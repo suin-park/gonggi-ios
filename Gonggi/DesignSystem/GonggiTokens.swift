@@ -21,6 +21,7 @@ enum GonggiColors {
     static let accentTeal = Color(red: 0.20, green: 0.72, blue: 0.66)    // active / progress
     static let successGreen = Color(red: 0.38, green: 0.84, blue: 0.58) // good coverage
     static let warning = Color(red: 0.98, green: 0.76, blue: 0.34)
+    static let warningCritical = Color(red: 0.96, green: 0.55, blue: 0.32)
     static let error = Color(red: 0.96, green: 0.40, blue: 0.42)
 
     static let heroGradient = LinearGradient(
@@ -62,12 +63,18 @@ enum GonggiColors {
         }
     }
 
-    static func progressGradient(fraction: Double) -> AngularGradient {
-        let colors: [Color] = fraction < 0.4
-            ? [accentCyan, accentTeal]
-            : fraction < 0.75
-                ? [accentTeal, successGreen.opacity(0.9)]
+    static func progressGradient(fraction: Double, emphasis: CaptureProgressEmphasis = .progressing) -> AngularGradient {
+        let colors: [Color]
+        switch emphasis {
+        case .ready:
+            colors = [successGreen, accentTeal.opacity(0.9)]
+        case .progressing:
+            colors = fraction < 0.75
+                ? [accentTeal, successGreen.opacity(0.85)]
                 : [successGreen, accentTeal]
+        case .needsWork:
+            colors = [accentCyan, accentTeal]
+        }
         return AngularGradient(colors: colors, center: .center)
     }
 
@@ -130,6 +137,14 @@ enum GonggiTypography {
     static func label(_ size: CGFloat = 11) -> Font {
         .system(size: size, weight: .medium, design: .default)
     }
+}
+
+// MARK: - Capture progress emphasis (UI only)
+
+enum CaptureProgressEmphasis {
+    case needsWork
+    case progressing
+    case ready
 }
 
 // MARK: - Animation

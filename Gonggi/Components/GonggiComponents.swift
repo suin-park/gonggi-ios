@@ -151,6 +151,7 @@ struct ProgressRing: View {
     var lineWidth: CGFloat = 8
     var label: String? = nil
     var compact: Bool = false
+    var emphasis: CaptureProgressEmphasis = .progressing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -160,7 +161,7 @@ struct ProgressRing: View {
             Circle()
                 .trim(from: 0, to: min(1, progress))
                 .stroke(
-                    GonggiColors.progressGradient(fraction: progress),
+                    GonggiColors.progressGradient(fraction: progress, emphasis: emphasis),
                     style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
@@ -184,6 +185,101 @@ struct ProgressRing: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("스캔 진행률 \(Int(progress * 100))퍼센트")
+    }
+}
+
+struct CaptureFinishPillButton: View {
+    let isReady: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            GonggiHaptics.medium()
+            action()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isReady ? "checkmark.circle.fill" : "stop.circle")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("촬영 완료")
+                    .font(GonggiTypography.headline(15))
+            }
+            .foregroundStyle(isReady ? GonggiColors.backgroundPrimary : GonggiColors.textPrimary)
+            .padding(.horizontal, GonggiSpacing.md)
+            .frame(minHeight: GonggiSpacing.touchTarget)
+            .background(
+                Capsule().fill(
+                    isReady
+                        ? AnyShapeStyle(
+                            LinearGradient(
+                                colors: [GonggiColors.successGreen, GonggiColors.accentTeal],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        : AnyShapeStyle(GonggiColors.surfaceElevated.opacity(0.92))
+                )
+            )
+            .overlay(
+                Capsule().stroke(
+                    isReady ? GonggiColors.successGreen.opacity(0.5) : GonggiColors.border,
+                    lineWidth: 1
+                )
+            )
+        }
+        .buttonStyle(GonggiPressableStyle(scale: 0.97))
+        .accessibilityLabel(isReady ? "촬영 완료. 충분히 기록되었습니다" : "촬영 완료")
+    }
+}
+
+struct CaptureControlBar: View {
+    let progress: Double
+    let emphasis: CaptureProgressEmphasis
+    let isReady: Bool
+    let isFlashOn: Bool
+    let showGuideOverlay: Bool
+    let onFlash: () -> Void
+    let onFinish: () -> Void
+    let onGuide: () -> Void
+
+    var body: some View {
+        HStack(spacing: GonggiSpacing.sm) {
+            GonggiIconButton(
+                systemName: isFlashOn ? "bolt.fill" : "bolt.slash.fill",
+                size: 40,
+                style: .dimmed,
+                action: onFlash
+            )
+            .accessibilityLabel(isFlashOn ? "플래시 끄기" : "플래시 켜기")
+
+            ProgressRing(
+                progress: progress,
+                lineWidth: 5,
+                label: nil,
+                compact: true,
+                emphasis: emphasis
+            )
+            .frame(width: 56, height: 56)
+
+            CaptureFinishPillButton(isReady: isReady, action: onFinish)
+
+            GonggiIconButton(
+                systemName: showGuideOverlay ? "map.fill" : "map",
+                size: 40,
+                style: .dimmed,
+                action: onGuide
+            )
+            .accessibilityLabel("가이드 오버레이")
+        }
+        .padding(.horizontal, GonggiSpacing.sm)
+        .padding(.vertical, GonggiSpacing.xs)
+        .background(
+            RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
+                .fill(Color.black.opacity(0.55))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
+                .stroke(GonggiColors.borderSubtle, lineWidth: 1)
+        )
     }
 }
 
@@ -240,10 +336,64 @@ struct CoverageLegend: View {
 }
 
 struct CaptureCoachBubble: View {
-    let message: String
+    let presentation: CaptureCoachPresentation
+
+    init(presentation: CaptureCoachPresentation) {
+        self.presentation = presentation
+    }
+
+    /// Legacy single-line message — mapped to guidance severity.
+    init(message: String) {
+        self.presentation = CaptureCoachPresentation(
+            title: message,
+            subtitle: nil,
+            severity: .guidance,
+            icon: "viewfinder",
+            warning: nil
+        )
+    }
 
     var body: some View {
-        GonggiGlassCapsule(message: message)
+        HStack(alignment: .top, spacing: GonggiSpacing.sm) {
+            Image(systemName: presentation.icon)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(presentation.severity.iconTint)
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(presentation.title)
+                    .font(GonggiTypography.headline(16))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                if let subtitle = presentation.subtitle {
+                    Text(subtitle)
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .lineSpacing(2)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, GonggiSpacing.md)
+        .padding(.vertical, GonggiSpacing.sm + 2)
+        .background(
+            RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                .fill(Color.black.opacity(0.62))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                .stroke(presentation.severity.accent.opacity(0.45), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var accessibilityText: String {
+        if let subtitle = presentation.subtitle {
+            return "\(presentation.title). \(subtitle)"
+        }
+        return presentation.title
     }
 }
 

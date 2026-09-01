@@ -66,7 +66,7 @@ struct CaptureFlowView: View {
     var body: some View {
         ZStack {
             if viewModel.useMockCamera {
-                MockCameraBackground(progress: viewModel.guidance.quality.overallCoverage)
+                MockCameraBackground(quality: viewModel.guidance.quality)
             } else {
                 ARCaptureViewRepresentable(session: viewModel.arSession) { frame in
                     viewModel.ingestFrame(frame)

@@ -41,7 +41,7 @@ struct ScreenshotRootView: View {
     private func captureScreenshot(for screen: ScreenshotScreen) -> some View {
         let config = ScreenshotHarness.captureConfig(for: screen)
         ZStack {
-            MockCameraBackground(progress: config.progress)
+            MockCameraBackground(quality: config.quality)
             CaptureOverlayView(
                 guidance: config.guidance,
                 onClose: {},
@@ -57,7 +57,7 @@ struct ScreenshotRootView: View {
 @MainActor
 enum ScreenshotHarness {
     struct CaptureConfig {
-        let progress: Double
+        let quality: CaptureQualityState
         let guidance: CaptureGuidanceEngine
     }
 
@@ -65,28 +65,22 @@ enum ScreenshotHarness {
         switch screen {
         case .capture30:
             return CaptureConfig(
-                progress: 0.30,
-                guidance: GonggiPreviewSamples.guidance(
-                    quality: GonggiPreviewSamples.coverage30,
-                    message: "이 영역을 다른 각도에서 촬영하세요"
-                )
+                quality: GonggiPreviewSamples.coverage30,
+                guidance: GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage30)
             )
         case .capture68:
             return CaptureConfig(
-                progress: 0.68,
+                quality: GonggiPreviewSamples.coverage68,
                 guidance: GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage68)
             )
         case .capture90:
             return CaptureConfig(
-                progress: 0.90,
-                guidance: GonggiPreviewSamples.guidance(
-                    quality: GonggiPreviewSamples.coverage90,
-                    message: "이 영역은 충분히 촬영되었습니다"
-                )
+                quality: GonggiPreviewSamples.coverage90,
+                guidance: GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage90)
             )
         case .fastMovement:
             return CaptureConfig(
-                progress: 0.52,
+                quality: GonggiPreviewSamples.fastMovement,
                 guidance: GonggiPreviewSamples.guidance(
                     quality: GonggiPreviewSamples.fastMovement,
                     message: GonggiPreviewSamples.coachFastMove
@@ -94,7 +88,7 @@ enum ScreenshotHarness {
             )
         case .trackingLimited:
             return CaptureConfig(
-                progress: 0.45,
+                quality: GonggiPreviewSamples.trackingLimited,
                 guidance: GonggiPreviewSamples.guidance(
                     quality: GonggiPreviewSamples.trackingLimited,
                     message: GonggiPreviewSamples.coachTracking
@@ -102,7 +96,7 @@ enum ScreenshotHarness {
             )
         case .lowTexture:
             return CaptureConfig(
-                progress: 0.40,
+                quality: GonggiPreviewSamples.lowTexture,
                 guidance: GonggiPreviewSamples.guidance(
                     quality: GonggiPreviewSamples.lowTexture,
                     message: GonggiPreviewSamples.coachLowTexture
@@ -110,7 +104,7 @@ enum ScreenshotHarness {
             )
         default:
             return CaptureConfig(
-                progress: 0.68,
+                quality: GonggiPreviewSamples.coverage68,
                 guidance: GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage68)
             )
         }
