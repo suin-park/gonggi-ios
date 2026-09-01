@@ -7,19 +7,20 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
                     header
-                    ForEach(appState.spaces) { space in
-                        SpaceCard(
-                            space: space,
-                            onOpen: { selectedSpace = space },
-                            onMore: {}
-                        )
+                    LazyVStack(spacing: GonggiSpacing.md) {
+                        ForEach(appState.spaces) { space in
+                            MemoryArchiveCard(space: space) {
+                                selectedSpace = space
+                            }
+                        }
                     }
                 }
                 .padding(GonggiSpacing.lg)
+                .padding(.bottom, GonggiSpacing.xxl)
             }
-            .background(GonggiColors.backgroundPrimary.ignoresSafeArea())
+            .background(GonggiAmbientBackground())
             .navigationTitle("보관함")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(item: $selectedSpace) { space in
@@ -29,10 +30,16 @@ struct LibraryView: View {
     }
 
     private var header: some View {
-        Text("기록한 공간을 다시 방문해보세요.")
-            .font(GonggiTypography.body(15))
-            .foregroundStyle(GonggiColors.textSecondary)
-            .padding(.bottom, GonggiSpacing.xs)
+        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+            Text("기억의 아카이브")
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(GonggiColors.accentTeal)
+            Text("기록한 공간을\n다시 방문해보세요")
+                .font(GonggiTypography.headline(20))
+                .foregroundStyle(GonggiColors.textPrimary)
+                .lineSpacing(2)
+        }
+        .padding(.bottom, GonggiSpacing.xs)
     }
 }
 

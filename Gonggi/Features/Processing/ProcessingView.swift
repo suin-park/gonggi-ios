@@ -79,6 +79,7 @@ struct ProcessingView: View {
     let onDismiss: () -> Void
 
     @StateObject private var viewModel: ProcessingViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         summary: CaptureSessionSummary,
@@ -95,32 +96,36 @@ struct ProcessingView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: GonggiSpacing.xl) {
-                header
-                if let status = viewModel.status {
-                    stepsList(status.steps)
-                    overallProgress(status.overallProgress)
-                    if let mins = status.estimatedMinutesRemaining, mins > 0 {
-                        Text("공간 생성 예상 시간 \(mins)분")
-                            .font(GonggiTypography.caption(14))
-                            .foregroundStyle(GonggiColors.textSecondary)
+            ScrollView {
+                VStack(alignment: .leading, spacing: GonggiSpacing.xl) {
+                    header
+                    if let status = viewModel.status {
+                        progressHero(status.overallProgress)
+                        stepsList(status.steps)
+                        if let mins = status.estimatedMinutesRemaining, mins > 0 {
+                            estimatedTimeBanner(minutes: mins)
+                        }
+                    } else if let err = viewModel.errorMessage {
+                        errorBanner(err)
+                    } else {
+                        loadingState
                     }
-                } else if let err = viewModel.errorMessage {
-                    Text(err)
-                        .foregroundStyle(GonggiColors.error)
-                } else {
-                    ProgressView("준비 중…")
-                        .tint(GonggiColors.accentCyan)
-                }
-                Spacer()
-                if viewModel.isComplete, let spaceId = viewModel.completedSpaceId, let jobId = viewModel.status?.jobId {
-                    PrimaryButton(title: "보관함에서 보기", icon: "archivebox") {
-                        onComplete(jobId, spaceId)
+
+                    if viewModel.isComplete,
+                       let spaceId = viewModel.completedSpaceId,
+                       let jobId = viewModel.status?.jobId {
+                        PrimaryButton(title: "보관함에서 보기", icon: "archivebox") {
+                            GonggiHaptics.success()
+                            onComplete(jobId, spaceId)
+                        }
+                        .padding(.top, GonggiSpacing.sm)
                     }
                 }
+                .padding(GonggiSpacing.lg)
+                .padding(.bottom, GonggiSpacing.xxl)
             }
-            .padding(GonggiSpacing.lg)
-            .background(GonggiColors.backgroundPrimary.ignoresSafeArea())
+            .background(GonggiAmbientBackground(showGlow: false))
+            .navigationTitle("공간 만들기")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -135,50 +140,107 @@ struct ProcessingView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            Text("「\(summary.suggestedName)」")
+                .font(GonggiTypography.headline(18))
+                .foregroundStyle(GonggiColors.accentTeal)
             Text("공간을 생성하고 있어요")
                 .font(GonggiTypography.title(26))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("3D Gaussian Splatting으로 변환하여\n더 생생하게 기억할 수 있어요.")
+            Text("촬영한 기억을 입체 공간으로 바꾸고 있어요.\n잠시만 기다려 주세요.")
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
-                .lineSpacing(3)
+                .lineSpacing(4)
         }
+    }
+
+    private func progressHero(_ value: Double) -> some View {
+        HStack(spacing: GonggiSpacing.lg) {
+            ProgressRing(progress: value, lineWidth: 6, label: "전체", compact: true)
+                .frame(width: 88, height: 88)
+            VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+                Text(viewModel.isComplete ? "완료되었어요" : "진행 중")
+                    .font(GonggiTypography.headline(17))
+                    .foregroundStyle(viewModel.isComplete ? GonggiColors.successGreen : GonggiColors.textPrimary)
+                Text("전체 \(Int(value * 100))%")
+                    .font(GonggiTypography.caption(14))
+                    .foregroundStyle(GonggiColors.textSecondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(GonggiSpacing.md)
+        .background(GonggiColors.surfaceElevated)
+        .overlay(
+            RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
+                .stroke(GonggiColors.border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
+        .animation(reduceMotion ? nil : GonggiMotion.standard, value: value)
     }
 
     private func stepsList(_ steps: [ProcessingStepState]) -> some View {
-        VStack(spacing: GonggiSpacing.md) {
-            ForEach(steps) { step in
-                StatusStepRow(step: step)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("진행 단계")
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(GonggiColors.textTertiary)
+                .padding(.bottom, GonggiSpacing.sm)
+            GonggiElevatedCard {
+                VStack(spacing: GonggiSpacing.md) {
+                    ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+                        StatusStepRow(
+                            step: step,
+                            isLast: index == steps.count - 1
+                        )
+                    }
+                }
             }
         }
-        .padding(GonggiSpacing.md)
-        .background(GonggiColors.surface.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
     }
 
-    private func overallProgress(_ value: Double) -> some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("전체 진행률 \(Int(value * 100))%")
-                .font(GonggiTypography.caption(13))
+    private func estimatedTimeBanner(minutes: Int) -> some View {
+        HStack(spacing: GonggiSpacing.sm) {
+            Image(systemName: "clock")
+                .foregroundStyle(GonggiColors.accentTeal)
+            Text("약 \(minutes)분 후에 완료될 예정이에요")
+                .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
-            ProgressView(value: value)
-                .tint(GonggiColors.accentTeal)
         }
+        .padding(GonggiSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GonggiColors.accentTeal.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: GonggiSpacing.sm) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(GonggiColors.error)
+            Text(message)
+                .font(GonggiTypography.caption(14))
+                .foregroundStyle(GonggiColors.textSecondary)
+        }
+        .padding(GonggiSpacing.md)
+        .background(GonggiColors.error.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+    }
+
+    private var loadingState: some View {
+        HStack(spacing: GonggiSpacing.md) {
+            ProgressView()
+                .tint(GonggiColors.accentTeal)
+            Text("준비하고 있어요…")
+                .font(GonggiTypography.body(15))
+                .foregroundStyle(GonggiColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(GonggiSpacing.lg)
+        .background(GonggiColors.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
     }
 }
 
 #Preview {
     ProcessingView(
-        summary: CaptureSessionSummary(
-            id: UUID(),
-            startedAt: Date(),
-            endedAt: Date(),
-            quality: .zero,
-            fastMotionSegments: 0,
-            lowTextureWarnings: 0,
-            areasNeedingRevisit: 0,
-            suggestedName: "테스트"
-        ),
+        summary: GonggiPreviewSamples.sampleSummary,
         spaceService: MockSpaceGenerationService(),
         onComplete: { _, _ in },
         onDismiss: {}

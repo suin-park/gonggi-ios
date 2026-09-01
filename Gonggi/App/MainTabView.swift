@@ -21,7 +21,10 @@ struct MainTabView: View {
                 .tabItem { Label(AppTab.profile.title, systemImage: AppTab.profile.icon) }
                 .tag(AppTab.profile)
         }
-        .tint(GonggiColors.accentCyan)
+        .tint(GonggiColors.accentTeal)
+        .onChange(of: appState.selectedTab) { _, _ in
+            GonggiHaptics.selection()
+        }
     }
 }
 

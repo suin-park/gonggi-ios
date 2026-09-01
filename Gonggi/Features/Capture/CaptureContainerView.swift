@@ -8,37 +8,47 @@ struct CaptureContainerView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                GonggiColors.backgroundPrimary.ignoresSafeArea()
+                GonggiAmbientBackground()
                 if isCapturing {
                     CaptureFlowView(onClose: { isCapturing = false })
                 } else {
                     startPrompt
                 }
             }
+            .navigationBarHidden(true)
         }
     }
 
     private var startPrompt: some View {
         VStack(spacing: GonggiSpacing.xl) {
             Spacer()
-            Image(systemName: "viewfinder.circle.fill")
-                .font(.system(size: 72))
-                .foregroundStyle(GonggiColors.accentCyan)
-            Text("공간 스캔")
-                .font(GonggiTypography.title(26))
-                .foregroundStyle(GonggiColors.textPrimary)
-            Text("벽면, 구석, 천장을 골고루 천천히 촬영하세요.")
-                .font(GonggiTypography.body(15))
-                .foregroundStyle(GonggiColors.textSecondary)
-                .multilineTextAlignment(.center)
+            ZStack {
+                Circle()
+                    .fill(GonggiColors.accentTeal.opacity(0.12))
+                    .frame(width: 120, height: 120)
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 52, weight: .ultraLight))
+                    .foregroundStyle(GonggiColors.accentTeal)
+            }
+            VStack(spacing: GonggiSpacing.sm) {
+                Text("새 공간 기록")
+                    .font(GonggiTypography.title(26))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                Text("벽면, 구석, 천장을 골고루\n천천히 촬영해 주세요")
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+            }
             PrimaryButton(title: "촬영 시작", icon: "camera.fill") {
+                GonggiHaptics.medium()
                 isCapturing = true
             }
             .padding(.horizontal, GonggiSpacing.lg)
             if appState.isMockMode {
-                Text("Mock 모드")
+                Text("Mock 모드 · 커버리지 오버레이 확인 가능")
                     .font(GonggiTypography.caption(11))
-                    .foregroundStyle(GonggiColors.accentTeal)
+                    .foregroundStyle(GonggiColors.textTertiary)
             }
             Spacer()
         }
@@ -93,6 +103,7 @@ struct CaptureFlowView: View {
                     }
                 )
                 .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
         .fullScreenCover(isPresented: $showProcessing) {
@@ -113,7 +124,12 @@ struct CaptureFlowView: View {
     }
 }
 
-#Preview {
+#Preview("Start prompt") {
+    CaptureContainerView()
+        .environmentObject(AppState(isMockMode: true))
+}
+
+#Preview("Capture flow") {
     CaptureFlowView(onClose: {})
         .environmentObject(AppState(isMockMode: true))
 }

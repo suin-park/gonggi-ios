@@ -15,93 +15,34 @@ struct CaptureSummaryView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                    Text("촬영 요약")
-                        .font(GonggiTypography.title(24))
-                        .foregroundStyle(GonggiColors.textPrimary)
-
-                    summaryRow(title: "촬영 품질", value: summary.qualityLabel, icon: "sparkles")
-                    if !summary.captureId.isEmpty {
-                        summaryRow(title: "Capture ID", value: summary.captureId, icon: "number")
-                    }
-                    summaryRow(
-                        title: "공간 커버리지",
-                        value: "\(summary.coveragePercent)%",
-                        icon: "square.grid.3x3.fill"
-                    )
-                    summaryRow(
-                        title: "촬영 시간",
-                        value: formattedDuration(summary.duration),
-                        icon: "clock"
+                    GonggiSummaryHero(
+                        coveragePercent: summary.coveragePercent,
+                        qualityLabel: summary.qualityLabel,
+                        duration: formattedDuration(summary.duration)
                     )
 
-                    if let w = summary.videoWidth, let h = summary.videoHeight, w > 0 {
-                        summaryRow(
-                            title: "영상 해상도",
-                            value: "\(w)×\(h)",
-                            icon: "video.fill"
-                        )
-                    }
+                    Text("촬영 결과")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textTertiary)
 
-                    summaryRow(
-                        title: "평균 회전 속도",
-                        value: String(format: "%.2f rad/s", summary.avgAngularVelocity),
-                        icon: "rotate.3d"
-                    )
-                    summaryRow(
-                        title: "최대 회전 속도",
-                        value: String(format: "%.2f rad/s", summary.maxAngularVelocity),
-                        icon: "gyroscope",
-                        warning: summary.maxAngularVelocity > 1.2
-                    )
-                    summaryRow(
-                        title: "빠른 이동 구간",
-                        value: "\(summary.fastMotionSegments)개",
-                        icon: "hare.fill",
-                        warning: summary.fastMotionSegments > 0
-                    )
-                    summaryRow(
-                        title: "추적 제한 시간",
-                        value: formattedDuration(summary.trackingLimitedSec),
-                        icon: "location.slash",
-                        warning: summary.trackingLimitedSec > 3
-                    )
-                    summaryRow(
-                        title: "충분 촬영 영역",
-                        value: "\(summary.goodAreaCount)개",
-                        icon: "checkmark.circle.fill"
-                    )
-                    summaryRow(
-                        title: "보강 필요 영역",
-                        value: "\(summary.insufficientAreaCount)개",
-                        icon: "arrow.triangle.2.circlepath",
-                        warning: summary.insufficientAreaCount > 0
-                    )
-                    summaryRow(
-                        title: "재방문 점수",
-                        value: percentString(summary.revisitScore),
-                        icon: "arrow.2.squarepath"
-                    )
-                    summaryRow(
-                        title: "각도 다양성",
-                        value: percentString(summary.angleDiversityScore),
-                        icon: "camera.metering.multispot"
-                    )
+                    metricsGrid
 
                     if summary.lowTextureWarnings > 0 {
                         warningBanner
                     }
 
                     if summary.manifestURL != nil {
-                        Text("촬영 데이터가 기기에 저장되었습니다. 업로드 전 외부로 전송되지 않습니다.")
+                        Text("촬영 데이터는 기기에만 저장됩니다.")
                             .font(GonggiTypography.caption(12))
-                            .foregroundStyle(GonggiColors.textSecondary)
+                            .foregroundStyle(GonggiColors.textTertiary)
                     }
 
                     VStack(spacing: GonggiSpacing.sm) {
                         PrimaryButton(title: "이대로 공간 생성", icon: "cube.transparent") {
+                            GonggiHaptics.success()
                             onCreateSpace()
                         }
-                        SecondaryButton(title: "추가 촬영") {
+                        SecondaryButton(title: "추가 촬영", icon: "camera") {
                             onContinueCapture()
                         }
                         #if DEBUG
@@ -117,11 +58,13 @@ struct CaptureSummaryView: View {
                         }
                         #endif
                     }
-                    .padding(.top, GonggiSpacing.md)
+                    .padding(.top, GonggiSpacing.sm)
                 }
                 .padding(GonggiSpacing.lg)
             }
-            .background(GonggiColors.backgroundPrimary.ignoresSafeArea())
+            .background(GonggiAmbientBackground())
+            .navigationTitle("촬영 요약")
+            .navigationBarTitleDisplayMode(.inline)
             #if DEBUG
             .sheet(isPresented: $showExportShare) {
                 CaptureExportShareSheet(items: exportShareItems) {
@@ -129,6 +72,49 @@ struct CaptureSummaryView: View {
                 }
             }
             #endif
+        }
+    }
+
+    private var metricsGrid: some View {
+        LazyVGrid(
+            columns: [GridItem(.flexible()), GridItem(.flexible())],
+            spacing: GonggiSpacing.sm
+        ) {
+            GonggiMetricTile(
+                icon: "checkmark.circle.fill",
+                title: "충분 촬영",
+                value: "\(summary.goodAreaCount)개",
+                accent: GonggiColors.successGreen
+            )
+            GonggiMetricTile(
+                icon: "arrow.triangle.2.circlepath",
+                title: "보강 필요",
+                value: "\(summary.insufficientAreaCount)개",
+                accent: GonggiColors.accentCyan,
+                warning: summary.insufficientAreaCount > 0
+            )
+            GonggiMetricTile(
+                icon: "hare.fill",
+                title: "빠른 이동",
+                value: "\(summary.fastMotionSegments)구간",
+                warning: summary.fastMotionSegments > 0
+            )
+            GonggiMetricTile(
+                icon: "location.slash",
+                title: "추적 제한",
+                value: formattedDuration(summary.trackingLimitedSec),
+                warning: summary.trackingLimitedSec > 3
+            )
+            GonggiMetricTile(
+                icon: "arrow.2.squarepath",
+                title: "재방문",
+                value: percentString(summary.revisitScore)
+            )
+            GonggiMetricTile(
+                icon: "camera.metering.multispot",
+                title: "각도 다양성",
+                value: percentString(summary.angleDiversityScore)
+            )
         }
     }
 
@@ -148,32 +134,6 @@ struct CaptureSummaryView: View {
     }
     #endif
 
-    private func summaryRow(
-        title: String,
-        value: String,
-        icon: String,
-        warning: Bool = false
-    ) -> some View {
-        GlassCard {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundStyle(warning ? GonggiColors.warning : GonggiColors.accentCyan)
-                    .frame(width: 28)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(GonggiTypography.caption(12))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                    Text(value)
-                        .font(GonggiTypography.headline(18))
-                        .foregroundStyle(GonggiColors.textPrimary)
-                }
-                Spacer()
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title) \(value)")
-    }
-
     private var warningBanner: some View {
         HStack(alignment: .top, spacing: GonggiSpacing.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -183,7 +143,11 @@ struct CaptureSummaryView: View {
                 .foregroundStyle(GonggiColors.textSecondary)
         }
         .padding(GonggiSpacing.md)
-        .background(GonggiColors.warning.opacity(0.12))
+        .background(GonggiColors.warning.opacity(0.1))
+        .overlay(
+            RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
+                .stroke(GonggiColors.warning.opacity(0.25), lineWidth: 1)
+        )
         .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
     }
 
@@ -200,33 +164,7 @@ struct CaptureSummaryView: View {
 
 #Preview {
     CaptureSummaryView(
-        summary: CaptureSessionSummary(
-            startedAt: Date().addingTimeInterval(-180),
-            endedAt: Date(),
-            quality: CaptureQualityState(
-                overallCoverage: 0.86,
-                motionSpeed: 0.3,
-                angularVelocity: 0.25,
-                blurScore: 0.8,
-                exposureScore: 0.9,
-                trackingQuality: 0.95,
-                lowTextureScore: 0.2,
-                overlapScore: 0.7,
-                parallaxScore: 0.65,
-                areas: []
-            ),
-            fastMotionSegments: 3,
-            lowTextureWarnings: 0,
-            areasNeedingRevisit: 2,
-            suggestedName: "새 공간",
-            avgAngularVelocity: 0.42,
-            maxAngularVelocity: 1.1,
-            trackingLimitedSec: 2.5,
-            goodAreaCount: 5,
-            insufficientAreaCount: 2,
-            revisitScore: 0.55,
-            angleDiversityScore: 0.62
-        ),
+        summary: GonggiPreviewSamples.sampleSummary,
         onContinueCapture: {},
         onCreateSpace: {}
     )
