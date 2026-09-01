@@ -48,7 +48,7 @@ def main() -> None:
         images.append((name.replace(".png", ""), img.resize((THUMB_WIDTH, thumb_h), Image.Resampling.LANCZOS)))
 
     rows = (len(images) + COLS - 1) // COLS
-    cell_h = max(h for _, im in images) + LABEL_HEIGHT
+    cell_h = max(im.height for _, im in images) + LABEL_HEIGHT
     sheet_w = COLS * THUMB_WIDTH + (COLS + 1) * PADDING
     sheet_h = rows * cell_h + (rows + 1) * PADDING
 
