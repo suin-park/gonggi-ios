@@ -1,0 +1,112 @@
+import ARKit
+import Combine
+import SwiftUI
+
+@MainActor
+final class CaptureViewModel: ObservableObject {
+    @Published private(set) var useMockCamera = true
+    @Published private(set) var lastSummary: CaptureSessionSummary?
+    @Published private(set) var isStopping = false
+
+    let guidance = CaptureGuidanceEngine()
+    let arSession = ARSession()
+    let framePipeline = CaptureFramePipeline()
+
+    private var mockTimer: AnyCancellable?
+    private var guidanceCancellable: AnyCancellable?
+    private var startedAt = Date()
+
+    init() {
+        guidanceCancellable = guidance.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        framePipeline.onQualityUpdate = { [weak self] quality, message in
+            Task { @MainActor in
+                self?.guidance.applySnapshot(quality: quality, message: message)
+            }
+        }
+    }
+
+    func configure(mockMode: Bool) {
+        guidance.mockMode = mockMode
+        useMockCamera = mockMode || !ARWorldTrackingConfiguration.isSupported
+        CaptureSessionStore.pruneStaleSessions()
+        if useMockCamera {
+            startMockTicks()
+            arSession.pause()
+        } else {
+            mockTimer?.cancel()
+            startAR()
+        }
+        start()
+    }
+
+    func start() {
+        lastSummary = nil
+        startedAt = Date()
+        guidance.start()
+        framePipeline.start(mockMode: useMockCamera)
+        guidance.isRecording = framePipeline.isRecording
+    }
+
+    func cancelCapture() {
+        mockTimer?.cancel()
+        mockTimer = nil
+        framePipeline.cancel()
+        guidance.cancelSession()
+        guidance.isRecording = false
+        arSession.pause()
+    }
+
+    func stop() async {
+        guard !isStopping else { return }
+        isStopping = true
+        mockTimer?.cancel()
+        mockTimer = nil
+        arSession.pause()
+
+        if useMockCamera {
+            lastSummary = framePipeline.mockSummary(
+                quality: guidance.quality,
+                startedAt: startedAt,
+                endedAt: Date()
+            )
+        } else if let summary = await framePipeline.finish() {
+            lastSummary = summary
+        } else {
+            lastSummary = framePipeline.mockSummary(
+                quality: guidance.quality,
+                startedAt: startedAt,
+                endedAt: Date()
+            )
+        }
+        guidance.isRecording = false
+        isStopping = false
+    }
+
+    /// Called synchronously from ARSessionDelegate — do not dispatch before this returns.
+    func ingestFrame(_ frame: ARFrame) {
+        framePipeline.ingest(frame: frame)
+    }
+
+    private func startMockTicks() {
+        mockTimer?.cancel()
+        mockTimer = Timer.publish(every: 0.5, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in self?.framePipeline.ingestMockTick() }
+    }
+
+    private func startAR() {
+        guard ARWorldTrackingConfiguration.isSupported else { return }
+        let config = ARWorldTrackingConfiguration()
+        config.planeDetection = [.horizontal, .vertical]
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            config.sceneReconstruction = .mesh
+        }
+        if type(of: config).supportsFrameSemantics(.sceneDepth) {
+            config.frameSemantics.insert(.sceneDepth)
+        }
+        config.environmentTexturing = .automatic
+        arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
+    }
+}

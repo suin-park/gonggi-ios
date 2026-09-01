@@ -1,0 +1,22 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad/
+xcuserdata/
+
+# macOS
+.DS_Store
+
+# SwiftPM
+.swiftpm/
+.build/
+
+# Generated project (optional — remove if committing .xcodeproj)
+# Gonggi.xcodeproj/
+Gonggi.xcodeproj/
+*.xcworkspace/
+xcshareddata/
+
+# CI artifacts
+TestResults.xcresult/

@@ -1,0 +1,66 @@
+name: Gonggi
+options:
+  bundleIdPrefix: com.whik
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  Gonggi:
+    type: application
+    platform: iOS
+    sources:
+      - path: Gonggi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.whik.gonggi
+        INFOPLIST_KEY_CFBundleDisplayName: 공기
+        INFOPLIST_KEY_NSCameraUsageDescription: 공간을 3D로 기록하기 위해 카메라가 필요합니다.
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        TARGETED_DEVICE_FAMILY: "1"
+    info:
+      path: Gonggi/Resources/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSCameraUsageDescription: 공간을 3D로 기록하기 위해 카메라가 필요합니다.
+        NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
+
+  GonggiTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: GonggiTests
+    dependencies:
+      - target: Gonggi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.whik.gonggi.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Gonggi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Gonggi"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  Gonggi:
+    build:
+      targets:
+        Gonggi: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - GonggiTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug

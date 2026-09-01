@@ -1,0 +1,133 @@
+name: Gonggi iOS CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Gonggi/**'
+      - 'GonggiTests/**'
+      - 'project.yml'
+      - 'docs/**'
+      - '.github/workflows/gonggi-ios-ci.yml'
+  pull_request:
+    paths:
+      - 'Gonggi/**'
+      - 'GonggiTests/**'
+      - 'project.yml'
+      - 'docs/**'
+      - '.github/workflows/gonggi-ios-ci.yml'
+
+concurrency:
+  group: gonggi-ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+
+jobs:
+  build-and-test:
+    name: Simulator build & unit tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          if [[ -z "${XCODE_APP}" ]]; then
+            echo "No Xcode.app found on runner"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: gonggi-ios-deriveddata-${{ hashFiles('Gonggi/**/*.swift', 'GonggiTests/**/*.swift', 'project.yml') }}
+          restore-keys: |
+            gonggi-ios-deriveddata-
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+          xcodebuild -list -project "${{ env.PROJECT }}"
+
+      - name: Resolve iOS Simulator destination
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID="$(python3 <<'PY'
+          import json, subprocess, sys
+          out = subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True)
+          data = json.loads(out)
+          runtimes = sorted([k for k in data.get("devices", {}) if "iOS" in k], reverse=True)
+          for rt in runtimes:
+              devices = data["devices"][rt]
+              preferred = [d for d in devices if d.get("isAvailable") and "iPhone" in d.get("name", "")]
+              preferred.sort(key=lambda d: d.get("name", ""))
+              for d in preferred:
+                  name = d.get("name", "")
+                  if any(x in name for x in ("iPhone 15", "iPhone 16", "iPhone 14", "iPhone SE")):
+                      print(d["udid"])
+                      sys.exit(0)
+              for d in preferred:
+                  print(d["udid"])
+                  sys.exit(0)
+          sys.exit(1)
+          PY
+          )"
+          echo "udid=${UDID}" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "${UDID}" || true
+
+      - name: Build (iOS Simulator, unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Boot simulator
+        run: xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
+
+      - name: Unit tests (iOS Simulator)
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GonggiTests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -resultBundlePath TestResults.xcresult
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gonggi-ios-test-results
+          path: TestResults.xcresult
+          if-no-files-found: ignore
