@@ -7,7 +7,7 @@ struct GonggiApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MainTabView()
+            rootContent
                 .environmentObject(appState)
                 .preferredColorScheme(.dark)
                 .onChange(of: scenePhase) { _, phase in
@@ -16,5 +16,18 @@ struct GonggiApp: App {
                     }
                 }
         }
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        #if DEBUG
+        if let screen = ScreenshotLaunchConfig.screen {
+            ScreenshotRootView(screen: screen)
+        } else {
+            MainTabView()
+        }
+        #else
+        MainTabView()
+        #endif
     }
 }

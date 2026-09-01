@@ -15,6 +15,7 @@ final class AppState: ObservableObject {
         isMockMode: Bool = {
             #if DEBUG
             ProcessInfo.processInfo.arguments.contains("-mock")
+                || ScreenshotLaunchConfig.isActive
             #else
             false
             #endif
@@ -24,6 +25,16 @@ final class AppState: ObservableObject {
         self.isMockMode = isMockMode
         self.spaceService = spaceService ?? MockSpaceGenerationService()
         self.spaces = SpaceRecord.sampleArchive
+        #if DEBUG
+        if let screen = ScreenshotLaunchConfig.screen {
+            switch screen {
+            case .home: selectedTab = .home
+            case .library: selectedTab = .library
+            case .profile: selectedTab = .profile
+            default: break
+            }
+        }
+        #endif
     }
 
     func selectTab(_ tab: AppTab) {

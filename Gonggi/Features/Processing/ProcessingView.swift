@@ -77,6 +77,8 @@ struct ProcessingView: View {
     let spaceService: SpaceGenerationService
     let onComplete: (String, String) -> Void
     let onDismiss: () -> Void
+    /// DEBUG screenshot mode only — freezes UI without starting pipeline.
+    private let screenshotFrozenStatus: GenerationJobStatus?
 
     @StateObject private var viewModel: ProcessingViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -84,11 +86,13 @@ struct ProcessingView: View {
     init(
         summary: CaptureSessionSummary,
         spaceService: SpaceGenerationService,
+        screenshotFrozenStatus: GenerationJobStatus? = nil,
         onComplete: @escaping (String, String) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.summary = summary
         self.spaceService = spaceService
+        self.screenshotFrozenStatus = screenshotFrozenStatus
         self.onComplete = onComplete
         self.onDismiss = onDismiss
         _viewModel = StateObject(wrappedValue: ProcessingViewModel(spaceService: spaceService))
@@ -134,7 +138,15 @@ struct ProcessingView: View {
                 }
             }
         }
-        .onAppear { viewModel.start(summary: summary) }
+        .onAppear {
+            #if DEBUG
+            if let frozen = screenshotFrozenStatus {
+                viewModel.status = frozen
+                return
+            }
+            #endif
+            viewModel.start(summary: summary)
+        }
         .onDisappear { viewModel.cancel() }
     }
 

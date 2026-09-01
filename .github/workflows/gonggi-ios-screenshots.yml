@@ -1,0 +1,145 @@
+name: Gonggi iOS Screenshots
+
+# Manual only — do not run on every push (macOS runner cost).
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: gonggi-ios-screenshots
+  cancel-in-progress: true
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+  BUNDLE_ID: com.whik.gonggi
+  DERIVED_DATA: DerivedData
+
+jobs:
+  screenshots:
+    name: Simulator UI screenshots
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          if [[ -z "${XCODE_APP}" ]]; then
+            echo "No Xcode.app found on runner"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+          xcodebuild -list -project "${{ env.PROJECT }}"
+
+      - name: Resolve iOS Simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          python3 <<'PY' | tee sim-info.txt
+          import json, subprocess, sys
+
+          out = subprocess.check_output(
+              ["xcrun", "simctl", "list", "devices", "available", "-j"], text=True
+          )
+          data = json.loads(out)
+          runtimes = sorted([k for k in data.get("devices", {}) if "iOS" in k], reverse=True)
+          chosen = None
+          for rt in runtimes:
+              devices = data["devices"][rt]
+              iphones = [d for d in devices if d.get("isAvailable") and "iPhone" in d.get("name", "")]
+              iphones.sort(key=lambda d: d.get("name", ""))
+              for pref in ("iPhone 16", "iPhone 15", "iPhone 14"):
+                  for d in iphones:
+                      if pref in d.get("name", ""):
+                          chosen = (d["udid"], d["name"], rt)
+                          break
+                  if chosen:
+                      break
+              if not chosen and iphones:
+                  d = iphones[0]
+                  chosen = (d["udid"], d["name"], rt)
+              if chosen:
+                  break
+          if not chosen:
+              sys.exit("No iPhone simulator found")
+          udid, name, runtime = chosen
+          print(f"device_name={name}")
+          print(f"runtime={runtime}")
+          print(f"udid={udid}")
+          PY
+          echo "device_name=$(grep '^device_name=' sim-info.txt | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+          echo "runtime=$(grep '^runtime=' sim-info.txt | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+          echo "udid=$(grep '^udid=' sim-info.txt | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+
+      - name: Boot simulator
+        run: |
+          set -euo pipefail
+          xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
+          xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+
+      - name: Build (iOS Simulator, unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath "${{ env.DERIVED_DATA }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+          test -d "${{ env.DERIVED_DATA }}/Build/Products/Debug-iphonesimulator/Gonggi.app"
+
+      - name: Install Pillow
+        run: pip3 install Pillow
+
+      - name: Capture screenshots
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/capture-gonggi-screenshots.sh
+          scripts/capture-gonggi-screenshots.sh
+
+      - name: Create contact sheet
+        run: python3 scripts/make-contact-sheet.py screenshots screenshots/contact-sheet.png
+
+      - name: Verify screenshots
+        run: python3 scripts/verify-screenshots.py screenshots
+
+      - name: Upload screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gonggi-ui-v1-screenshots
+          path: |
+            screenshots/*.png
+          if-no-files-found: error
+
+      - name: Summary
+        run: |
+          echo "## Gonggi UI V1 Screenshots" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Device:** ${{ steps.sim.outputs.device_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Runtime:** ${{ steps.sim.outputs.runtime }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Artifact:** \`gonggi-ui-v1-screenshots\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Screenshots:** 12 PNG + contact-sheet.png" >> "$GITHUB_STEP_SUMMARY"
+          ls -la screenshots/
