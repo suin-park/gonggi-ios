@@ -54,6 +54,7 @@ struct ScreenshotRootView: View {
     }
 }
 
+@MainActor
 enum ScreenshotHarness {
     struct CaptureConfig {
         let progress: Double
