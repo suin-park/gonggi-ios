@@ -86,6 +86,7 @@ enum GonggiPreviewSamples {
     )
 
     static let sampleSummary = CaptureSessionSummary(
+        captureId: "GONGGI_CAPTURE_V1_001",
         startedAt: Date().addingTimeInterval(-142),
         endedAt: Date(),
         quality: coverage68,
@@ -93,7 +94,6 @@ enum GonggiPreviewSamples {
         lowTextureWarnings: 0,
         areasNeedingRevisit: 3,
         suggestedName: "어릴 적 우리 집",
-        captureId: "GONGGI_CAPTURE_V1_001",
         avgAngularVelocity: 0.42,
         maxAngularVelocity: 1.1,
         trackingLimitedSec: 2.5,

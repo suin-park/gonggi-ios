@@ -157,37 +157,37 @@ struct MeshWireframeOverlay: View {
 // MARK: - Previews
 
 #Preview("Coverage 30%") {
-    capturePreview(GonggiPreviewSamples.guidance(quality: .coverage30, message: "이 영역을 다른 각도에서 촬영하세요"), progress: 0.30)
+    capturePreview(GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage30, message: "이 영역을 다른 각도에서 촬영하세요"), progress: 0.30)
 }
 
 #Preview("Coverage 68%") {
-    capturePreview(GonggiPreviewSamples.guidance(quality: .coverage68), progress: 0.68)
+    capturePreview(GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage68), progress: 0.68)
 }
 
 #Preview("Coverage 90%") {
     capturePreview(
-        GonggiPreviewSamples.guidance(quality: .coverage90, message: "이 영역은 충분히 촬영되었습니다"),
+        GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage90, message: "이 영역은 충분히 촬영되었습니다"),
         progress: 0.90
     )
 }
 
 #Preview("Tracking limited") {
     capturePreview(
-        GonggiPreviewSamples.guidance(quality: .trackingLimited, message: GonggiPreviewSamples.coachTracking),
+        GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.trackingLimited, message: GonggiPreviewSamples.coachTracking),
         progress: 0.45
     )
 }
 
 #Preview("Fast movement") {
     capturePreview(
-        GonggiPreviewSamples.guidance(quality: .fastMovement, message: GonggiPreviewSamples.coachFastMove),
+        GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.fastMovement, message: GonggiPreviewSamples.coachFastMove),
         progress: 0.52
     )
 }
 
 #Preview("Low texture") {
     capturePreview(
-        GonggiPreviewSamples.guidance(quality: .lowTexture, message: GonggiPreviewSamples.coachLowTexture),
+        GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.lowTexture, message: GonggiPreviewSamples.coachLowTexture),
         progress: 0.40
     )
 }
