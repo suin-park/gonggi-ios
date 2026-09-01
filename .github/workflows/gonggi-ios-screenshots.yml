@@ -110,7 +110,12 @@ jobs:
           test -d "${{ env.DERIVED_DATA }}/Build/Products/Debug-iphonesimulator/Gonggi.app"
 
       - name: Install Pillow
-        run: pip3 install Pillow
+        run: |
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install Pillow
+          echo "VIRTUAL_ENV=${{ github.workspace }}/.venv" >> "$GITHUB_ENV"
+          echo "${{ github.workspace }}/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Capture screenshots
         env:
