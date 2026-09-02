@@ -6,6 +6,7 @@ final class CaptureSessionController {
     let sessionId: String
     let captureId: String
     private let videoRecorder = ARVideoRecorder()
+    private let coverageSpatialIndex: CoverageSpatialIndex
     private var telemetry = CaptureTelemetryCollector()
     private var coverage = CoverageModelV1()
     private var guidanceRules = GuidanceRuleEngine()
@@ -15,9 +16,14 @@ final class CaptureSessionController {
     private var videoURL: URL?
     private var manifestURL: URL?
 
-    init(captureId: String = CaptureIdRegistry.nextCaptureId(), sessionId: String? = nil) {
+    init(
+        captureId: String = CaptureIdRegistry.nextCaptureId(),
+        sessionId: String? = nil,
+        coverageSpatialIndex: CoverageSpatialIndex
+    ) {
         self.captureId = captureId
         self.sessionId = sessionId ?? captureId
+        self.coverageSpatialIndex = coverageSpatialIndex
     }
 
     func start() throws {
@@ -25,6 +31,7 @@ final class CaptureSessionController {
         sessionStartTimestamp = 0
         telemetry.reset(startTime: 0)
         coverage = CoverageModelV1()
+        coverageSpatialIndex.reset()
         guidanceRules.reset()
         let url = try CaptureSessionStore.videoURL(sessionId: sessionId)
         videoURL = url
@@ -45,6 +52,7 @@ final class CaptureSessionController {
 
         let motionQuality = telemetry.motionQuality
         coverage.observe(cameraTransform: frame.camera.transform, motionQuality: motionQuality, at: Date())
+        coverageSpatialIndex.replace(cells: coverage.snapshotCells())
 
         let trackingLimited = frame.camera.trackingState != .normal
         _ = guidanceRules.evaluate(quality: qualityState(trackingLimited: trackingLimited), trackingLimited: trackingLimited)

@@ -46,7 +46,7 @@ struct CaptureContainerView: View {
             }
             .padding(.horizontal, GonggiSpacing.lg)
             if appState.isMockMode {
-                Text("Mock 모드 · 커버리지 오버레이 확인 가능")
+                Text("Mock 모드 · 가이드 텍스트·진행률만 표시 (LiDAR mesh 없음)")
                     .font(GonggiTypography.caption(11))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
@@ -68,7 +68,11 @@ struct CaptureFlowView: View {
             if viewModel.useMockCamera {
                 MockCameraBackground(quality: viewModel.guidance.quality)
             } else {
-                ARCaptureViewRepresentable(session: viewModel.arSession) { frame in
+                ARCaptureViewRepresentable(
+                    session: viewModel.arSession,
+                    coverageSpatialIndex: viewModel.framePipeline.coverageSpatialIndex,
+                    showMeshOverlay: viewModel.guidance.showGuideOverlay
+                ) { frame in
                     viewModel.ingestFrame(frame)
                 }
                 .ignoresSafeArea()

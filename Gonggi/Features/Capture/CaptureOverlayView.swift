@@ -26,11 +26,8 @@ struct CaptureOverlayView: View {
 
     var body: some View {
         ZStack {
-            if guidance.showGuideOverlay {
-                CoverageSurfaceOverlay(quality: guidance.quality)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-            }
+            // LiDAR mesh wireframe is rendered in ARCaptureViewRepresentable (AR layer).
+            // Non-LiDAR devices: guidance text + progress only.
 
             // Top/bottom scrims only — keep center camera clear
             VStack(spacing: 0) {

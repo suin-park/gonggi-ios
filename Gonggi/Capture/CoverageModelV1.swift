@@ -103,6 +103,15 @@ struct CoverageModelV1 {
         return (g, a, i, u)
     }
 
+    func state(at worldPosition: simd_float3) -> CoverageState {
+        let cellId = CaptureMath.gridCellId(position: worldPosition)
+        return cells[cellId]?.state ?? .unseen
+    }
+
+    func snapshotCells() -> [String: CoverageCell] {
+        cells
+    }
+
     // MARK: - Scoring
 
     private func score(

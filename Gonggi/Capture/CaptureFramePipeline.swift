@@ -7,6 +7,8 @@ final class CaptureFramePipeline {
     var mockMode: Bool = true
     var onQualityUpdate: ((CaptureQualityState, String) -> Void)?
 
+    let coverageSpatialIndex = CoverageSpatialIndex()
+
     private var sessionController: CaptureSessionController?
     private var guidanceRules = GuidanceRuleEngine()
     private var mockTick: UInt = 0
@@ -21,9 +23,10 @@ final class CaptureFramePipeline {
         if mockMode {
             mockAreas = ["floor", "wall-n", "wall-s", "corner-ne", "ceiling", "sofa-zone", "shelf"]
                 .map { AreaCoverage(id: $0) }
+            coverageSpatialIndex.reset()
             sessionController = nil
         } else {
-            let controller = CaptureSessionController()
+            let controller = CaptureSessionController(coverageSpatialIndex: coverageSpatialIndex)
             sessionController = controller
             try? controller.start()
         }
@@ -32,6 +35,7 @@ final class CaptureFramePipeline {
     func cancel() {
         sessionController?.cancel()
         sessionController = nil
+        coverageSpatialIndex.reset()
     }
 
     func finish() async -> CaptureSessionSummary? {
