@@ -1,6 +1,6 @@
 name: Gonggi TestFlight
 
-# Manual only — never run on push (macOS cost + accidental uploads).
+# Manual only - never run on push (macOS cost + accidental uploads).
 on:
   workflow_dispatch:
     inputs:
@@ -23,15 +23,16 @@ env:
   SCHEME: Gonggi
   PROJECT: Gonggi.xcodeproj
   BUNDLE_ID: com.whik.gonggi
-  ARCHIVE_PATH: ${{ runner.temp }}/Gonggi.xcarchive
-  EXPORT_PATH: ${{ runner.temp }}/export
-  IPA_PATH: ${{ runner.temp }}/export/Gonggi.ipa
 
 jobs:
   testflight:
     name: Archive, sign, and upload to TestFlight
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      ARCHIVE_PATH: ${{ runner.temp }}/Gonggi.xcarchive
+      EXPORT_PATH: ${{ runner.temp }}/export
+      IPA_PATH: ${{ runner.temp }}/export/Gonggi.ipa
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -256,7 +257,7 @@ jobs:
             echo "- **Build number:** ${{ inputs.build_number }}"
             echo "- **Profile:** ${{ steps.signing.outputs.profile_name }}"
             echo ""
-            echo "Check [App Store Connect](https://appstoreconnect.apple.com/) → TestFlight for processing status."
+            echo "Check [App Store Connect](https://appstoreconnect.apple.com/) - TestFlight for processing status."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup signing artifacts
