@@ -38,12 +38,49 @@ enum ARMeshWireframeBuilder {
         )
     }
 
-    static func meshResource(from lineMesh: LineMesh) -> MeshResource? {
-        guard !lineMesh.positions.isEmpty, !lineMesh.indices.isEmpty else { return nil }
+    static func meshResource(from lineMesh: LineMesh, edgeThickness: Float = 0.0035) -> MeshResource? {
+        let extruded = extrudeEdges(lineMesh, thickness: edgeThickness)
+        guard !extruded.positions.isEmpty, !extruded.indices.isEmpty else { return nil }
         var descriptor = MeshDescriptor()
-        descriptor.positions = MeshBuffers.Positions(lineMesh.positions)
-        descriptor.primitives = .lines(lineMesh.indices)
+        descriptor.positions = MeshBuffers.Positions(extruded.positions)
+        descriptor.primitives = .triangles(extruded.indices)
         return try? MeshResource.generate(from: [descriptor])
+    }
+
+    /// Extrudes line segments into thin quads (triangle pairs) for iOS 17 RealityKit compatibility.
+    static func extrudeEdges(_ lineMesh: LineMesh, thickness: Float) -> LineMesh {
+        var positions: [SIMD3<Float>] = []
+        var indices: [UInt32] = []
+        let half = thickness * 0.5
+
+        var edgeIndex = 0
+        while edgeIndex + 1 < lineMesh.indices.count {
+            let a = Int(lineMesh.indices[edgeIndex])
+            let b = Int(lineMesh.indices[edgeIndex + 1])
+            edgeIndex += 2
+            guard a < lineMesh.positions.count, b < lineMesh.positions.count else { continue }
+
+            let start = lineMesh.positions[a]
+            let end = lineMesh.positions[b]
+            let direction = end - start
+            guard simd_length_squared(direction) > 1e-8 else { continue }
+
+            let axis = simd_normalize(direction)
+            var perpendicular = simd_cross(axis, SIMD3<Float>(0, 1, 0))
+            if simd_length_squared(perpendicular) < 1e-6 {
+                perpendicular = simd_cross(axis, SIMD3<Float>(1, 0, 0))
+            }
+            perpendicular = simd_normalize(perpendicular) * half
+
+            let base = UInt32(positions.count)
+            positions.append(start - perpendicular)
+            positions.append(start + perpendicular)
+            positions.append(end + perpendicular)
+            positions.append(end - perpendicular)
+            indices.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 3])
+        }
+
+        return LineMesh(positions: positions, indices: indices)
     }
 
   // MARK: - Pure helpers (testable)

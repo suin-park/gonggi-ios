@@ -84,6 +84,16 @@ final class ARMeshWireframeBuilderTests: XCTestCase {
         XCTAssertTrue(meshes.captured.positions.isEmpty)
     }
 
+    func testExtrudeEdgesBuildsTriangleMesh() {
+        let lineMesh = ARMeshWireframeBuilder.LineMesh(
+            positions: [SIMD3(0, 0, 0), SIMD3(1, 0, 0)],
+            indices: [0, 1]
+        )
+        let extruded = ARMeshWireframeBuilder.extrudeEdges(lineMesh, thickness: 0.01)
+        XCTAssertEqual(extruded.positions.count, 4)
+        XCTAssertEqual(extruded.indices.count, 6)
+    }
+
     func testCoverageModelSpatialLookupMatchesGrid() {
         var model = CoverageModelV1()
         for i in 0..<8 {
