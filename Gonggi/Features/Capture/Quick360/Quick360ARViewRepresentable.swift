@@ -1,4 +1,5 @@
 import ARKit
+import RealityKit
 import SwiftUI
 
 /// Minimal AR view for Quick 360 — no LiDAR wireframe or CoverageModel overlay.
