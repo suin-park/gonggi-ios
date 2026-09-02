@@ -14,8 +14,9 @@ struct Quick360FlowView: View {
             } else {
                 Quick360ARViewRepresentable(
                     session: viewModel.arSession,
-                    onFrame: { frame in
-                        viewModel.ingestFrame(frame)
+                    engine: viewModel.engine,
+                    onPayload: { payload in
+                        viewModel.ingestPayload(payload)
                     },
                     onViewReady: {
                         viewModel.onARViewReady()

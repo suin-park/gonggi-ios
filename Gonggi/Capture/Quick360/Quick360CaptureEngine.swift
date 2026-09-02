@@ -4,6 +4,7 @@ import simd
 
 /// Core capture orchestrator — independent from 3DGS CaptureFramePipeline.
 final class Quick360CaptureEngine {
+    private let stateLock = NSLock()
     private(set) var sessionId: String = ""
     private(set) var captureId: String = ""
     private(set) var startedAt = Date()
@@ -30,6 +31,8 @@ final class Quick360CaptureEngine {
     }
 
     func start(sessionId: String, captureId: String) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         self.sessionId = sessionId
         self.captureId = captureId
         startedAt = Date()
@@ -48,13 +51,16 @@ final class Quick360CaptureEngine {
         refreshUI(guidance: .alignTarget)
     }
 
-    func setOriginTransform(_ transform: simd_float4x4) {
+    /// Caller must hold `stateLock`.
+    private func setOriginTransform(_ transform: simd_float4x4) {
         if originTransform == matrix_identity_float4x4 {
             originTransform = transform
         }
     }
 
     func ingestMockTick(elapsed: Double) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard isRunning, !isComplete else { return }
         let progress = min(1, elapsed / 45)
         let yawSteps = Quick360Config.yawStepCount
@@ -81,11 +87,40 @@ final class Quick360CaptureEngine {
         _ = pitch
     }
 
-    func ingest(frame: ARFrame) {
-        guard isRunning, !isComplete else { return }
-        setOriginTransform(frame.camera.transform)
+    /// Pose-only check used on the AR callback thread to decide whether to copy JPEG
+    /// while `capturedImage` is still valid.
+    func wantsJPEGCandidate(cameraTransform: simd_float4x4) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard isRunning, !isComplete else { return false }
+        if originTransform == matrix_identity_float4x4 { return true }
+        guard let currentTarget = Quick360SphericalTargetLayout.currentTarget(in: targets) else {
+            return false
+        }
+        let (yawRad, pitchRad) = SphericalMath.relativeYawPitchRad(
+            cameraTransform: cameraTransform,
+            originTransform: originTransform
+        )
+        return Quick360SphericalTargetLayout.isWithinTolerance(
+            cameraYawRad: yawRad,
+            cameraPitchRad: pitchRad,
+            target: currentTarget
+        )
+    }
 
-        let cameraTransform = frame.camera.transform
+    /// Copy owned pixels on the ARSession delegate queue (call before the callback returns).
+    func makeOwnedPayload(from frame: ARFrame) -> Quick360FramePayload {
+        let includeJPEG = wantsJPEGCandidate(cameraTransform: frame.camera.transform)
+        return Quick360FramePayload.copyOwned(from: frame, includeJPEG: includeJPEG)
+    }
+
+    func ingest(payload: Quick360FramePayload) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard isRunning, !isComplete else { return }
+        setOriginTransform(payload.cameraTransform)
+
+        let cameraTransform = payload.cameraTransform
         translationState = Quick360TranslationGuard.update(
             state: translationState,
             cameraTransform: cameraTransform,
@@ -97,9 +132,9 @@ final class Quick360CaptureEngine {
             originTransform: originTransform
         )
         let translationM = translationState.distanceM
-        let now = frame.timestamp
+        let now = payload.timestamp
 
-        let gray = Quick360FrameEncoder.analysisGrayscale(from: frame.capturedImage)
+        let gray = payload.analysisGrayscale
         let (dynamicRatio, newDynamic) = Quick360DynamicRegionDetector.dynamicRatio(
             state: dynamicState,
             grayscale: gray,
@@ -149,7 +184,6 @@ final class Quick360CaptureEngine {
 
         if inTolerance {
             targets = Quick360SphericalTargetLayout.markAccumulating(targets: targets, targetId: currentTarget.id)
-            let jpeg = Quick360FrameEncoder.jpegData(from: frame.capturedImage)
             keyframeIndex += 1
             let fileName = String(format: "keyframe_%04d.jpg", keyframeIndex)
             let candidate = Quick360FrameCandidate(
@@ -160,9 +194,9 @@ final class Quick360CaptureEngine {
                 sharpness: sharpness,
                 exposure: exposure,
                 dynamicRatio: dynamicRatio,
-                intrinsics: Quick360FrameEncoder.intrinsics(from: frame),
+                intrinsics: payload.intrinsics,
                 transform: CaptureKeyframeRecord.encodeTransform(cameraTransform),
-                imageJPEG: jpeg,
+                imageJPEG: payload.jpegData,
                 fileName: fileName
             )
             candidateSlots = Quick360CandidateBuffer.ingest(

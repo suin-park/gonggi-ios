@@ -258,6 +258,46 @@ jobs:
           set -euo pipefail
           bash scripts/upload-to-asc.sh "${IPA_PATH}"
 
+      - name: Package dSYM for symbolication
+        if: always() && steps.paths.outputs.archive_path != ''
+        id: dsym
+        env:
+          ARCHIVE_PATH: ${{ steps.paths.outputs.archive_path }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+        run: |
+          set -euo pipefail
+          DSYM_SRC="${ARCHIVE_PATH}/dSYMs"
+          OUT_DIR="${RUNNER_TEMP}/gonggi-dsyms"
+          mkdir -p "${OUT_DIR}"
+          if [[ ! -d "${DSYM_SRC}" ]]; then
+            echo "::warning::No dSYMs directory in archive at ${DSYM_SRC}"
+            exit 0
+          fi
+          cp -R "${DSYM_SRC}/." "${OUT_DIR}/"
+          # Record binary UUID for crash matching (must match IPS slice_uuid).
+          {
+            echo "marketing_version=${MARKETING_VERSION}"
+            echo "build_number=${BUILD_NUMBER}"
+            echo "archive_path=${ARCHIVE_PATH}"
+            echo ""
+            echo "## dwarfdump UUIDs"
+            find "${OUT_DIR}" -name "*.dSYM" -print0 | while IFS= read -r -d '' dsym; do
+              echo "### $(basename "${dsym}")"
+              dwarfdump -u "${dsym}" || true
+            done
+          } | tee "${OUT_DIR}/UUIDS.txt"
+          echo "dsym_dir=${OUT_DIR}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dSYM artifact
+        if: always() && steps.dsym.outputs.dsym_dir != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gonggi-dSYM-${{ inputs.marketing_version }}-${{ inputs.build_number }}
+          path: ${{ steps.dsym.outputs.dsym_dir }}
+          if-no-files-found: warn
+          retention-days: 90
+
       - name: Summary
         if: success() && steps.upload.outcome == 'success'
         run: |
@@ -268,6 +308,7 @@ jobs:
             echo "- **Marketing version:** ${{ inputs.marketing_version }}"
             echo "- **Build number:** ${{ inputs.build_number }}"
             echo "- **Profile:** ${{ steps.signing.outputs.profile_name }}"
+            echo "- **dSYM artifact:** Gonggi-dSYM-${{ inputs.marketing_version }}-${{ inputs.build_number }} (90-day retention)"
             echo ""
             echo "Check [App Store Connect](https://appstoreconnect.apple.com/) - TestFlight for processing status."
           } >> "$GITHUB_STEP_SUMMARY"

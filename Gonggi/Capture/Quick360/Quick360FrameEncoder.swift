@@ -1,14 +1,20 @@
 import ARKit
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import simd
 import UniformTypeIdentifiers
 
 /// Converts ARFrame pixel buffers to analysis thumbnails and JPEG keyframes.
+///
+/// ARKit `capturedImage` is typically `420YpCbCr8BiPlanarFullRange` (YUV), not BGRA.
+/// Always convert via `CIContext` — never assume 4-byte BGRA row layout.
 enum Quick360FrameEncoder {
     static let analysisWidth = 64
     static let analysisHeight = 36
+
+    private static let ciContext = CIContext(options: [.cacheIntermediates: false])
 
     static func intrinsics(from frame: ARFrame) -> CameraIntrinsics {
         let matrix = frame.camera.intrinsics
@@ -23,32 +29,48 @@ enum Quick360FrameEncoder {
         )
     }
 
-    static func extractRGBA(from pixelBuffer: CVPixelBuffer) -> (rgba: [UInt8], width: Int, height: Int)? {
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+    /// Render CVPixelBuffer (any ARKit format) to owned RGBA8 bytes.
+    static func renderRGBA(
+        from pixelBuffer: CVPixelBuffer,
+        maxWidth: Int? = nil
+    ) -> (rgba: [UInt8], width: Int, height: Int)? {
+        var image = CIImage(cvPixelBuffer: pixelBuffer)
+        // ARKit YUV CIImages often have a non-zero origin; normalize before render.
+        image = image.transformed(by: CGAffineTransform(
+            translationX: -image.extent.origin.x,
+            y: -image.extent.origin.y
+        ))
+        let srcW = image.extent.width
+        let srcH = image.extent.height
+        guard srcW > 1, srcH > 1 else { return nil }
 
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        var rgba = [UInt8](repeating: 0, count: width * height * 4)
-
-        for y in 0..<height {
-            let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
-            for x in 0..<width {
-                let bi = (y * width + x) * 4
-                let yi = y * bytesPerRow + x * 4
-                rgba[bi] = row[yi + 2]     // BGRA → RGBA
-                rgba[bi + 1] = row[yi + 1]
-                rgba[bi + 2] = row[yi]
-                rgba[bi + 3] = 255
-            }
+        if let maxWidth, srcW > CGFloat(maxWidth) {
+            let scale = CGFloat(maxWidth) / srcW
+            image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         }
+
+        let width = Int(image.extent.width.rounded(.down))
+        let height = Int(image.extent.height.rounded(.down))
+        guard width > 0, height > 0 else { return nil }
+
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        ciContext.render(
+            image,
+            toBitmap: &rgba,
+            rowBytes: width * 4,
+            bounds: bounds,
+            format: .RGBA8,
+            colorSpace: colorSpace
+        )
         return (rgba, width, height)
     }
 
     static func analysisGrayscale(from pixelBuffer: CVPixelBuffer) -> [UInt8] {
-        guard let (rgba, w, h) = extractRGBA(from: pixelBuffer) else { return [] }
+        guard let (rgba, w, h) = renderRGBA(from: pixelBuffer, maxWidth: analysisWidth * 4) else {
+            return []
+        }
         return Quick360ImageAnalysis.downsampleGrayscale(
             rgba: rgba,
             srcWidth: w,
@@ -59,28 +81,8 @@ enum Quick360FrameEncoder {
     }
 
     static func jpegData(from pixelBuffer: CVPixelBuffer, maxWidth: Int = Quick360Config.keyframeMaxPixelWidth) -> Data? {
-        guard let (rgba, w, h) = extractRGBA(from: pixelBuffer) else { return nil }
-        let scale = min(1, Float(maxWidth) / Float(w))
-        let outW = max(1, Int(Float(w) * scale))
-        let outH = max(1, Int(Float(h) * scale))
-        let scaled = Quick360ImageAnalysis.downsampleGrayscale(
-            rgba: rgba,
-            srcWidth: w,
-            srcHeight: h,
-            dstWidth: outW,
-            dstHeight: outH
-        )
-        // Re-expand grayscale to RGB for JPEG
-        var rgb = [UInt8](repeating: 0, count: outW * outH * 4)
-        for i in 0..<(outW * outH) {
-            let g = scaled[i]
-            let bi = i * 4
-            rgb[bi] = g
-            rgb[bi + 1] = g
-            rgb[bi + 2] = g
-            rgb[bi + 3] = 255
-        }
-        return jpegFromRGBA(rgb, width: outW, height: outH)
+        guard let (rgba, w, h) = renderRGBA(from: pixelBuffer, maxWidth: maxWidth) else { return nil }
+        return jpegFromRGBA(rgba, width: w, height: h)
     }
 
     static func jpegFromRGBA(_ rgba: [UInt8], width: Int, height: Int) -> Data? {

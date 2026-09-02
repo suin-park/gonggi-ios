@@ -12,7 +12,7 @@ final class Quick360ViewModel: ObservableObject {
     @Published private(set) var isStitching = false
 
     let arSession = ARSession()
-    private let engine: Quick360CaptureEngine
+    let engine: Quick360CaptureEngine
     private var mockTimer: AnyCancellable?
     private var mockStartedAt = Date()
     private var didRunSession = false
@@ -80,8 +80,8 @@ final class Quick360ViewModel: ObservableObject {
         Quick360Log.stage("cancelCapture")
     }
 
-    func ingestFrame(_ frame: ARFrame) {
-        engine.ingest(frame: frame)
+    func ingestPayload(_ payload: Quick360FramePayload) {
+        engine.ingest(payload: payload)
         uiState = engine.uiState
     }
 

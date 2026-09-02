@@ -4,12 +4,14 @@ import SwiftUI
 
 /// Minimal AR view for Quick 360 — no LiDAR wireframe or CoverageModel overlay.
 ///
-/// Critical: `automaticallyConfigureSession` must be `false` **before** assigning a custom
-/// `ARSession`. Default `ARView(frame:)` uses `true`, which races with an already-running
-/// session from the view model and can terminate the process on entry (non-LiDAR devices).
+/// Critical lifecycle rules:
+/// 1. `automaticallyConfigureSession` must be `false` **before** assigning a custom `ARSession`.
+/// 2. Never hop `ARFrame` / `CVPixelBuffer` to another queue — copy owned pixels first
+///    (Build 3 EXC_BAD_ACCESS: `_sessionDidUpdateFrame` → main queue → stale buffer).
 struct Quick360ARViewRepresentable: UIViewRepresentable {
     let session: ARSession
-    var onFrame: (ARFrame) -> Void
+    let engine: Quick360CaptureEngine
+    var onPayload: (Quick360FramePayload) -> Void
     var onViewReady: () -> Void
 
     func makeUIView(context: Context) -> ARView {
@@ -21,7 +23,8 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
         )
         Quick360Log.stage("ARView created (automaticallyConfigureSession=false)")
 
-        context.coordinator.onFrame = onFrame
+        context.coordinator.engine = engine
+        context.coordinator.onPayload = onPayload
         context.coordinator.onViewReady = onViewReady
         view.session = session
         session.delegate = context.coordinator
@@ -35,24 +38,24 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
-        context.coordinator.onFrame = onFrame
+        context.coordinator.engine = engine
+        context.coordinator.onPayload = onPayload
         context.coordinator.onViewReady = onViewReady
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator: NSObject, ARSessionDelegate {
-        var onFrame: ((ARFrame) -> Void)?
+        var engine: Quick360CaptureEngine?
+        var onPayload: ((Quick360FramePayload) -> Void)?
         var onViewReady: (() -> Void)?
 
         func session(_ session: ARSession, didUpdate frame: ARFrame) {
-            // ARKit delivers frames off the main queue; hop for @MainActor view model.
-            if Thread.isMainThread {
-                onFrame?(frame)
-            } else {
-                DispatchQueue.main.async { [onFrame] in
-                    onFrame?(frame)
-                }
+            guard let engine, let onPayload else { return }
+            // Owned copy while CVPixelBuffer is valid — do not capture `frame` into async.
+            let payload = engine.makeOwnedPayload(from: frame)
+            DispatchQueue.main.async {
+                onPayload(payload)
             }
         }
 

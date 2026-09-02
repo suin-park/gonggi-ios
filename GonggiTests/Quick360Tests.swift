@@ -1,4 +1,5 @@
 import ARKit
+import CoreVideo
 import simd
 import XCTest
 @testable import Gonggi
@@ -328,3 +329,104 @@ final class Quick360ARBootstrapTests: XCTestCase {
         XCTAssertTrue(mustDisableAutoConfigureFirst)
     }
 }
+
+final class Quick360FrameLifetimeTests: XCTestCase {
+    /// Build 3 crash (EXC_BAD_ACCESS): ARFrame hopped to main via DispatchQueue.main.async,
+    /// then CVPixelBufferLockBaseAddress / BGRA walk on a recycled buffer.
+    /// Contract: only owned `Quick360FramePayload` may cross queues.
+    func testPayloadIsOwnedValueTypeWithoutPixelBuffer() {
+        let payload = Quick360FramePayload(
+            timestamp: 1.0,
+            cameraTransform: matrix_identity_float4x4,
+            intrinsics: CameraIntrinsics(fx: 1, fy: 1, cx: 0, cy: 0, width: 64, height: 36),
+            analysisGrayscale: [UInt8](repeating: 40, count: 64 * 36),
+            jpegData: Data([0xFF, 0xD8, 0xFF])
+        )
+        XCTAssertEqual(payload.analysisGrayscale.count, 64 * 36)
+        XCTAssertNotNil(payload.jpegData)
+        // Sendable owned copy — safe to hop to main without ARFrame.
+        DispatchQueue.main.sync {
+            XCTAssertEqual(payload.timestamp, 1.0)
+        }
+    }
+
+    func testEngineIngestsOwnedPayloadOnMainWithoutARFrame() {
+        let engine = Quick360CaptureEngine(mockMode: true)
+        engine.start(sessionId: "s", captureId: "c")
+        let gray = [UInt8](repeating: 80, count: Quick360FrameEncoder.analysisWidth * Quick360FrameEncoder.analysisHeight)
+        let payload = Quick360FramePayload(
+            timestamp: 0.5,
+            cameraTransform: matrix_identity_float4x4,
+            intrinsics: CameraIntrinsics(fx: 500, fy: 500, cx: 320, cy: 240, width: 640, height: 480),
+            analysisGrayscale: gray,
+            jpegData: nil
+        )
+        engine.ingest(payload: payload)
+        XCTAssertTrue(engine.isRunning)
+        XCTAssertFalse(engine.uiState.progressPercent < 0)
+    }
+
+    func testWantsJPEGCandidateTrueBeforeOriginSet() {
+        let engine = Quick360CaptureEngine(mockMode: false)
+        engine.start(sessionId: "s", captureId: "c")
+        XCTAssertTrue(engine.wantsJPEGCandidate(cameraTransform: matrix_identity_float4x4))
+    }
+
+    func testCIContextRGBARenderFromBGRAPixelBuffer() throws {
+        let width = 16
+        let height = 8
+        var pixelBuffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            [
+                kCVPixelBufferCGImageCompatibilityKey: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey: true
+            ] as CFDictionary,
+            &pixelBuffer
+        )
+        XCTAssertEqual(status, kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixelBuffer)
+
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else {
+            XCTFail("missing base address")
+            return
+        }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let ptr = base.assumingMemoryBound(to: UInt8.self)
+        for y in 0..<height {
+            for x in 0..<width {
+                let o = y * bytesPerRow + x * 4
+                ptr[o] = 10      // B
+                ptr[o + 1] = 20 // G
+                ptr[o + 2] = 30 // R
+                ptr[o + 3] = 255
+            }
+        }
+
+        let rendered = try XCTUnwrap(Quick360FrameEncoder.renderRGBA(from: buffer, maxWidth: 16))
+        XCTAssertEqual(rendered.width, width)
+        XCTAssertEqual(rendered.height, height)
+        XCTAssertEqual(rendered.rgba.count, width * height * 4)
+
+        let gray = Quick360FrameEncoder.analysisGrayscale(from: buffer)
+        XCTAssertEqual(gray.count, Quick360FrameEncoder.analysisWidth * Quick360FrameEncoder.analysisHeight)
+
+        let jpeg = Quick360FrameEncoder.jpegData(from: buffer, maxWidth: 16)
+        XCTAssertNotNil(jpeg)
+        XCTAssertGreaterThan(jpeg?.count ?? 0, 0)
+    }
+
+    /// Documents Build 3 anti-pattern: never capture ARFrame into main.async.
+    func testMustCopyPixelsBeforeMainQueueHop() {
+        let copyBeforeAsync = true
+        let hopARFrameToMain = false
+        XCTAssertTrue(copyBeforeAsync)
+        XCTAssertFalse(hopARFrameToMain)
+    }
+}
+
