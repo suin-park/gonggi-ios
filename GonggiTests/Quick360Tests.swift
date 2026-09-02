@@ -534,7 +534,12 @@ final class Quick360HybridSpaceTests: XCTestCase {
         let brush = Quick360LiveSphereBrush(width: 128, height: 64)
         let before = brush.coveragePercent()
         var thumb = [UInt8](repeating: 180, count: 32 * 24 * 4)
-        for i in stride(from: 3, to: thumb.count, by: 4) { thumb[i] = 255 }
+        for i in stride(from: 0, to: thumb.count, by: 4) {
+            thumb[i] = 200
+            thumb[i + 1] = 40
+            thumb[i + 2] = 40
+            thumb[i + 3] = 255
+        }
         brush.paint(
             thumbRGBA: thumb,
             thumbWidth: 32,
@@ -547,6 +552,46 @@ final class Quick360HybridSpaceTests: XCTestCase {
         )
         XCTAssertGreaterThan(brush.coveragePercent(), before)
         XCTAssertGreaterThan(brush.updateCount, 0)
+
+        // After fade settles, captured preview stays vivid (not heavy desaturate).
+        let preview = brush.composePreviewRGBA(now: 1 + Quick360Config.brushRevealFadeSec + 0.05)
+        var foundVivid = false
+        for i in 0..<(128 * 64) where brush.confidence[i] > 180 {
+            let o = i * 4
+            if preview[o] > 150 && preview[o + 1] < 100 {
+                foundVivid = true
+                break
+            }
+        }
+        XCTAssertTrue(foundVivid)
+    }
+
+    func testCapturedPreviewIsNotWashedToGray() {
+        let brush = Quick360LiveSphereBrush(width: 64, height: 32)
+        var thumb = [UInt8](repeating: 0, count: 16 * 12 * 4)
+        for i in stride(from: 0, to: thumb.count, by: 4) {
+            thumb[i] = 220
+            thumb[i + 1] = 30
+            thumb[i + 2] = 30
+            thumb[i + 3] = 255
+        }
+        brush.paint(
+            thumbRGBA: thumb, thumbWidth: 16, thumbHeight: 12,
+            cameraTransform: matrix_identity_float4x4,
+            originTransform: matrix_identity_float4x4,
+            intrinsics: CameraIntrinsics(fx: 300, fy: 300, cx: 160, cy: 120, width: 320, height: 240),
+            observationConfidence: 0.9,
+            now: 10
+        )
+        let preview = brush.composePreviewRGBA(now: 11)
+        let unseenGray = Int(Quick360Config.unseenNeutralGray)
+        var capturedDistinctFromGray = 0
+        for i in 0..<(64 * 32) where brush.confidence[i] > 0 {
+            let o = i * 4
+            let dist = abs(Int(preview[o]) - unseenGray) + abs(Int(preview[o + 1]) - unseenGray)
+            if dist > 40 { capturedDistinctFromGray += 1 }
+        }
+        XCTAssertGreaterThan(capturedDistinctFromGray, 20)
     }
 
     func testFloorConfidenceReplacementPrefersBetterObservation() {

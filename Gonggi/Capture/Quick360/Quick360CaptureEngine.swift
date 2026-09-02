@@ -156,11 +156,12 @@ final class Quick360CaptureEngine {
                 thumbRGBA: thumb,
                 thumbWidth: 16,
                 thumbHeight: 16,
-                cameraTransform: matrix_identity_float4x4,
+                cameraTransform: lookingDownCamera(height: 1.2),
                 intrinsics: CameraIntrinsics(fx: 500, fy: 500, cx: 8, cy: 8, width: 16, height: 16),
                 floor: floor,
                 observationConfidence: 0.7,
-                dynamicRatio: 0
+                dynamicRatio: 0,
+                now: elapsed
             )
             var updated = floor
             updated.coveragePercent = floorAtlas.coveragePercent()
@@ -382,7 +383,8 @@ final class Quick360CaptureEngine {
                 intrinsics: payload.intrinsics,
                 floor: floor,
                 observationConfidence: obsConf,
-                dynamicRatio: dynamicRatio
+                dynamicRatio: dynamicRatio,
+                now: now
             )
             if painted > 0 {
                 floor.coveragePercent = floorAtlas.coveragePercent()
@@ -575,17 +577,28 @@ final class Quick360CaptureEngine {
     func previewImages() -> (sphere: UIImage?, floor: UIImage?) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return (sphereBrush.makeUIImage(), floorSurface == nil ? nil : floorAtlas.makeUIImage())
+        let now = CACurrentMediaTime()
+        return (sphereBrush.makeUIImage(now: now), floorSurface == nil ? nil : floorAtlas.makeUIImage(now: now))
     }
 
     func snapshotBrushCGImages() -> (sphere: CGImage?, floor: CGImage?, floorSurface: CapturedFloorSurface?) {
         stateLock.lock()
         defer { stateLock.unlock() }
+        let now = CACurrentMediaTime()
         return (
-            sphereBrush.makeCGImage(),
-            floorSurface == nil ? nil : floorAtlas.makeCGImage(),
+            sphereBrush.makeCGImage(now: now),
+            floorSurface == nil ? nil : floorAtlas.makeCGImage(now: now),
             floorSurface
         )
+    }
+
+    private func lookingDownCamera(height: Float) -> simd_float4x4 {
+        var cam = matrix_identity_float4x4
+        cam.columns.0 = SIMD4(1, 0, 0, 0)
+        cam.columns.1 = SIMD4(0, 0, -1, 0)
+        cam.columns.2 = SIMD4(0, 1, 0, 0)
+        cam.columns.3 = SIMD4(0, height, 0, 1)
+        return cam
     }
 
     func pendingKeyframeJPEGs() -> [(Quick360SelectedKeyframe, Data)] {

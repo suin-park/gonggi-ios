@@ -18,11 +18,19 @@ enum Quick360Config {
     static let keyframeMaxPixelWidth = 1920
 
     // Live sphere brush proxy (separate from final panorama)
+    /// Keep 512×256; clarity comes from dense FOV fill + bilinear display, not resolution jump.
     static let livePreviewWidth = 512
     static let livePreviewHeight = 256
     static let liveBrushMinIntervalSec: Double = 0.2 // ~5 Hz
-    static let brushThumbMaxWidth = 160
-    static let brushFeatherFadeSec: Double = 0.3
+    /// Slightly sharper source for FOV sampling (not a proxy resolution increase).
+    static let brushThumbMaxWidth = 256
+    /// Fade-in for newly painted pixels; settles to full opacity (not persistent translucency).
+    static let brushRevealFadeSec: Double = 0.22
+    /// FOV edge-only feather band (normalized |nx|/|ny| beyond this gets soft blend).
+    static let brushBoundaryFeatherStart: Float = 0.88
+    static let unseenNeutralGray: UInt8 = 168
+    /// Subtle veil on weak confidence (does not desaturate/blur captured content).
+    static let weakConfidenceVeil: Float = 0.12
     static let sphereWeakConfidence: Float = 0.35
     static let sphereGoodConfidence: Float = 0.65
     static let sphereCoverageCompletePercent: Int = 55

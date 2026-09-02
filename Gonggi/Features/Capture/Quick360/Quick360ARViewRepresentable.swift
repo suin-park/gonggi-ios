@@ -147,7 +147,9 @@ final class Quick360HybridSceneController {
         if let cg = snap.sphere,
            let resource = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) {
             var mat = UnlitMaterial()
-            mat.color = .init(texture: .init(resource))
+            // Opaque clear paint — no translucent wash over captured regions.
+            mat.color = .init(tint: .white, texture: .init(resource))
+            mat.blending = .opaque
             sphereEntity?.model?.materials = [mat]
             sphereMaterial = mat
         }
@@ -184,7 +186,8 @@ final class Quick360HybridSceneController {
         if let cg = floorCG,
            let resource = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) {
             var mat = UnlitMaterial()
-            mat.color = .init(texture: .init(resource))
+            mat.color = .init(tint: .white, texture: .init(resource))
+            mat.blending = .opaque
             floorEntity?.model?.materials = [mat]
             floorMaterial = mat
         }

@@ -4,17 +4,20 @@ import simd
 import UIKit
 
 /// Low-resolution live equirect brush canvas (proxy, not final panorama).
+/// Visual language: solid gray (unseen) vs clear camera texture (captured).
 final class Quick360LiveSphereBrush {
     let width: Int
     let height: Int
-    /// RGBA8 canvas. Unobserved starts as neutral gray.
+    /// Stored camera colors for captured pixels (unseen slots unused / ignored in compose).
     private(set) var rgba: [UInt8]
-    /// Per-pixel confidence 0…1 (stored as UInt8 0…255).
+    /// Per-pixel confidence 0…1 (UInt8 0…255). Internal — weak is subtle in preview only.
     private(set) var confidence: [UInt8]
+    /// First-seen timestamp for reveal fade; 0 = never painted.
+    private var firstSeen: [Double]
     private(set) var updateCount = 0
     private var lastPaintAt: TimeInterval = 0
 
-    private let neutralGray: UInt8 = 140
+    private let neutralGray: UInt8 = Quick360Config.unseenNeutralGray
 
     init(width: Int = Quick360Config.livePreviewWidth, height: Int = Quick360Config.livePreviewHeight) {
         self.width = width
@@ -22,18 +25,19 @@ final class Quick360LiveSphereBrush {
         let count = width * height
         rgba = [UInt8](repeating: 0, count: count * 4)
         confidence = [UInt8](repeating: 0, count: count)
-        for i in 0..<count {
-            let o = i * 4
-            rgba[o] = neutralGray
-            rgba[o + 1] = neutralGray
-            rgba[o + 2] = neutralGray
-            rgba[o + 3] = 255
-        }
+        firstSeen = [Double](repeating: 0, count: count)
+        fillUnseenGray()
     }
 
     func reset() {
         updateCount = 0
         lastPaintAt = 0
+        firstSeen = [Double](repeating: 0, count: width * height)
+        fillUnseenGray()
+        for i in 0..<confidence.count { confidence[i] = 0 }
+    }
+
+    private func fillUnseenGray() {
         let count = width * height
         for i in 0..<count {
             let o = i * 4
@@ -41,7 +45,6 @@ final class Quick360LiveSphereBrush {
             rgba[o + 1] = neutralGray
             rgba[o + 2] = neutralGray
             rgba[o + 3] = 255
-            confidence[i] = 0
         }
     }
 
@@ -49,7 +52,7 @@ final class Quick360LiveSphereBrush {
         now - lastPaintAt >= Quick360Config.liveBrushMinIntervalSec
     }
 
-    /// Project camera thumb into equirect using pose relative to origin.
+    /// Fill current camera FOV densely into equirect (no sparse mosaic stamps).
     func paint(
         thumbRGBA: [UInt8],
         thumbWidth: Int,
@@ -72,74 +75,103 @@ final class Quick360LiveSphereBrush {
         let fy = max(intrinsics.fy, 1)
         let halfFOVx = atan((Float(intrinsics.width) * 0.5) / fx)
         let halfFOVy = atan((Float(intrinsics.height) * 0.5) / fy)
-
-        // Sparse sample grid for performance
-        let stepX = max(1, thumbWidth / 24)
-        let stepY = max(1, thumbHeight / 14)
-        let stampRadius = max(2, min(width, height) / 28)
         let conf = simd_clamp(observationConfidence, 0, 1)
 
-        var y = 0
-        while y < thumbHeight {
-            var x = 0
-            while x < thumbWidth {
-                let nx = (Float(x) + 0.5) / Float(thumbWidth) * 2 - 1
-                let ny = (Float(y) + 0.5) / Float(thumbHeight) * 2 - 1
-                let yaw = yaw0 + nx * halfFOVx
-                let pitch = pitch0 - ny * halfFOVy
-                let pixel = SphericalMath.equirectangularPixel(
-                    yawRad: yaw,
-                    pitchRad: pitch,
-                    width: width,
-                    height: height
-                )
-                let ti = (y * thumbWidth + x) * 4
-                let r = thumbRGBA[ti]
-                let g = thumbRGBA[ti + 1]
-                let b = thumbRGBA[ti + 2]
-                // Edge feather: samples near FOV edge get lower weight
+        let pad: Float = 0.04
+        let pitchLo = pitch0 - halfFOVy - pad
+        let pitchHi = pitch0 + halfFOVy + pad
+
+        let y0 = max(0, SphericalMath.equirectangularPixel(yawRad: yaw0, pitchRad: pitchHi, width: width, height: height).y - 2)
+        let y1 = min(height - 1, SphericalMath.equirectangularPixel(yawRad: yaw0, pitchRad: pitchLo, width: width, height: height).y + 2)
+
+        let featherStart = Quick360Config.brushBoundaryFeatherStart
+        let interiorConf = UInt8(clamping: Int((max(conf, 0.85) * 255).rounded()))
+
+        for y in y0...y1 {
+            for x in 0..<width {
+                let dirYawPitch = equirectYawPitch(x: x, y: y)
+                var dyaw = dirYawPitch.yaw - yaw0
+                while dyaw > .pi { dyaw -= 2 * .pi }
+                while dyaw < -.pi { dyaw += 2 * .pi }
+                let dpitch = dirYawPitch.pitch - pitch0
+                let nx = dyaw / max(halfFOVx, 1e-4)
+                let ny = -dpitch / max(halfFOVy, 1e-4)
                 let edge = max(abs(nx), abs(ny))
-                let feather = simd_clamp(1.2 - edge, 0.15, 1)
-                stamp(
-                    cx: pixel.x,
-                    cy: pixel.y,
-                    radius: stampRadius,
-                    r: r, g: g, b: b,
-                    weight: conf * feather
-                )
-                x += stepX
+                guard edge <= 1.02 else { continue }
+
+                let boundaryWeight: Float
+                if edge <= featherStart {
+                    boundaryWeight = 1
+                } else {
+                    boundaryWeight = simd_clamp((1.02 - edge) / max(1.02 - featherStart, 1e-4), 0, 1)
+                }
+                guard boundaryWeight > 0.04 else { continue }
+
+                let tu = (nx * 0.5 + 0.5) * Float(thumbWidth - 1)
+                let tv = (ny * 0.5 + 0.5) * Float(thumbHeight - 1)
+                let (r, g, b) = sampleBilinear(thumbRGBA, width: thumbWidth, height: thumbHeight, u: tu, v: tv)
+
+                let idx = y * width + x
+                let prev = confidence[idx]
+                let o = idx * 4
+
+                if boundaryWeight >= 0.98 {
+                    rgba[o] = r
+                    rgba[o + 1] = g
+                    rgba[o + 2] = b
+                    rgba[o + 3] = 255
+                    if prev == 0 {
+                        firstSeen[idx] = now
+                    }
+                    confidence[idx] = max(prev, interiorConf)
+                } else {
+                    let w = boundaryWeight * conf
+                    let prevC = Float(prev) / 255
+                    if w + 0.08 < prevC { continue }
+                    rgba[o] = mix(rgba[o], r, w)
+                    rgba[o + 1] = mix(rgba[o + 1], g, w)
+                    rgba[o + 2] = mix(rgba[o + 2], b, w)
+                    if prev == 0 { firstSeen[idx] = now }
+                    confidence[idx] = UInt8(clamping: Int((min(1, max(prevC, w)) * 255).rounded()))
+                }
             }
-            y += stepY
         }
     }
 
-    private func stamp(cx: Int, cy: Int, radius: Int, r: UInt8, g: UInt8, b: UInt8, weight: Float) {
-        let w = weight
-        guard w > 0.05 else { return }
-        let r2 = radius * radius
-        for dy in -radius...radius {
-            for dx in -radius...radius {
-                let dist2 = dx * dx + dy * dy
-                guard dist2 <= r2 else { continue }
-                let px = cx + dx
-                let py = cy + dy
-                guard px >= 0, px < width, py >= 0, py < height else { continue }
-                let falloff = 1 - Float(dist2) / Float(max(r2, 1))
-                let soft = falloff * falloff
-                let sampleW = w * soft
-                let idx = py * width + px
-                let prev = Float(confidence[idx]) / 255
-                // Prefer better observations; soft blend otherwise
-                if sampleW + 0.05 < prev { continue }
-                let blend = sampleW / max(sampleW + prev, 0.001)
-                let o = idx * 4
-                rgba[o] = mix(rgba[o], r, blend)
-                rgba[o + 1] = mix(rgba[o + 1], g, blend)
-                rgba[o + 2] = mix(rgba[o + 2], b, blend)
-                let newConf = min(1, max(prev, sampleW))
-                confidence[idx] = UInt8(clamping: Int((newConf * 255).rounded()))
-            }
+    private func equirectYawPitch(x: Int, y: Int) -> (yaw: Float, pitch: Float) {
+        let u = Float(x) / Float(max(width - 1, 1))
+        let v = Float(y) / Float(max(height - 1, 1))
+        let yaw = u * 2 * .pi - .pi
+        let pitch = .pi / 2 - v * .pi
+        return (yaw, pitch)
+    }
+
+    private func sampleBilinear(_ rgba: [UInt8], width: Int, height: Int, u: Float, v: Float) -> (UInt8, UInt8, UInt8) {
+        let x = simd_clamp(u, 0, Float(width - 1))
+        let y = simd_clamp(v, 0, Float(height - 1))
+        let x0 = Int(floor(x))
+        let y0 = Int(floor(y))
+        let x1 = min(x0 + 1, width - 1)
+        let y1 = min(y0 + 1, height - 1)
+        let tx = x - Float(x0)
+        let ty = y - Float(y0)
+
+        func pix(_ px: Int, _ py: Int) -> SIMD3<Float> {
+            let i = (py * width + px) * 4
+            return SIMD3(Float(rgba[i]), Float(rgba[i + 1]), Float(rgba[i + 2]))
         }
+        let c00 = pix(x0, y0)
+        let c10 = pix(x1, y0)
+        let c01 = pix(x0, y1)
+        let c11 = pix(x1, y1)
+        let c0 = c00 * (1 - tx) + c10 * tx
+        let c1 = c01 * (1 - tx) + c11 * tx
+        let c = c0 * (1 - ty) + c1 * ty
+        return (
+            UInt8(clamping: Int(c.x.rounded())),
+            UInt8(clamping: Int(c.y.rounded())),
+            UInt8(clamping: Int(c.z.rounded()))
+        )
     }
 
     private func mix(_ a: UInt8, _ b: UInt8, _ t: Float) -> UInt8 {
@@ -157,7 +189,6 @@ final class Quick360LiveSphereBrush {
         coveragePercent(minConfidence: Quick360Config.sphereGoodConfidence)
     }
 
-    /// Upper band (ceiling) coverage for guidance.
     func upperBandCoveragePercent() -> Float {
         let bandH = max(1, height / 5)
         var hit = 0
@@ -172,37 +203,60 @@ final class Quick360LiveSphereBrush {
         return total == 0 ? 0 : Float(hit) / Float(total) * 100
     }
 
-    /// Desaturate weak regions for visual state (unobserved stays gray).
-    func previewRGBAApplyingVisualState() -> [UInt8] {
-        var out = rgba
-        let weak = UInt8(clamping: Int(Quick360Config.sphereWeakConfidence * 255))
-        let good = UInt8(clamping: Int(Quick360Config.sphereGoodConfidence * 255))
-        for i in 0..<confidence.count {
-            let c = confidence[i]
-            if c == 0 { continue }
+    /// Compose display buffer: solid gray unseen, clear captured, edge fade-in only.
+    func composePreviewRGBA(now: TimeInterval) -> [UInt8] {
+        let fade = max(Quick360Config.brushRevealFadeSec, 0.05)
+        let weakThr = UInt8(clamping: Int(Quick360Config.sphereWeakConfidence * 255))
+        let goodThr = UInt8(clamping: Int(Quick360Config.sphereGoodConfidence * 255))
+        let veil = Quick360Config.weakConfidenceVeil
+        var out = [UInt8](repeating: 0, count: width * height * 4)
+
+        for i in 0..<(width * height) {
             let o = i * 4
-            if c < weak {
-                let g = UInt8((Int(out[o]) + Int(out[o + 1]) + Int(out[o + 2])) / 3)
-                out[o] = g
-                out[o + 1] = g
-                out[o + 2] = g
-            } else if c < good {
-                let g = (Int(out[o]) + Int(out[o + 1]) + Int(out[o + 2])) / 3
-                out[o] = UInt8((Int(out[o]) * 2 + g) / 3)
-                out[o + 1] = UInt8((Int(out[o + 1]) * 2 + g) / 3)
-                out[o + 2] = UInt8((Int(out[o + 2]) * 2 + g) / 3)
+            let c = confidence[i]
+            if c == 0 {
+                out[o] = neutralGray
+                out[o + 1] = neutralGray
+                out[o + 2] = neutralGray
+                out[o + 3] = 255
+                continue
             }
+
+            var r = Float(rgba[o])
+            var g = Float(rgba[o + 1])
+            var b = Float(rgba[o + 2])
+
+            // Reveal fade: gray → clear color, then stays fully clear.
+            let seen = firstSeen[i]
+            let age = seen > 0 ? now - seen : fade
+            let reveal = simd_clamp(Float(age / fade), 0, 1)
+            let gray = Float(neutralGray)
+            r = gray * (1 - reveal) + r * reveal
+            g = gray * (1 - reveal) + g * reveal
+            b = gray * (1 - reveal) + b * reveal
+
+            // Weak: keep recognizable color, tiny gray veil only (no desaturate/blur).
+            if c < goodThr {
+                let amount = c < weakThr ? veil * 1.25 : veil
+                r = r * (1 - amount) + gray * amount
+                g = g * (1 - amount) + gray * amount
+                b = b * (1 - amount) + gray * amount
+            }
+
+            out[o] = UInt8(clamping: Int(r.rounded()))
+            out[o + 1] = UInt8(clamping: Int(g.rounded()))
+            out[o + 2] = UInt8(clamping: Int(b.rounded()))
+            out[o + 3] = 255
         }
         return out
     }
 
-    func makeUIImage() -> UIImage? {
-        let pixels = previewRGBAApplyingVisualState()
-        return Quick360ImageBuffer.uiImage(rgba: pixels, width: width, height: height)
+    func makeUIImage(now: TimeInterval = CACurrentMediaTime()) -> UIImage? {
+        Quick360ImageBuffer.uiImage(rgba: composePreviewRGBA(now: now), width: width, height: height)
     }
 
-    func makeCGImage() -> CGImage? {
-        Quick360ImageBuffer.cgImage(rgba: previewRGBAApplyingVisualState(), width: width, height: height)
+    func makeCGImage(now: TimeInterval = CACurrentMediaTime()) -> CGImage? {
+        Quick360ImageBuffer.cgImage(rgba: composePreviewRGBA(now: now), width: width, height: height)
     }
 }
 

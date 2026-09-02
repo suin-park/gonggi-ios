@@ -14,8 +14,9 @@ struct Quick360FlowView: View {
                 if let sphere = viewModel.spherePreview {
                     Image(uiImage: sphere)
                         .resizable()
+                        .interpolation(.high)
                         .scaledToFill()
-                        .opacity(0.55)
+                        .opacity(0.92)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                 }

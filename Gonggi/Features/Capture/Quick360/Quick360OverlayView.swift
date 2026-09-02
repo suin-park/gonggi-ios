@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Hybrid Space Capture overlay — no target dots / 1/24 / mini-map.
+/// Hybrid Space Capture overlay — coverage is shown by in-world sphere/floor paint, not a washed HUD.
 struct Quick360OverlayView: View {
     let uiState: Quick360CaptureUIState
     let spherePreview: UIImage?
@@ -11,17 +11,6 @@ struct Quick360OverlayView: View {
 
     var body: some View {
         ZStack {
-            // Soft coverage HUD (guidance, not photoreal) — feathered into camera view.
-            if let spherePreview {
-                Image(uiImage: spherePreview)
-                    .resizable()
-                    .scaledToFill()
-                    .opacity(uiState.phase == .capturing || uiState.phase == .complete ? 0.22 : 0.12)
-                    .blendMode(.plusLighter)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-            }
-
             VStack {
                 topBar
                 Spacer()
@@ -64,6 +53,7 @@ struct Quick360OverlayView: View {
         HStack(spacing: GonggiSpacing.sm) {
             Image(uiImage: image)
                 .resizable()
+                .interpolation(.high)
                 .scaledToFill()
                 .frame(width: 72, height: 72)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -94,7 +84,12 @@ struct Quick360OverlayView: View {
                 .multilineTextAlignment(.center)
                 .shadow(color: .black.opacity(0.5), radius: 4)
 
-            if let msg = uiState.translationLevel.guidanceMessage {
+            // Avoid duplicating the same sentence as title + caption.
+            if let msg = uiState.translationLevel.guidanceMessage,
+               msg != uiState.guidance.primaryText,
+               uiState.guidance != .stayInPlace,
+               uiState.guidance != .returnToOrigin,
+               uiState.guidance != .holdStill {
                 Text(msg)
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.warning)
@@ -102,8 +97,8 @@ struct Quick360OverlayView: View {
 
             if uiState.phase == .capturing || uiState.phase == .complete {
                 Text("공간 \(uiState.sphereCoveragePercent)%")
-                    .font(GonggiTypography.body(16))
-                    .foregroundStyle(GonggiColors.accentCyan)
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textTertiary)
             }
 
             if uiState.canStart {
