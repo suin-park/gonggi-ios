@@ -5,7 +5,8 @@ import simd
 enum Quick360Config {
     static let outputWidth = 2048
     static let outputHeight = 1024
-    static let yawStepCount = 12
+    /// 8 yaw × 3 pitch = 24 guidance targets (~12–24 keyframe product goal, ~30–60s capture).
+    static let yawStepCount = 8
     static let pitchBandsDeg: [Float] = [0, 30, -30]
     static let targetAngularToleranceDeg: Float = 14
     static let candidateWindowSec: Double = 0.65

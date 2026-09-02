@@ -104,7 +104,9 @@ final class Quick360CaptureEngine {
             state: dynamicState,
             grayscale: gray,
             width: Quick360FrameEncoder.analysisWidth,
-            height: Quick360FrameEncoder.analysisHeight
+            height: Quick360FrameEncoder.analysisHeight,
+            yawRad: yawRad,
+            pitchRad: pitchRad
         )
         dynamicState = newDynamic
 

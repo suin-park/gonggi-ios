@@ -53,6 +53,38 @@ enum Quick360ImageAnalysis {
         return simd_clamp(meanDiff * 3, 0, 1)
     }
 
+    /// Residual difference after lightweight translational alignment (0…1).
+    static func residualDifferenceRatio(
+        reference: [UInt8],
+        current: [UInt8],
+        width: Int,
+        height: Int,
+        shiftDx: Int,
+        shiftDy: Int
+    ) -> Float {
+        guard reference.count == current.count,
+              width > 0, height > 0,
+              reference.count == width * height else { return 0 }
+
+        let margin = 2
+        var diffSum = 0
+        var count = 0
+        for y in margin..<(height - margin) {
+            for x in margin..<(width - margin) {
+                let refX = x + shiftDx
+                let refY = y + shiftDy
+                guard refX >= 0, refX < width, refY >= 0, refY < height else { continue }
+                let curIdx = y * width + x
+                let refIdx = refY * width + refX
+                diffSum += abs(Int(reference[refIdx]) - Int(current[curIdx]))
+                count += 1
+            }
+        }
+        guard count > 0 else { return 0 }
+        let meanDiff = Float(diffSum) / Float(count) / 255.0
+        return simd_clamp(meanDiff * 3, 0, 1)
+    }
+
     /// Downsample RGBA buffer to coarse grayscale for analysis.
     static func downsampleGrayscale(
         rgba: [UInt8],

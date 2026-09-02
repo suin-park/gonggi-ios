@@ -44,14 +44,14 @@ final class Quick360TargetLayoutTests: XCTestCase {
     func testTargetCount() {
         let targets = Quick360SphericalTargetLayout.makeTargets()
         XCTAssertEqual(targets.count, Quick360Config.targetCount)
-        XCTAssertEqual(targets.count, 36)
+        XCTAssertEqual(targets.count, 24)
     }
 
     func testProgressIncreasesOnSelection() {
         var targets = Quick360SphericalTargetLayout.makeTargets()
         XCTAssertEqual(Quick360SphericalTargetLayout.progressPercent(in: targets), 0)
         targets = Quick360SphericalTargetLayout.markSelected(targets: targets, targetId: 0)
-        XCTAssertEqual(Quick360SphericalTargetLayout.progressPercent(in: targets), 3)
+        XCTAssertEqual(Quick360SphericalTargetLayout.progressPercent(in: targets), 4)
     }
 
     func testWithinTolerance() {
@@ -217,14 +217,71 @@ final class Quick360SessionStoreTests: XCTestCase {
 }
 
 final class Quick360DynamicRegionTests: XCTestCase {
-    func testDynamicRatioOnChange() {
+    private let w = 10
+    private let h = 10
+
+    private func gray(fill: UInt8) -> [UInt8] {
+        [UInt8](repeating: fill, count: w * h)
+    }
+
+    func testDynamicRatioOnUniformChangeWithSmallRotation() {
         var state = Quick360DynamicRegionDetector.initial()
-        let a = [UInt8](repeating: 50, count: 100)
-        let b = [UInt8](repeating: 200, count: 100)
-        let (r1, s1) = Quick360DynamicRegionDetector.dynamicRatio(state: state, grayscale: a, width: 10, height: 10)
+        let a = gray(fill: 50)
+        var b = gray(fill: 50)
+        b[55] = 220
+        let (r1, s1) = Quick360DynamicRegionDetector.dynamicRatio(
+            state: state, grayscale: a, width: w, height: h, yawRad: 0, pitchRad: 0
+        )
         XCTAssertEqual(r1, 0, accuracy: 0.01)
-        let (r2, _) = Quick360DynamicRegionDetector.dynamicRatio(state: s1, grayscale: b, width: 10, height: 10)
-        XCTAssertGreaterThan(r2, 0.3)
+        let (r2, _) = Quick360DynamicRegionDetector.dynamicRatio(
+            state: s1, grayscale: b, width: w, height: h, yawRad: 0.01, pitchRad: 0
+        )
+        XCTAssertGreaterThan(r2, 0.15)
+    }
+
+    func testLargeCameraRotationIgnored() {
+        var state = Quick360DynamicRegionDetector.initial()
+        let a = gray(fill: 80)
+        let b = gray(fill: 200)
+        let (_, s1) = Quick360DynamicRegionDetector.dynamicRatio(
+            state: state, grayscale: a, width: w, height: h, yawRad: 0, pitchRad: 0
+        )
+        let yawDelta = 20 * Float.pi / 180
+        let (ratio, _) = Quick360DynamicRegionDetector.dynamicRatio(
+            state: s1, grayscale: b, width: w, height: h, yawRad: yawDelta, pitchRad: 0
+        )
+        XCTAssertEqual(ratio, 0, accuracy: 0.01)
+    }
+
+    func testIdenticalFramesLowResidual() {
+        var state = Quick360DynamicRegionDetector.initial()
+        let a = gray(fill: 100)
+        let (_, s1) = Quick360DynamicRegionDetector.dynamicRatio(
+            state: state, grayscale: a, width: w, height: h, yawRad: 0, pitchRad: 0
+        )
+        let (ratio, _) = Quick360DynamicRegionDetector.dynamicRatio(
+            state: s1, grayscale: a, width: w, height: h, yawRad: 0.02, pitchRad: 0
+        )
+        XCTAssertLessThan(ratio, 0.1)
+    }
+
+    func testResidualDifferenceIgnoresGlobalShift() {
+        var ref = gray(fill: 100)
+        var cur = gray(fill: 100)
+        for y in 0..<h {
+            for x in 0..<w {
+                let v = UInt8((x * 10 + y * 3) % 200 + 20)
+                ref[y * w + x] = v
+                let sx = x > 0 ? x - 1 : x
+                cur[y * w + x] = ref[y * w + sx]
+            }
+        }
+        let raw = Quick360ImageAnalysis.differenceRatio(a: ref, b: cur)
+        let residual = Quick360ImageAnalysis.residualDifferenceRatio(
+            reference: ref, current: cur, width: w, height: h, shiftDx: -1, shiftDy: 0
+        )
+        XCTAssertGreaterThan(raw, 0.1)
+        XCTAssertLessThan(residual, raw)
     }
 }
 

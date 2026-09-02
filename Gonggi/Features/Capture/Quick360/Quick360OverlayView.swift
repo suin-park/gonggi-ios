@@ -92,7 +92,7 @@ struct Quick360OverlayView: View {
                 translationLevel: .safe,
                 currentTarget: Quick360SphericalTarget(id: 0, yawDeg: 90, pitchDeg: 0, state: .accumulating),
                 selectedCount: 10,
-                totalTargets: 36,
+                totalTargets: 24,
                 isComplete: false
             ),
             onClose: {},
