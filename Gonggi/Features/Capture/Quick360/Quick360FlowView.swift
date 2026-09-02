@@ -12,9 +12,15 @@ struct Quick360FlowView: View {
             if viewModel.useMockCamera {
                 mockBackground
             } else {
-                Quick360ARViewRepresentable(session: viewModel.arSession) { frame in
-                    viewModel.ingestFrame(frame)
-                }
+                Quick360ARViewRepresentable(
+                    session: viewModel.arSession,
+                    onFrame: { frame in
+                        viewModel.ingestFrame(frame)
+                    },
+                    onViewReady: {
+                        viewModel.onARViewReady()
+                    }
+                )
                 .ignoresSafeArea()
             }
 
@@ -43,7 +49,10 @@ struct Quick360FlowView: View {
                 }
             }
         }
-        .onAppear { viewModel.configure(mockMode: appState.isMockMode) }
+        .onAppear {
+            Quick360Log.stage("Quick360FlowView onAppear")
+            viewModel.configure(mockMode: appState.isMockMode)
+        }
         .sheet(isPresented: $showSummary) {
             if let summary = viewModel.lastSummary {
                 Quick360SummaryView(

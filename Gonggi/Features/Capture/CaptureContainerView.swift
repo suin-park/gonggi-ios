@@ -85,6 +85,9 @@ struct CaptureContainerView: View {
     private func modeCard(_ mode: CaptureMode) -> some View {
         Button {
             GonggiHaptics.medium()
+            if mode == .quick360 {
+                Quick360Log.stage("mode selected: Quick 360 Capture")
+            }
             selectedMode = mode
             isCapturing = true
         } label: {

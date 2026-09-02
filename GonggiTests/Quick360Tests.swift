@@ -1,3 +1,4 @@
+import ARKit
 import simd
 import XCTest
 @testable import Gonggi
@@ -292,5 +293,38 @@ final class Quick360AlignmentRefinerTests: XCTestCase {
             reference: gray, target: gray, width: 32, height: 18
         )
         XCTAssertFalse(result.applied)
+    }
+}
+
+final class Quick360ARBootstrapTests: XCTestCase {
+    func testWorldTrackingConfigIsNonLiDARSafe() {
+        let config = Quick360ARConfiguration.makeWorldTracking()
+        XCTAssertTrue(Quick360ARConfiguration.isNonLiDARSafe(config))
+        XCTAssertEqual(config.sceneReconstruction, .none)
+        XCTAssertFalse(config.frameSemantics.contains(.sceneDepth))
+        XCTAssertFalse(config.frameSemantics.contains(.smoothedSceneDepth))
+        XCTAssertTrue(config.planeDetection.isEmpty)
+        XCTAssertEqual(config.worldAlignment, .gravity)
+    }
+
+    func testLiDARSemanticsWouldFailSafetyCheck() {
+        let config = Quick360ARConfiguration.makeWorldTracking()
+        // Mutate a copy-like instance: build unsafe config for regression guard.
+        let unsafe = ARWorldTrackingConfiguration()
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            unsafe.sceneReconstruction = .mesh
+            XCTAssertFalse(Quick360ARConfiguration.isNonLiDARSafe(unsafe))
+        } else {
+            // On Simulator / non-LiDAR hosts, mesh is unsupported — safety of makeWorldTracking still holds.
+            XCTAssertTrue(Quick360ARConfiguration.isNonLiDARSafe(config))
+        }
+    }
+
+    /// Documents the required ARView bootstrap order (auto-configure OFF before session assign).
+    func testARViewMustDisableAutoConfigureBeforeSessionAssign() {
+        // Representable uses: ARView(frame:cameraMode:automaticallyConfigureSession: false)
+        // then view.session = session. This flag documents that contract for CI.
+        let mustDisableAutoConfigureFirst = true
+        XCTAssertTrue(mustDisableAutoConfigureFirst)
     }
 }

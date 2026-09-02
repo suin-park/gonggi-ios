@@ -1,4 +1,5 @@
 import ARKit
+import AVFoundation
 import Combine
 import SwiftUI
 
@@ -14,39 +15,69 @@ final class Quick360ViewModel: ObservableObject {
     private let engine: Quick360CaptureEngine
     private var mockTimer: AnyCancellable?
     private var mockStartedAt = Date()
+    private var didRunSession = false
+    private var arViewReady = false
 
     init(mockMode: Bool = true) {
+        Quick360Log.stage("Quick360 init start")
         engine = Quick360CaptureEngine(mockMode: mockMode)
         useMockCamera = mockMode
+        Quick360Log.stage("Quick360 init done mockMode=\(mockMode)")
     }
 
     func configure(mockMode: Bool) {
+        Quick360Log.stage("configure start mockMode=\(mockMode)")
+        let permission = AVCaptureDevice.authorizationStatus(for: .video)
+        Quick360Log.stage("camera permission = \(Self.permissionLabel(permission))")
+
         useMockCamera = mockMode || !ARWorldTrackingConfiguration.isSupported
+        Quick360Log.stage(
+            "useMockCamera=\(useMockCamera) worldTrackingSupported=\(ARWorldTrackingConfiguration.isSupported)"
+        )
+
         if useMockCamera {
             arSession.pause()
+            start()
         } else {
-            startAR()
+            // Do NOT call arSession.run here — wait until ARView is created with
+            // automaticallyConfigureSession=false and has taken ownership of the session.
+            start()
+            requestCameraIfNeeded()
         }
-        start()
+        Quick360Log.stage("configure end")
+    }
+
+    /// Called once from Quick360ARViewRepresentable after ARView owns the session.
+    func onARViewReady() {
+        Quick360Log.stage("onARViewReady")
+        arViewReady = true
+        guard !useMockCamera else { return }
+        runSessionIfNeeded()
     }
 
     func start() {
         lastSummary = nil
+        didRunSession = false
         let sessionId = UUID().uuidString
         let captureId = CaptureIdRegistry.nextCaptureId()
         engine.start(sessionId: sessionId, captureId: captureId)
         uiState = engine.uiState
         mockStartedAt = Date()
+        Quick360Log.stage("engine start sessionId=\(sessionId)")
 
         if useMockCamera {
             startMockTicks()
+        } else if arViewReady {
+            runSessionIfNeeded()
         }
     }
 
     func cancelCapture() {
         mockTimer?.cancel()
         mockTimer = nil
+        didRunSession = false
         arSession.pause()
+        Quick360Log.stage("cancelCapture")
     }
 
     func ingestFrame(_ frame: ARFrame) {
@@ -59,6 +90,7 @@ final class Quick360ViewModel: ObservableObject {
         isStopping = true
         mockTimer?.cancel()
         arSession.pause()
+        didRunSession = false
 
         isStitching = true
         let result: Quick360Reconstruction.Result?
@@ -86,14 +118,30 @@ final class Quick360ViewModel: ObservableObject {
         isStopping = false
     }
 
-    private func startAR() {
-        let config = ARWorldTrackingConfiguration()
-        config.worldAlignment = .gravity
-        config.planeDetection = []
-        if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
-            // Do not enable depth for Quick 360 — LiDAR mesh not used
+    private func runSessionIfNeeded() {
+        guard !didRunSession else {
+            Quick360Log.stage("session run skipped (already running)")
+            return
         }
+        let config = Quick360ARConfiguration.makeWorldTracking()
+        Quick360Log.stage(
+            "configuration created nonLiDARSafe=\(Quick360ARConfiguration.isNonLiDARSafe(config))"
+        )
+        Quick360Log.stage("session run start")
         arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
+        didRunSession = true
+        Quick360Log.stage("session run success")
+    }
+
+    private func requestCameraIfNeeded() {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        guard status == .notDetermined else { return }
+        Quick360Log.stage("requesting camera access")
+        AVCaptureDevice.requestAccess(for: .video) { granted in
+            Task { @MainActor in
+                Quick360Log.stage("camera access granted=\(granted)")
+            }
+        }
     }
 
     private func startMockTicks() {
@@ -112,5 +160,15 @@ final class Quick360ViewModel: ObservableObject {
         let f = DateFormatter()
         f.dateFormat = "M/d HH:mm"
         return f.string(from: date)
+    }
+
+    private static func permissionLabel(_ status: AVAuthorizationStatus) -> String {
+        switch status {
+        case .authorized: return "authorized"
+        case .denied: return "denied"
+        case .restricted: return "restricted"
+        case .notDetermined: return "notDetermined"
+        @unknown default: return "unknown"
+        }
     }
 }
