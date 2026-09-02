@@ -58,7 +58,7 @@ final class Quick360CaptureEngine {
         guard isRunning, !isComplete else { return }
         let progress = min(1, elapsed / 45)
         let yawSteps = Quick360Config.yawStepCount
-        let completed = min(targets.count, Int(progress * Float(targets.count)))
+        let completed = min(targets.count, Int(progress * Double(targets.count)))
         targets = targets.enumerated().map { idx, t in
             var state = t.state
             if idx < completed { state = .selected }

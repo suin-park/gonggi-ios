@@ -77,8 +77,8 @@ enum SphericalMath {
         let x = Int((uv.x * Float(width - 1)).rounded())
         let y = Int((uv.y * Float(height - 1)).rounded())
         return SIMD2(
-            simd_clamp(x, 0, width - 1),
-            simd_clamp(y, 0, height - 1)
+            min(max(x, 0), width - 1),
+            min(max(y, 0), height - 1)
         )
     }
 
