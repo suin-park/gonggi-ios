@@ -20,14 +20,14 @@ enum Quick360ARConfiguration {
         config.worldAlignment = .gravity
         config.planeDetection = []
         // Explicit: never enable mesh / sceneDepth — required for non-LiDAR iPhones (e.g. 14 Plus).
-        config.sceneReconstruction = .none
+        config.sceneReconstruction = []
         config.frameSemantics = []
         return config
     }
 
     /// Guards against accidentally enabling LiDAR-only semantics on Quick 360.
     static func isNonLiDARSafe(_ config: ARWorldTrackingConfiguration) -> Bool {
-        config.sceneReconstruction == .none
+        config.sceneReconstruction.isEmpty
             && !config.frameSemantics.contains(.sceneDepth)
             && !config.frameSemantics.contains(.smoothedSceneDepth)
             && config.planeDetection.isEmpty

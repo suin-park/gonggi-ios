@@ -300,7 +300,7 @@ final class Quick360ARBootstrapTests: XCTestCase {
     func testWorldTrackingConfigIsNonLiDARSafe() {
         let config = Quick360ARConfiguration.makeWorldTracking()
         XCTAssertTrue(Quick360ARConfiguration.isNonLiDARSafe(config))
-        XCTAssertEqual(config.sceneReconstruction, .none)
+        XCTAssertTrue(config.sceneReconstruction.isEmpty)
         XCTAssertFalse(config.frameSemantics.contains(.sceneDepth))
         XCTAssertFalse(config.frameSemantics.contains(.smoothedSceneDepth))
         XCTAssertTrue(config.planeDetection.isEmpty)
