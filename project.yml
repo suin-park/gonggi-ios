@@ -33,6 +33,7 @@ targets:
     info:
       path: Gonggi/Resources/Info.plist
       properties:
+        CFBundleIconName: AppIcon
         UILaunchScreen: {}
         NSCameraUsageDescription: 공간을 3D로 기록하기 위해 카메라가 필요합니다.
         NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
