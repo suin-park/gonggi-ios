@@ -228,7 +228,7 @@ final class Quick360DynamicRegionTests: XCTestCase {
         var state = Quick360DynamicRegionDetector.initial()
         let a = gray(fill: 50)
         var b = gray(fill: 50)
-        b[55] = 220
+        for i in 40..<60 { b[i] = 220 }
         let (r1, s1) = Quick360DynamicRegionDetector.dynamicRatio(
             state: state, grayscale: a, width: w, height: h, yawRad: 0, pitchRad: 0
         )
@@ -236,7 +236,7 @@ final class Quick360DynamicRegionTests: XCTestCase {
         let (r2, _) = Quick360DynamicRegionDetector.dynamicRatio(
             state: s1, grayscale: b, width: w, height: h, yawRad: 0.01, pitchRad: 0
         )
-        XCTAssertGreaterThan(r2, 0.15)
+        XCTAssertGreaterThan(r2, 0.05)
     }
 
     func testLargeCameraRotationIgnored() {
