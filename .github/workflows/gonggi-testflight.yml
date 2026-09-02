@@ -67,6 +67,9 @@ jobs:
           fi
           echo "All required secrets are present."
 
+      - name: Validate AppIcon sources
+        run: python3 scripts/validate-app-icon-sources.py
+
       - name: Select Xcode
         run: |
           set -euo pipefail

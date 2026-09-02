@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Preflight validation for Gonggi .app bundle (CI Release build)."""
+"""Preflight validation for Gonggi .app bundle (CI Release simulator build)."""
 from __future__ import annotations
 
 import plistlib
 import sys
 from pathlib import Path
 
-BUNDLE_ID = "com.whik.gonggi"
-REQUIRED_ICON_PIXELS = {120, 180, 1024}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from preflight_common import BUNDLE_ID, collect_car_icon_assets
+
+# Simulator Release builds may omit some device-only icon renditions in Assets.car.
+REQUIRED_ICON_PIXELS = {120}
 
 
 def fail(message: str) -> None:
@@ -17,29 +20,6 @@ def fail(message: str) -> None:
 
 def ok(message: str) -> None:
     print(f"OK: {message}")
-
-
-def collect_car_icon_assets(car_path: Path) -> set[int]:
-    try:
-        data = car_path.read_bytes()
-    except OSError:
-        return set()
-
-    found: set[int] = set()
-    needle = b"\x89PNG\r\n\x1a\n"
-    offset = 0
-    while True:
-        idx = data.find(needle, offset)
-        if idx == -1:
-            break
-        ihdr_offset = idx + len(needle) + 4
-        if ihdr_offset + 8 < len(data):
-            w = int.from_bytes(data[ihdr_offset : ihdr_offset + 4], "big")
-            h = int.from_bytes(data[ihdr_offset + 4 : ihdr_offset + 8], "big")
-            if w == h and 20 <= w <= 1024:
-                found.add(w)
-        offset = idx + 1
-    return found
 
 
 def main() -> None:
@@ -79,12 +59,13 @@ def main() -> None:
                 pixel_sizes.add(w)
 
     car_path = app_path / "Assets.car"
-    if car_path.is_file():
-        pixel_sizes |= collect_car_icon_assets(car_path)
-        ok("Assets.car present (compiled asset catalog)")
+    if not car_path.is_file():
+        fail("Assets.car missing — AppIcon asset catalog did not compile")
+    pixel_sizes |= collect_car_icon_assets(car_path)
+    ok("Assets.car present (compiled asset catalog)")
 
     if not pixel_sizes:
-        fail("No AppIcon PNG sizes detected in app bundle")
+        fail("No AppIcon sizes detected in app bundle")
 
     ok(f"Detected icon pixel sizes: {sorted(pixel_sizes)}")
 
