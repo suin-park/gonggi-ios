@@ -61,6 +61,7 @@ struct CaptureFlowView: View {
     @StateObject private var viewModel = CaptureViewModel()
     @State private var showSummary = false
     @State private var showProcessing = false
+    @State private var showSpacePreview = false
     let onClose: () -> Void
 
     var body: some View {
@@ -93,6 +94,17 @@ struct CaptureFlowView: View {
                 onFlash: { viewModel.guidance.toggleFlash() },
                 onGuide: { viewModel.guidance.toggleGuide() }
             )
+
+            if viewModel.isStopping || viewModel.isReconstructingTexturedMesh {
+                Color.black.opacity(0.45).ignoresSafeArea()
+                VStack(spacing: GonggiSpacing.sm) {
+                    ProgressView()
+                        .tint(GonggiColors.accentCyan)
+                    Text(viewModel.isReconstructingTexturedMesh ? "공간 mesh 재구성 중…" : "촬영 마무리 중…")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+            }
         }
         .onAppear { viewModel.configure(mockMode: appState.isMockMode) }
         .sheet(isPresented: $showSummary) {
@@ -104,10 +116,18 @@ struct CaptureFlowView: View {
                         showSummary = false
                         appState.pendingCapture = summary
                         showProcessing = true
+                    },
+                    onPreviewSpace: summary.texturedSpaceURL.map { url in
+                        { showSpacePreview = true }
                     }
                 )
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
+            }
+        }
+        .fullScreenCover(isPresented: $showSpacePreview) {
+            if let url = viewModel.lastSummary?.texturedSpaceURL {
+                SpacePreviewView(usdzURL: url)
             }
         }
         .fullScreenCover(isPresented: $showProcessing) {

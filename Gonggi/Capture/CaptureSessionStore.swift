@@ -5,6 +5,10 @@ enum CaptureSessionStore {
     static let capturesFolderName = "Captures"
     static let videoFileName = "original.mov"
     static let manifestFileName = "manifest.json"
+    static let meshFolderName = "mesh"
+    static let keyframesFolderName = "keyframes"
+    static let texturedSpaceUSDZFileName = "textured-space.usdz"
+    static let texturedSpaceReportFileName = "textured-space-report.json"
 
     static func rootDirectory() throws -> URL {
         let base = try FileManager.default.url(
@@ -30,6 +34,31 @@ enum CaptureSessionStore {
 
     static func manifestURL(sessionId: String) throws -> URL {
         try createSessionDirectory(sessionId: sessionId).appendingPathComponent(manifestFileName)
+    }
+
+    static func createMeshDirectory(sessionId: String) throws -> URL {
+        let dir = try createSessionDirectory(sessionId: sessionId)
+            .appendingPathComponent(meshFolderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keyframes = dir.appendingPathComponent(keyframesFolderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: keyframes, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func keyframesDirectory(sessionId: String) throws -> URL {
+        try createMeshDirectory(sessionId: sessionId).appendingPathComponent(keyframesFolderName, isDirectory: true)
+    }
+
+    static func keyframeURL(sessionId: String, fileName: String) throws -> URL {
+        try keyframesDirectory(sessionId: sessionId).appendingPathComponent(fileName)
+    }
+
+    static func texturedSpaceUSDZURL(sessionId: String) throws -> URL {
+        try createMeshDirectory(sessionId: sessionId).appendingPathComponent(texturedSpaceUSDZFileName)
+    }
+
+    static func texturedSpaceReportURL(sessionId: String) throws -> URL {
+        try createMeshDirectory(sessionId: sessionId).appendingPathComponent(texturedSpaceReportFileName)
     }
 
     static func deleteSession(sessionId: String) {

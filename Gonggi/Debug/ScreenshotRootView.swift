@@ -17,7 +17,8 @@ struct ScreenshotRootView: View {
                 CaptureSummaryView(
                     summary: GonggiPreviewSamples.sampleSummary,
                     onContinueCapture: {},
-                    onCreateSpace: {}
+                    onCreateSpace: {},
+                    onPreviewSpace: nil
                 )
             case .processing:
                 ProcessingView(

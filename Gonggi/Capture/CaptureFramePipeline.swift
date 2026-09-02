@@ -102,6 +102,8 @@ final class CaptureFramePipeline {
 
     var isRecording: Bool { sessionController != nil }
 
+    var activeSessionId: String? { sessionController?.sessionId }
+
     private var lastUIUpdate: TimeInterval = 0
 
     private func publishUI(trackingLimited: Bool) {

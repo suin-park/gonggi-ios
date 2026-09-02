@@ -120,6 +120,8 @@ struct CaptureSessionSummary: Identifiable, Equatable {
     var insufficientAreaCount: Int
     var revisitScore: Double
     var angleDiversityScore: Double
+    var texturedSpaceURL: URL?
+    var texturedMeshReport: TexturedMeshReport?
 
     init(
         id: UUID = UUID(),
@@ -144,7 +146,9 @@ struct CaptureSessionSummary: Identifiable, Equatable {
         goodAreaCount: Int = 0,
         insufficientAreaCount: Int = 0,
         revisitScore: Double = 0,
-        angleDiversityScore: Double = 0
+        angleDiversityScore: Double = 0,
+        texturedSpaceURL: URL? = nil,
+        texturedMeshReport: TexturedMeshReport? = nil
     ) {
         self.id = id
         self.captureId = captureId
@@ -169,6 +173,8 @@ struct CaptureSessionSummary: Identifiable, Equatable {
         self.insufficientAreaCount = insufficientAreaCount
         self.revisitScore = revisitScore
         self.angleDiversityScore = angleDiversityScore
+        self.texturedSpaceURL = texturedSpaceURL
+        self.texturedMeshReport = texturedMeshReport
     }
 
     var duration: TimeInterval { endedAt.timeIntervalSince(startedAt) }

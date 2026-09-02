@@ -1,5 +1,4 @@
 import ARKit
-import Combine
 import SwiftUI
 
 @MainActor
@@ -7,11 +6,13 @@ final class CaptureViewModel: ObservableObject {
     @Published private(set) var useMockCamera = true
     @Published private(set) var lastSummary: CaptureSessionSummary?
     @Published private(set) var isStopping = false
+    @Published private(set) var isReconstructingTexturedMesh = false
 
     let guidance = CaptureGuidanceEngine()
     let arSession = ARSession()
     let framePipeline = CaptureFramePipeline()
 
+    private let texturedMeshCapture = TexturedMeshCaptureService()
     private var mockTimer: AnyCancellable?
     private var guidanceCancellable: AnyCancellable?
     private var startedAt = Date()
@@ -47,12 +48,21 @@ final class CaptureViewModel: ObservableObject {
         guidance.start()
         framePipeline.start(mockMode: useMockCamera)
         guidance.isRecording = framePipeline.isRecording
+
+        if !useMockCamera,
+           CaptureDeviceCapabilities.supportsLiDARMeshReconstruction,
+           let sessionId = framePipeline.activeSessionId {
+            texturedMeshCapture.start(sessionId: sessionId)
+        } else {
+            texturedMeshCapture.reset()
+        }
     }
 
     func cancelCapture() {
         mockTimer?.cancel()
         mockTimer = nil
         framePipeline.cancel()
+        texturedMeshCapture.reset()
         guidance.cancelSession()
         guidance.isRecording = false
         arSession.pause()
@@ -71,7 +81,12 @@ final class CaptureViewModel: ObservableObject {
                 startedAt: startedAt,
                 endedAt: Date()
             )
-        } else if let summary = await framePipeline.finish() {
+        } else if var summary = await framePipeline.finish() {
+            if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
+                isReconstructingTexturedMesh = true
+                summary = await enrichWithTexturedMesh(summary)
+                isReconstructingTexturedMesh = false
+            }
             lastSummary = summary
         } else {
             lastSummary = framePipeline.mockSummary(
@@ -80,13 +95,44 @@ final class CaptureViewModel: ObservableObject {
                 endedAt: Date()
             )
         }
+        texturedMeshCapture.reset()
         guidance.isRecording = false
         isStopping = false
     }
 
     /// Called synchronously from ARSessionDelegate — do not dispatch before this returns.
     func ingestFrame(_ frame: ARFrame) {
+        if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
+            texturedMeshCapture.ingest(frame: frame)
+        }
         framePipeline.ingest(frame: frame)
+    }
+
+    private func enrichWithTexturedMesh(_ summary: CaptureSessionSummary) async -> CaptureSessionSummary {
+        let meshSnapshots = texturedMeshCapture.snapshotMeshAnchors()
+        let keyframes = texturedMeshCapture.snapshotKeyframes()
+        let peakMemory = texturedMeshCapture.peakMemoryEstimateMB()
+
+        guard !meshSnapshots.isEmpty, !keyframes.isEmpty else {
+            return summary
+        }
+
+        return await Task.detached(priority: .userInitiated) {
+            do {
+                let output = try TexturedMeshReconstruction.reconstruct(
+                    sessionId: summary.sessionId,
+                    meshSnapshots: meshSnapshots,
+                    keyframes: keyframes,
+                    peakMemoryEstimateMB: peakMemory
+                )
+                var updated = summary
+                updated.texturedSpaceURL = output.usdzURL
+                updated.texturedMeshReport = output.report
+                return updated
+            } catch {
+                return summary
+            }
+        }.value
     }
 
     private func startMockTicks() {

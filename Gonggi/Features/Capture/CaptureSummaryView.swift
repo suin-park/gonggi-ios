@@ -4,6 +4,7 @@ struct CaptureSummaryView: View {
     let summary: CaptureSessionSummary
     let onContinueCapture: () -> Void
     let onCreateSpace: () -> Void
+    let onPreviewSpace: (() -> Void)?
 
     #if DEBUG
     @State private var showExportShare = false
@@ -27,6 +28,10 @@ struct CaptureSummaryView: View {
 
                     metricsGrid
 
+                    if let report = summary.texturedMeshReport {
+                        texturedMeshReportSection(report)
+                    }
+
                     if summary.lowTextureWarnings > 0 {
                         warningBanner
                     }
@@ -38,6 +43,11 @@ struct CaptureSummaryView: View {
                     }
 
                     VStack(spacing: GonggiSpacing.sm) {
+                        if summary.texturedSpaceURL != nil, onPreviewSpace != nil {
+                            SecondaryButton(title: "공간 미리보기 (Experimental)", icon: "cube") {
+                                onPreviewSpace?()
+                            }
+                        }
                         PrimaryButton(title: "이대로 공간 생성", icon: "cube.transparent") {
                             GonggiHaptics.success()
                             onCreateSpace()
@@ -160,12 +170,44 @@ struct CaptureSummaryView: View {
     private func percentString(_ value: Double) -> String {
         "\(Int((value * 100).rounded()))%"
     }
+
+    private func texturedMeshReportSection(_ report: TexturedMeshReport) -> some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            Text("Textured Mesh (Experimental)")
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(GonggiColors.textTertiary)
+
+            LazyVGrid(
+                columns: [GridItem(.flexible()), GridItem(.flexible())],
+                spacing: GonggiSpacing.sm
+            ) {
+                GonggiMetricTile(icon: "point.3.connected.trianglepath.dotted", title: "Vertices", value: formatCount(report.vertexCount))
+                GonggiMetricTile(icon: "triangle", title: "Triangles", value: formatCount(report.triangleCount))
+                GonggiMetricTile(icon: "photo.on.rectangle", title: "Keyframes", value: "\(report.keyframeCount)")
+                GonggiMetricTile(icon: "paintbrush.pointed", title: "Texture", value: "\(Int(report.texturedCoveragePercent.rounded()))%")
+                GonggiMetricTile(icon: "clock", title: "Rebuild", value: String(format: "%.1fs", report.reconstructionTimeSec))
+                GonggiMetricTile(icon: "doc", title: "Output", value: formatBytes(report.outputByteSize))
+            }
+        }
+    }
+
+    private func formatCount(_ value: Int) -> String {
+        if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
+        if value >= 1_000 { return String(format: "%.0fK", Double(value) / 1_000) }
+        return "\(value)"
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        let mb = Double(bytes) / (1024 * 1024)
+        return mb >= 1 ? String(format: "%.1f MB", mb) : String(format: "%.0f KB", Double(bytes) / 1024)
+    }
 }
 
 #Preview {
     CaptureSummaryView(
         summary: GonggiPreviewSamples.sampleSummary,
         onContinueCapture: {},
-        onCreateSpace: {}
+        onCreateSpace: {},
+        onPreviewSpace: nil
     )
 }
