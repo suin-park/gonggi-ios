@@ -131,38 +131,54 @@ final class Quick360HybridSceneController {
         view.scene.addAnchor(anchor)
         rootAnchor = anchor
 
-        // Inside-out sphere without X-scale mirror (avoids left/right flip of brush U).
-        var mat = sphereMaterial
-        mat.faceCulling = .front
+        // Inside-out via negative X (iOS 17–safe). Compensate horizontal mirror when applying texture.
         let sphere = ModelEntity(
             mesh: .generateSphere(radius: 8),
-            materials: [mat]
+            materials: [sphereMaterial]
         )
-        sphere.scale = SIMD3<Float>(1, 1, 1)
+        sphere.scale = SIMD3<Float>(-1, 1, 1)
         sphere.name = "hybridSphere"
         anchor.addChild(sphere)
         sphereEntity = sphere
-        sphereMaterial = mat
     }
 
     func syncTextures(from engine: Quick360CaptureEngine, showDebugMarker: Bool) {
         let snap = engine.snapshotBrushCGImages()
         // Align sphere local frame with capture origin so relative yaw=0 → texture U≈0.5 in view.
         if let origin = snap.originTransform {
-            var t = origin
-            // Keep sphere centered on origin position (in-place capture).
-            sphereEntity?.transform.matrix = t
+            sphereEntity?.transform.matrix = origin
+            // Re-apply inside-out scale after setting full transform.
+            sphereEntity?.scale = SIMD3<Float>(-1, 1, 1)
         }
         if let cg = snap.sphere,
-           let resource = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) {
+           let display = Self.horizontallyMirrored(cg),
+           let resource = try? TextureResource.generate(from: display, options: .init(semantic: .color)) {
             var mat = UnlitMaterial()
             mat.color = .init(tint: .white, texture: .init(resource))
             mat.blending = .opaque
-            mat.faceCulling = .front
             sphereEntity?.model?.materials = [mat]
             sphereMaterial = mat
         }
         syncFloor(surface: snap.floorSurface, floorCG: snap.floor, showDebugMarker: showDebugMarker)
+    }
+
+    /// Cancels UV mirror introduced by `scale.x = -1` without flipping sphere yaw math.
+    private static func horizontallyMirrored(_ image: CGImage) -> CGImage? {
+        let w = image.width
+        let h = image.height
+        guard let ctx = CGContext(
+            data: nil,
+            width: w,
+            height: h,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.translateBy(x: CGFloat(w), y: 0)
+        ctx.scaleBy(x: -1, y: 1)
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
     }
 
     func syncFloor(from engine: Quick360CaptureEngine, showDebugMarker: Bool) {
