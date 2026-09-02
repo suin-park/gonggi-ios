@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// Seam blending with feather weights and dynamic-region preference.
 enum PanoramaSeamBlender {

@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// Exposure compensation between adjacent keyframes using global brightness scale.
 enum PanoramaExposureCompensator {
