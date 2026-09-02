@@ -4,6 +4,7 @@ import CoreImage
 import Foundation
 import ImageIO
 import simd
+import UIKit
 import UniformTypeIdentifiers
 
 /// Converts ARFrame pixel buffers to analysis thumbnails and JPEG keyframes.
@@ -29,13 +30,34 @@ enum Quick360FrameEncoder {
         )
     }
 
-    /// Render CVPixelBuffer (any ARKit format) to owned RGBA8 bytes.
+    /// Render CVPixelBuffer (any ARKit format) to owned RGBA8 bytes (sensor orientation).
     static func renderRGBA(
         from pixelBuffer: CVPixelBuffer,
         maxWidth: Int? = nil
     ) -> (rgba: [UInt8], width: Int, height: Int)? {
+        renderRGBA(from: pixelBuffer, maxWidth: maxWidth, orientation: nil)
+    }
+
+    /// Brush source: apply interface orientation so portrait UI top/right matches thumb top/right.
+    static func renderBrushRGBA(
+        from pixelBuffer: CVPixelBuffer,
+        maxWidth: Int,
+        interfaceOrientation: UIInterfaceOrientation = Quick360BrushOrientation.primaryInterfaceOrientation
+    ) -> (rgba: [UInt8], width: Int, height: Int)? {
+        let orient = Quick360BrushOrientation.cgImageOrientation(for: interfaceOrientation)
+        return renderRGBA(from: pixelBuffer, maxWidth: maxWidth, orientation: orient)
+    }
+
+    private static func renderRGBA(
+        from pixelBuffer: CVPixelBuffer,
+        maxWidth: Int?,
+        orientation: CGImagePropertyOrientation?
+    ) -> (rgba: [UInt8], width: Int, height: Int)? {
         var image = CIImage(cvPixelBuffer: pixelBuffer)
-        // ARKit YUV CIImages often have a non-zero origin; normalize before render.
+        if let orientation {
+            // Image-space rotation only — do not bake pose offsets into sphere yaw.
+            image = image.oriented(orientation)
+        }
         image = image.transformed(by: CGAffineTransform(
             translationX: -image.extent.origin.x,
             y: -image.extent.origin.y
@@ -44,9 +66,13 @@ enum Quick360FrameEncoder {
         let srcH = image.extent.height
         guard srcW > 1, srcH > 1 else { return nil }
 
-        if let maxWidth, srcW > CGFloat(maxWidth) {
-            let scale = CGFloat(maxWidth) / srcW
+        if let maxWidth, max(srcW, srcH) > CGFloat(maxWidth) {
+            let scale = CGFloat(maxWidth) / max(srcW, srcH)
             image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            image = image.transformed(by: CGAffineTransform(
+                translationX: -image.extent.origin.x,
+                y: -image.extent.origin.y
+            ))
         }
 
         let width = Int(image.extent.width.rounded(.down))

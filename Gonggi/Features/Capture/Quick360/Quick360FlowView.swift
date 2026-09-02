@@ -39,6 +39,7 @@ struct Quick360FlowView: View {
                 uiState: viewModel.uiState,
                 spherePreview: viewModel.useMockCamera ? nil : viewModel.spherePreview,
                 floorPreview: viewModel.floorPreview,
+                brushDebug: viewModel.showBrushDebug ? viewModel.brushDebug : nil,
                 onClose: {
                     viewModel.cancelCapture()
                     onClose()

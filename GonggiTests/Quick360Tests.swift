@@ -40,6 +40,82 @@ final class Quick360SphericalMathTests: XCTestCase {
         let (yaw, _) = SphericalMath.relativeYawPitchRad(cameraTransform: rotated, originTransform: origin)
         XCTAssertGreaterThan(abs(yaw), 0.5)
     }
+
+    func testStartPoseMapsToSphereFrontCenter() {
+        let origin = matrix_identity_float4x4
+        let (yaw, pitch) = SphericalMath.relativeYawPitchRad(
+            cameraTransform: origin,
+            originTransform: origin
+        )
+        XCTAssertEqual(yaw, 0, accuracy: 0.02)
+        XCTAssertEqual(pitch, 0, accuracy: 0.02)
+        let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: pitch)
+        XCTAssertEqual(uv.x, 0.5, accuracy: 0.02)
+        XCTAssertEqual(uv.y, 0.5, accuracy: 0.02)
+    }
+
+    func testPlus90YawMapsExpectedU() {
+        // Ry(+90°): optical forward → -X, sphere yaw → -π/2, U → 0.25
+        var cam = matrix_identity_float4x4
+        let t = Float.pi / 2
+        cam.columns.0 = SIMD4(cos(t), 0, -sin(t), 0)
+        cam.columns.2 = SIMD4(sin(t), 0, cos(t), 0)
+        let (yaw, _) = SphericalMath.relativeYawPitchRad(
+            cameraTransform: cam,
+            originTransform: matrix_identity_float4x4
+        )
+        XCTAssertEqual(yaw, -Float.pi / 2, accuracy: 0.05)
+        let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: 0)
+        XCTAssertEqual(uv.x, 0.25, accuracy: 0.03)
+    }
+
+    func testMinus90YawMapsExpectedU() {
+        var cam = matrix_identity_float4x4
+        let t = -Float.pi / 2
+        cam.columns.0 = SIMD4(cos(t), 0, -sin(t), 0)
+        cam.columns.2 = SIMD4(sin(t), 0, cos(t), 0)
+        let (yaw, _) = SphericalMath.relativeYawPitchRad(
+            cameraTransform: cam,
+            originTransform: matrix_identity_float4x4
+        )
+        XCTAssertEqual(yaw, Float.pi / 2, accuracy: 0.05)
+        let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: 0)
+        XCTAssertEqual(uv.x, 0.75, accuracy: 0.03)
+    }
+
+    func testPitchUpDownMapsExpectedV() {
+        // Pitch up: rotate around X so forward gains +Y
+        var up = matrix_identity_float4x4
+        let a: Float = 0.4
+        up.columns.1 = SIMD4(0, cos(a), sin(a), 0)
+        up.columns.2 = SIMD4(0, -sin(a), cos(a), 0)
+        let (_, pitchUp) = SphericalMath.relativeYawPitchRad(
+            cameraTransform: up,
+            originTransform: matrix_identity_float4x4
+        )
+        XCTAssertGreaterThan(pitchUp, 0.2)
+        let vUp = SphericalMath.equirectangularUV(yawRad: 0, pitchRad: pitchUp).y
+        XCTAssertLessThan(vUp, 0.5)
+
+        var down = matrix_identity_float4x4
+        let b: Float = -0.4
+        down.columns.1 = SIMD4(0, cos(b), sin(b), 0)
+        down.columns.2 = SIMD4(0, -sin(b), cos(b), 0)
+        let (_, pitchDown) = SphericalMath.relativeYawPitchRad(
+            cameraTransform: down,
+            originTransform: matrix_identity_float4x4
+        )
+        XCTAssertLessThan(pitchDown, -0.2)
+        let vDown = SphericalMath.equirectangularUV(yawRad: 0, pitchRad: pitchDown).y
+        XCTAssertGreaterThan(vDown, 0.5)
+    }
+
+    func testOpticalForwardIsNegativeZ() {
+        let f = SphericalMath.forwardVector(from: matrix_identity_float4x4)
+        XCTAssertEqual(f.x, 0, accuracy: 0.001)
+        XCTAssertEqual(f.y, 0, accuracy: 0.001)
+        XCTAssertEqual(f.z, -1, accuracy: 0.001)
+    }
 }
 
 final class Quick360TargetLayoutTests: XCTestCase {
@@ -686,5 +762,77 @@ final class Quick360HybridSpaceTests: XCTestCase {
         }
     }
 }
+
+final class Quick360BrushOrientationTests: XCTestCase {
+    func testPortraitUsesImageSpaceRightOrientation() {
+        let o = Quick360BrushOrientation.cgImageOrientation(for: .portrait)
+        XCTAssertEqual(o, .right)
+    }
+
+    func testPortraitIntrinsicsSwapAxes() {
+        let sensor = CameraIntrinsics(fx: 1000, fy: 800, cx: 640, cy: 360, width: 1280, height: 720)
+        let oriented = Quick360BrushOrientation.remappedIntrinsics(sensor, interface: .portrait)
+        XCTAssertEqual(oriented.width, 720)
+        XCTAssertEqual(oriented.height, 1280)
+        XCTAssertEqual(oriented.fx, 800, accuracy: 0.1)
+        XCTAssertEqual(oriented.fy, 1000, accuracy: 0.1)
+        // Must not leave landscape dims — that caused 90° content on sphere.
+        XCTAssertLessThan(oriented.width, oriented.height)
+    }
+
+    func testPortraitCenterPixelRayIsOpticalForward() {
+        let halfX: Float = 0.6
+        let halfY: Float = 0.45
+        let ray = Quick360BrushOrientation.portraitPixelRayDirection(
+            normalizedX: 0.5, normalizedY: 0.5, halfFOVx: halfX, halfFOVy: halfY
+        )
+        XCTAssertEqual(ray.x, 0, accuracy: 0.05)
+        XCTAssertEqual(ray.y, 0, accuracy: 0.05)
+        XCTAssertEqual(ray.z, -1, accuracy: 0.05)
+    }
+
+    func testPortraitTopPixelRayPointsUp() {
+        let ray = Quick360BrushOrientation.portraitPixelRayDirection(
+            normalizedX: 0.5, normalizedY: 0.0, halfFOVx: 0.5, halfFOVy: 0.5
+        )
+        XCTAssertGreaterThan(ray.y, 0.2)
+        XCTAssertLessThan(ray.z, 0)
+    }
+
+    func testPortraitRightPixelRayPointsRight() {
+        let ray = Quick360BrushOrientation.portraitPixelRayDirection(
+            normalizedX: 1.0, normalizedY: 0.5, halfFOVx: 0.5, halfFOVy: 0.5
+        )
+        XCTAssertGreaterThan(ray.x, 0.2)
+        XCTAssertLessThan(ray.z, 0)
+    }
+
+    func testNoHardcodedYawOffsetForOrientation() {
+        // Orientation fix lives in CGImagePropertyOrientation, not sphere yaw.
+        let start = SphericalMath.relativeYawPitchRad(
+            cameraTransform: matrix_identity_float4x4,
+            originTransform: matrix_identity_float4x4
+        )
+        XCTAssertEqual(start.yaw, 0, accuracy: 0.01)
+        XCTAssertNotEqual(
+            Quick360BrushOrientation.cgImageOrientation(for: .portrait),
+            .up
+        )
+    }
+
+    func testNoHorizontalMirrorInYawSign() {
+        // Turning right (Ry +90) → negative sphere yaw → U < 0.5 (content moves left on panosphere).
+        var cam = matrix_identity_float4x4
+        let t = Float.pi / 2
+        cam.columns.0 = SIMD4(cos(t), 0, -sin(t), 0)
+        cam.columns.2 = SIMD4(sin(t), 0, cos(t), 0)
+        let (yaw, _) = SphericalMath.relativeYawPitchRad(
+            cameraTransform: cam,
+            originTransform: matrix_identity_float4x4
+        )
+        XCTAssertLessThan(yaw, 0)
+    }
+}
+
 
 

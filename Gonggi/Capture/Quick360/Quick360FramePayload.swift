@@ -33,9 +33,10 @@ struct Quick360FramePayload: Sendable {
         var brushW = 0
         var brushH = 0
         if includeBrush,
-           let rendered = Quick360FrameEncoder.renderRGBA(
+           let rendered = Quick360FrameEncoder.renderBrushRGBA(
             from: frame.capturedImage,
-            maxWidth: Quick360Config.brushThumbMaxWidth
+            maxWidth: Quick360Config.brushThumbMaxWidth,
+            interfaceOrientation: Quick360BrushOrientation.primaryInterfaceOrientation
            ) {
             brushRGBA = rendered.rgba
             brushW = rendered.width

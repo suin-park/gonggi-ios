@@ -13,6 +13,8 @@ final class Quick360ViewModel: ObservableObject {
     @Published private(set) var isStitching = false
     @Published private(set) var spherePreview: UIImage?
     @Published private(set) var floorPreview: UIImage?
+    @Published private(set) var brushDebug = Quick360BrushDebugState()
+    @Published var showBrushDebug = Quick360Config.showBrushCoordinateDebug
 
     let arSession = ARSession()
     let engine: Quick360CaptureEngine
@@ -102,6 +104,7 @@ final class Quick360ViewModel: ObservableObject {
     func ingestPayload(_ payload: Quick360FramePayload) {
         engine.ingest(payload: payload)
         uiState = engine.uiState
+        brushDebug = engine.brushDebug
     }
 
     func stop() async {

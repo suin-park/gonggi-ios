@@ -5,6 +5,7 @@ struct Quick360OverlayView: View {
     let uiState: Quick360CaptureUIState
     let spherePreview: UIImage?
     let floorPreview: UIImage?
+    var brushDebug: Quick360BrushDebugState? = nil
     let onClose: () -> Void
     let onStart: () -> Void
     let onFinish: () -> Void
@@ -13,6 +14,18 @@ struct Quick360OverlayView: View {
         ZStack {
             VStack {
                 topBar
+                if let brushDebug {
+                    HStack {
+                        Text(brushDebug.overlayText)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .padding(8)
+                            .background(.black.opacity(0.55))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        Spacer()
+                    }
+                    .padding(.horizontal, GonggiSpacing.lg)
+                }
                 Spacer()
                 if let floorPreview, uiState.floorDetected {
                     floorStrip(floorPreview)

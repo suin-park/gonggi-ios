@@ -131,25 +131,34 @@ final class Quick360HybridSceneController {
         view.scene.addAnchor(anchor)
         rootAnchor = anchor
 
-        // Inside-out sphere (scale.x negative) — neutral gray until brushed.
+        // Inside-out sphere without X-scale mirror (avoids left/right flip of brush U).
+        var mat = sphereMaterial
+        mat.faceCulling = .front
         let sphere = ModelEntity(
             mesh: .generateSphere(radius: 8),
-            materials: [sphereMaterial]
+            materials: [mat]
         )
-        sphere.scale = SIMD3<Float>(-1, 1, 1)
+        sphere.scale = SIMD3<Float>(1, 1, 1)
         sphere.name = "hybridSphere"
         anchor.addChild(sphere)
         sphereEntity = sphere
+        sphereMaterial = mat
     }
 
     func syncTextures(from engine: Quick360CaptureEngine, showDebugMarker: Bool) {
         let snap = engine.snapshotBrushCGImages()
+        // Align sphere local frame with capture origin so relative yaw=0 → texture U≈0.5 in view.
+        if let origin = snap.originTransform {
+            var t = origin
+            // Keep sphere centered on origin position (in-place capture).
+            sphereEntity?.transform.matrix = t
+        }
         if let cg = snap.sphere,
            let resource = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) {
             var mat = UnlitMaterial()
-            // Opaque clear paint — no translucent wash over captured regions.
             mat.color = .init(tint: .white, texture: .init(resource))
             mat.blending = .opaque
+            mat.faceCulling = .front
             sphereEntity?.model?.materials = [mat]
             sphereMaterial = mat
         }

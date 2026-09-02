@@ -62,6 +62,11 @@ final class Quick360FloorAtlas {
         let conf = simd_clamp(observationConfidence * Float(dynamicPenalty), 0, 1)
         guard conf > 0.12 else { return 0 }
 
+        let orientedIntrinsics = Quick360BrushOrientation.remappedIntrinsics(
+            intrinsics,
+            interface: Quick360BrushOrientation.primaryInterfaceOrientation
+        )
+
         // Dense sampling — every 1–2 thumb pixels for continuous floor paint.
         let stepX = max(1, thumbWidth / 96)
         let stepY = max(1, thumbHeight / 96)
@@ -92,7 +97,7 @@ final class Quick360FloorAtlas {
                     pixelY: y,
                     width: thumbWidth,
                     height: thumbHeight,
-                    intrinsics: intrinsics,
+                    intrinsics: orientedIntrinsics,
                     cameraTransform: cameraTransform
                 )
                 if Quick360FloorMath.isGrazingAngle(
@@ -175,10 +180,13 @@ final class Quick360FloorAtlas {
         intrinsics: CameraIntrinsics,
         cameraTransform: simd_float4x4
     ) -> simd_float3 {
+        // Thumb is portrait-normalized; map into oriented full-res intrinsic space.
         let u = (Float(pixelX) + 0.5) / Float(width) * Float(intrinsics.width)
         let v = (Float(pixelY) + 0.5) / Float(height) * Float(intrinsics.height)
         let x = (u - intrinsics.cx) / max(intrinsics.fx, 1)
         let y = (v - intrinsics.cy) / max(intrinsics.fy, 1)
+        // Optical forward = local -Z; +X right, +Y down in image → -Y in camera for OpenGL-style?
+        // ARKit camera: +X right, +Y up, -Z forward. Image v increases downward → -Y.
         let local = simd_normalize(simd_float3(x, -y, -1))
         let r = simd_float3x3(columns: (
             simd_float3(cameraTransform.columns.0.x, cameraTransform.columns.0.y, cameraTransform.columns.0.z),

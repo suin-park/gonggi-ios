@@ -31,6 +31,12 @@ enum Quick360Config {
     static let unseenNeutralGray: UInt8 = 168
     /// Subtle veil on weak confidence (does not desaturate/blur captured content).
     static let weakConfidenceVeil: Float = 0.12
+    /// Debug coordinate HUD (DEBUG builds only unless overridden).
+    #if DEBUG
+    static let showBrushCoordinateDebug = true
+    #else
+    static let showBrushCoordinateDebug = false
+    #endif
     static let sphereWeakConfidence: Float = 0.35
     static let sphereGoodConfidence: Float = 0.65
     static let sphereCoverageCompletePercent: Int = 55

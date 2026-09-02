@@ -71,10 +71,12 @@ final class Quick360LiveSphereBrush {
             cameraTransform: cameraTransform,
             originTransform: originTransform
         )
-        let fx = max(intrinsics.fx, 1)
-        let fy = max(intrinsics.fy, 1)
-        let halfFOVx = atan((Float(intrinsics.width) * 0.5) / fx)
-        let halfFOVy = atan((Float(intrinsics.height) * 0.5) / fy)
+        // FOV from portrait-normalized intrinsics (image orientation), not sensor landscape.
+        let orientedIntrinsics = Quick360BrushOrientation.remappedIntrinsics(
+            intrinsics,
+            interface: Quick360BrushOrientation.primaryInterfaceOrientation
+        )
+        let (halfFOVx, halfFOVy) = Quick360BrushOrientation.halfFOV(orientedIntrinsics: orientedIntrinsics)
         let conf = simd_clamp(observationConfidence, 0, 1)
 
         let pad: Float = 0.04
@@ -94,6 +96,7 @@ final class Quick360LiveSphereBrush {
                 while dyaw > .pi { dyaw -= 2 * .pi }
                 while dyaw < -.pi { dyaw += 2 * .pi }
                 let dpitch = dirYawPitch.pitch - pitch0
+                // Portrait brush: +nx → image right, +ny → image down.
                 let nx = dyaw / max(halfFOVx, 1e-4)
                 let ny = -dpitch / max(halfFOVy, 1e-4)
                 let edge = max(abs(nx), abs(ny))

@@ -3,11 +3,14 @@ import simd
 
 /// Pure spherical / equirectangular math (testable without ARKit).
 enum SphericalMath {
+    /// ARKit optical forward = local **-Z** (`-columns.2`). Never use +Z as forward.
     static func forwardVector(from transform: simd_float4x4) -> simd_float3 {
         let col = transform.columns.2
         return simd_normalize(simd_float3(-col.x, -col.y, -col.z))
     }
 
+    /// Absolute world yaw/pitch from optical forward (`atan2(x, z)`).
+    /// Note: identity camera looks along -Z → yaw = π. Prefer `relativeYawPitchRad` for sphere brush.
     static func yawPitchRad(from transform: simd_float4x4) -> (yaw: Float, pitch: Float) {
         let f = forwardVector(from: transform)
         let yaw = atan2(f.x, f.z)
@@ -15,17 +18,32 @@ enum SphericalMath {
         return (yaw, pitch)
     }
 
-    /// Yaw/pitch relative to origin camera orientation.
+    /// Map optical forward into **sphere brush** yaw/pitch where camera local -Z → (yaw:0, pitch:0).
+    /// Uses `atan2(x, -z)` so identity / relative-identity lands at equirect center — not the ±π seam.
+    static func sphereYawPitchFromOpticalForward(_ forward: simd_float3) -> (yaw: Float, pitch: Float) {
+        let f = simd_normalize(forward)
+        let yaw = atan2(f.x, -f.z)
+        let pitch = asin(simd_clamp(f.y, -1, 1))
+        return (yaw, pitch)
+    }
+
+    /// Relative pose for Hybrid brush / sector logic:
+    /// `relative = inverse(startCamera) * currentCamera`, then optical forward → sphere yaw/pitch.
+    /// At capture start (current == origin) → yaw ≈ 0, pitch ≈ 0 (sphere front center).
     static func relativeYawPitchRad(
         cameraTransform: simd_float4x4,
         originTransform: simd_float4x4
     ) -> (yaw: Float, pitch: Float) {
-        let originYaw = yawPitchRad(from: originTransform).yaw
-        let (yaw, pitch) = yawPitchRad(from: cameraTransform)
-        var relativeYaw = yaw - originYaw
-        while relativeYaw > .pi { relativeYaw -= 2 * .pi }
-        while relativeYaw < -.pi { relativeYaw += 2 * .pi }
-        return (relativeYaw, pitch)
+        let relative = simd_inverse(originTransform) * cameraTransform
+        return sphereYawPitchFromOpticalForward(forwardVector(from: relative))
+    }
+
+    /// Full relative camera transform (origin-local).
+    static func relativeCameraTransform(
+        cameraTransform: simd_float4x4,
+        originTransform: simd_float4x4
+    ) -> simd_float4x4 {
+        simd_inverse(originTransform) * cameraTransform
     }
 
     static func yawPitchDeg(from transform: simd_float4x4) -> (yaw: Float, pitch: Float) {
@@ -59,14 +77,13 @@ enum SphericalMath {
     }
 
     /// Equirectangular UV (0…1) from yaw/pitch in radians.
-    /// yaw: -π…π, pitch: -π/2…π/2
+    /// yaw: -π…π → U, pitch: -π/2…π/2 → V (top = +pitch).
     static func equirectangularUV(yawRad: Float, pitchRad: Float) -> SIMD2<Float> {
         let u = (yawRad + .pi) / (2 * .pi)
         let v = (.pi / 2 - pitchRad) / .pi
         return SIMD2(u, simd_clamp(v, 0, 1))
     }
 
-    /// Pixel coordinates in 2:1 equirectangular canvas.
     static func equirectangularPixel(
         yawRad: Float,
         pitchRad: Float,
@@ -82,7 +99,6 @@ enum SphericalMath {
         )
     }
 
-    /// Direction from pixel in equirectangular image.
     static func directionFromEquirectangularPixel(
         x: Int,
         y: Int,

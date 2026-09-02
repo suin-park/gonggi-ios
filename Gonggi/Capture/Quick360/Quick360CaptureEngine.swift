@@ -17,6 +17,7 @@ final class Quick360CaptureEngine {
     private(set) var translationState = Quick360TranslationGuard.State.initial
     private(set) var dynamicState = Quick360DynamicRegionDetector.initial()
     private(set) var uiState = Quick360CaptureUIState.initial
+    private(set) var brushDebug = Quick360BrushDebugState()
     private(set) var isRunning = false
     private(set) var isComplete = false
     private(set) var isCapturing = false
@@ -370,6 +371,11 @@ final class Quick360CaptureEngine {
                 observationConfidence: obsConf * (dynamicRatio > 0.35 ? 0.5 : 1),
                 now: now
             )
+            updateBrushDebugLocked(
+                cameraTransform: cameraTransform,
+                brushWidth: payload.brushWidth,
+                brushHeight: payload.brushHeight
+            )
         }
 
         // Floor brush
@@ -574,6 +580,28 @@ final class Quick360CaptureEngine {
         )
     }
 
+    private func updateBrushDebugLocked(
+        cameraTransform: simd_float4x4,
+        brushWidth: Int,
+        brushHeight: Int
+    ) {
+        let (yaw, pitch) = SphericalMath.relativeYawPitchRad(
+            cameraTransform: cameraTransform,
+            originTransform: originTransform == matrix_identity_float4x4 ? cameraTransform : originTransform
+        )
+        let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: pitch)
+        brushDebug = Quick360BrushDebugState(
+            relativeYawDeg: yaw * 180 / .pi,
+            relativePitchDeg: pitch * 180 / .pi,
+            centerU: uv.x,
+            centerV: uv.y,
+            interfaceOrientation: "portrait",
+            brushWidth: brushWidth,
+            brushHeight: brushHeight,
+            originLocked: originTransform != matrix_identity_float4x4
+        )
+    }
+
     func previewImages() -> (sphere: UIImage?, floor: UIImage?) {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -581,14 +609,23 @@ final class Quick360CaptureEngine {
         return (sphereBrush.makeUIImage(now: now), floorSurface == nil ? nil : floorAtlas.makeUIImage(now: now))
     }
 
-    func snapshotBrushCGImages() -> (sphere: CGImage?, floor: CGImage?, floorSurface: CapturedFloorSurface?) {
+    func snapshotBrushCGImages() -> (
+        sphere: CGImage?,
+        floor: CGImage?,
+        floorSurface: CapturedFloorSurface?,
+        originTransform: simd_float4x4?
+    ) {
         stateLock.lock()
         defer { stateLock.unlock() }
         let now = CACurrentMediaTime()
+        let origin: simd_float4x4? = (isCapturing && originTransform != matrix_identity_float4x4)
+            ? originTransform
+            : nil
         return (
             sphereBrush.makeCGImage(now: now),
             floorSurface == nil ? nil : floorAtlas.makeCGImage(now: now),
-            floorSurface
+            floorSurface,
+            origin
         )
     }
 
