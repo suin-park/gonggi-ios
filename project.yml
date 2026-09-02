@@ -33,6 +33,8 @@ targets:
     info:
       path: Gonggi/Resources/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleIconName: AppIcon
         UILaunchScreen: {}
         NSCameraUsageDescription: 공간을 3D로 기록하기 위해 카메라가 필요합니다.
