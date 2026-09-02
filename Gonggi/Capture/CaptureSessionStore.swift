@@ -9,6 +9,12 @@ enum CaptureSessionStore {
     static let keyframesFolderName = "keyframes"
     static let texturedSpaceUSDZFileName = "textured-space.usdz"
     static let texturedSpaceReportFileName = "textured-space-report.json"
+    static let panoramaFolderName = "panorama"
+    static let panoramaKeyframesFolderName = "keyframes"
+    static let panoramaEquirectangularFileName = "draft-equirectangular.jpg"
+    static let panoramaCoverageMaskFileName = "capture-coverage-mask.png"
+    static let panoramaMetadataFileName = "capture-metadata.json"
+    static let panoramaReportFileName = "panorama-report.json"
 
     static func rootDirectory() throws -> URL {
         let base = try FileManager.default.url(
@@ -59,6 +65,42 @@ enum CaptureSessionStore {
 
     static func texturedSpaceReportURL(sessionId: String) throws -> URL {
         try createMeshDirectory(sessionId: sessionId).appendingPathComponent(texturedSpaceReportFileName)
+    }
+
+    // MARK: - Quick 360 Panorama
+
+    static func createPanoramaDirectory(sessionId: String) throws -> URL {
+        let dir = try createSessionDirectory(sessionId: sessionId)
+            .appendingPathComponent(panoramaFolderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let keyframes = dir.appendingPathComponent(panoramaKeyframesFolderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: keyframes, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func quick360KeyframesDirectory(sessionId: String) throws -> URL {
+        try createPanoramaDirectory(sessionId: sessionId)
+            .appendingPathComponent(panoramaKeyframesFolderName, isDirectory: true)
+    }
+
+    static func quick360KeyframeURL(sessionId: String, fileName: String) throws -> URL {
+        try quick360KeyframesDirectory(sessionId: sessionId).appendingPathComponent(fileName)
+    }
+
+    static func quick360EquirectangularURL(sessionId: String) throws -> URL {
+        try createPanoramaDirectory(sessionId: sessionId).appendingPathComponent(panoramaEquirectangularFileName)
+    }
+
+    static func quick360CoverageMaskURL(sessionId: String) throws -> URL {
+        try createPanoramaDirectory(sessionId: sessionId).appendingPathComponent(panoramaCoverageMaskFileName)
+    }
+
+    static func quick360MetadataURL(sessionId: String) throws -> URL {
+        try createPanoramaDirectory(sessionId: sessionId).appendingPathComponent(panoramaMetadataFileName)
+    }
+
+    static func quick360ReportURL(sessionId: String) throws -> URL {
+        try createPanoramaDirectory(sessionId: sessionId).appendingPathComponent(panoramaReportFileName)
     }
 
     static func deleteSession(sessionId: String) {

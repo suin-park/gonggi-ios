@@ -1,16 +1,46 @@
 import SwiftUI
 
-/// Entry for Scan tab — presents full-screen capture flow.
+/// Capture mode selection — 3DGS and Quick 360 are fully independent flows.
+enum CaptureMode: String, Identifiable {
+    case spaceScan3DGS
+    case quick360
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .spaceScan3DGS: return "공간 스캔 (3DGS)"
+        case .quick360: return "Quick 360 Capture"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .spaceScan3DGS: return "이동하며 multi-view 촬영"
+        case .quick360: return "한 위치에서 360° 회전 촬영"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .spaceScan3DGS: return "viewfinder"
+        case .quick360: return "globe"
+        }
+    }
+}
+
+/// Entry for Scan tab — presents mode selection then full-screen capture flow.
 struct CaptureContainerView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var selectedMode: CaptureMode?
     @State private var isCapturing = false
 
     var body: some View {
         NavigationStack {
             ZStack {
                 GonggiAmbientBackground()
-                if isCapturing {
-                    CaptureFlowView(onClose: { isCapturing = false })
+                if isCapturing, let mode = selectedMode {
+                    captureFlow(for: mode)
                 } else {
                     startPrompt
                 }
@@ -19,40 +49,71 @@ struct CaptureContainerView: View {
         }
     }
 
+    @ViewBuilder
+    private func captureFlow(for mode: CaptureMode) -> some View {
+        switch mode {
+        case .spaceScan3DGS:
+            CaptureFlowView(onClose: { isCapturing = false; selectedMode = nil })
+        case .quick360:
+            Quick360FlowView(onClose: { isCapturing = false; selectedMode = nil })
+        }
+    }
+
     private var startPrompt: some View {
         VStack(spacing: GonggiSpacing.xl) {
             Spacer()
-            ZStack {
-                Circle()
-                    .fill(GonggiColors.accentTeal.opacity(0.12))
-                    .frame(width: 120, height: 120)
-                Image(systemName: "viewfinder")
-                    .font(.system(size: 52, weight: .ultraLight))
-                    .foregroundStyle(GonggiColors.accentTeal)
-            }
-            VStack(spacing: GonggiSpacing.sm) {
-                Text("새 공간 기록")
-                    .font(GonggiTypography.title(26))
-                    .foregroundStyle(GonggiColors.textPrimary)
-                Text("벽면, 구석, 천장을 골고루\n천천히 촬영해 주세요")
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-            }
-            PrimaryButton(title: "촬영 시작", icon: "camera.fill") {
-                GonggiHaptics.medium()
-                isCapturing = true
+            Text("촬영 모드 선택")
+                .font(GonggiTypography.title(26))
+                .foregroundStyle(GonggiColors.textPrimary)
+
+            VStack(spacing: GonggiSpacing.md) {
+                modeCard(.spaceScan3DGS)
+                modeCard(.quick360)
             }
             .padding(.horizontal, GonggiSpacing.lg)
+
             if appState.isMockMode {
-                Text("Mock 모드 · 가이드 텍스트·진행률만 표시 (LiDAR mesh 없음)")
+                Text("Mock 모드 · Quick 360은 synthetic 파노라마 생성")
                     .font(GonggiTypography.caption(11))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
             Spacer()
         }
         .padding()
+    }
+
+    private func modeCard(_ mode: CaptureMode) -> some View {
+        Button {
+            GonggiHaptics.medium()
+            selectedMode = mode
+            isCapturing = true
+        } label: {
+            HStack(spacing: GonggiSpacing.md) {
+                ZStack {
+                    Circle()
+                        .fill(GonggiColors.accentTeal.opacity(0.12))
+                        .frame(width: 52, height: 52)
+                    Image(systemName: mode.icon)
+                        .font(.system(size: 24, weight: .light))
+                        .foregroundStyle(GonggiColors.accentTeal)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(mode.title)
+                        .font(GonggiTypography.body(17))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                    Text(mode.subtitle)
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(GonggiColors.textTertiary)
+            }
+            .padding(GonggiSpacing.md)
+            .background(GonggiColors.surfaceElevated.opacity(0.7))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
     }
 }
 
