@@ -238,24 +238,25 @@ jobs:
           fi
           echo "IPA exported: $(du -h "${IPA_PATH}" | cut -f1)"
 
+      - name: Preflight validate IPA
+        env:
+          IPA_PATH: ${{ steps.paths.outputs.ipa_path }}
+        run: |
+          set -euo pipefail
+          python3 scripts/validate-ipa-preflight.py "${IPA_PATH}"
+
       - name: Upload to App Store Connect
+        id: upload
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           IPA_PATH: ${{ steps.paths.outputs.ipa_path }}
         run: |
           set -euo pipefail
-          xcrun altool --upload-app \
-            --type ios \
-            --file "${IPA_PATH}" \
-            --apiKey "${ASC_KEY_ID}" \
-            --apiIssuer "${ASC_ISSUER_ID}"
-
-          echo "Upload accepted by App Store Connect."
-          echo "Note: the build appears in TestFlight only after Apple processing completes (often 5-30 minutes)."
+          bash scripts/upload-to-asc.sh "${IPA_PATH}"
 
       - name: Summary
-        if: success()
+        if: success() && steps.upload.outcome == 'success'
         run: |
           {
             echo "## TestFlight upload succeeded"

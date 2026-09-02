@@ -84,7 +84,8 @@ GitHub Actions (macOS)
   → import Distribution cert + provisioning profile (ephemeral keychain)
   → xcodebuild archive (Release, manual signing)
   → xcodebuild -exportArchive (app-store-connect)
-  → xcrun altool --upload-app (App Store Connect API key)
+  → validate IPA (bundle id, CFBundleIconName, AppIcon sizes)
+  → scripts/upload-to-asc.sh (altool + failure detection)
   → cleanup keychain / keys / temp files
 ```
 
@@ -145,7 +146,7 @@ If a secret is missing, the workflow fails immediately with:
 
 **First suggested upload:** marketing `1.0`, build `1`.
 
-**Re-runs:** increment `build_number` each time (App Store Connect rejects duplicate build numbers for the same version).
+If a prior upload failed at **Apple validation** (e.g. missing App Icon) before ASC registered the build, you can usually **reuse** the same build number. If ASC already shows that build, increment `build_number`.
 
 The workflow does **not** auto-increment build numbers — you choose the value at run time to avoid accidental uploads.
 
@@ -157,7 +158,8 @@ The workflow does **not** auto-increment build numbers — you choose the value 
 |------|-------------------|
 | Archive | `Gonggi.xcarchive` created on runner |
 | Export | `Gonggi.ipa` created |
-| Upload | `altool` reports upload accepted |
+| Preflight | `validate-ipa-preflight.py` passes (icons + `CFBundleIconName`) |
+| Upload | `upload-to-asc.sh` confirms success; job fails on `UPLOAD FAILED` / validation errors |
 
 **Important:** upload accepted ≠ immediately installable on TestFlight.
 

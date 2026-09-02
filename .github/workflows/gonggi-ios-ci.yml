@@ -7,6 +7,7 @@ on:
       - 'Gonggi/**'
       - 'GonggiTests/**'
       - 'project.yml'
+      - 'scripts/**'
       - 'docs/**'
       - '.github/workflows/gonggi-ios-ci.yml'
   pull_request:
@@ -14,7 +15,7 @@ on:
       - 'Gonggi/**'
       - 'GonggiTests/**'
       - 'project.yml'
-      - 'docs/**'
+      - 'scripts/**'
       - '.github/workflows/gonggi-ios-ci.yml'
 
 concurrency:
@@ -50,7 +51,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          key: gonggi-ios-deriveddata-${{ hashFiles('Gonggi/**/*.swift', 'GonggiTests/**/*.swift', 'project.yml') }}
+          key: gonggi-ios-deriveddata-${{ hashFiles('Gonggi/**/*.swift', 'GonggiTests/**/*.swift', 'Gonggi/Resources/Assets.xcassets/**', 'project.yml') }}
           restore-keys: |
             gonggi-ios-deriveddata-
 
@@ -67,6 +68,9 @@ jobs:
           xcodegen generate
           test -d "${{ env.PROJECT }}"
           xcodebuild -list -project "${{ env.PROJECT }}"
+
+      - name: Validate AppIcon sources
+        run: python3 scripts/validate-app-icon-sources.py
 
       - name: Resolve iOS Simulator destination
         id: sim
@@ -106,6 +110,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
+
+      - name: Release build (iOS Simulator, unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Preflight validate Release app bundle
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "${HOME}/Library/Developer/Xcode/DerivedData" -type d -name 'Gonggi.app' -path '*/Release-iphonesimulator/*' -print -quit)"
+          if [[ -z "${APP_PATH}" ]]; then
+            echo "::error::Release Gonggi.app not found in DerivedData"
+            exit 1
+          fi
+          echo "Validating ${APP_PATH}"
+          python3 scripts/validate-app-bundle-preflight.py "${APP_PATH}"
 
       - name: Boot simulator
         run: xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
