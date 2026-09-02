@@ -29,13 +29,16 @@ jobs:
     name: Archive, sign, and upload to TestFlight
     runs-on: macos-15
     timeout-minutes: 60
-    env:
-      ARCHIVE_PATH: ${{ runner.temp }}/Gonggi.xcarchive
-      EXPORT_PATH: ${{ runner.temp }}/export
-      IPA_PATH: ${{ runner.temp }}/export/Gonggi.ipa
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set artifact paths
+        id: paths
+        run: |
+          echo "archive_path=${RUNNER_TEMP}/Gonggi.xcarchive" >> "$GITHUB_OUTPUT"
+          echo "export_path=${RUNNER_TEMP}/export" >> "$GITHUB_OUTPUT"
+          echo "ipa_path=${RUNNER_TEMP}/export/Gonggi.ipa" >> "$GITHUB_OUTPUT"
 
       - name: Validate required secrets
         env:
@@ -101,11 +104,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          KEYCHAIN_PATH="${{ runner.temp }}/app-signing.keychain-db"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/app-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
-          CERT_PATH="${{ runner.temp }}/distribution.p12"
-          PROFILE_PATH="${{ runner.temp }}/Gonggi.mobileprovision"
-          PROFILE_PLIST="${{ runner.temp }}/profile.plist"
+          CERT_PATH="${RUNNER_TEMP}/distribution.p12"
+          PROFILE_PATH="${RUNNER_TEMP}/Gonggi.mobileprovision"
+          PROFILE_PLIST="${RUNNER_TEMP}/profile.plist"
 
           echo "keychain_path=${KEYCHAIN_PATH}" >> "$GITHUB_OUTPUT"
           echo "keychain_password=${KEYCHAIN_PASSWORD}" >> "$GITHUB_OUTPUT"
@@ -114,8 +117,8 @@ jobs:
           security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
           security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
 
-          echo "${APPLE_DISTRIBUTION_CERT_P12}" | tr -d '[:space:]' > "${{ runner.temp }}/distribution.b64"
-          base64 -D -i "${{ runner.temp }}/distribution.b64" -o "${CERT_PATH}"
+          echo "${APPLE_DISTRIBUTION_CERT_P12}" | tr -d '[:space:]' > "${RUNNER_TEMP}/distribution.b64"
+          base64 -D -i "${RUNNER_TEMP}/distribution.b64" -o "${CERT_PATH}"
           security import "${CERT_PATH}" \
             -k "${KEYCHAIN_PATH}" \
             -P "${APPLE_DISTRIBUTION_CERT_PASSWORD}" \
@@ -130,8 +133,8 @@ jobs:
 
           security list-keychains -d user -s "${KEYCHAIN_PATH}" $(security list-keychains -d user | tr -d '"')
 
-          echo "${APPLE_PROVISIONING_PROFILE}" | tr -d '[:space:]' > "${{ runner.temp }}/profile.b64"
-          base64 -D -i "${{ runner.temp }}/profile.b64" -o "${PROFILE_PATH}"
+          echo "${APPLE_PROVISIONING_PROFILE}" | tr -d '[:space:]' > "${RUNNER_TEMP}/profile.b64"
+          base64 -D -i "${RUNNER_TEMP}/profile.b64" -o "${PROFILE_PATH}"
           security cms -D -i "${PROFILE_PATH}" > "${PROFILE_PLIST}"
 
           PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "${PROFILE_PLIST}")"
@@ -182,6 +185,7 @@ jobs:
           PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
           BUILD_NUMBER: ${{ inputs.build_number }}
           MARKETING_VERSION: ${{ inputs.marketing_version }}
+          ARCHIVE_PATH: ${{ steps.paths.outputs.archive_path }}
         run: |
           set -euo pipefail
           echo "Building archive - marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}"
@@ -190,7 +194,7 @@ jobs:
             -scheme "${{ env.SCHEME }}" \
             -configuration Release \
             -destination "generic/platform=iOS" \
-            -archivePath "${{ env.ARCHIVE_PATH }}" \
+            -archivePath "${ARCHIVE_PATH}" \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
             PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}" \
@@ -198,8 +202,8 @@ jobs:
             MARKETING_VERSION="${MARKETING_VERSION}" \
             CURRENT_PROJECT_VERSION="${BUILD_NUMBER}"
 
-          if [[ ! -d "${{ env.ARCHIVE_PATH }}" ]]; then
-            echo "::error::Archive not found at ${{ env.ARCHIVE_PATH }}"
+          if [[ ! -d "${ARCHIVE_PATH}" ]]; then
+            echo "::error::Archive not found at ${ARCHIVE_PATH}"
             exit 1
           fi
           echo "Archive created successfully."
@@ -208,9 +212,12 @@ jobs:
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
+          ARCHIVE_PATH: ${{ steps.paths.outputs.archive_path }}
+          EXPORT_PATH: ${{ steps.paths.outputs.export_path }}
+          IPA_PATH: ${{ steps.paths.outputs.ipa_path }}
         run: |
           set -euo pipefail
-          EXPORT_OPTS="${{ runner.temp }}/ExportOptions.plist"
+          EXPORT_OPTS="${RUNNER_TEMP}/ExportOptions.plist"
           /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "${EXPORT_OPTS}"
           /usr/libexec/PlistBuddy -c "Add :teamID string ${APPLE_TEAM_ID}" "${EXPORT_OPTS}"
           /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "${EXPORT_OPTS}"
@@ -218,28 +225,29 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:${{ env.BUNDLE_ID }} string ${PROFILE_NAME}" "${EXPORT_OPTS}"
           /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "${EXPORT_OPTS}"
 
-          mkdir -p "${{ env.EXPORT_PATH }}"
+          mkdir -p "${EXPORT_PATH}"
           xcodebuild -exportArchive \
-            -archivePath "${{ env.ARCHIVE_PATH }}" \
-            -exportPath "${{ env.EXPORT_PATH }}" \
+            -archivePath "${ARCHIVE_PATH}" \
+            -exportPath "${EXPORT_PATH}" \
             -exportOptionsPlist "${EXPORT_OPTS}"
 
-          if [[ ! -f "${{ env.IPA_PATH }}" ]]; then
-            echo "::error::IPA not found at ${{ env.IPA_PATH }}"
-            ls -la "${{ env.EXPORT_PATH }}" || true
+          if [[ ! -f "${IPA_PATH}" ]]; then
+            echo "::error::IPA not found at ${IPA_PATH}"
+            ls -la "${EXPORT_PATH}" || true
             exit 1
           fi
-          echo "IPA exported: $(du -h "${{ env.IPA_PATH }}" | cut -f1)"
+          echo "IPA exported: $(du -h "${IPA_PATH}" | cut -f1)"
 
       - name: Upload to App Store Connect
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          IPA_PATH: ${{ steps.paths.outputs.ipa_path }}
         run: |
           set -euo pipefail
           xcrun altool --upload-app \
             --type ios \
-            --file "${{ env.IPA_PATH }}" \
+            --file "${IPA_PATH}" \
             --apiKey "${ASC_KEY_ID}" \
             --apiIssuer "${ASC_ISSUER_ID}"
 
@@ -265,17 +273,19 @@ jobs:
         env:
           KEYCHAIN_PATH: ${{ steps.signing.outputs.keychain_path }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ARCHIVE_PATH: ${{ steps.paths.outputs.archive_path }}
+          EXPORT_PATH: ${{ steps.paths.outputs.export_path }}
         run: |
           set +e
           if [[ -n "${KEYCHAIN_PATH:-}" && -f "${KEYCHAIN_PATH}" ]]; then
             security delete-keychain "${KEYCHAIN_PATH}" 2>/dev/null || true
           fi
-          rm -f "${{ runner.temp }}/distribution.p12" "${{ runner.temp }}/distribution.b64" "${{ runner.temp }}/profile.b64" 2>/dev/null || true
-          rm -f "${{ runner.temp }}/Gonggi.mobileprovision" 2>/dev/null || true
-          rm -f "${{ runner.temp }}/profile.plist" 2>/dev/null || true
-          rm -f "${{ runner.temp }}/ExportOptions.plist" 2>/dev/null || true
+          rm -f "${RUNNER_TEMP}/distribution.p12" "${RUNNER_TEMP}/distribution.b64" "${RUNNER_TEMP}/profile.b64" 2>/dev/null || true
+          rm -f "${RUNNER_TEMP}/Gonggi.mobileprovision" 2>/dev/null || true
+          rm -f "${RUNNER_TEMP}/profile.plist" 2>/dev/null || true
+          rm -f "${RUNNER_TEMP}/ExportOptions.plist" 2>/dev/null || true
           if [[ -n "${ASC_KEY_ID:-}" ]]; then
             rm -f "${HOME}/.private_keys/AuthKey_${ASC_KEY_ID}.p8" 2>/dev/null || true
           fi
-          rm -rf "${{ env.EXPORT_PATH }}" 2>/dev/null || true
-          rm -rf "${{ env.ARCHIVE_PATH }}" 2>/dev/null || true
+          rm -rf "${EXPORT_PATH}" 2>/dev/null || true
+          rm -rf "${ARCHIVE_PATH}" 2>/dev/null || true
