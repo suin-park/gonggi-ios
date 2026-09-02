@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       build_number:
-        description: 'CFBundleVersion (CURRENT_PROJECT_VERSION) — must be unique per upload'
+        description: 'CFBundleVersion (CURRENT_PROJECT_VERSION) - must be unique per upload'
         required: true
         default: '1'
         type: string
@@ -183,7 +183,7 @@ jobs:
           MARKETING_VERSION: ${{ inputs.marketing_version }}
         run: |
           set -euo pipefail
-          echo "Building archive — marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}"
+          echo "Building archive - marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}"
           xcodebuild archive \
             -project "${{ env.PROJECT }}" \
             -scheme "${{ env.SCHEME }}" \
@@ -210,27 +210,12 @@ jobs:
         run: |
           set -euo pipefail
           EXPORT_OPTS="${{ runner.temp }}/ExportOptions.plist"
-          cat > "${EXPORT_OPTS}" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>app-store-connect</string>
-  <key>teamID</key>
-  <string>${APPLE_TEAM_ID}</string>
-  <key>signingStyle</key>
-  <string>manual</string>
-  <key>provisioningProfiles</key>
-  <dict>
-    <key>${{ env.BUNDLE_ID }}</key>
-    <string>${PROFILE_NAME}</string>
-  </dict>
-  <key>uploadSymbols</key>
-  <true/>
-</dict>
-</plist>
-PLIST
+          /usr/libexec/PlistBuddy -c "Add :method string app-store-connect" "${EXPORT_OPTS}"
+          /usr/libexec/PlistBuddy -c "Add :teamID string ${APPLE_TEAM_ID}" "${EXPORT_OPTS}"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "${EXPORT_OPTS}"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "${EXPORT_OPTS}"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:${{ env.BUNDLE_ID }} string ${PROFILE_NAME}" "${EXPORT_OPTS}"
+          /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool true" "${EXPORT_OPTS}"
 
           mkdir -p "${{ env.EXPORT_PATH }}"
           xcodebuild -exportArchive \
@@ -258,7 +243,7 @@ PLIST
             --apiIssuer "${ASC_ISSUER_ID}"
 
           echo "Upload accepted by App Store Connect."
-          echo "Note: the build appears in TestFlight only after Apple processing completes (often 5–30 minutes)."
+          echo "Note: the build appears in TestFlight only after Apple processing completes (often 5-30 minutes)."
 
       - name: Summary
         if: success()
