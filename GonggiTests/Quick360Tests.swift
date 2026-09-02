@@ -344,10 +344,15 @@ final class Quick360FrameLifetimeTests: XCTestCase {
         )
         XCTAssertEqual(payload.analysisGrayscale.count, 64 * 36)
         XCTAssertNotNil(payload.jpegData)
-        // Sendable owned copy — safe to hop to main without ARFrame.
-        DispatchQueue.main.sync {
-            XCTAssertEqual(payload.timestamp, 1.0)
+        // Value-type owned copy — safe across queues without retaining ARFrame/CVPixelBuffer.
+        var hoppedTimestamp: Double = 0
+        let sem = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            hoppedTimestamp = payload.timestamp
+            sem.signal()
         }
+        XCTAssertEqual(sem.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(hoppedTimestamp, 1.0)
     }
 
     func testEngineIngestsOwnedPayloadOnMainWithoutARFrame() {
