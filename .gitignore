@@ -20,3 +20,17 @@ xcshareddata/
 
 # CI artifacts
 TestResults.xcresult/
+screenshots/
+export/
+
+# Apple signing — never commit
+*.p8
+*.p12
+*.mobileprovision
+*.cer
+AuthKey_*.p8
+*.ipa
+*.xcarchive
+
+# Local signing scratch (if any)
+.private_keys/

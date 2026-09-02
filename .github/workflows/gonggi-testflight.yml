@@ -1,0 +1,295 @@
+name: Gonggi TestFlight
+
+# Manual only — never run on push (macOS cost + accidental uploads).
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: 'CFBundleVersion (CURRENT_PROJECT_VERSION) — must be unique per upload'
+        required: true
+        default: '1'
+        type: string
+      marketing_version:
+        description: 'CFBundleShortVersionString (MARKETING_VERSION override)'
+        required: false
+        default: '1.0'
+        type: string
+
+concurrency:
+  group: gonggi-testflight
+  cancel-in-progress: false
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+  BUNDLE_ID: com.whik.gonggi
+  ARCHIVE_PATH: ${{ runner.temp }}/Gonggi.xcarchive
+  EXPORT_PATH: ${{ runner.temp }}/export
+  IPA_PATH: ${{ runner.temp }}/export/Gonggi.ipa
+
+jobs:
+  testflight:
+    name: Archive, sign, and upload to TestFlight
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          APPLE_DISTRIBUTION_CERT_P12: ${{ secrets.APPLE_DISTRIBUTION_CERT_P12 }}
+          APPLE_DISTRIBUTION_CERT_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERT_PASSWORD }}
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in APPLE_TEAM_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT \
+                      APPLE_DISTRIBUTION_CERT_P12 APPLE_DISTRIBUTION_CERT_PASSWORD \
+                      APPLE_PROVISIONING_PROFILE; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Missing required GitHub secrets: ${missing[*]}"
+            echo "Configure repository secrets before running this workflow."
+            echo "See docs/CI_AND_TESTFLIGHT.md"
+            exit 1
+          fi
+          echo "All required secrets are present."
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          if [[ -z "${XCODE_APP}" ]]; then
+            echo "::error::No Xcode.app found on runner"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          echo "Using ${XCODE_APP}"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos || true
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+          xcodebuild -list -project "${{ env.PROJECT }}"
+
+      - name: Import signing certificate and provisioning profile
+        id: signing
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_DISTRIBUTION_CERT_P12: ${{ secrets.APPLE_DISTRIBUTION_CERT_P12 }}
+          APPLE_DISTRIBUTION_CERT_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERT_PASSWORD }}
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+
+          KEYCHAIN_PATH="${{ runner.temp }}/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          CERT_PATH="${{ runner.temp }}/distribution.p12"
+          PROFILE_PATH="${{ runner.temp }}/Gonggi.mobileprovision"
+          PROFILE_PLIST="${{ runner.temp }}/profile.plist"
+
+          echo "keychain_path=${KEYCHAIN_PATH}" >> "$GITHUB_OUTPUT"
+          echo "keychain_password=${KEYCHAIN_PASSWORD}" >> "$GITHUB_OUTPUT"
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+
+          echo "${APPLE_DISTRIBUTION_CERT_P12}" | tr -d '[:space:]' > "${{ runner.temp }}/distribution.b64"
+          base64 -D -i "${{ runner.temp }}/distribution.b64" -o "${CERT_PATH}"
+          security import "${CERT_PATH}" \
+            -k "${KEYCHAIN_PATH}" \
+            -P "${APPLE_DISTRIBUTION_CERT_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -T /usr/bin/xcodebuild
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" \
+            "${KEYCHAIN_PATH}"
+
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" $(security list-keychains -d user | tr -d '"')
+
+          echo "${APPLE_PROVISIONING_PROFILE}" | tr -d '[:space:]' > "${{ runner.temp }}/profile.b64"
+          base64 -D -i "${{ runner.temp }}/profile.b64" -o "${PROFILE_PATH}"
+          security cms -D -i "${PROFILE_PATH}" > "${PROFILE_PLIST}"
+
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "${PROFILE_PLIST}")"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "${PROFILE_PLIST}")"
+          PROFILE_TEAM="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "${PROFILE_PLIST}")"
+          PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "${PROFILE_PLIST}" 2>/dev/null || true)"
+
+          if [[ "${PROFILE_TEAM}" != "${APPLE_TEAM_ID}" ]]; then
+            echo "::error::Provisioning profile Team ID (${PROFILE_TEAM}) does not match APPLE_TEAM_ID"
+            exit 1
+          fi
+
+          if [[ -n "${PROFILE_APP_ID}" && "${PROFILE_APP_ID}" != *"${{ env.BUNDLE_ID }}" ]]; then
+            echo "::error::Provisioning profile app id (${PROFILE_APP_ID}) does not match bundle ${{ env.BUNDLE_ID }}"
+            exit 1
+          fi
+
+          mkdir -p "${HOME}/Library/MobileDevice/Provisioning Profiles"
+          cp "${PROFILE_PATH}" "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
+
+          echo "profile_name=${PROFILE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "profile_uuid=${PROFILE_UUID}" >> "$GITHUB_OUTPUT"
+
+          echo "Imported distribution certificate."
+          echo "Provisioning profile: ${PROFILE_NAME} (${PROFILE_UUID})"
+          security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | grep "Apple Distribution" || {
+            echo "::error::Apple Distribution identity not found in keychain"
+            exit 1
+          }
+
+      - name: Prepare App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.private_keys"
+          umask 077
+          KEY_FILE="${HOME}/.private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "${ASC_KEY_CONTENT}" > "${KEY_FILE}"
+          chmod 600 "${KEY_FILE}"
+          test -s "${KEY_FILE}"
+          echo "App Store Connect API key file prepared (content not logged)."
+
+      - name: Archive (Release, manual signing)
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+        run: |
+          set -euo pipefail
+          echo "Building archive — marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}"
+          xcodebuild archive \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "${{ env.ARCHIVE_PATH }}" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" \
+            PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            MARKETING_VERSION="${MARKETING_VERSION}" \
+            CURRENT_PROJECT_VERSION="${BUILD_NUMBER}"
+
+          if [[ ! -d "${{ env.ARCHIVE_PATH }}" ]]; then
+            echo "::error::Archive not found at ${{ env.ARCHIVE_PATH }}"
+            exit 1
+          fi
+          echo "Archive created successfully."
+
+      - name: Export IPA
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
+        run: |
+          set -euo pipefail
+          EXPORT_OPTS="${{ runner.temp }}/ExportOptions.plist"
+          cat > "${EXPORT_OPTS}" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>teamID</key>
+  <string>${APPLE_TEAM_ID}</string>
+  <key>signingStyle</key>
+  <string>manual</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>${{ env.BUNDLE_ID }}</key>
+    <string>${PROFILE_NAME}</string>
+  </dict>
+  <key>uploadSymbols</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
+          mkdir -p "${{ env.EXPORT_PATH }}"
+          xcodebuild -exportArchive \
+            -archivePath "${{ env.ARCHIVE_PATH }}" \
+            -exportPath "${{ env.EXPORT_PATH }}" \
+            -exportOptionsPlist "${EXPORT_OPTS}"
+
+          if [[ ! -f "${{ env.IPA_PATH }}" ]]; then
+            echo "::error::IPA not found at ${{ env.IPA_PATH }}"
+            ls -la "${{ env.EXPORT_PATH }}" || true
+            exit 1
+          fi
+          echo "IPA exported: $(du -h "${{ env.IPA_PATH }}" | cut -f1)"
+
+      - name: Upload to App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcrun altool --upload-app \
+            --type ios \
+            --file "${{ env.IPA_PATH }}" \
+            --apiKey "${ASC_KEY_ID}" \
+            --apiIssuer "${ASC_ISSUER_ID}"
+
+          echo "Upload accepted by App Store Connect."
+          echo "Note: the build appears in TestFlight only after Apple processing completes (often 5–30 minutes)."
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## TestFlight upload succeeded"
+            echo ""
+            echo "- **Bundle ID:** ${{ env.BUNDLE_ID }}"
+            echo "- **Marketing version:** ${{ inputs.marketing_version }}"
+            echo "- **Build number:** ${{ inputs.build_number }}"
+            echo "- **Profile:** ${{ steps.signing.outputs.profile_name }}"
+            echo ""
+            echo "Check [App Store Connect](https://appstoreconnect.apple.com/) → TestFlight for processing status."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup signing artifacts
+        if: always()
+        env:
+          KEYCHAIN_PATH: ${{ steps.signing.outputs.keychain_path }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          set +e
+          if [[ -n "${KEYCHAIN_PATH:-}" && -f "${KEYCHAIN_PATH}" ]]; then
+            security delete-keychain "${KEYCHAIN_PATH}" 2>/dev/null || true
+          fi
+          rm -f "${{ runner.temp }}/distribution.p12" "${{ runner.temp }}/distribution.b64" "${{ runner.temp }}/profile.b64" 2>/dev/null || true
+          rm -f "${{ runner.temp }}/Gonggi.mobileprovision" 2>/dev/null || true
+          rm -f "${{ runner.temp }}/profile.plist" 2>/dev/null || true
+          rm -f "${{ runner.temp }}/ExportOptions.plist" 2>/dev/null || true
+          if [[ -n "${ASC_KEY_ID:-}" ]]; then
+            rm -f "${HOME}/.private_keys/AuthKey_${ASC_KEY_ID}.p8" 2>/dev/null || true
+          fi
+          rm -rf "${{ env.EXPORT_PATH }}" 2>/dev/null || true
+          rm -rf "${{ env.ARCHIVE_PATH }}" 2>/dev/null || true

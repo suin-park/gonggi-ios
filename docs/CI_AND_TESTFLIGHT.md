@@ -59,54 +59,144 @@ Simulator UDID is **not** hardcoded to “iPhone 16”; CI picks an available iP
 
 ---
 
-## TestFlight pipeline (design only — not enabled yet)
+## UI Screenshots (manual)
 
-```
-Windows/Cursor
-  → git push
-  → GitHub Actions macOS
-      → xcodegen
-      → xcodebuild archive (Release)
-      → export IPA
-      → altool / App Store Connect API upload
-  → App Store Connect processing
-  → TestFlight internal/external testing
-  → Install on iPhone
-```
+**Workflow:** [`.github/workflows/gonggi-ios-screenshots.yml`](../.github/workflows/gonggi-ios-screenshots.yml)
 
-**Prerequisites (after Apple Developer Program enrollment — $99/year):**
+**Trigger:** `workflow_dispatch` only (not on push).
 
-| Item | Purpose | Where to store |
-|------|---------|----------------|
-| Apple Developer Program | Code signing + TestFlight | developer.apple.com |
-| Distribution certificate (Apple Distribution) | Sign release IPA | GitHub Secret: base64 `.p12` + password |
-| App ID `com.whik.gonggi` | Bundle identifier | Apple Developer → Identifiers |
-| Provisioning profile (App Store) | Match bundle + cert | GitHub Secret: base64 `.mobileprovision` |
-| App Store Connect app record | TestFlight builds | appstoreconnect.apple.com |
-| App Store Connect API key (.p8) | CI upload without Mac UI | Secrets: `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT` |
-| Team ID | Signing | Secret: `APPLE_TEAM_ID` |
-| Keychain / import script | Install cert on runner | workflow step (ephemeral) |
-
-**Suggested future workflow file:** `.github/workflows/gonggi-ios-testflight.yml` (manual `workflow_dispatch` only to limit macOS minutes).
-
-**Do not run until:**
-
-1. Gonggi iOS CI is GREEN on `main`
-2. Apple Developer Program active
-3. Secrets configured and documented in team vault
-4. At least one successful manual archive on CI
+**Artifact:** `gonggi-ui-v1-screenshots` (12 PNG + contact-sheet).
 
 ---
 
-## Estimated CI usage (unsigned Simulator gate)
+## TestFlight pipeline
 
-| Event | Approx. duration | Notes |
-|-------|------------------|-------|
-| Push to this repo | ~8–15 min | XcodeGen + build + 6 test classes |
-| Push elsewhere | 0 min | workflow skipped (path filter) |
-| Concurrent pushes | 1 run | cancel-in-progress |
+**Workflow:** [`.github/workflows/gonggi-testflight.yml`](../.github/workflows/gonggi-testflight.yml)
 
-macOS runners consume more minutes than Linux; path filters and concurrency keep cost bounded.
+**Trigger:** `workflow_dispatch` only — never runs on push.
+
+```
+GitHub Actions (macOS)
+  → validate secrets
+  → xcodegen
+  → import Distribution cert + provisioning profile (ephemeral keychain)
+  → xcodebuild archive (Release, manual signing)
+  → xcodebuild -exportArchive (app-store-connect)
+  → xcrun altool --upload-app (App Store Connect API key)
+  → cleanup keychain / keys / temp files
+```
+
+**Bundle ID:** `com.whik.gonggi`  
+**App Store Connect app:** 공기 (Gonggi)
+
+---
+
+## Required GitHub Secrets
+
+Configure at: **Repository → Settings → Secrets and variables → Actions → New repository secret**
+
+Do **not** commit these values to git. Do **not** paste them into issues or chat.
+
+| Secret name | Meaning | Format |
+|-------------|---------|--------|
+| `APPLE_TEAM_ID` | Apple Developer Team ID (10 characters) | Plain text |
+| `ASC_KEY_ID` | App Store Connect API Key ID | Plain text |
+| `ASC_ISSUER_ID` | App Store Connect API Issuer ID (UUID) | Plain text |
+| `ASC_KEY_CONTENT` | App Store Connect API private key (`.p8` file contents) | Plain text — include `-----BEGIN PRIVATE KEY-----` / `END` lines |
+| `APPLE_DISTRIBUTION_CERT_P12` | Apple Distribution certificate | **Base64** of the `.p12` file |
+| `APPLE_DISTRIBUTION_CERT_PASSWORD` | Password used when exporting the `.p12` | Plain text |
+| `APPLE_PROVISIONING_PROFILE` | App Store distribution profile for `com.whik.gonggi` | **Base64** of the `.mobileprovision` file |
+
+The workflow decodes the provisioning profile at runtime and reads **Name** and **UUID** — no profile UUID is hardcoded in the repo.
+
+### Encoding `.p12` and `.mobileprovision` to base64 (on your Mac)
+
+```bash
+base64 -i YourCert.p12 | pbcopy          # paste into APPLE_DISTRIBUTION_CERT_P12
+base64 -i Gonggi_AppStore.mobileprovision | pbcopy   # paste into APPLE_PROVISIONING_PROFILE
+```
+
+---
+
+## How to run TestFlight workflow
+
+1. Ensure all **Required GitHub Secrets** above are configured.
+2. Open GitHub → **Actions** → **Gonggi TestFlight**.
+3. Click **Run workflow**.
+4. Enter:
+   - **build_number** — `CFBundleVersion` (must be **unique** for each upload; e.g. `1`, `2`, `3`).
+   - **marketing_version** — optional; default `1.0` (maps to `MARKETING_VERSION` / `CFBundleShortVersionString`).
+5. Click **Run workflow**.
+6. Wait for the job to finish (typically 15–30 minutes).
+
+If a secret is missing, the workflow fails immediately with:  
+`Missing required GitHub secrets: <name>`
+
+---
+
+## Version / build strategy
+
+| Setting | `project.yml` default | TestFlight workflow |
+|---------|----------------------|---------------------|
+| Marketing version | `0.1.0` (`MARKETING_VERSION`) | Overridden by `marketing_version` input (default `1.0`) |
+| Build number | `1` (`CURRENT_PROJECT_VERSION`) | Overridden by `build_number` input |
+
+**First suggested upload:** marketing `1.0`, build `1`.
+
+**Re-runs:** increment `build_number` each time (App Store Connect rejects duplicate build numbers for the same version).
+
+The workflow does **not** auto-increment build numbers — you choose the value at run time to avoid accidental uploads.
+
+---
+
+## What success means
+
+| Step | Success indicator |
+|------|-------------------|
+| Archive | `Gonggi.xcarchive` created on runner |
+| Export | `Gonggi.ipa` created |
+| Upload | `altool` reports upload accepted |
+
+**Important:** upload accepted ≠ immediately installable on TestFlight.
+
+After upload, Apple processes the build (often 5–30 minutes, sometimes longer). When ready:
+
+1. [App Store Connect](https://appstoreconnect.apple.com/) → **My Apps** → **공기** → **TestFlight**
+2. Build appears under **iOS Builds**
+3. Add internal testers or install via TestFlight app on iPhone
+
+---
+
+## Signing strategy (workflow)
+
+- **Manual signing** (`CODE_SIGN_STYLE=Manual`)
+- **Identity:** `Apple Distribution`
+- **Team:** `APPLE_TEAM_ID` secret
+- **Profile:** decoded from `APPLE_PROVISIONING_PROFILE` — name resolved at runtime
+- **Ephemeral keychain** on the runner — deleted in cleanup step
+
+Simulator CI remains **unsigned** and is unchanged.
+
+---
+
+## Security
+
+- No secrets in repository or workflow logs
+- `set -x` not used on signing/upload steps
+- Certificate, profile, and API key contents are never echoed
+- Temporary keychain and `.p8` file removed in `always()` cleanup
+
+---
+
+## Estimated CI usage
+
+| Workflow | Trigger | Approx. duration |
+|----------|---------|------------------|
+| Gonggi iOS CI | push/PR (path filter) | ~8–15 min |
+| Gonggi iOS Screenshots | manual | ~7 min |
+| Gonggi TestFlight | manual | ~15–30 min |
+
+macOS runners cost more than Linux; TestFlight and Screenshots are **manual only** to control spend.
 
 ---
 
@@ -115,7 +205,8 @@ macOS runners consume more minutes than Linux; path filters and concurrency keep
 1. Edit code on Windows in Cursor
 2. Push to GitHub
 3. Wait for **Gonggi iOS CI** green check
-4. (Later) trigger TestFlight workflow → install on iPhone
-5. Run device protocol in `DEVICE_CAPTURE_TEST_V1.md`
+4. (Optional) run **Gonggi iOS Screenshots** to review UI
+5. Configure secrets → run **Gonggi TestFlight** → install on iPhone
+6. Run device protocol in `DEVICE_CAPTURE_TEST_V1.md`
 
 No local Xcode required for day-to-day compile gate.
