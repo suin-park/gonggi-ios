@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// Monitors camera translation from capture origin for parallax guard.
+/// Monitors camera translation from capture origin. Soft guidance only — never blocks capture.
 enum Quick360TranslationGuard {
     struct State: Equatable {
         var level: Quick360TranslationLevel
@@ -9,6 +9,7 @@ enum Quick360TranslationGuard {
         var maxDistanceM: Float
         var averageDistanceM: Float
         var sampleCount: Int
+        /// Kept for API compatibility; always false in V4 (no capture block).
         var shouldHoldKeyframe: Bool
 
         static let initial = State(
@@ -43,7 +44,7 @@ enum Quick360TranslationGuard {
             maxDistanceM: newMax,
             averageDistanceM: newAvg,
             sampleCount: newCount,
-            shouldHoldKeyframe: lvl == .excessive
+            shouldHoldKeyframe: false
         )
     }
 
@@ -53,10 +54,8 @@ enum Quick360TranslationGuard {
     ) -> Quick360GuidanceKind {
         switch translationLevel {
         case .excessive:
-            return .returnToOrigin
-        case .warning:
-            return .holdStill
-        case .safe:
+            return .stayInPlace
+        case .warning, .safe:
             return rotationHint
         }
     }

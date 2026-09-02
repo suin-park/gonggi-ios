@@ -1,13 +1,14 @@
 import Foundation
 import simd
 
-/// Orchestrates panorama reconstruction and file export after Quick 360 capture.
+/// Orchestrates panorama reconstruction and file export after Hybrid Space Capture.
 enum Quick360Reconstruction {
     struct Result: Equatable {
         let panoramaURL: URL
         let coverageMaskURL: URL
         let metadataURL: URL
         let reportURL: URL
+        let floorTextureURL: URL?
         let report: Quick360PanoramaReport
     }
 
@@ -68,6 +69,30 @@ enum Quick360Reconstruction {
             to: maskURL
         )
 
+        var floorTextureURL: URL?
+        var floorMeta: CapturedFloorSurfaceMetadata?
+        if let floorSnap = engine.snapshotFloorForExport() {
+            _ = try CaptureSessionStore.createFloorDirectory(sessionId: sessionId)
+            let texURL = try CaptureSessionStore.quick360FloorTextureURL(sessionId: sessionId)
+            let confURL = try CaptureSessionStore.quick360FloorConfidenceMaskURL(sessionId: sessionId)
+            let metaURL = try CaptureSessionStore.quick360FloorMetadataURL(sessionId: sessionId)
+            try PanoramaExporter.writeJPEG(
+                rgba: floorSnap.rgba,
+                width: floorSnap.surface.textureWidth,
+                height: floorSnap.surface.textureHeight,
+                to: texURL
+            )
+            try PanoramaExporter.writePNG(
+                rgba: floorSnap.confidenceRGBA,
+                width: floorSnap.surface.textureWidth,
+                height: floorSnap.surface.textureHeight,
+                to: confURL
+            )
+            floorMeta = CapturedFloorSurfaceMetadata(surface: floorSnap.surface)
+            try PanoramaExporter.writeJSON(floorMeta!, to: metaURL)
+            floorTextureURL = texURL
+        }
+
         let iso = ISO8601DateFormatter()
         let metadata = Quick360CaptureMetadata(
             sessionId: sessionId,
@@ -80,10 +105,16 @@ enum Quick360Reconstruction {
             targetCount: engine.targets.count,
             selectedKeyframeCount: engine.selectedKeyframes.count,
             cameraNotes: Quick360CameraNotes.notes(for: mockMode),
-            keyframes: engine.selectedKeyframes
+            keyframes: engine.selectedKeyframes,
+            lightingSamples: engine.lightingSamples,
+            floor: floorMeta
         )
         try PanoramaExporter.writeJSON(metadata, to: metadataURL)
 
+        let duration = endedAt.timeIntervalSince(engine.startedAt)
+        let sphereCov = Double(engine.sphereBrush.coveragePercent())
+        let sphereGood = Double(engine.sphereBrush.goodCoveragePercent())
+        let floor = engine.floorSurface
         let report = Quick360PanoramaReport(
             candidateFrameCount: engine.candidateFrameCount,
             selectedKeyframeCount: engine.selectedKeyframes.count,
@@ -99,7 +130,17 @@ enum Quick360Reconstruction {
             outputByteSize: PanoramaExporter.fileByteSize(at: panoramaURL),
             alignmentRefinementApplied: stitchOutput.alignmentApplied,
             parallaxWarpLevel: PanoramaParallaxWarp.level,
-            createdAt: iso.string(from: endedAt)
+            createdAt: iso.string(from: endedAt),
+            sphereCoveragePercent: sphereCov,
+            sphereGoodCoveragePercent: sphereGood,
+            floorDetected: floor != nil,
+            floorTrackingConfidence: floor?.trackingConfidence ?? 0,
+            floorCoveragePercent: Double(floor?.coveragePercent ?? 0),
+            floorGoodCoveragePercent: Double(floor?.goodCoveragePercent ?? 0),
+            floorExtentM: floor.map { [$0.extent.x, $0.extent.y, $0.extent.z] } ?? [],
+            floorTextureUpdateCount: floor?.textureUpdateCount ?? 0,
+            sphereBrushUpdateCount: engine.sphereBrush.updateCount,
+            captureDurationSec: duration
         )
         try PanoramaExporter.writeJSON(report, to: reportURL)
 
@@ -108,6 +149,7 @@ enum Quick360Reconstruction {
             coverageMaskURL: maskURL,
             metadataURL: metadataURL,
             reportURL: reportURL,
+            floorTextureURL: floorTextureURL,
             report: report
         )
     }

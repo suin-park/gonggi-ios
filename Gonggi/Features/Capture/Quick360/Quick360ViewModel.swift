@@ -2,6 +2,7 @@ import ARKit
 import AVFoundation
 import Combine
 import SwiftUI
+import UIKit
 
 @MainActor
 final class Quick360ViewModel: ObservableObject {
@@ -10,10 +11,13 @@ final class Quick360ViewModel: ObservableObject {
     @Published private(set) var lastSummary: Quick360SessionSummary?
     @Published private(set) var isStopping = false
     @Published private(set) var isStitching = false
+    @Published private(set) var spherePreview: UIImage?
+    @Published private(set) var floorPreview: UIImage?
 
     let arSession = ARSession()
     let engine: Quick360CaptureEngine
     private var mockTimer: AnyCancellable?
+    private var previewTimer: AnyCancellable?
     private var mockStartedAt = Date()
     private var didRunSession = false
     private var arViewReady = false
@@ -37,17 +41,15 @@ final class Quick360ViewModel: ObservableObject {
 
         if useMockCamera {
             arSession.pause()
-            start()
+            prepareSession()
         } else {
-            // Do NOT call arSession.run here — wait until ARView is created with
-            // automaticallyConfigureSession=false and has taken ownership of the session.
-            start()
+            prepareSession()
             requestCameraIfNeeded()
         }
+        startPreviewTicks()
         Quick360Log.stage("configure end")
     }
 
-    /// Called once from Quick360ARViewRepresentable after ARView owns the session.
     func onARViewReady() {
         Quick360Log.stage("onARViewReady")
         arViewReady = true
@@ -55,7 +57,8 @@ final class Quick360ViewModel: ObservableObject {
         runSessionIfNeeded()
     }
 
-    func start() {
+    /// Reset session to align-front phase (does not auto-begin capture).
+    func prepareSession() {
         lastSummary = nil
         didRunSession = false
         let sessionId = UUID().uuidString
@@ -63,7 +66,9 @@ final class Quick360ViewModel: ObservableObject {
         engine.start(sessionId: sessionId, captureId: captureId)
         uiState = engine.uiState
         mockStartedAt = Date()
-        Quick360Log.stage("engine start sessionId=\(sessionId)")
+        spherePreview = nil
+        floorPreview = nil
+        Quick360Log.stage("engine prepare sessionId=\(sessionId)")
 
         if useMockCamera {
             startMockTicks()
@@ -72,9 +77,23 @@ final class Quick360ViewModel: ObservableObject {
         }
     }
 
+    /// Compatibility alias used by summary retry.
+    func start() {
+        prepareSession()
+    }
+
+    func beginCapture() {
+        Quick360Log.stage("beginCapture")
+        engine.beginCapture()
+        uiState = engine.uiState
+        mockStartedAt = Date()
+    }
+
     func cancelCapture() {
         mockTimer?.cancel()
         mockTimer = nil
+        previewTimer?.cancel()
+        previewTimer = nil
         didRunSession = false
         arSession.pause()
         Quick360Log.stage("cancelCapture")
@@ -112,8 +131,9 @@ final class Quick360ViewModel: ObservableObject {
             panoramaURL: result?.panoramaURL,
             coverageMaskURL: result?.coverageMaskURL,
             metadataURL: result?.metadataURL,
+            floorTextureURL: result?.floorTextureURL,
             report: result?.report,
-            suggestedName: "Quick 360 \(formattedDate(endedAt))"
+            suggestedName: "공간 \(formattedDate(endedAt))"
         )
         isStopping = false
     }
@@ -125,7 +145,7 @@ final class Quick360ViewModel: ObservableObject {
         }
         let config = Quick360ARConfiguration.makeWorldTracking()
         Quick360Log.stage(
-            "configuration created nonLiDARSafe=\(Quick360ARConfiguration.isNonLiDARSafe(config))"
+            "configuration created nonLiDARSafe=\(Quick360ARConfiguration.isNonLiDARSafe(config)) plane=\(config.planeDetection.contains(.horizontal))"
         )
         Quick360Log.stage("session run start")
         arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
@@ -153,6 +173,18 @@ final class Quick360ViewModel: ObservableObject {
                 let elapsed = Date().timeIntervalSince(self.mockStartedAt)
                 self.engine.ingestMockTick(elapsed: elapsed)
                 self.uiState = self.engine.uiState
+            }
+    }
+
+    private func startPreviewTicks() {
+        previewTimer?.cancel()
+        previewTimer = Timer.publish(every: 0.35, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let images = self.engine.previewImages()
+                self.spherePreview = images.sphere
+                self.floorPreview = images.floor
             }
     }
 

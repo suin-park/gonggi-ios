@@ -1,32 +1,65 @@
 import Foundation
 import simd
 
-/// Configuration for Quick 360 Capture Prototype V2.
+/// Configuration for Quick 360 Hybrid Space Capture (V4).
 enum Quick360Config {
+    // Final offline panorama (unchanged)
     static let outputWidth = 2048
     static let outputHeight = 1024
-    /// 8 yaw × 3 pitch = 24 guidance targets (~12–24 keyframe product goal, ~30–60s capture).
+
+    /// Internal sector layout for keyframe selection (not shown in UI).
     static let yawStepCount = 8
     static let pitchBandsDeg: [Float] = [0, 30, -30]
-    static let targetAngularToleranceDeg: Float = 14
+    static let targetAngularToleranceDeg: Float = 18
     static let candidateWindowSec: Double = 0.65
     static let maxCandidatesPerTarget = 10
     static let minCandidatesBeforeSelect = 3
     static let keyframeJPEGQuality: CGFloat = 0.82
     static let keyframeMaxPixelWidth = 1920
 
-    // Translation / parallax guard (meters)
-    static let translationSafeM: Float = 0.035
-    static let translationWarningM: Float = 0.09
-    static let translationExcessiveM: Float = 0.16
+    // Live sphere brush proxy (separate from final panorama)
+    static let livePreviewWidth = 512
+    static let livePreviewHeight = 256
+    static let liveBrushMinIntervalSec: Double = 0.2 // ~5 Hz
+    static let brushThumbMaxWidth = 160
+    static let brushFeatherFadeSec: Double = 0.3
+    static let sphereWeakConfidence: Float = 0.35
+    static let sphereGoodConfidence: Float = 0.65
+    static let sphereCoverageCompletePercent: Int = 55
+    static let sphereLookUpPitchDeg: Float = 35
+    static let sphereCeilingSparsePercent: Int = 25
 
-    // Quality scoring weights
+    // Local floor placement surface
+    static let floorTextureSize = 512
+    static let floorMaxRadiusM: Float = 3.0
+    static let floorMinExtentM: Float = 0.4
+    static let floorPreferredMaxDepthBelowCameraM: Float = 2.5
+    static let floorMinIncidenceCos: Float = 0.28 // reject grazing
+    static let floorWeakConfidence: Float = 0.3
+    static let floorGoodConfidence: Float = 0.6
+    static let floorCoverageHintPercent: Int = 18
+    static let floorGoodCoveragePercent: Int = 35
+    static let floorStabilizeUpdates: Int = 3
+
+    // Translation: allow natural body/arm motion; only soft-warn on walking away
+    static let translationSafeM: Float = 0.12
+    static let translationWarningM: Float = 0.28
+    static let translationExcessiveM: Float = 0.45
+
+    // Quality scoring weights (internal keyframes)
     static let weightOrientation: Float = 0.35
     static let weightTranslation: Float = 0.25
     static let weightSharpness: Float = 0.25
     static let weightExposure: Float = 0.15
 
     static var targetCount: Int { yawStepCount * pitchBandsDeg.count }
+}
+
+enum Quick360CapturePhase: String, Codable, Equatable {
+    case alignFront
+    case readyToStart
+    case capturing
+    case complete
 }
 
 enum Quick360TargetState: String, Codable, Equatable {
@@ -50,33 +83,59 @@ enum Quick360TranslationLevel: String, Codable, Equatable {
     case warning
     case excessive
 
+    /// Soft guidance only — never blocks capture.
     var guidanceMessage: String? {
         switch self {
-        case .safe: return nil
-        case .warning: return "휴대폰 위치를 유지해주세요"
-        case .excessive: return "촬영 위치에서 너무 멀어졌어요"
+        case .safe, .warning: return nil
+        case .excessive: return "가능하면 같은 자리에서 촬영해 주세요"
         }
     }
 }
 
 enum Quick360GuidanceKind: Equatable {
+    case faceForward
+    case readyToStart
+    case lookAround
+    case lookDownFloor
+    case lookUp
+    case floorRecorded
+    case spaceReady
+    case spaceReadyNoFloor
+    case stayInPlace
+    case waitForClear
+    case success
+
+    // Legacy aliases used by internal target layout helpers
     case alignTarget
     case rotateRight
     case rotateLeft
     case holdStill
-    case waitForClear
-    case success
     case returnToOrigin
 
     var primaryText: String {
         switch self {
-        case .alignTarget: return "여기를 맞춰주세요"
-        case .rotateRight: return "천천히 오른쪽으로\n돌려주세요"
-        case .rotateLeft: return "천천히 왼쪽으로\n돌려주세요"
-        case .holdStill: return "휴대폰 위치를 유지해주세요"
-        case .waitForClear: return "잠시 기다렸다 다시 비춰주세요"
-        case .success: return "좋아요 ✓"
-        case .returnToOrigin: return "원래 위치로 조금 돌아와주세요"
+        case .faceForward, .alignTarget:
+            return "정면을 먼저 비춰주세요"
+        case .readyToStart:
+            return "준비가 됐어요"
+        case .lookAround, .rotateRight, .rotateLeft:
+            return "카메라를 천천히 주변에 비춰보세요"
+        case .lookDownFloor:
+            return "바닥도 조금 비춰주세요"
+        case .lookUp:
+            return "위쪽도 조금 담아주세요"
+        case .floorRecorded:
+            return "좋아요. 바닥도 기록됐어요"
+        case .spaceReady:
+            return "공간과 바닥이 충분히 기록됐어요"
+        case .spaceReadyNoFloor:
+            return "공간 기록은 완료됐어요. 바닥 정보는 충분하지 않아요"
+        case .stayInPlace, .returnToOrigin, .holdStill:
+            return "가능하면 같은 자리에서 촬영해 주세요"
+        case .waitForClear:
+            return "잠시 기다렸다 다시 비춰주세요"
+        case .success:
+            return "좋아요"
         }
     }
 }
@@ -121,6 +180,13 @@ struct Quick360SelectedKeyframe: Codable, Equatable {
     let transform: [Float]
 }
 
+/// ARKit lighting snapshot for future product compositing (not physically accurate).
+struct Quick360LightingSample: Codable, Equatable {
+    let timestamp: Double
+    let ambientIntensity: Float
+    let ambientColorTemperature: Float
+}
+
 struct Quick360CaptureMetadata: Codable, Equatable {
     let sessionId: String
     let captureId: String
@@ -133,6 +199,8 @@ struct Quick360CaptureMetadata: Codable, Equatable {
     let selectedKeyframeCount: Int
     let cameraNotes: [String]
     let keyframes: [Quick360SelectedKeyframe]
+    let lightingSamples: [Quick360LightingSample]
+    let floor: CapturedFloorSurfaceMetadata?
 }
 
 struct Quick360PanoramaReport: Codable, Equatable {
@@ -151,6 +219,17 @@ struct Quick360PanoramaReport: Codable, Equatable {
     let alignmentRefinementApplied: Bool
     let parallaxWarpLevel: String
     let createdAt: String
+    // V4 hybrid metrics
+    let sphereCoveragePercent: Double
+    let sphereGoodCoveragePercent: Double
+    let floorDetected: Bool
+    let floorTrackingConfidence: Float
+    let floorCoveragePercent: Double
+    let floorGoodCoveragePercent: Double
+    let floorExtentM: [Float]
+    let floorTextureUpdateCount: Int
+    let sphereBrushUpdateCount: Int
+    let captureDurationSec: Double
 }
 
 struct Quick360SessionSummary: Identifiable, Equatable {
@@ -163,6 +242,7 @@ struct Quick360SessionSummary: Identifiable, Equatable {
     let panoramaURL: URL?
     let coverageMaskURL: URL?
     let metadataURL: URL?
+    let floorTextureURL: URL?
     let report: Quick360PanoramaReport?
     let suggestedName: String
 
@@ -171,21 +251,32 @@ struct Quick360SessionSummary: Identifiable, Equatable {
 
 /// UI-facing capture state (updated on main actor).
 struct Quick360CaptureUIState: Equatable {
+    var phase: Quick360CapturePhase
     var progressPercent: Int
+    var sphereCoveragePercent: Int
+    var floorCoveragePercent: Int
+    var floorDetected: Bool
     var guidance: Quick360GuidanceKind
     var translationLevel: Quick360TranslationLevel
-    var currentTarget: Quick360SphericalTarget?
+    var canStart: Bool
+    var canFinish: Bool
+    var isComplete: Bool
+    /// Internal only — not shown in overlay.
     var selectedCount: Int
     var totalTargets: Int
-    var isComplete: Bool
 
     static let initial = Quick360CaptureUIState(
+        phase: .alignFront,
         progressPercent: 0,
-        guidance: .alignTarget,
+        sphereCoveragePercent: 0,
+        floorCoveragePercent: 0,
+        floorDetected: false,
+        guidance: .faceForward,
         translationLevel: .safe,
-        currentTarget: nil,
+        canStart: false,
+        canFinish: false,
+        isComplete: false,
         selectedCount: 0,
-        totalTargets: Quick360Config.targetCount,
-        isComplete: false
+        totalTargets: Quick360Config.targetCount
     )
 }

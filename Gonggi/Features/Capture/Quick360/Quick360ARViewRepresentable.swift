@@ -1,18 +1,16 @@
 import ARKit
 import RealityKit
 import SwiftUI
+import UIKit
 
-/// Minimal AR view for Quick 360 — no LiDAR wireframe or CoverageModel overlay.
-///
-/// Critical lifecycle rules:
-/// 1. `automaticallyConfigureSession` must be `false` **before** assigning a custom `ARSession`.
-/// 2. Never hop `ARFrame` / `CVPixelBuffer` to another queue — copy owned pixels first
-///    (Build 3 EXC_BAD_ACCESS: `_sessionDidUpdateFrame` → main queue → stale buffer).
+/// Minimal AR view for Hybrid Space Capture.
+/// Keeps Build 4 lifetime contract: copy owned pixels before any queue hop.
 struct Quick360ARViewRepresentable: UIViewRepresentable {
     let session: ARSession
     let engine: Quick360CaptureEngine
     var onPayload: (Quick360FramePayload) -> Void
     var onViewReady: () -> Void
+    var showDebugFloorMarker: Bool
 
     func makeUIView(context: Context) -> ARView {
         Quick360Log.stage("ARView create start")
@@ -26,6 +24,9 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
         context.coordinator.engine = engine
         context.coordinator.onPayload = onPayload
         context.coordinator.onViewReady = onViewReady
+        context.coordinator.showDebugFloorMarker = showDebugFloorMarker
+        context.coordinator.attachHybridScene(to: view)
+
         view.session = session
         session.delegate = context.coordinator
         view.renderOptions = [.disablePersonOcclusion, .disableMotionBlur]
@@ -41,6 +42,7 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
         context.coordinator.engine = engine
         context.coordinator.onPayload = onPayload
         context.coordinator.onViewReady = onViewReady
+        context.coordinator.showDebugFloorMarker = showDebugFloorMarker
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -49,14 +51,54 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
         var engine: Quick360CaptureEngine?
         var onPayload: ((Quick360FramePayload) -> Void)?
         var onViewReady: (() -> Void)?
+        var showDebugFloorMarker = false
+        private var hybrid = Quick360HybridSceneController()
+        private var lastTexturePush: TimeInterval = 0
+
+        func attachHybridScene(to view: ARView) {
+            hybrid.attach(to: view)
+        }
 
         func session(_ session: ARSession, didUpdate frame: ARFrame) {
             guard let engine, let onPayload else { return }
-            // Owned copy while CVPixelBuffer is valid — do not capture `frame` into async.
             let payload = engine.makeOwnedPayload(from: frame)
             DispatchQueue.main.async {
                 onPayload(payload)
+                self.pushTexturesIfNeeded(now: frame.timestamp)
             }
+        }
+
+        func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+            handlePlanes(anchors)
+        }
+
+        func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+            handlePlanes(anchors)
+        }
+
+        private func handlePlanes(_ anchors: [ARAnchor]) {
+            guard let engine else { return }
+            for anchor in anchors {
+                guard let plane = anchor as? ARPlaneAnchor,
+                      plane.alignment == .horizontal else { continue }
+                let extent = simd_float3(plane.planeExtent.width, 0, plane.planeExtent.height)
+                engine.ingestPlaneAnchor(
+                    identifier: plane.identifier,
+                    worldTransform: plane.transform,
+                    extent: extent,
+                    alignment: "horizontal"
+                )
+            }
+            DispatchQueue.main.async {
+                self.hybrid.syncFloor(from: engine, showDebugMarker: self.showDebugFloorMarker)
+            }
+        }
+
+        private func pushTexturesIfNeeded(now: TimeInterval) {
+            guard let engine else { return }
+            guard now - lastTexturePush >= Quick360Config.liveBrushMinIntervalSec else { return }
+            lastTexturePush = now
+            hybrid.syncTextures(from: engine, showDebugMarker: showDebugFloorMarker)
         }
 
         func session(_ session: ARSession, didFailWithError error: Error) {
@@ -69,6 +111,100 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
 
         func sessionInterruptionEnded(_ session: ARSession) {
             Quick360Log.stage("ARSession interruption ended")
+        }
+    }
+}
+
+/// RealityKit inverted sphere + local floor plane for in-world coverage visualization.
+final class Quick360HybridSceneController {
+    private weak var arView: ARView?
+    private var rootAnchor: AnchorEntity?
+    private var sphereEntity: ModelEntity?
+    private var floorEntity: ModelEntity?
+    private var debugMarker: ModelEntity?
+    private var sphereMaterial = UnlitMaterial(color: .gray)
+    private var floorMaterial = UnlitMaterial(color: UIColor(white: 0.55, alpha: 1))
+
+    func attach(to view: ARView) {
+        arView = view
+        let anchor = AnchorEntity(world: .zero)
+        view.scene.addAnchor(anchor)
+        rootAnchor = anchor
+
+        // Inside-out sphere (scale.x negative) — neutral gray until brushed.
+        let sphere = ModelEntity(
+            mesh: .generateSphere(radius: 8),
+            materials: [sphereMaterial]
+        )
+        sphere.scale = SIMD3<Float>(-1, 1, 1)
+        sphere.name = "hybridSphere"
+        anchor.addChild(sphere)
+        sphereEntity = sphere
+    }
+
+    func syncTextures(from engine: Quick360CaptureEngine, showDebugMarker: Bool) {
+        let snap = engine.snapshotBrushCGImages()
+        if let cg = snap.sphere,
+           let resource = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) {
+            var mat = UnlitMaterial()
+            mat.color = .init(texture: .init(resource))
+            sphereEntity?.model?.materials = [mat]
+            sphereMaterial = mat
+        }
+        syncFloor(surface: snap.floorSurface, floorCG: snap.floor, showDebugMarker: showDebugMarker)
+    }
+
+    func syncFloor(from engine: Quick360CaptureEngine, showDebugMarker: Bool) {
+        let snap = engine.snapshotBrushCGImages()
+        syncFloor(surface: snap.floorSurface, floorCG: snap.floor, showDebugMarker: showDebugMarker)
+    }
+
+    private func syncFloor(surface: CapturedFloorSurface?, floorCG: CGImage?, showDebugMarker: Bool) {
+        guard let rootAnchor, let surface else { return }
+
+        if floorEntity == nil {
+            let mesh = MeshResource.generatePlane(
+                width: surface.extent.x,
+                depth: surface.extent.z
+            )
+            let entity = ModelEntity(mesh: mesh, materials: [floorMaterial])
+            entity.name = "hybridFloor"
+            entity.position = SIMD3(0, 0.01, 0)
+            rootAnchor.addChild(entity)
+            floorEntity = entity
+        }
+
+        floorEntity?.transform.matrix = surface.worldTransform
+        let mesh = MeshResource.generatePlane(
+            width: max(surface.extent.x, 0.5),
+            depth: max(surface.extent.z, 0.5)
+        )
+        floorEntity?.model?.mesh = mesh
+
+        if let cg = floorCG,
+           let resource = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) {
+            var mat = UnlitMaterial()
+            mat.color = .init(texture: .init(resource))
+            floorEntity?.model?.materials = [mat]
+            floorMaterial = mat
+        }
+
+        if showDebugMarker {
+            if debugMarker == nil {
+                let marker = ModelEntity(
+                    mesh: .generateBox(size: 0.08),
+                    materials: [SimpleMaterial(color: .cyan, isMetallic: false)]
+                )
+                marker.name = "floorDebugMarker"
+                rootAnchor.addChild(marker)
+                debugMarker = marker
+            }
+            var t = surface.worldTransform
+            t.columns.3.y += 0.05
+            debugMarker?.transform.matrix = t
+            debugMarker?.isEnabled = true
+        } else {
+            debugMarker?.isEnabled = false
         }
     }
 }

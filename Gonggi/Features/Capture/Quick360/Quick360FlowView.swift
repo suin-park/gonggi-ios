@@ -11,6 +11,14 @@ struct Quick360FlowView: View {
         ZStack {
             if viewModel.useMockCamera {
                 mockBackground
+                if let sphere = viewModel.spherePreview {
+                    Image(uiImage: sphere)
+                        .resizable()
+                        .scaledToFill()
+                        .opacity(0.55)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
             } else {
                 Quick360ARViewRepresentable(
                     session: viewModel.arSession,
@@ -20,16 +28,22 @@ struct Quick360FlowView: View {
                     },
                     onViewReady: {
                         viewModel.onARViewReady()
-                    }
+                    },
+                    showDebugFloorMarker: false
                 )
                 .ignoresSafeArea()
             }
 
             Quick360OverlayView(
                 uiState: viewModel.uiState,
+                spherePreview: viewModel.useMockCamera ? nil : viewModel.spherePreview,
+                floorPreview: viewModel.floorPreview,
                 onClose: {
                     viewModel.cancelCapture()
                     onClose()
+                },
+                onStart: {
+                    viewModel.beginCapture()
                 },
                 onFinish: {
                     Task {
@@ -79,7 +93,7 @@ struct Quick360FlowView: View {
 
     private var mockBackground: some View {
         LinearGradient(
-            colors: [Color(white: 0.15), Color(white: 0.08)],
+            colors: [Color(white: 0.18), Color(white: 0.08)],
             startPoint: .top,
             endPoint: .bottom
         )

@@ -76,23 +76,24 @@ final class Quick360TranslationGuardTests: XCTestCase {
     }
 
     func testWarningLevel() {
-        XCTAssertEqual(Quick360TranslationGuard.level(for: 0.1), .warning)
+        XCTAssertEqual(Quick360TranslationGuard.level(for: 0.30), .warning)
     }
 
     func testExcessiveLevel() {
-        XCTAssertEqual(Quick360TranslationGuard.level(for: 0.2), .excessive)
+        XCTAssertEqual(Quick360TranslationGuard.level(for: 0.50), .excessive)
     }
 
-    func testHoldKeyframeOnExcessive() {
+    func testDoesNotBlockCaptureOnExcessive() {
         var state = Quick360TranslationGuard.State.initial
         var moved = matrix_identity_float4x4
-        moved.columns.3 = SIMD4<Float>(0.2, 0, 0, 1)
+        moved.columns.3 = SIMD4<Float>(0.5, 0, 0, 1)
         state = Quick360TranslationGuard.update(
             state: state,
             cameraTransform: moved,
             originTransform: matrix_identity_float4x4
         )
-        XCTAssertTrue(state.shouldHoldKeyframe)
+        XCTAssertEqual(state.level, .excessive)
+        XCTAssertFalse(state.shouldHoldKeyframe)
     }
 }
 
@@ -304,8 +305,15 @@ final class Quick360ARBootstrapTests: XCTestCase {
         XCTAssertTrue(config.sceneReconstruction.isEmpty)
         XCTAssertFalse(config.frameSemantics.contains(.sceneDepth))
         XCTAssertFalse(config.frameSemantics.contains(.smoothedSceneDepth))
-        XCTAssertTrue(config.planeDetection.isEmpty)
+        XCTAssertTrue(config.planeDetection.contains(.horizontal))
+        XCTAssertFalse(config.planeDetection.contains(.vertical))
         XCTAssertEqual(config.worldAlignment, .gravity)
+    }
+
+    func testVerticalPlaneDetectionFailsSafetyCheck() {
+        let unsafe = ARWorldTrackingConfiguration()
+        unsafe.planeDetection = [.horizontal, .vertical]
+        XCTAssertFalse(Quick360ARConfiguration.isNonLiDARSafe(unsafe))
     }
 
     func testLiDARSemanticsWouldFailSafetyCheck() {
@@ -340,7 +348,12 @@ final class Quick360FrameLifetimeTests: XCTestCase {
             cameraTransform: matrix_identity_float4x4,
             intrinsics: CameraIntrinsics(fx: 1, fy: 1, cx: 0, cy: 0, width: 64, height: 36),
             analysisGrayscale: [UInt8](repeating: 40, count: 64 * 36),
-            jpegData: Data([0xFF, 0xD8, 0xFF])
+            jpegData: Data([0xFF, 0xD8, 0xFF]),
+            brushRGBA: [],
+            brushWidth: 0,
+            brushHeight: 0,
+            ambientIntensity: 500,
+            ambientColorTemperature: 6500
         )
         XCTAssertEqual(payload.analysisGrayscale.count, 64 * 36)
         XCTAssertNotNil(payload.jpegData)
@@ -364,7 +377,12 @@ final class Quick360FrameLifetimeTests: XCTestCase {
             cameraTransform: matrix_identity_float4x4,
             intrinsics: CameraIntrinsics(fx: 500, fy: 500, cx: 320, cy: 240, width: 640, height: 480),
             analysisGrayscale: gray,
-            jpegData: nil
+            jpegData: nil,
+            brushRGBA: [],
+            brushWidth: 0,
+            brushHeight: 0,
+            ambientIntensity: nil,
+            ambientColorTemperature: nil
         )
         engine.ingest(payload: payload)
         XCTAssertTrue(engine.isRunning)
@@ -374,6 +392,7 @@ final class Quick360FrameLifetimeTests: XCTestCase {
     func testWantsJPEGCandidateTrueBeforeOriginSet() {
         let engine = Quick360CaptureEngine(mockMode: false)
         engine.start(sessionId: "s", captureId: "c")
+        engine.beginCapture()
         XCTAssertTrue(engine.wantsJPEGCandidate(cameraTransform: matrix_identity_float4x4))
     }
 
@@ -434,4 +453,193 @@ final class Quick360FrameLifetimeTests: XCTestCase {
         XCTAssertFalse(hopARFrameToMain)
     }
 }
+
+final class Quick360HybridSpaceTests: XCTestCase {
+    func testCameraRayToSphereUV() {
+        let yaw: Float = 0
+        let pitch: Float = 0
+        let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: pitch)
+        XCTAssertEqual(uv.x, 0.5, accuracy: 0.02)
+        XCTAssertEqual(uv.y, 0.5, accuracy: 0.02)
+    }
+
+    func testFloorRayIntersectionBelowCamera() {
+        let origin = simd_float3(0, 1.5, 0)
+        let dir = simd_normalize(simd_float3(0, -1, 0.2))
+        let t = Quick360FloorMath.rayPlaneIntersection(
+            rayOrigin: origin,
+            rayDirection: dir,
+            planePoint: simd_float3(0, 0, 0),
+            planeNormal: simd_float3(0, 1, 0)
+        )
+        XCTAssertNotNil(t)
+        XCTAssertGreaterThan(t ?? 0, 0)
+    }
+
+    func testFloorLocalUVConversion() {
+        let transform = matrix_identity_float4x4
+        let uv = Quick360FloorMath.worldToFloorUV(
+            worldPoint: simd_float3(0.5, 0, -0.5),
+            floorCenter: .zero,
+            extentX: 2,
+            extentZ: 2,
+            worldTransform: transform
+        )
+        XCTAssertNotNil(uv)
+        XCTAssertEqual(uv!.x, 0.75, accuracy: 0.05)
+        XCTAssertEqual(uv!.y, 0.25, accuracy: 0.05)
+    }
+
+    func testGrazingAngleRejected() {
+        let grazing = Quick360FloorMath.isGrazingAngle(
+            rayDirection: simd_normalize(simd_float3(1, -0.05, 0)),
+            planeNormal: simd_float3(0, 1, 0),
+            minCos: Quick360Config.floorMinIncidenceCos
+        )
+        XCTAssertTrue(grazing)
+        let steep = Quick360FloorMath.isGrazingAngle(
+            rayDirection: simd_normalize(simd_float3(0, -1, 0)),
+            planeNormal: simd_float3(0, 1, 0),
+            minCos: Quick360Config.floorMinIncidenceCos
+        )
+        XCTAssertFalse(steep)
+    }
+
+    func testFloorDetectorPrefersBelowCameraNearOrigin() {
+        var low = matrix_identity_float4x4
+        low.columns.3 = SIMD4(0, 0, 0, 1)
+        var far = matrix_identity_float4x4
+        far.columns.3 = SIMD4(8, 0, 0, 1)
+        let candidates = [
+            Quick360FloorDetector.Candidate(
+                identifier: UUID(), worldTransform: far, extent: simd_float3(2, 0, 2),
+                alignment: "horizontal", updateCount: 5
+            ),
+            Quick360FloorDetector.Candidate(
+                identifier: UUID(), worldTransform: low, extent: simd_float3(2, 0, 2),
+                alignment: "horizontal", updateCount: 5
+            )
+        ]
+        var cam = matrix_identity_float4x4
+        cam.columns.3 = SIMD4(0, 1.5, 0, 1)
+        let best = Quick360FloorDetector.selectBest(
+            candidates: candidates,
+            cameraTransform: cam,
+            originTransform: cam
+        )
+        XCTAssertEqual(best?.worldTransform.columns.3.x ?? 99, 0, accuracy: 0.01)
+    }
+
+    func testSphereBrushIncreasesCoverage() {
+        let brush = Quick360LiveSphereBrush(width: 128, height: 64)
+        let before = brush.coveragePercent()
+        var thumb = [UInt8](repeating: 180, count: 32 * 24 * 4)
+        for i in stride(from: 3, to: thumb.count, by: 4) { thumb[i] = 255 }
+        brush.paint(
+            thumbRGBA: thumb,
+            thumbWidth: 32,
+            thumbHeight: 24,
+            cameraTransform: matrix_identity_float4x4,
+            originTransform: matrix_identity_float4x4,
+            intrinsics: CameraIntrinsics(fx: 400, fy: 400, cx: 320, cy: 240, width: 640, height: 480),
+            observationConfidence: 0.8,
+            now: 1
+        )
+        XCTAssertGreaterThan(brush.coveragePercent(), before)
+        XCTAssertGreaterThan(brush.updateCount, 0)
+    }
+
+    func testFloorConfidenceReplacementPrefersBetterObservation() {
+        let atlas = Quick360FloorAtlas(size: 64)
+        let floor = CapturedFloorSurface.make(
+            worldTransform: matrix_identity_float4x4,
+            originTransform: matrix_identity_float4x4,
+            extent: simd_float3(2, 0, 2),
+            trackingConfidence: 0.8,
+            textureSize: 64
+        )
+        var weak = [UInt8](repeating: 40, count: 16 * 16 * 4)
+        for i in stride(from: 3, to: weak.count, by: 4) { weak[i] = 255 }
+        // Camera looking down at floor (ARKit -Z forward → -Y world).
+        var cam = matrix_identity_float4x4
+        cam.columns.0 = SIMD4(1, 0, 0, 0)
+        cam.columns.1 = SIMD4(0, 0, -1, 0)
+        cam.columns.2 = SIMD4(0, 1, 0, 0)
+        cam.columns.3 = SIMD4(0, 1.2, 0, 1)
+        _ = atlas.paintFromCamera(
+            thumbRGBA: weak, thumbWidth: 16, thumbHeight: 16,
+            cameraTransform: cam,
+            intrinsics: CameraIntrinsics(fx: 200, fy: 200, cx: 8, cy: 8, width: 16, height: 16),
+            floor: floor, observationConfidence: 0.3, dynamicRatio: 0
+        )
+        let mid = atlas.coveragePercent()
+        var strong = [UInt8](repeating: 220, count: 16 * 16 * 4)
+        for i in stride(from: 3, to: strong.count, by: 4) { strong[i] = 255 }
+        _ = atlas.paintFromCamera(
+            thumbRGBA: strong, thumbWidth: 16, thumbHeight: 16,
+            cameraTransform: cam,
+            intrinsics: CameraIntrinsics(fx: 200, fy: 200, cx: 8, cy: 8, width: 16, height: 16),
+            floor: floor, observationConfidence: 0.9, dynamicRatio: 0
+        )
+        XCTAssertGreaterThan(atlas.coveragePercent(), 0)
+        XCTAssertGreaterThanOrEqual(atlas.coveragePercent(), mid)
+    }
+
+    func testFloorMetadataSerialization() throws {
+        let surface = CapturedFloorSurface.make(
+            worldTransform: matrix_identity_float4x4,
+            originTransform: matrix_identity_float4x4,
+            extent: simd_float3(2.5, 0, 2.5),
+            trackingConfidence: 0.7,
+            textureSize: 512
+        )
+        let meta = CapturedFloorSurfaceMetadata(surface: surface)
+        let data = try JSONEncoder().encode(meta)
+        let decoded = try JSONDecoder().decode(CapturedFloorSurfaceMetadata.self, from: data)
+        XCTAssertEqual(decoded.textureWidth, 512)
+        XCTAssertEqual(decoded.extent[0], 2.5, accuracy: 0.01)
+        XCTAssertTrue(decoded.isShadowReceiverReady)
+    }
+
+    func testNoFloorFallbackStillAllowsCapture() {
+        let engine = Quick360CaptureEngine(mockMode: true)
+        engine.start(sessionId: "s", captureId: "c")
+        engine.beginCapture()
+        XCTAssertNil(engine.floorSurface)
+        XCTAssertTrue(engine.isCapturing)
+        XCTAssertTrue(engine.isRunning)
+    }
+
+    func testFloorExtentClamp() {
+        let big = Quick360FloorMath.clampExtent(simd_float3(20, 0, 20), maxRadius: 3)
+        XCTAssertLessThanOrEqual(big.x, 6.01)
+        let small = Quick360FloorMath.clampExtent(simd_float3(0.1, 0, 0.1), maxRadius: 3)
+        XCTAssertGreaterThanOrEqual(small.x, Quick360Config.floorMinExtentM)
+    }
+
+    func testSessionFloorPaths() throws {
+        let id = UUID().uuidString
+        let dir = try CaptureSessionStore.createFloorDirectory(sessionId: id)
+        XCTAssertTrue(dir.path.contains("floor"))
+        let tex = try CaptureSessionStore.quick360FloorTextureURL(sessionId: id)
+        XCTAssertTrue(tex.lastPathComponent.contains("floor-texture"))
+        CaptureSessionStore.deleteSession(sessionId: id)
+    }
+
+    func testGuidanceHidesTechnicalTerms() {
+        let texts = [
+            Quick360GuidanceKind.faceForward.primaryText,
+            Quick360GuidanceKind.lookAround.primaryText,
+            Quick360GuidanceKind.lookDownFloor.primaryText,
+            Quick360GuidanceKind.stayInPlace.primaryText
+        ]
+        for text in texts {
+            XCTAssertFalse(text.lowercased().contains("plane"))
+            XCTAssertFalse(text.lowercased().contains("anchor"))
+            XCTAssertFalse(text.lowercased().contains("yaw"))
+            XCTAssertFalse(text.contains("translation"))
+        }
+    }
+}
+
 
