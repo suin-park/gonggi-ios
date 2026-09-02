@@ -16,13 +16,13 @@ final class CameraProjectionTests: XCTestCase {
     )
 
     XCTAssertNotNil(projected)
-    XCTAssertEqual(projected?.pixel.x, 640, accuracy: 1)
-    XCTAssertEqual(projected?.pixel.y, 360, accuracy: 1)
+    XCTAssertEqual(Double(projected!.pixel.x), 640, accuracy: 1)
+    XCTAssertEqual(Double(projected!.pixel.y), 360, accuracy: 1)
   }
 
   func testProjectRejectsBehindCamera() {
     let intrinsics = CameraIntrinsics(fx: 1000, fy: 1000, cx: 640, cy: 360, width: 1280, height: 720)
-  var camera = matrix_identity_float4x4
+    let camera = matrix_identity_float4x4
     let projected = CameraProjection.project(
       worldPoint: SIMD3<Float>(0, 0, 1),
       worldNormal: SIMD3<Float>(0, 0, -1),
