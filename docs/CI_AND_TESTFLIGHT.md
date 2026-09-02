@@ -75,6 +75,8 @@ Simulator UDID is **not** hardcoded to “iPhone 16”; CI picks an available iP
 
 **Trigger:** `workflow_dispatch` only — never runs on push.
 
+> **Note:** If the workflow YAML is invalid, GitHub may show the file path instead of "Gonggi TestFlight" in the Actions sidebar and hide the **Run workflow** button. Push events can also show a 0s failed "workflow file" run during validation. Fix YAML errors (e.g. invalid `runner` context in `env`, unindented heredoc blocks) before dispatching.
+
 ```
 GitHub Actions (macOS)
   → validate secrets
