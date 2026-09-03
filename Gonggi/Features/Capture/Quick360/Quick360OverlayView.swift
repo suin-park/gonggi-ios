@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Hybrid Space Capture overlay — coverage is shown by in-world sphere/floor paint, not a washed HUD.
+/// Hybrid Space Capture overlay — coverage is shown by in-world sphere paint, not a washed HUD.
 struct Quick360OverlayView: View {
     let uiState: Quick360CaptureUIState
     let spherePreview: UIImage?
@@ -9,6 +9,8 @@ struct Quick360OverlayView: View {
     let onClose: () -> Void
     let onStart: () -> Void
     let onFinish: () -> Void
+    /// DEBUG-only: reopen Split Debug for coordinate regression.
+    var onToggleSplitDebug: (() -> Void)? = nil
 
     var body: some View {
         ZStack {
@@ -46,6 +48,19 @@ struct Quick360OverlayView: View {
                     .clipShape(Circle())
             }
             Spacer()
+            #if DEBUG
+            if let onToggleSplitDebug {
+                Button(action: onToggleSplitDebug) {
+                    Text("Split")
+                        .font(GonggiTypography.caption(12))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.45))
+                        .clipShape(Capsule())
+                }
+            }
+            #endif
             if uiState.canFinish {
                 Button(action: onFinish) {
                     Text("완료")

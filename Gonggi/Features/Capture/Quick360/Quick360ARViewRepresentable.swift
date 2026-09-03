@@ -151,7 +151,7 @@ final class Quick360HybridSceneController {
             mesh: .generateSphere(radius: 8),
             materials: [sphereMaterial]
         )
-        sphere.scale = SIMD3<Float>(-1, 1, 1)
+        sphere.scale = Quick360SphereCoordinateConvention.insideOutScale
         sphere.name = "hybridSphere"
         anchor.addChild(sphere)
         sphereEntity = sphere
@@ -167,10 +167,10 @@ final class Quick360HybridSceneController {
         if let origin = snap.originTransform {
             sphereEntity?.transform.matrix = origin
             // Re-apply inside-out scale after setting full transform.
-            sphereEntity?.scale = SIMD3<Float>(-1, 1, 1)
+            sphereEntity?.scale = Quick360SphereCoordinateConvention.insideOutScale
         }
         if let cg = snap.sphere,
-           let display = Self.horizontallyMirrored(cg),
+           let display = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(cg),
            let resource = try? TextureResource.generate(from: display, options: .init(semantic: .color)) {
             var mat = UnlitMaterial()
             mat.color = .init(tint: .white, texture: .init(resource))
@@ -184,25 +184,6 @@ final class Quick360HybridSceneController {
             showDebugMarker: showDebugMarker,
             showFloorRenderer: showFloorRenderer
         )
-    }
-
-    /// Cancels UV mirror introduced by `scale.x = -1` without flipping sphere yaw math.
-    private static func horizontallyMirrored(_ image: CGImage) -> CGImage? {
-        let w = image.width
-        let h = image.height
-        guard let ctx = CGContext(
-            data: nil,
-            width: w,
-            height: h,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-        ctx.translateBy(x: CGFloat(w), y: 0)
-        ctx.scaleBy(x: -1, y: 1)
-        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
-        return ctx.makeImage()
     }
 
     func setFloorRendererVisible(_ visible: Bool) {

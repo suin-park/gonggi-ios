@@ -59,9 +59,12 @@ enum Quick360Config {
     #else
     static let showBrushCoordinateDebug = false
     #endif
-    /// Temporary: Hybrid Space Capture opens Split Debug View for coordinate A/B on device.
-    /// Set false when production UX returns (do not invent ±90° offsets while this is on).
-    static let splitDebugCaptureMode = true
+    /// Production default: inside-out sphere paint UX.
+    /// DEBUG builds may reopen Split Debug at runtime via ViewModel toggle (coordinate regression).
+    /// Do not invent ±90° offsets / mirrors on the sphere while debugging.
+    static let splitDebugCaptureModeDefault = false
+    /// Compatibility alias — prefer ViewModel runtime toggle in DEBUG.
+    static var splitDebugCaptureMode: Bool { splitDebugCaptureModeDefault }
     static let sphereWeakConfidence: Float = 0.35
     static let sphereGoodConfidence: Float = 0.65
     static let sphereCoverageCompletePercent: Int = 55

@@ -527,21 +527,7 @@ final class Quick360CaptureEngine {
                 ? (stable ? .readyToStart : .faceForward)
                 : (stable ? .readyToStart : .faceForward)
             refreshUILocked(guidance: guidance, forceCanStart: stable)
-            // Split debug: keep sphere neutral gray until start so Test A is unambiguous.
-            // Production path (non-split): gentle pre-start hint paint remains.
-            if !splitDebug.enabled, !payload.brushRGBA.isEmpty,
-               let basis = Quick360CaptureBasis.make(fromStartCamera: payload.cameraTransform) {
-                sphereBrush.paint(
-                    thumbRGBA: payload.brushRGBA,
-                    thumbWidth: payload.brushWidth,
-                    thumbHeight: payload.brushHeight,
-                    cameraTransform: payload.cameraTransform,
-                    captureBasis: basis,
-                    intrinsics: payload.intrinsics,
-                    observationConfidence: 0.25,
-                    now: payload.timestamp
-                )
-            }
+            // Keep sphere neutral gray until 「촬영 시작」 — no pre-start hint paint.
             updateBrushDebugLocked(
                 cameraTransform: payload.cameraTransform,
                 brushWidth: payload.brushWidth,

@@ -1349,5 +1349,43 @@ final class Quick360BrushOrientationTests: XCTestCase {
     }
 }
 
+final class Quick360SphereCoordinateConventionTests: XCTestCase {
+    func testEquirectUVMatchesSphericalMath() {
+        let uv = Quick360SphereCoordinateConvention.equirectangularUV(yawRad: 0, pitchRad: 0)
+        let ref = SphericalMath.equirectangularUV(yawRad: 0, pitchRad: 0)
+        XCTAssertEqual(uv.x, ref.x, accuracy: 0.001)
+        XCTAssertEqual(uv.y, ref.y, accuracy: 0.001)
+        XCTAssertEqual(uv.x, 0.5, accuracy: 0.01)
+        XCTAssertEqual(uv.y, 0.5, accuracy: 0.01)
+    }
+
+    func testOpticalForwardAtOriginIsNegativeZ() {
+        let f = Quick360SphereCoordinateConvention.opticalForward(yawRad: 0, pitchRad: 0)
+        XCTAssertEqual(f.x, 0, accuracy: 0.01)
+        XCTAssertEqual(f.y, 0, accuracy: 0.01)
+        XCTAssertEqual(f.z, -1, accuracy: 0.01)
+    }
+
+    func testInsideOutScaleIsNegativeX() {
+        let s = Quick360SphereCoordinateConvention.insideOutScale
+        XCTAssertEqual(s.x, -1, accuracy: 0.001)
+        XCTAssertEqual(s.y, 1, accuracy: 0.001)
+        XCTAssertEqual(s.z, 1, accuracy: 0.001)
+    }
+
+    func testProductionSplitDebugDefaultsAllowContinuousPaint() {
+        let s = Quick360SplitDebugSettings.production
+        XCTAssertFalse(s.enabled)
+        XCTAssertFalse(s.singleFrameMode)
+        XCTAssertTrue(s.paintEnabled)
+        XCTAssertFalse(s.showFloorRenderer)
+    }
+
+    func testSplitDebugCaptureModeDefaultIsOff() {
+        XCTAssertFalse(Quick360Config.splitDebugCaptureModeDefault)
+        XCTAssertFalse(Quick360Config.splitDebugCaptureMode)
+    }
+}
+
 
 

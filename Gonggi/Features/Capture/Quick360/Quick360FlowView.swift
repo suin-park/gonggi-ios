@@ -24,6 +24,7 @@ struct Quick360FlowView: View {
                 }
                 productionOverlay
             } else {
+                // Full-screen inside-out sphere paint (camera at sphere center).
                 Quick360ARViewRepresentable(
                     session: viewModel.arSession,
                     engine: viewModel.engine,
@@ -34,7 +35,7 @@ struct Quick360FlowView: View {
                         viewModel.onARViewReady()
                     },
                     showDebugFloorMarker: false,
-                    showFloorRenderer: true
+                    showFloorRenderer: false
                 )
                 .ignoresSafeArea()
                 productionOverlay
@@ -78,7 +79,7 @@ struct Quick360FlowView: View {
         }
     }
 
-    /// Hidden AR session driver + visible Split Debug panes (full-screen, no tab bar).
+    /// Hidden AR session driver + visible Split Debug panes (DEBUG toggle only).
     private var splitDebugStack: some View {
         ZStack {
             if viewModel.useMockCamera {
@@ -108,8 +109,12 @@ struct Quick360FlowView: View {
                 brushDebug: viewModel.brushDebug,
                 hasCachedFrame: viewModel.hasCachedSplitDebugFrame,
                 onClose: {
+                    #if DEBUG
+                    viewModel.toggleSplitDebugMode()
+                    #else
                     viewModel.cancelCapture()
                     onClose()
+                    #endif
                 },
                 onStartTest: {
                     viewModel.runSplitDebugTestA()
@@ -128,7 +133,8 @@ struct Quick360FlowView: View {
         Quick360OverlayView(
             uiState: viewModel.uiState,
             spherePreview: viewModel.useMockCamera ? nil : viewModel.spherePreview,
-            floorPreview: viewModel.floorPreview,
+            // Floor UI off for this UX validation step (detection/atlas kept in engine).
+            floorPreview: nil,
             brushDebug: viewModel.showBrushDebug ? viewModel.brushDebug : nil,
             onClose: {
                 viewModel.cancelCapture()
@@ -142,6 +148,11 @@ struct Quick360FlowView: View {
                     await viewModel.stop()
                     showSummary = true
                 }
+            },
+            onToggleSplitDebug: {
+                #if DEBUG
+                viewModel.toggleSplitDebugMode()
+                #endif
             }
         )
     }

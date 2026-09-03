@@ -16,9 +16,11 @@ final class Quick360ViewModel: ObservableObject {
     @Published private(set) var cameraSourcePreview: UIImage?
     @Published private(set) var brushDebug = Quick360BrushDebugState()
     @Published var showBrushDebug = Quick360Config.showBrushCoordinateDebug
-    @Published private(set) var splitDebugSettings = Quick360SplitDebugSettings.default
+    @Published private(set) var splitDebugSettings = Quick360SplitDebugSettings.production
     @Published private(set) var splitDebugTestPhase: Quick360SplitDebugTestPhase = .idle
     @Published private(set) var hasCachedSplitDebugFrame = false
+    /// Runtime Split Debug UI (DEBUG toggle). Production starts OFF.
+    @Published private(set) var splitDebugUIActive = Quick360Config.splitDebugCaptureModeDefault
 
     let arSession = ARSession()
     let engine: Quick360CaptureEngine
@@ -28,22 +30,34 @@ final class Quick360ViewModel: ObservableObject {
     private var didRunSession = false
     private var arViewReady = false
 
-    var isSplitDebugMode: Bool { Quick360Config.splitDebugCaptureMode }
+    var isSplitDebugMode: Bool { splitDebugUIActive }
 
     init(mockMode: Bool = true) {
         Quick360Log.stage("Quick360 init start")
         engine = Quick360CaptureEngine(mockMode: mockMode)
         useMockCamera = mockMode
-        if Quick360Config.splitDebugCaptureMode {
-            engine.updateSplitDebugSettings { settings in
-                settings.enabled = true
-                settings.showFloorRenderer = false
-                settings.singleFrameMode = true
-                settings.paintEnabled = true
-            }
-            splitDebugSettings = engine.splitDebugSettings
+        applySplitDebugEngineSettings(active: splitDebugUIActive)
+        Quick360Log.stage("Quick360 init done mockMode=\(mockMode) splitDebug=\(splitDebugUIActive)")
+    }
+
+    /// DEBUG-only: reopen Split Debug for coordinate regression without shipping it in production UI.
+    func toggleSplitDebugMode() {
+        #if DEBUG
+        splitDebugUIActive.toggle()
+        applySplitDebugEngineSettings(active: splitDebugUIActive)
+        if !splitDebugUIActive {
+            engine.resetSplitDebugTest()
         }
-        Quick360Log.stage("Quick360 init done mockMode=\(mockMode)")
+        syncSplitDebugPublishedState()
+        Quick360Log.stage("splitDebug UI toggled → \(splitDebugUIActive)")
+        #endif
+    }
+
+    private func applySplitDebugEngineSettings(active: Bool) {
+        engine.updateSplitDebugSettings { settings in
+            settings = active ? .splitDebug : .production
+        }
+        splitDebugSettings = engine.splitDebugSettings
     }
 
     func configure(mockMode: Bool) {

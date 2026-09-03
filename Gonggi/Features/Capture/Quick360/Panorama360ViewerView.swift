@@ -38,14 +38,20 @@ private struct Panorama360SceneView: UIViewRepresentable {
 
         let material = SCNMaterial()
         material.isDoubleSided = true
-        material.diffuse.contents = UIImage(contentsOfFile: imageURL.path)
+        if let raw = UIImage(contentsOfFile: imageURL.path),
+           let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
+            material.diffuse.contents = prepared
+        } else {
+            material.diffuse.contents = UIImage(contentsOfFile: imageURL.path)
+        }
         material.diffuse.wrapS = .repeat
         material.diffuse.wrapT = .clamp
         sphere.firstMaterial = material
         sphere.firstMaterial?.cullMode = .front
 
         let sphereNode = SCNNode(geometry: sphere)
-        sphereNode.scale = SCNVector3(-1, 1, 1)
+        let s = Quick360SphereCoordinateConvention.insideOutScale
+        sphereNode.scale = SCNVector3(s.x, s.y, s.z)
         scene.rootNode.addChildNode(sphereNode)
 
         let cameraNode = SCNNode()
