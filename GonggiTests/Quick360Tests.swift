@@ -832,6 +832,59 @@ final class Quick360BrushOrientationTests: XCTestCase {
         )
         XCTAssertLessThan(yaw, 0)
     }
+
+    func testFOVCornersCompactAroundCenterForForwardFrame() {
+        let halfX: Float = 0.55
+        let halfY: Float = 0.70
+        let corners = Quick360FOVDiagnostics.footprintCorners(
+            centerYawRad: 0,
+            centerPitchRad: 0,
+            halfFOVx: halfX,
+            halfFOVy: halfY
+        )
+        XCTAssertEqual(corners.count, 4)
+        XCTAssertTrue(Quick360FOVDiagnostics.isCompactAroundCenter(corners))
+        // Center of quad near equirect center
+        let cu = corners.map(\.u).reduce(0, +) / 4
+        let cv = corners.map(\.v).reduce(0, +) / 4
+        XCTAssertEqual(cu, 0.5, accuracy: 0.05)
+        XCTAssertEqual(cv, 0.5, accuracy: 0.05)
+        // No corner at pole (v≈0 or v≈1) or seam jump for forward FOV
+        for c in corners {
+            XCTAssertGreaterThan(c.v, 0.12)
+            XCTAssertLessThan(c.v, 0.88)
+            XCTAssertGreaterThan(c.u, 0.2)
+            XCTAssertLessThan(c.u, 0.8)
+        }
+    }
+
+    func testFOVCornersMoveRightWithPositiveYaw() {
+        let halfX: Float = 0.5
+        let halfY: Float = 0.5
+        let at0 = Quick360FOVDiagnostics.footprintCorners(
+            centerYawRad: 0, centerPitchRad: 0, halfFOVx: halfX, halfFOVy: halfY
+        )
+        let atRight = Quick360FOVDiagnostics.footprintCorners(
+            centerYawRad: 0.4, centerPitchRad: 0, halfFOVx: halfX, halfFOVy: halfY
+        )
+        let u0 = at0.map(\.u).reduce(0, +) / 4
+        let uR = atRight.map(\.u).reduce(0, +) / 4
+        XCTAssertGreaterThan(uR, u0)
+    }
+
+    func testRelativeRollNearZeroWhenLevel() {
+        let roll = Quick360FOVDiagnostics.relativeRollRad(
+            cameraTransform: matrix_identity_float4x4,
+            originTransform: matrix_identity_float4x4
+        )
+        XCTAssertEqual(roll, 0, accuracy: 0.02)
+    }
+
+    func testSplitDebugSettingsDefaultsHideFloor() {
+        let s = Quick360SplitDebugSettings.default
+        XCTAssertFalse(s.showFloorRenderer)
+        XCTAssertTrue(s.singleFrameMode)
+    }
 }
 
 

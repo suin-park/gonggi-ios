@@ -9,7 +9,9 @@ struct Quick360FlowView: View {
 
     var body: some View {
         ZStack {
-            if viewModel.useMockCamera {
+            if viewModel.isSplitDebugMode {
+                splitDebugStack
+            } else if viewModel.useMockCamera {
                 mockBackground
                 if let sphere = viewModel.spherePreview {
                     Image(uiImage: sphere)
@@ -20,6 +22,7 @@ struct Quick360FlowView: View {
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                 }
+                productionOverlay
             } else {
                 Quick360ARViewRepresentable(
                     session: viewModel.arSession,
@@ -30,30 +33,12 @@ struct Quick360FlowView: View {
                     onViewReady: {
                         viewModel.onARViewReady()
                     },
-                    showDebugFloorMarker: false
+                    showDebugFloorMarker: false,
+                    showFloorRenderer: true
                 )
                 .ignoresSafeArea()
+                productionOverlay
             }
-
-            Quick360OverlayView(
-                uiState: viewModel.uiState,
-                spherePreview: viewModel.useMockCamera ? nil : viewModel.spherePreview,
-                floorPreview: viewModel.floorPreview,
-                brushDebug: viewModel.showBrushDebug ? viewModel.brushDebug : nil,
-                onClose: {
-                    viewModel.cancelCapture()
-                    onClose()
-                },
-                onStart: {
-                    viewModel.beginCapture()
-                },
-                onFinish: {
-                    Task {
-                        await viewModel.stop()
-                        showSummary = true
-                    }
-                }
-            )
 
             if viewModel.isStopping || viewModel.isStitching {
                 Color.black.opacity(0.45).ignoresSafeArea()
@@ -67,7 +52,7 @@ struct Quick360FlowView: View {
             }
         }
         .onAppear {
-            Quick360Log.stage("Quick360FlowView onAppear")
+            Quick360Log.stage("Quick360FlowView onAppear splitDebug=\(viewModel.isSplitDebugMode)")
             viewModel.configure(mockMode: appState.isMockMode)
         }
         .sheet(isPresented: $showSummary) {
@@ -91,6 +76,78 @@ struct Quick360FlowView: View {
                 Panorama360ViewerView(imageURL: url)
             }
         }
+    }
+
+    /// Hidden AR session driver + visible Split Debug panes.
+    private var splitDebugStack: some View {
+        ZStack {
+            if viewModel.useMockCamera {
+                mockBackground
+            } else {
+                Quick360ARViewRepresentable(
+                    session: viewModel.arSession,
+                    engine: viewModel.engine,
+                    onPayload: { payload in
+                        viewModel.ingestPayload(payload)
+                    },
+                    onViewReady: {
+                        viewModel.onARViewReady()
+                    },
+                    showDebugFloorMarker: false,
+                    showFloorRenderer: false
+                )
+                .opacity(0.001)
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
+            }
+
+            Quick360SplitDebugView(
+                uiState: viewModel.uiState,
+                sphereImage: viewModel.spherePreview,
+                cameraSourceImage: viewModel.cameraSourcePreview,
+                brushDebug: viewModel.brushDebug,
+                settings: viewModel.splitDebugSettings,
+                onClose: {
+                    viewModel.cancelCapture()
+                    onClose()
+                },
+                onStart: {
+                    viewModel.beginCapture()
+                },
+                onFinish: {
+                    Task {
+                        await viewModel.stop()
+                        showSummary = true
+                    }
+                },
+                onToggleFreeze: { viewModel.toggleFreeze() },
+                onTogglePaint: { viewModel.togglePaintEnabled() },
+                onToggleSingleFrame: { viewModel.toggleSingleFrameMode() },
+                onPaintOneFrame: { viewModel.requestSingleFramePaint() }
+            )
+        }
+    }
+
+    private var productionOverlay: some View {
+        Quick360OverlayView(
+            uiState: viewModel.uiState,
+            spherePreview: viewModel.useMockCamera ? nil : viewModel.spherePreview,
+            floorPreview: viewModel.floorPreview,
+            brushDebug: viewModel.showBrushDebug ? viewModel.brushDebug : nil,
+            onClose: {
+                viewModel.cancelCapture()
+                onClose()
+            },
+            onStart: {
+                viewModel.beginCapture()
+            },
+            onFinish: {
+                Task {
+                    await viewModel.stop()
+                    showSummary = true
+                }
+            }
+        )
     }
 
     private var mockBackground: some View {

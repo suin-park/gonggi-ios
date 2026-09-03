@@ -110,23 +110,60 @@ enum Quick360BrushOrientation {
 struct Quick360BrushDebugState: Equatable {
     var relativeYawDeg: Float = 0
     var relativePitchDeg: Float = 0
+    var relativeRollDeg: Float = 0
     var centerU: Float = 0.5
     var centerV: Float = 0.5
     var interfaceOrientation: String = "portrait"
     var brushWidth: Int = 0
     var brushHeight: Int = 0
     var originLocked: Bool = false
+    var cameraForward: SIMD3<Float> = .zero
+    var referenceForward: SIMD3<Float> = .zero
+    var worldUp: SIMD3<Float> = SIMD3(0, 1, 0)
+    var halfFOVxDeg: Float = 0
+    var halfFOVyDeg: Float = 0
+    var fovCorners: [Quick360FOVDiagnostics.Corner] = []
 
     var overlayText: String {
-        String(
-            format: "yaw %.1f°  pitch %.1f°\n%@  brush %dx%d\ncenterUV (%.2f, %.2f)",
-            relativeYawDeg,
-            relativePitchDeg,
-            interfaceOrientation,
-            brushWidth,
-            brushHeight,
-            centerU,
-            centerV
+        let origin = originLocked ? "LOCKED" : "—"
+        var lines = [
+            String(format: "yaw:   %.1f°", relativeYawDeg),
+            String(format: "pitch: %.1f°", relativePitchDeg),
+            String(format: "roll:  %.1f°", relativeRollDeg),
+            "",
+            String(format: "centerUV:\n%.3f / %.3f", centerU, centerV),
+            "",
+            "interface:\n\(interfaceOrientation)",
+            "",
+            String(format: "source:\n%dx%d", brushWidth, brushHeight),
+            "",
+            "origin:\n\(origin)"
+        ]
+        if !fovCorners.isEmpty {
+            lines.append("")
+            lines.append("FOV corners:")
+            for c in fovCorners {
+                lines.append(
+                    String(format: "%@ %.0f/%.0f (%.2f,%.2f)", c.label, c.yawDeg, c.pitchDeg, c.u, c.v)
+                )
+            }
+        }
+        lines.append("")
+        lines.append(
+            String(
+                format: "camF %.2f %.2f %.2f",
+                cameraForward.x, cameraForward.y, cameraForward.z
+            )
         )
+        lines.append(
+            String(
+                format: "refF %.2f %.2f %.2f",
+                referenceForward.x, referenceForward.y, referenceForward.z
+            )
+        )
+        lines.append(
+            String(format: "up   %.2f %.2f %.2f", worldUp.x, worldUp.y, worldUp.z)
+        )
+        return lines.joined(separator: "\n")
     }
 }

@@ -3,6 +3,7 @@ import Foundation
 import simd
 import UIKit
 import CoreGraphics
+import QuartzCore
 
 /// Hybrid Space Capture orchestrator — sphere brush + local floor + internal keyframes.
 final class Quick360CaptureEngine {
@@ -21,6 +22,10 @@ final class Quick360CaptureEngine {
     private(set) var isRunning = false
     private(set) var isComplete = false
     private(set) var isCapturing = false
+    /// Latest portrait-normalized brush source (same bytes as sphere paint).
+    private(set) var latestBrushSourceImage: UIImage?
+    /// Latest live sphere brush preview (same texture pipeline as production).
+    private(set) var latestSpherePreviewImage: UIImage?
 
     let sphereBrush = Quick360LiveSphereBrush()
     let floorAtlas = Quick360FloorAtlas()
@@ -30,6 +35,9 @@ final class Quick360CaptureEngine {
     private var floorStabilizeCount = 0
     private var lastBrushAt: TimeInterval = -1
     private var showedFloorRecorded = false
+    private var splitDebug = Quick360SplitDebugSettings.default
+    /// When `singleFrameMode`, paint exactly once after start (or after `requestSingleFramePaint`).
+    private var pendingSingleFramePaint = false
 
     var candidateFrameCount = 0
     var rejectedFrames = 0
@@ -41,6 +49,26 @@ final class Quick360CaptureEngine {
 
     init(mockMode: Bool) {
         self.mockMode = mockMode
+    }
+
+    var splitDebugSettings: Quick360SplitDebugSettings {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return splitDebug
+    }
+
+    func updateSplitDebugSettings(_ update: (inout Quick360SplitDebugSettings) -> Void) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        update(&splitDebug)
+    }
+
+    /// Debug: queue one paint on the next ingest while capturing (Single Frame mode).
+    func requestSingleFramePaint() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard isCapturing else { return }
+        pendingSingleFramePaint = true
     }
 
     func start(sessionId: String, captureId: String) {
@@ -68,6 +96,9 @@ final class Quick360CaptureEngine {
         floorStabilizeCount = 0
         lastBrushAt = -1
         showedFloorRecorded = false
+        pendingSingleFramePaint = false
+        latestBrushSourceImage = nil
+        latestSpherePreviewImage = nil
         sphereBrush.reset()
         floorAtlas.reset()
         refreshUILocked(guidance: .faceForward)
@@ -80,7 +111,9 @@ final class Quick360CaptureEngine {
         guard isRunning, !isCapturing else { return }
         isCapturing = true
         originTransform = matrix_identity_float4x4
-        refreshUILocked(guidance: .lookAround)
+        // Split debug default: first frame only until continuous paint is re-enabled.
+        pendingSingleFramePaint = splitDebug.enabled && (splitDebug.singleFrameMode || splitDebug.paintEnabled)
+        refreshUILocked(guidance: splitDebug.enabled ? .holdStill : .lookAround)
     }
 
     /// Caller must hold `stateLock`.
@@ -184,6 +217,10 @@ final class Quick360CaptureEngine {
         stateLock.lock()
         defer { stateLock.unlock() }
         guard isRunning else { return false }
+        // Split debug needs frequent camera-source frames before start.
+        if splitDebug.enabled {
+            return now - lastBrushAt >= Quick360Config.liveBrushMinIntervalSec
+        }
         if !isCapturing { return now - lastBrushAt >= 0.5 }
         return now - lastBrushAt >= Quick360Config.liveBrushMinIntervalSec
     }
@@ -289,6 +326,7 @@ final class Quick360CaptureEngine {
         stateLock.lock()
         defer { stateLock.unlock() }
         guard isRunning, !isComplete else { return }
+        if splitDebug.frozen { return }
 
         if let intensity = payload.ambientIntensity,
            let temp = payload.ambientColorTemperature,
@@ -302,13 +340,19 @@ final class Quick360CaptureEngine {
             }
         }
 
+        publishBrushSourceLocked(payload)
+
         if !isCapturing {
             // Align-front: when camera is roughly level/forward, enable start.
             let pitch = SphericalMath.yawPitchRad(from: payload.cameraTransform).pitch
             let stable = abs(pitch) < 0.35
-            refreshUILocked(guidance: stable ? .readyToStart : .faceForward, forceCanStart: stable)
-            // Still allow a gentle sphere preview paint before start (optional gray→hint)
-            if !payload.brushRGBA.isEmpty {
+            let guidance: Quick360GuidanceKind = splitDebug.enabled
+                ? (stable ? .readyToStart : .faceForward)
+                : (stable ? .readyToStart : .faceForward)
+            refreshUILocked(guidance: guidance, forceCanStart: stable)
+            // Split debug: keep sphere neutral gray until start so Test A is unambiguous.
+            // Production path (non-split): gentle pre-start hint paint remains.
+            if !splitDebug.enabled, !payload.brushRGBA.isEmpty {
                 let identity = matrix_identity_float4x4
                 sphereBrush.paint(
                     thumbRGBA: payload.brushRGBA,
@@ -321,6 +365,14 @@ final class Quick360CaptureEngine {
                     now: payload.timestamp
                 )
             }
+            updateBrushDebugLocked(
+                cameraTransform: payload.cameraTransform,
+                brushWidth: payload.brushWidth,
+                brushHeight: payload.brushHeight,
+                intrinsics: payload.intrinsics,
+                treatAsIdentityOrigin: true
+            )
+            publishSpherePreviewLocked()
             return
         }
 
@@ -359,26 +411,35 @@ final class Quick360CaptureEngine {
         let exposure = Quick360ImageAnalysis.exposureScore(grayscale: gray)
         let obsConf = simd_clamp(0.35 + sharpness * 0.4 + exposure * 0.25, 0.2, 1)
 
-        // Sphere brush
+        // Sphere brush (respect Paint ON/OFF + Single Frame mode)
         if !payload.brushRGBA.isEmpty {
-            sphereBrush.paint(
-                thumbRGBA: payload.brushRGBA,
-                thumbWidth: payload.brushWidth,
-                thumbHeight: payload.brushHeight,
-                cameraTransform: cameraTransform,
-                originTransform: originTransform,
-                intrinsics: payload.intrinsics,
-                observationConfidence: obsConf * (dynamicRatio > 0.35 ? 0.5 : 1),
-                now: now
-            )
+            let shouldPaint = shouldPaintSphereLocked()
+            if shouldPaint {
+                sphereBrush.paint(
+                    thumbRGBA: payload.brushRGBA,
+                    thumbWidth: payload.brushWidth,
+                    thumbHeight: payload.brushHeight,
+                    cameraTransform: cameraTransform,
+                    originTransform: originTransform,
+                    intrinsics: payload.intrinsics,
+                    observationConfidence: obsConf * (dynamicRatio > 0.35 ? 0.5 : 1),
+                    now: now
+                )
+                if splitDebug.singleFrameMode {
+                    pendingSingleFramePaint = false
+                }
+            }
             updateBrushDebugLocked(
                 cameraTransform: cameraTransform,
                 brushWidth: payload.brushWidth,
-                brushHeight: payload.brushHeight
+                brushHeight: payload.brushHeight,
+                intrinsics: payload.intrinsics,
+                treatAsIdentityOrigin: false
             )
+            publishSpherePreviewLocked()
         }
 
-        // Floor brush
+        // Floor brush (atlas/metadata keep running; renderer visibility is UI-only)
         tryLockFloorLocked()
         if var floor = floorSurface, !payload.brushRGBA.isEmpty {
             let painted = floorAtlas.paintFromCamera(
@@ -580,25 +641,82 @@ final class Quick360CaptureEngine {
         )
     }
 
+    private func shouldPaintSphereLocked() -> Bool {
+        guard splitDebug.paintEnabled else { return false }
+        if splitDebug.singleFrameMode {
+            return pendingSingleFramePaint
+        }
+        return true
+    }
+
+    private func publishBrushSourceLocked(_ payload: Quick360FramePayload) {
+        guard !payload.brushRGBA.isEmpty else { return }
+        latestBrushSourceImage = Quick360ImageBuffer.uiImage(
+            rgba: payload.brushRGBA,
+            width: payload.brushWidth,
+            height: payload.brushHeight
+        )
+    }
+
+    private func publishSpherePreviewLocked() {
+        latestSpherePreviewImage = sphereBrush.makeUIImage(now: CACurrentMediaTime())
+    }
+
     private func updateBrushDebugLocked(
         cameraTransform: simd_float4x4,
         brushWidth: Int,
-        brushHeight: Int
+        brushHeight: Int,
+        intrinsics: CameraIntrinsics,
+        treatAsIdentityOrigin: Bool
     ) {
+        let origin = treatAsIdentityOrigin
+            ? cameraTransform
+            : (originTransform == matrix_identity_float4x4 ? cameraTransform : originTransform)
         let (yaw, pitch) = SphericalMath.relativeYawPitchRad(
             cameraTransform: cameraTransform,
-            originTransform: originTransform == matrix_identity_float4x4 ? cameraTransform : originTransform
+            originTransform: origin
+        )
+        let roll = Quick360FOVDiagnostics.relativeRollRad(
+            cameraTransform: cameraTransform,
+            originTransform: origin
         )
         let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: pitch)
+        let relative = SphericalMath.relativeCameraTransform(
+            cameraTransform: cameraTransform,
+            originTransform: origin
+        )
+        let camFwd = SphericalMath.forwardVector(from: relative)
+        let refFwd = SphericalMath.forwardVector(from: matrix_identity_float4x4)
+        let oriented = Quick360BrushOrientation.remappedIntrinsics(
+            intrinsics,
+            interface: Quick360BrushOrientation.primaryInterfaceOrientation
+        )
+        let (halfX, halfY) = Quick360BrushOrientation.halfFOV(orientedIntrinsics: oriented)
+        let corners = Quick360FOVDiagnostics.footprintCorners(
+            centerYawRad: yaw,
+            centerPitchRad: pitch,
+            halfFOVx: halfX,
+            halfFOVy: halfY
+        )
+        if splitDebug.enabled, originTransform != matrix_identity_float4x4 || treatAsIdentityOrigin {
+            Quick360FOVDiagnostics.logCorners(corners)
+        }
         brushDebug = Quick360BrushDebugState(
             relativeYawDeg: yaw * 180 / .pi,
             relativePitchDeg: pitch * 180 / .pi,
+            relativeRollDeg: roll * 180 / .pi,
             centerU: uv.x,
             centerV: uv.y,
             interfaceOrientation: "portrait",
             brushWidth: brushWidth,
             brushHeight: brushHeight,
-            originLocked: originTransform != matrix_identity_float4x4
+            originLocked: !treatAsIdentityOrigin && originTransform != matrix_identity_float4x4,
+            cameraForward: camFwd,
+            referenceForward: refFwd,
+            worldUp: SIMD3(0, 1, 0),
+            halfFOVxDeg: halfX * 180 / .pi,
+            halfFOVyDeg: halfY * 180 / .pi,
+            fovCorners: corners
         )
     }
 
@@ -606,7 +724,8 @@ final class Quick360CaptureEngine {
         stateLock.lock()
         defer { stateLock.unlock() }
         let now = CACurrentMediaTime()
-        return (sphereBrush.makeUIImage(now: now), floorSurface == nil ? nil : floorAtlas.makeUIImage(now: now))
+        let sphere = latestSpherePreviewImage ?? sphereBrush.makeUIImage(now: now)
+        return (sphere, floorSurface == nil ? nil : floorAtlas.makeUIImage(now: now))
     }
 
     func snapshotBrushCGImages() -> (
@@ -627,6 +746,12 @@ final class Quick360CaptureEngine {
             floorSurface,
             origin
         )
+    }
+
+    func debugPreviewSnapshot() -> (sphere: UIImage?, cameraSource: UIImage?, brushDebug: Quick360BrushDebugState) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return (latestSpherePreviewImage, latestBrushSourceImage, brushDebug)
     }
 
     private func lookingDownCamera(height: Float) -> simd_float4x4 {

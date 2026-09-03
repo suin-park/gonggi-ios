@@ -11,6 +11,8 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
     var onPayload: (Quick360FramePayload) -> Void
     var onViewReady: () -> Void
     var showDebugFloorMarker: Bool
+    /// Split debug gate: hide floor plane entity (detection/atlas still run in engine).
+    var showFloorRenderer: Bool = true
 
     func makeUIView(context: Context) -> ARView {
         Quick360Log.stage("ARView create start")
@@ -25,6 +27,7 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
         context.coordinator.onPayload = onPayload
         context.coordinator.onViewReady = onViewReady
         context.coordinator.showDebugFloorMarker = showDebugFloorMarker
+        context.coordinator.showFloorRenderer = showFloorRenderer
         context.coordinator.attachHybridScene(to: view)
 
         view.session = session
@@ -43,6 +46,8 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
         context.coordinator.onPayload = onPayload
         context.coordinator.onViewReady = onViewReady
         context.coordinator.showDebugFloorMarker = showDebugFloorMarker
+        context.coordinator.showFloorRenderer = showFloorRenderer
+        context.coordinator.hybrid.setFloorRendererVisible(showFloorRenderer)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -52,11 +57,13 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
         var onPayload: ((Quick360FramePayload) -> Void)?
         var onViewReady: (() -> Void)?
         var showDebugFloorMarker = false
-        private var hybrid = Quick360HybridSceneController()
+        var showFloorRenderer = true
+        fileprivate var hybrid = Quick360HybridSceneController()
         private var lastTexturePush: TimeInterval = 0
 
         func attachHybridScene(to view: ARView) {
             hybrid.attach(to: view)
+            hybrid.setFloorRendererVisible(showFloorRenderer)
         }
 
         func session(_ session: ARSession, didUpdate frame: ARFrame) {
@@ -90,7 +97,11 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
                 )
             }
             DispatchQueue.main.async {
-                self.hybrid.syncFloor(from: engine, showDebugMarker: self.showDebugFloorMarker)
+                self.hybrid.syncFloor(
+                    from: engine,
+                    showDebugMarker: self.showDebugFloorMarker,
+                    showFloorRenderer: self.showFloorRenderer
+                )
             }
         }
 
@@ -98,7 +109,11 @@ struct Quick360ARViewRepresentable: UIViewRepresentable {
             guard let engine else { return }
             guard now - lastTexturePush >= Quick360Config.liveBrushMinIntervalSec else { return }
             lastTexturePush = now
-            hybrid.syncTextures(from: engine, showDebugMarker: showDebugFloorMarker)
+            hybrid.syncTextures(
+                from: engine,
+                showDebugMarker: showDebugFloorMarker,
+                showFloorRenderer: showFloorRenderer
+            )
         }
 
         func session(_ session: ARSession, didFailWithError error: Error) {
@@ -142,7 +157,11 @@ final class Quick360HybridSceneController {
         sphereEntity = sphere
     }
 
-    func syncTextures(from engine: Quick360CaptureEngine, showDebugMarker: Bool) {
+    func syncTextures(
+        from engine: Quick360CaptureEngine,
+        showDebugMarker: Bool,
+        showFloorRenderer: Bool = true
+    ) {
         let snap = engine.snapshotBrushCGImages()
         // Align sphere local frame with capture origin so relative yaw=0 → texture U≈0.5 in view.
         if let origin = snap.originTransform {
@@ -159,7 +178,12 @@ final class Quick360HybridSceneController {
             sphereEntity?.model?.materials = [mat]
             sphereMaterial = mat
         }
-        syncFloor(surface: snap.floorSurface, floorCG: snap.floor, showDebugMarker: showDebugMarker)
+        syncFloor(
+            surface: snap.floorSurface,
+            floorCG: snap.floor,
+            showDebugMarker: showDebugMarker,
+            showFloorRenderer: showFloorRenderer
+        )
     }
 
     /// Cancels UV mirror introduced by `scale.x = -1` without flipping sphere yaw math.
@@ -181,12 +205,33 @@ final class Quick360HybridSceneController {
         return ctx.makeImage()
     }
 
-    func syncFloor(from engine: Quick360CaptureEngine, showDebugMarker: Bool) {
-        let snap = engine.snapshotBrushCGImages()
-        syncFloor(surface: snap.floorSurface, floorCG: snap.floor, showDebugMarker: showDebugMarker)
+    func setFloorRendererVisible(_ visible: Bool) {
+        floorEntity?.isEnabled = visible
+        if !visible {
+            debugMarker?.isEnabled = false
+        }
     }
 
-    private func syncFloor(surface: CapturedFloorSurface?, floorCG: CGImage?, showDebugMarker: Bool) {
+    func syncFloor(
+        from engine: Quick360CaptureEngine,
+        showDebugMarker: Bool,
+        showFloorRenderer: Bool = true
+    ) {
+        let snap = engine.snapshotBrushCGImages()
+        syncFloor(
+            surface: snap.floorSurface,
+            floorCG: snap.floor,
+            showDebugMarker: showDebugMarker,
+            showFloorRenderer: showFloorRenderer
+        )
+    }
+
+    private func syncFloor(
+        surface: CapturedFloorSurface?,
+        floorCG: CGImage?,
+        showDebugMarker: Bool,
+        showFloorRenderer: Bool
+    ) {
         guard let rootAnchor, let surface else { return }
 
         if floorEntity == nil {
@@ -207,6 +252,7 @@ final class Quick360HybridSceneController {
             depth: max(surface.extent.z, 0.5)
         )
         floorEntity?.model?.mesh = mesh
+        floorEntity?.isEnabled = showFloorRenderer
 
         if let cg = floorCG,
            let resource = try? TextureResource.generate(from: cg, options: .init(semantic: .color)) {
@@ -217,7 +263,7 @@ final class Quick360HybridSceneController {
             floorMaterial = mat
         }
 
-        if showDebugMarker {
+        if showFloorRenderer, showDebugMarker {
             if debugMarker == nil {
                 let marker = ModelEntity(
                     mesh: .generateBox(size: 0.08),
