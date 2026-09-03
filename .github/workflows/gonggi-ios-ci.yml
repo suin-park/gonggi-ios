@@ -9,6 +9,9 @@ on:
       - 'project.yml'
       - 'scripts/**'
       - 'docs/**'
+      - 'Vendor/OpenCV/**'
+      - 'third_party/**'
+      - 'NOTICE'
       - '.github/workflows/gonggi-ios-ci.yml'
   pull_request:
     paths:
@@ -16,6 +19,8 @@ on:
       - 'GonggiTests/**'
       - 'project.yml'
       - 'scripts/**'
+      - 'Vendor/OpenCV/**'
+      - 'third_party/**'
       - '.github/workflows/gonggi-ios-ci.yml'
 
 concurrency:
@@ -25,15 +30,70 @@ concurrency:
 env:
   SCHEME: Gonggi
   PROJECT: Gonggi.xcodeproj
+  OPENCV_VERSION: "4.10.0"
 
 jobs:
-  build-and-test:
-    name: Simulator build & unit tests
+  prepare-opencv:
+    name: Prepare OpenCV xcframework
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Cache OpenCV xcframework
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Ensure OpenCV xcframework
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh
+          ./scripts/ensure_opencv_xcframework.sh
+
+      - name: Upload OpenCV xcframework
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencv2-xcframework
+          path: Vendor/OpenCV/opencv2.xcframework
+          if-no-files-found: error
+          retention-days: 7
+
+  build-and-test:
+    name: Simulator build & unit tests
+    needs: prepare-opencv
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download OpenCV xcframework
+        uses: actions/download-artifact@v4
+        with:
+          name: opencv2-xcframework
+          path: Vendor/OpenCV
+
+      - name: Verify OpenCV layout
+        run: |
+          set -euo pipefail
+          # Normalize nested download layouts from upload-artifact.
+          if [[ ! -f Vendor/OpenCV/opencv2.xcframework/Info.plist ]]; then
+            INNER="$(find Vendor/OpenCV -type d -name 'opencv2.xcframework' | head -n 1)"
+            if [[ -n "${INNER}" && "${INNER}" != "Vendor/OpenCV/opencv2.xcframework" ]]; then
+              rm -rf /tmp/opencv2.xcframework
+              mv "${INNER}" /tmp/opencv2.xcframework
+              rm -rf Vendor/OpenCV/opencv2.xcframework
+              mkdir -p Vendor/OpenCV
+              mv /tmp/opencv2.xcframework Vendor/OpenCV/opencv2.xcframework
+            fi
+          fi
+          test -f Vendor/OpenCV/opencv2.xcframework/Info.plist
+          ls -la Vendor/OpenCV/opencv2.xcframework
 
       - name: Select Xcode
         run: |
@@ -51,7 +111,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/Library/Developer/Xcode/DerivedData
-          key: gonggi-ios-deriveddata-${{ hashFiles('Gonggi/**/*.swift', 'GonggiTests/**/*.swift', 'Gonggi/Resources/Assets.xcassets/**', 'project.yml') }}
+          key: gonggi-ios-deriveddata-${{ hashFiles('Gonggi/**/*.swift', 'Gonggi/**/*.{h,mm,m}', 'GonggiTests/**/*.swift', 'Gonggi/Resources/Assets.xcassets/**', 'project.yml', 'Vendor/OpenCV/VERSION') }}
           restore-keys: |
             gonggi-ios-deriveddata-
 
@@ -123,6 +183,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
+
+      - name: Report OpenCV binary size delta
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "${HOME}/Library/Developer/Xcode/DerivedData" -type d -name 'Gonggi.app' -path '*/Release-iphonesimulator/*' -print -quit)"
+          echo "Release app: ${APP_PATH}"
+          du -sh "${APP_PATH}" || true
+          du -sh Vendor/OpenCV/opencv2.xcframework || true
 
       - name: Preflight validate Release app bundle
         run: |

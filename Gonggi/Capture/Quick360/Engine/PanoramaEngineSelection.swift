@@ -94,7 +94,7 @@ enum PanoramaABTestWriter {
             openCV: openCVReport,
             notes: openCV.success
                 ? nil
-                : "Phase 1: OpenCV stub unavailable; schema reserved for Phase 2"
+                : (openCV.failureReason ?? "OpenCV unavailable; schema reserved for A/B")
         )
         try PanoramaExporter.writeJSON(
             ab,

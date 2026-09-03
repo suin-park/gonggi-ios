@@ -223,11 +223,12 @@ final class PanoramaEnginePhase1Tests: XCTestCase {
         XCTAssertNil(ab.openCV.peakMemoryMB)
     }
 
-    func testOpenCVUnavailableGraceful() async throws {
+    func testOpenCVBridgeAvailableButStitchDeferredGraceful() async throws {
         let url = tempPanoramaURL()
         defer { try? FileManager.default.removeItem(at: url) }
         let engine = OpenCVPanoramaEngine()
-        XCTAssertFalse(engine.isAvailable)
+        // Phase 2A: xcframework + bridge linked; full stitch is Phase 2B/2C.
+        XCTAssertTrue(engine.isAvailable)
         XCTAssertEqual(engine.identifier, PanoramaEngineID.openCV)
 
         let out = try await engine.stitch(input: makeInput(keyframes: makeTinyKeyframes(), outURL: url))

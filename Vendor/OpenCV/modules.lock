@@ -1,0 +1,34 @@
+# Gonggi Phase 2 — OpenCV module pin (custom minimal xcframework)
+# Version: see Vendor/OpenCV/VERSION
+#
+# INCLUDED (required for reconstruction PoC):
+#   core
+#   imgproc
+#   imgcodecs
+#   flann          # features2d dependency
+#   features2d
+#   calib3d
+#   stitching     # detail::* FeaturesFinder / Estimator / Warper / Seam / Blender
+#
+# EXCLUDED (--without):
+#   dnn
+#   video
+#   videoio
+#   highgui
+#   ml
+#   gapi
+#   objc
+#   java
+#   python
+#   js
+#   ts
+#   world
+#   photo         # not required for our detail pipeline
+#   objdetect
+#   videoio ffmpeg backends (N/A on iOS custom build)
+#
+# Architectures:
+#   iphoneos:           arm64
+#   iphonesimulator:    arm64   (GitHub Actions macos-15 / Apple Silicon)
+#
+# Deployment: iOS 17.0 (matches Gonggi)

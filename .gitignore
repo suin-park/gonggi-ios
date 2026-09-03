@@ -34,3 +34,8 @@ AuthKey_*.p8
 
 # Local signing scratch (if any)
 .private_keys/
+
+# OpenCV (large binary — build/cache via scripts/ensure_opencv_xcframework.sh)
+Vendor/OpenCV/opencv2.xcframework/
+Vendor/OpenCV/BUILD_INFO.txt
+.opencv-build/

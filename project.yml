@@ -19,6 +19,16 @@ targets:
     platform: iOS
     sources:
       - path: Gonggi
+        excludes:
+          - "**/*.md"
+    resources:
+      - path: NOTICE
+      - path: third_party/opencv/LICENSE
+    dependencies:
+      - framework: Vendor/OpenCV/opencv2.xcframework
+        embed: false
+      - sdk: libc++.tbd
+      - sdk: Accelerate.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.whik.gonggi
@@ -30,6 +40,14 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: Gonggi/Capture/Quick360/Engine/OpenCV/Gonggi-Bridging-Header.h
+        CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+        CLANG_CXX_LIBRARY: libc++
+        CLANG_ENABLE_MODULES: YES
+        ENABLE_BITCODE: NO
+        FRAMEWORK_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Vendor/OpenCV"
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Gonggi/Capture/Quick360/Engine/OpenCV"
+        OTHER_LDFLAGS: "$(inherited) -framework opencv2"
     info:
       path: Gonggi/Resources/Info.plist
       properties:

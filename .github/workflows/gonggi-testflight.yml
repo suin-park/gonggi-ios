@@ -23,15 +23,30 @@ env:
   SCHEME: Gonggi
   PROJECT: Gonggi.xcodeproj
   BUNDLE_ID: com.whik.gonggi
+  OPENCV_VERSION: "4.10.0"
 
 jobs:
   testflight:
     name: Archive, sign, and upload to TestFlight
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 150
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Cache OpenCV xcframework
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Ensure OpenCV xcframework
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh
+          ./scripts/ensure_opencv_xcframework.sh
 
       - name: Set artifact paths
         id: paths
