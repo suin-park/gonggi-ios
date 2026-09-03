@@ -1636,7 +1636,7 @@ final class PanoramaOrientationPipelineTests: XCTestCase {
         XCTAssertEqual(h, 64)
         XCTAssertEqual(rgba.count, w * h * 4)
         // prepareEquirect is identity — no 90° texture rotate
-        guard let cg = Quick360LiveSphereBrush.cgImage(rgba: rgba, width: w, height: h),
+        guard let cg = Quick360ImageBuffer.cgImage(rgba: rgba, width: w, height: h),
               let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(cg) else {
             XCTFail("prepare failed")
             return

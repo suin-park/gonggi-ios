@@ -57,7 +57,7 @@ enum PanoramaOrientationDebug {
             to: dir.appendingPathComponent("final_equirect_raw.jpg")
         )
 
-        guard let cg = Quick360LiveSphereBrush.cgImage(rgba: marked, width: width, height: height),
+        guard let cg = Quick360ImageBuffer.cgImage(rgba: marked, width: width, height: height),
               let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(cg),
               let ready = rgbaFromCGImage(prepared) else {
             try PanoramaExporter.writeJPEG(
