@@ -6,9 +6,12 @@ import simd
 
 /// Portrait-normalized brush source orientation (separate from camera pose / sphere yaw).
 ///
-/// Chain:
-/// `CVPixelBuffer (sensor/landscape)` → `CIImage` → `oriented(for: interface)` → owned RGBA thumb
-/// → FOV sample UV (portrait top = up, right = right) → sphere UV
+/// Single convention (must stay consistent end-to-end):
+/// 1. Sensor `CVPixelBuffer` (landscape) → `CIImage.oriented(.right)` = **90° CW** pixels
+/// 2. Intrinsics remapped with the **same** 90° CW map (not CCW, not a second flip)
+/// 3. Portrait thumb: u↑right, v↑down; `cameraRayFromPixel`: +X=right, +Y=up, −Z=forward
+///
+/// Do not apply ±90° texture hacks on the sphere — fix axes here only.
 enum Quick360BrushOrientation {
     /// Product gate: portrait iPhone capture.
     static let primaryInterfaceOrientation: UIInterfaceOrientation = .portrait
@@ -32,28 +35,41 @@ enum Quick360BrushOrientation {
         }
     }
 
+    /// Sensor pixel → oriented pixel for portrait (matches `CIImage.oriented(.right)` / 90° CW).
+    /// `(u,v) → (H−1−v, u)` with oriented size `(H, W)`.
+    static func orientedPixelFromSensorPortraitCW(
+        sensorU: Float,
+        sensorV: Float,
+        sensorWidth: Int,
+        sensorHeight: Int
+    ) -> SIMD2<Float> {
+        SIMD2(Float(sensorHeight - 1) - sensorV, sensorU)
+    }
+
     /// Remap sensor intrinsics into the oriented (e.g. portrait) image space.
+    /// Must match `cgImageOrientation` / `CIImage.oriented` exactly — no inverse remap.
     static func remappedIntrinsics(
         _ sensor: CameraIntrinsics,
         interface: UIInterfaceOrientation
     ) -> CameraIntrinsics {
         switch interface {
         case .portrait:
-            // 90° CW (.right): (x,y) → (h-1-y, x) in full-res; dimensions swap.
-            return CameraIntrinsics(
-                fx: sensor.fy,
-                fy: sensor.fx,
-                cx: sensor.cy,
-                cy: Float(sensor.width - 1) - sensor.cx,
-                width: sensor.height,
-                height: sensor.width
-            )
-        case .portraitUpsideDown:
+            // 90° CW (.right): (x,y) → (H−1−y, x); dims (W,H) → (H,W).
             return CameraIntrinsics(
                 fx: sensor.fy,
                 fy: sensor.fx,
                 cx: Float(sensor.height - 1) - sensor.cy,
                 cy: sensor.cx,
+                width: sensor.height,
+                height: sensor.width
+            )
+        case .portraitUpsideDown:
+            // 90° CCW (.left): (x,y) → (y, W−1−x).
+            return CameraIntrinsics(
+                fx: sensor.fy,
+                fy: sensor.fx,
+                cx: sensor.cy,
+                cy: Float(sensor.width - 1) - sensor.cx,
                 width: sensor.height,
                 height: sensor.width
             )
@@ -128,6 +144,14 @@ struct Quick360BrushDebugState: Equatable {
     var halfFOVxDeg: Float = 0
     var halfFOVyDeg: Float = 0
     var fovCorners: [Quick360FOVDiagnostics.Corner] = []
+    /// Camera-local sample rays (expect center≈(0,0,−1), top.y>0, right.x>0).
+    var centerRay: SIMD3<Float> = .zero
+    var topCenterRay: SIMD3<Float> = .zero
+    var rightCenterRay: SIMD3<Float> = .zero
+    /// Same samples in gravity basis degrees (top→pitch↑, right→yaw↑).
+    var centerYawPitchDeg: SIMD2<Float> = .zero
+    var topCenterYawPitchDeg: SIMD2<Float> = .zero
+    var rightCenterYawPitchDeg: SIMD2<Float> = .zero
 
     var overlayText: String {
         let origin = originLocked ? "LOCKED" : "NOT LOCKED"
@@ -138,6 +162,23 @@ struct Quick360BrushDebugState: Equatable {
             String(format: "rawYP: %.1f / %.1f", rawRelativeYawDeg, rawRelativePitchDeg),
             "",
             String(format: "centerUV:\n%.3f / %.3f", centerU, centerV),
+            "",
+            "rays cam:",
+            String(format: "C %.2f %.2f %.2f", centerRay.x, centerRay.y, centerRay.z),
+            String(format: "T %.2f %.2f %.2f", topCenterRay.x, topCenterRay.y, topCenterRay.z),
+            String(format: "R %.2f %.2f %.2f", rightCenterRay.x, rightCenterRay.y, rightCenterRay.z),
+            String(
+                format: "C yp %.1f/%.1f",
+                centerYawPitchDeg.x, centerYawPitchDeg.y
+            ),
+            String(
+                format: "T yp %.1f/%.1f",
+                topCenterYawPitchDeg.x, topCenterYawPitchDeg.y
+            ),
+            String(
+                format: "R yp %.1f/%.1f",
+                rightCenterYawPitchDeg.x, rightCenterYawPitchDeg.y
+            ),
             "",
             "interface:\n\(interfaceOrientation)",
             "",

@@ -911,8 +911,27 @@ final class Quick360CaptureEngine {
         } else {
             corners = []
         }
+        let axisRays = Quick360PerspectiveProjection.sampleAxisRays(thumbIntrinsics: thumbK)
+        var axisYP: (
+            center: (yaw: Float, pitch: Float),
+            topCenter: (yaw: Float, pitch: Float),
+            rightCenter: (yaw: Float, pitch: Float)
+        )?
+        if let basis {
+            axisYP = Quick360PerspectiveProjection.sampleAxisYawPitch(
+                thumbIntrinsics: thumbK,
+                cameraTransform: cameraTransform,
+                basis: basis
+            )
+        }
         if splitDebug.enabled, hasLockedOrigin || treatAsIdentityOrigin {
             Quick360FOVDiagnostics.logCorners(corners)
+            Quick360FOVDiagnostics.logAxisRays(
+                center: axisRays.center,
+                topCenter: axisRays.topCenter,
+                rightCenter: axisRays.rightCenter,
+                yawPitch: axisYP
+            )
         }
         brushDebug = Quick360BrushDebugState(
             relativeYawDeg: yaw * 180 / .pi,
@@ -932,7 +951,13 @@ final class Quick360CaptureEngine {
             worldUp: basis?.worldUp ?? SIMD3(0, 1, 0),
             halfFOVxDeg: halfX * 180 / .pi,
             halfFOVyDeg: halfY * 180 / .pi,
-            fovCorners: corners
+            fovCorners: corners,
+            centerRay: axisRays.center,
+            topCenterRay: axisRays.topCenter,
+            rightCenterRay: axisRays.rightCenter,
+            centerYawPitchDeg: axisYP.map { SIMD2($0.center.yaw * 180 / .pi, $0.center.pitch * 180 / .pi) } ?? .zero,
+            topCenterYawPitchDeg: axisYP.map { SIMD2($0.topCenter.yaw * 180 / .pi, $0.topCenter.pitch * 180 / .pi) } ?? .zero,
+            rightCenterYawPitchDeg: axisYP.map { SIMD2($0.rightCenter.yaw * 180 / .pi, $0.rightCenter.pitch * 180 / .pi) } ?? .zero
         )
     }
 

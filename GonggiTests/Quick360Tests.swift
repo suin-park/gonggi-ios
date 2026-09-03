@@ -776,8 +776,31 @@ final class Quick360BrushOrientationTests: XCTestCase {
         XCTAssertEqual(oriented.height, 1280)
         XCTAssertEqual(oriented.fx, 800, accuracy: 0.1)
         XCTAssertEqual(oriented.fy, 1000, accuracy: 0.1)
+        // 90° CW (.right): (cx,cy) → (H−1−cy, cx) — must match CIImage.oriented(.right), not CCW.
+        XCTAssertEqual(oriented.cx, Float(720 - 1) - 360, accuracy: 0.1)
+        XCTAssertEqual(oriented.cy, 640, accuracy: 0.1)
         // Must not leave landscape dims — that caused 90° content on sphere.
         XCTAssertLessThan(oriented.width, oriented.height)
+    }
+
+    func testPortraitRemapMatchesOrientedPixelFromSensorCW() {
+        let sensor = CameraIntrinsics(fx: 1000, fy: 800, cx: 640, cy: 360, width: 1280, height: 720)
+        let oriented = Quick360BrushOrientation.remappedIntrinsics(sensor, interface: .portrait)
+        let mapped = Quick360BrushOrientation.orientedPixelFromSensorPortraitCW(
+            sensorU: sensor.cx,
+            sensorV: sensor.cy,
+            sensorWidth: sensor.width,
+            sensorHeight: sensor.height
+        )
+        XCTAssertEqual(oriented.cx, mapped.x, accuracy: 0.01)
+        XCTAssertEqual(oriented.cy, mapped.y, accuracy: 0.01)
+    }
+
+    func testPortraitUpsideDownUsesCCWRemap() {
+        let sensor = CameraIntrinsics(fx: 1000, fy: 800, cx: 640, cy: 360, width: 1280, height: 720)
+        let oriented = Quick360BrushOrientation.remappedIntrinsics(sensor, interface: .portraitUpsideDown)
+        XCTAssertEqual(oriented.cx, 360, accuracy: 0.1)
+        XCTAssertEqual(oriented.cy, Float(1280 - 1) - 640, accuracy: 0.1)
     }
 
     func testPortraitCenterPixelRayIsOpticalForward() {
@@ -900,6 +923,46 @@ final class Quick360BrushOrientationTests: XCTestCase {
         )
         XCTAssertGreaterThan(yaw, 0.15)
         XCTAssertEqual(pitch, 0, accuracy: 0.05)
+    }
+
+    func testCameraRayAxisConventionCenterTopRight() {
+        let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
+        let rays = Quick360PerspectiveProjection.sampleAxisRays(thumbIntrinsics: thumb)
+        XCTAssertEqual(rays.center.x, 0, accuracy: 0.02)
+        XCTAssertEqual(rays.center.y, 0, accuracy: 0.02)
+        XCTAssertEqual(rays.center.z, -1, accuracy: 0.02)
+        XCTAssertGreaterThan(rays.topCenter.y, 0.2)
+        XCTAssertEqual(rays.topCenter.x, 0, accuracy: 0.05)
+        XCTAssertGreaterThan(rays.rightCenter.x, 0.2)
+        XCTAssertEqual(rays.rightCenter.y, 0, accuracy: 0.05)
+    }
+
+    func testAxisRaysInGravityBasisTopPitchRightYawOnly() {
+        let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
+        let yp = Quick360PerspectiveProjection.sampleAxisYawPitch(
+            thumbIntrinsics: thumb, cameraTransform: cam, basis: basis
+        )
+        XCTAssertEqual(yp.center.yaw, 0, accuracy: 0.03)
+        XCTAssertEqual(yp.center.pitch, 0, accuracy: 0.03)
+        XCTAssertEqual(yp.topCenter.yaw, 0, accuracy: 0.05)
+        XCTAssertGreaterThan(yp.topCenter.pitch, 0.15)
+        XCTAssertGreaterThan(yp.rightCenter.yaw, 0.15)
+        XCTAssertEqual(yp.rightCenter.pitch, 0, accuracy: 0.05)
+    }
+
+    func testRemappedIntrinsicsThenRaysStayPortraitAligned() {
+        // Sensor landscape → portrait remapped → thumb rays must not swap X/Y.
+        let sensor = CameraIntrinsics(fx: 1000, fy: 800, cx: 640, cy: 360, width: 1280, height: 720)
+        let oriented = Quick360BrushOrientation.remappedIntrinsics(sensor, interface: .portrait)
+        let thumb = Quick360PerspectiveProjection.scaledIntrinsics(oriented, thumbWidth: 180, thumbHeight: 320)
+        let rays = Quick360PerspectiveProjection.sampleAxisRays(thumbIntrinsics: thumb)
+        XCTAssertEqual(rays.center.x, 0, accuracy: 0.03)
+        XCTAssertEqual(rays.center.y, 0, accuracy: 0.03)
+        XCTAssertEqual(rays.center.z, -1, accuracy: 0.03)
+        XCTAssertGreaterThan(rays.topCenter.y, abs(rays.topCenter.x) + 0.1)
+        XCTAssertGreaterThan(rays.rightCenter.x, abs(rays.rightCenter.y) + 0.1)
     }
 
     func testPerspectiveFourCornersHaveIndependentYawPitch() {

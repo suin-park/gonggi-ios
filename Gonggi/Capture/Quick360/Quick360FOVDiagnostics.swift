@@ -66,4 +66,35 @@ enum Quick360FOVDiagnostics {
         }
         Quick360Log.stage("\(prefix): \(parts.joined(separator: " | "))")
     }
+
+    /// Log portrait axis sample rays (camera local + gravity yaw/pitch).
+    static func logAxisRays(
+        center: simd_float3,
+        topCenter: simd_float3,
+        rightCenter: simd_float3,
+        yawPitch: (
+            center: (yaw: Float, pitch: Float),
+            topCenter: (yaw: Float, pitch: Float),
+            rightCenter: (yaw: Float, pitch: Float)
+        )?
+    ) {
+        Quick360Log.stage(
+            String(
+                format: "axisRays cam: C=(%.3f,%.3f,%.3f) T=(%.3f,%.3f,%.3f) R=(%.3f,%.3f,%.3f)",
+                center.x, center.y, center.z,
+                topCenter.x, topCenter.y, topCenter.z,
+                rightCenter.x, rightCenter.y, rightCenter.z
+            )
+        )
+        if let yp = yawPitch {
+            Quick360Log.stage(
+                String(
+                    format: "axisRays grav°: C=%.1f/%.1f T=%.1f/%.1f R=%.1f/%.1f (expect T↑pitch R↑yaw)",
+                    yp.center.yaw * 180 / .pi, yp.center.pitch * 180 / .pi,
+                    yp.topCenter.yaw * 180 / .pi, yp.topCenter.pitch * 180 / .pi,
+                    yp.rightCenter.yaw * 180 / .pi, yp.rightCenter.pitch * 180 / .pi
+                )
+            )
+        }
+    }
 }
