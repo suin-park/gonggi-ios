@@ -17,6 +17,8 @@ final class Quick360ViewModel: ObservableObject {
     @Published private(set) var brushDebug = Quick360BrushDebugState()
     @Published var showBrushDebug = Quick360Config.showBrushCoordinateDebug
     @Published private(set) var splitDebugSettings = Quick360SplitDebugSettings.default
+    @Published private(set) var splitDebugTestPhase: Quick360SplitDebugTestPhase = .idle
+    @Published private(set) var hasCachedSplitDebugFrame = false
 
     let arSession = ARSession()
     let engine: Quick360CaptureEngine
@@ -117,43 +119,38 @@ final class Quick360ViewModel: ObservableObject {
     func ingestPayload(_ payload: Quick360FramePayload) {
         if engine.splitDebugSettings.frozen { return }
         engine.ingest(payload: payload)
+        syncSplitDebugPublishedState()
+    }
+
+    /// START TEST — independent of production canStart; uses last owned brush frame.
+    func runSplitDebugTestA() {
+        let ok = engine.runSplitDebugTestA()
+        syncSplitDebugPublishedState()
+        Quick360Log.stage("splitDebug runTestA ok=\(ok)")
+    }
+
+    func resetSplitDebugTest() {
+        engine.resetSplitDebugTest()
+        syncSplitDebugPublishedState()
+        Quick360Log.stage("splitDebug reset")
+    }
+
+    func requestSplitDebugPaintOne() {
+        engine.requestSplitDebugPaintOne()
+        splitDebugSettings = engine.splitDebugSettings
+        Quick360Log.stage("splitDebug paintOne")
+    }
+
+    private func syncSplitDebugPublishedState() {
         uiState = engine.uiState
         brushDebug = engine.brushDebug
+        splitDebugSettings = engine.splitDebugSettings
         let snap = engine.debugPreviewSnapshot()
-        if let cam = snap.cameraSource {
-            cameraSourcePreview = cam
-        }
-        if let sphere = snap.sphere {
-            spherePreview = sphere
-        }
-    }
-
-    func toggleFreeze() {
-        engine.updateSplitDebugSettings { $0.frozen.toggle() }
-        splitDebugSettings = engine.splitDebugSettings
-        Quick360Log.stage("splitDebug freeze=\(splitDebugSettings.frozen)")
-    }
-
-    func togglePaintEnabled() {
-        engine.updateSplitDebugSettings { $0.paintEnabled.toggle() }
-        splitDebugSettings = engine.splitDebugSettings
-        Quick360Log.stage("splitDebug paint=\(splitDebugSettings.paintEnabled)")
-    }
-
-    func toggleSingleFrameMode() {
-        engine.updateSplitDebugSettings { settings in
-            settings.singleFrameMode.toggle()
-            if settings.singleFrameMode {
-                // Leave continuous; next Paint 1 / start queues a frame.
-            }
-        }
-        splitDebugSettings = engine.splitDebugSettings
-        Quick360Log.stage("splitDebug singleFrame=\(splitDebugSettings.singleFrameMode)")
-    }
-
-    func requestSingleFramePaint() {
-        engine.requestSingleFramePaint()
-        Quick360Log.stage("splitDebug requestSingleFramePaint")
+        cameraSourcePreview = snap.cameraSource
+        spherePreview = snap.sphere
+        brushDebug = snap.brushDebug
+        splitDebugTestPhase = snap.testPhase
+        hasCachedSplitDebugFrame = snap.hasCachedFrame
     }
 
     func stop() async {
@@ -237,12 +234,10 @@ final class Quick360ViewModel: ObservableObject {
                 let images = self.engine.previewImages()
                 self.spherePreview = images.sphere
                 self.floorPreview = images.floor
-                let snap = self.engine.debugPreviewSnapshot()
-                if let cam = snap.cameraSource {
-                    self.cameraSourcePreview = cam
+                self.syncSplitDebugPublishedState()
+                if !self.isSplitDebugMode {
+                    // keep floor preview from images above
                 }
-                self.brushDebug = snap.brushDebug
-                self.splitDebugSettings = self.engine.splitDebugSettings
             }
     }
 

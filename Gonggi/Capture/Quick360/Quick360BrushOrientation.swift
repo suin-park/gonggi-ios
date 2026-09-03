@@ -125,7 +125,7 @@ struct Quick360BrushDebugState: Equatable {
     var fovCorners: [Quick360FOVDiagnostics.Corner] = []
 
     var overlayText: String {
-        let origin = originLocked ? "LOCKED" : "—"
+        let origin = originLocked ? "LOCKED" : "NOT LOCKED"
         var lines = [
             String(format: "yaw:   %.1f°", relativeYawDeg),
             String(format: "pitch: %.1f°", relativePitchDeg),

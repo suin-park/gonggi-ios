@@ -885,6 +885,99 @@ final class Quick360BrushOrientationTests: XCTestCase {
         XCTAssertFalse(s.showFloorRenderer)
         XCTAssertTrue(s.singleFrameMode)
     }
+
+    func testSplitDebugTestALocksPaintsAndFreezesIndependentlyOfCanStart() {
+        let engine = Quick360CaptureEngine(mockMode: true)
+        engine.updateSplitDebugSettings { settings in
+            settings.enabled = true
+            settings.singleFrameMode = true
+            settings.paintEnabled = true
+        }
+        engine.start(sessionId: "test-a", captureId: "cap-a")
+
+        let w = 32
+        let h = 48
+        var rgba = [UInt8](repeating: 180, count: w * h * 4)
+        for i in 0..<(w * h) {
+            rgba[i * 4 + 3] = 255
+        }
+        let payload = Quick360FramePayload(
+            timestamp: 1.0,
+            cameraTransform: matrix_identity_float4x4,
+            intrinsics: CameraIntrinsics(fx: 500, fy: 500, cx: 320, cy: 240, width: 640, height: 480),
+            analysisGrayscale: [UInt8](repeating: 40, count: 64 * 36),
+            jpegData: nil,
+            brushRGBA: rgba,
+            brushWidth: w,
+            brushHeight: h,
+            ambientIntensity: nil,
+            ambientColorTemperature: nil
+        )
+        // Pre-start ingest caches frame; production canStart may still be false.
+        engine.ingest(payload: payload)
+        let pre = engine.debugPreviewSnapshot()
+        XCTAssertTrue(pre.hasCachedFrame)
+        XCTAssertEqual(pre.brushDebug.brushWidth, w)
+        XCTAssertEqual(pre.brushDebug.brushHeight, h)
+        XCTAssertFalse(pre.brushDebug.originLocked)
+
+        XCTAssertTrue(engine.runSplitDebugTestA())
+        let snap = engine.debugPreviewSnapshot()
+        XCTAssertEqual(snap.testPhase, .testAFrozen)
+        XCTAssertTrue(engine.splitDebugSettings.frozen)
+        XCTAssertTrue(snap.brushDebug.originLocked)
+        XCTAssertEqual(snap.brushDebug.relativeYawDeg, 0, accuracy: 0.5)
+        XCTAssertEqual(snap.brushDebug.relativePitchDeg, 0, accuracy: 0.5)
+        XCTAssertEqual(snap.brushDebug.centerU, 0.5, accuracy: 0.02)
+        XCTAssertEqual(snap.brushDebug.centerV, 0.5, accuracy: 0.02)
+        XCTAssertEqual(snap.brushDebug.brushWidth, w)
+        XCTAssertNotNil(snap.sphere)
+
+        engine.resetSplitDebugTest()
+        let reset = engine.debugPreviewSnapshot()
+        XCTAssertEqual(reset.testPhase, .idle)
+        XCTAssertFalse(engine.splitDebugSettings.frozen)
+        XCTAssertFalse(reset.brushDebug.originLocked)
+    }
+
+    func testSplitDebugHUDKeepsSourceSizeWhenEmptyBrushFrameArrives() {
+        let engine = Quick360CaptureEngine(mockMode: true)
+        engine.updateSplitDebugSettings { $0.enabled = true }
+        engine.start(sessionId: "src", captureId: "src")
+        let w = 20
+        let h = 30
+        var rgba = [UInt8](repeating: 100, count: w * h * 4)
+        for i in 0..<(w * h) { rgba[i * 4 + 3] = 255 }
+        let full = Quick360FramePayload(
+            timestamp: 1.0,
+            cameraTransform: matrix_identity_float4x4,
+            intrinsics: CameraIntrinsics(fx: 400, fy: 400, cx: 200, cy: 150, width: 400, height: 300),
+            analysisGrayscale: [UInt8](repeating: 10, count: 64 * 36),
+            jpegData: nil,
+            brushRGBA: rgba,
+            brushWidth: w,
+            brushHeight: h,
+            ambientIntensity: nil,
+            ambientColorTemperature: nil
+        )
+        engine.ingest(payload: full)
+        let empty = Quick360FramePayload(
+            timestamp: 1.2,
+            cameraTransform: matrix_identity_float4x4,
+            intrinsics: CameraIntrinsics(fx: 400, fy: 400, cx: 200, cy: 150, width: 400, height: 300),
+            analysisGrayscale: [UInt8](repeating: 10, count: 64 * 36),
+            jpegData: nil,
+            brushRGBA: [],
+            brushWidth: 0,
+            brushHeight: 0,
+            ambientIntensity: nil,
+            ambientColorTemperature: nil
+        )
+        engine.ingest(payload: empty)
+        let snap = engine.debugPreviewSnapshot()
+        XCTAssertEqual(snap.brushDebug.brushWidth, w)
+        XCTAssertEqual(snap.brushDebug.brushHeight, h)
+    }
 }
 
 

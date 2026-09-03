@@ -78,7 +78,7 @@ struct Quick360FlowView: View {
         }
     }
 
-    /// Hidden AR session driver + visible Split Debug panes.
+    /// Hidden AR session driver + visible Split Debug panes (full-screen, no tab bar).
     private var splitDebugStack: some View {
         ZStack {
             if viewModel.useMockCamera {
@@ -102,28 +102,24 @@ struct Quick360FlowView: View {
             }
 
             Quick360SplitDebugView(
-                uiState: viewModel.uiState,
+                testPhase: viewModel.splitDebugTestPhase,
                 sphereImage: viewModel.spherePreview,
                 cameraSourceImage: viewModel.cameraSourcePreview,
                 brushDebug: viewModel.brushDebug,
-                settings: viewModel.splitDebugSettings,
+                hasCachedFrame: viewModel.hasCachedSplitDebugFrame,
                 onClose: {
                     viewModel.cancelCapture()
                     onClose()
                 },
-                onStart: {
-                    viewModel.beginCapture()
+                onStartTest: {
+                    viewModel.runSplitDebugTestA()
                 },
-                onFinish: {
-                    Task {
-                        await viewModel.stop()
-                        showSummary = true
-                    }
+                onReset: {
+                    viewModel.resetSplitDebugTest()
                 },
-                onToggleFreeze: { viewModel.toggleFreeze() },
-                onTogglePaint: { viewModel.togglePaintEnabled() },
-                onToggleSingleFrame: { viewModel.toggleSingleFrameMode() },
-                onPaintOneFrame: { viewModel.requestSingleFramePaint() }
+                onPaintOne: {
+                    viewModel.requestSplitDebugPaintOne()
+                }
             )
         }
     }

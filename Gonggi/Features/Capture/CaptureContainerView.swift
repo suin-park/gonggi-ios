@@ -39,13 +39,29 @@ struct CaptureContainerView: View {
         NavigationStack {
             ZStack {
                 GonggiAmbientBackground()
-                if isCapturing, let mode = selectedMode {
+                if isCapturing, let mode = selectedMode, mode != .quick360 {
                     captureFlow(for: mode)
                 } else {
                     startPrompt
                 }
             }
             .navigationBarHidden(true)
+        }
+        // Hybrid Split Debug needs the full screen — hide the main Tab Bar.
+        .fullScreenCover(isPresented: Binding(
+            get: { isCapturing && selectedMode == .quick360 },
+            set: { presented in
+                if !presented {
+                    isCapturing = false
+                    selectedMode = nil
+                }
+            }
+        )) {
+            Quick360FlowView(onClose: {
+                isCapturing = false
+                selectedMode = nil
+            })
+            .environmentObject(appState)
         }
     }
 
@@ -55,7 +71,7 @@ struct CaptureContainerView: View {
         case .spaceScan3DGS:
             CaptureFlowView(onClose: { isCapturing = false; selectedMode = nil })
         case .quick360:
-            Quick360FlowView(onClose: { isCapturing = false; selectedMode = nil })
+            EmptyView()
         }
     }
 

@@ -38,6 +38,21 @@ final class Quick360CaptureEngine {
     private var splitDebug = Quick360SplitDebugSettings.default
     /// When `singleFrameMode`, paint exactly once after start (or after `requestSingleFramePaint`).
     private var pendingSingleFramePaint = false
+    /// Independent Test A gate (not tied to production `canStart` / coverage).
+    private(set) var splitDebugTestPhase: Quick360SplitDebugTestPhase = .idle
+    /// Last owned portrait brush frame for immediate START TEST (no production SM gate).
+    private var cachedBrushFrame: CachedSplitDebugBrushFrame?
+    /// After PAINT 1 while frozen: accept one live frame then freeze again.
+    private var pendingPaintOneThenFreeze = false
+
+    private struct CachedSplitDebugBrushFrame {
+        let timestamp: Double
+        let cameraTransform: simd_float4x4
+        let intrinsics: CameraIntrinsics
+        let brushRGBA: [UInt8]
+        let brushWidth: Int
+        let brushHeight: Int
+    }
 
     var candidateFrameCount = 0
     var rejectedFrames = 0
@@ -71,6 +86,102 @@ final class Quick360CaptureEngine {
         pendingSingleFramePaint = true
     }
 
+    /// Split Debug Test A: lock origin → paint exactly one owned frame → freeze.
+    /// Independent of production `canStart` / coverage / continuous brush.
+    @discardableResult
+    func runSplitDebugTestA() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard splitDebug.enabled, isRunning else { return false }
+        guard let frame = cachedBrushFrame, !frame.brushRGBA.isEmpty else {
+            Quick360Log.stage("splitDebug TestA aborted: no cached brush frame")
+            return false
+        }
+
+        splitDebug.frozen = false
+        pendingPaintOneThenFreeze = false
+        pendingSingleFramePaint = false
+        isCapturing = true
+        isComplete = false
+        originTransform = frame.cameraTransform
+        sphereBrush.reset()
+        sphereBrush.paint(
+            thumbRGBA: frame.brushRGBA,
+            thumbWidth: frame.brushWidth,
+            thumbHeight: frame.brushHeight,
+            cameraTransform: frame.cameraTransform,
+            originTransform: originTransform,
+            intrinsics: frame.intrinsics,
+            observationConfidence: 1.0,
+            now: frame.timestamp
+        )
+        latestBrushSourceImage = Quick360ImageBuffer.uiImage(
+            rgba: frame.brushRGBA,
+            width: frame.brushWidth,
+            height: frame.brushHeight
+        )
+        publishSpherePreviewLocked()
+        updateBrushDebugLocked(
+            cameraTransform: frame.cameraTransform,
+            brushWidth: frame.brushWidth,
+            brushHeight: frame.brushHeight,
+            intrinsics: frame.intrinsics,
+            treatAsIdentityOrigin: false
+        )
+        splitDebug.frozen = true
+        splitDebugTestPhase = .testAFrozen
+        refreshUILocked(guidance: .holdStill)
+        Quick360Log.stage(
+            "splitDebug TestA OK origin LOCKED brush \(frame.brushWidth)x\(frame.brushHeight) frozen"
+        )
+        return true
+    }
+
+    /// Reset Split Debug to pre-Test A: gray sphere, live camera, origin unlocked.
+    func resetSplitDebugTest() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        splitDebug.frozen = false
+        pendingSingleFramePaint = false
+        pendingPaintOneThenFreeze = false
+        isCapturing = false
+        isComplete = false
+        originTransform = matrix_identity_float4x4
+        splitDebugTestPhase = .idle
+        sphereBrush.reset()
+        publishSpherePreviewLocked()
+        if let frame = cachedBrushFrame {
+            latestBrushSourceImage = Quick360ImageBuffer.uiImage(
+                rgba: frame.brushRGBA,
+                width: frame.brushWidth,
+                height: frame.brushHeight
+            )
+            updateBrushDebugLocked(
+                cameraTransform: frame.cameraTransform,
+                brushWidth: frame.brushWidth,
+                brushHeight: frame.brushHeight,
+                intrinsics: frame.intrinsics,
+                treatAsIdentityOrigin: true
+            )
+        } else {
+            brushDebug = Quick360BrushDebugState()
+        }
+        refreshUILocked(guidance: .faceForward, forceCanStart: true)
+        Quick360Log.stage("splitDebug reset → idle")
+    }
+
+    /// While Test A is frozen: unfreeze for one live paint, then freeze again.
+    func requestSplitDebugPaintOne() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard splitDebug.enabled, splitDebugTestPhase == .testAFrozen else { return }
+        pendingPaintOneThenFreeze = true
+        pendingSingleFramePaint = true
+        splitDebug.frozen = false
+        isCapturing = true
+        Quick360Log.stage("splitDebug PAINT 1 armed")
+    }
+
     func start(sessionId: String, captureId: String) {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -97,6 +208,9 @@ final class Quick360CaptureEngine {
         lastBrushAt = -1
         showedFloorRecorded = false
         pendingSingleFramePaint = false
+        pendingPaintOneThenFreeze = false
+        splitDebugTestPhase = .idle
+        cachedBrushFrame = nil
         latestBrushSourceImage = nil
         latestSpherePreviewImage = nil
         sphereBrush.reset()
@@ -341,6 +455,36 @@ final class Quick360CaptureEngine {
         }
 
         publishBrushSourceLocked(payload)
+        cacheBrushFrameLocked(payload)
+
+        if pendingPaintOneThenFreeze, isCapturing, !payload.brushRGBA.isEmpty {
+            setOriginTransform(payload.cameraTransform)
+            sphereBrush.paint(
+                thumbRGBA: payload.brushRGBA,
+                thumbWidth: payload.brushWidth,
+                thumbHeight: payload.brushHeight,
+                cameraTransform: payload.cameraTransform,
+                originTransform: originTransform,
+                intrinsics: payload.intrinsics,
+                observationConfidence: 1.0,
+                now: payload.timestamp
+            )
+            pendingSingleFramePaint = false
+            pendingPaintOneThenFreeze = false
+            updateBrushDebugLocked(
+                cameraTransform: payload.cameraTransform,
+                brushWidth: payload.brushWidth,
+                brushHeight: payload.brushHeight,
+                intrinsics: payload.intrinsics,
+                treatAsIdentityOrigin: false
+            )
+            publishSpherePreviewLocked()
+            splitDebug.frozen = true
+            splitDebugTestPhase = .testAFrozen
+            refreshUILocked(guidance: .holdStill)
+            Quick360Log.stage("splitDebug PAINT 1 done → freeze")
+            return
+        }
 
         if !isCapturing {
             // Align-front: when camera is roughly level/forward, enable start.
@@ -656,6 +800,23 @@ final class Quick360CaptureEngine {
             width: payload.brushWidth,
             height: payload.brushHeight
         )
+        // Keep HUD source WxH in sync with the image actually shown (avoid 0x0 overwrite).
+        if payload.brushWidth > 0, payload.brushHeight > 0 {
+            brushDebug.brushWidth = payload.brushWidth
+            brushDebug.brushHeight = payload.brushHeight
+        }
+    }
+
+    private func cacheBrushFrameLocked(_ payload: Quick360FramePayload) {
+        guard !payload.brushRGBA.isEmpty, payload.brushWidth > 0, payload.brushHeight > 0 else { return }
+        cachedBrushFrame = CachedSplitDebugBrushFrame(
+            timestamp: payload.timestamp,
+            cameraTransform: payload.cameraTransform,
+            intrinsics: payload.intrinsics,
+            brushRGBA: payload.brushRGBA,
+            brushWidth: payload.brushWidth,
+            brushHeight: payload.brushHeight
+        )
     }
 
     private func publishSpherePreviewLocked() {
@@ -701,6 +862,9 @@ final class Quick360CaptureEngine {
         if splitDebug.enabled, originTransform != matrix_identity_float4x4 || treatAsIdentityOrigin {
             Quick360FOVDiagnostics.logCorners(corners)
         }
+        // Never clobber live source WxH with empty brush frames (throttle gaps).
+        let resolvedW = brushWidth > 0 ? brushWidth : (cachedBrushFrame?.brushWidth ?? brushDebug.brushWidth)
+        let resolvedH = brushHeight > 0 ? brushHeight : (cachedBrushFrame?.brushHeight ?? brushDebug.brushHeight)
         brushDebug = Quick360BrushDebugState(
             relativeYawDeg: yaw * 180 / .pi,
             relativePitchDeg: pitch * 180 / .pi,
@@ -708,8 +872,8 @@ final class Quick360CaptureEngine {
             centerU: uv.x,
             centerV: uv.y,
             interfaceOrientation: "portrait",
-            brushWidth: brushWidth,
-            brushHeight: brushHeight,
+            brushWidth: resolvedW,
+            brushHeight: resolvedH,
             originLocked: !treatAsIdentityOrigin && originTransform != matrix_identity_float4x4,
             cameraForward: camFwd,
             referenceForward: refFwd,
@@ -748,10 +912,22 @@ final class Quick360CaptureEngine {
         )
     }
 
-    func debugPreviewSnapshot() -> (sphere: UIImage?, cameraSource: UIImage?, brushDebug: Quick360BrushDebugState) {
+    func debugPreviewSnapshot() -> (
+        sphere: UIImage?,
+        cameraSource: UIImage?,
+        brushDebug: Quick360BrushDebugState,
+        testPhase: Quick360SplitDebugTestPhase,
+        hasCachedFrame: Bool
+    ) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return (latestSpherePreviewImage, latestBrushSourceImage, brushDebug)
+        return (
+            latestSpherePreviewImage,
+            latestBrushSourceImage,
+            brushDebug,
+            splitDebugTestPhase,
+            cachedBrushFrame != nil
+        )
     }
 
     private func lookingDownCamera(height: Float) -> simd_float4x4 {
