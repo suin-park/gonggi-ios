@@ -40,7 +40,11 @@ enum Quick360SphereCoordinateConvention {
             fromCamera: originCamera,
             worldUp: worldUp
         ) else { return nil }
-        var m = simd_float4x4(frame.rotation)
+        let R = frame.rotation
+        var m = matrix_identity_float4x4
+        m.columns.0 = SIMD4<Float>(R.columns.0.x, R.columns.0.y, R.columns.0.z, 0)
+        m.columns.1 = SIMD4<Float>(R.columns.1.x, R.columns.1.y, R.columns.1.z, 0)
+        m.columns.2 = SIMD4<Float>(R.columns.2.x, R.columns.2.y, R.columns.2.z, 0)
         m.columns.3 = originCamera.columns.3
         return m
     }
