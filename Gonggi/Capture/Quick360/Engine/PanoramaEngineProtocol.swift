@@ -126,7 +126,8 @@ struct PanoramaEngineOutput {
                 fallbackCount: nil,
                 highParallaxCount: nil,
                 outputFilePath: nil,
-                failureReason: reason
+                failureReason: reason,
+                openCVMetricsJSON: nil
             )
         )
     }
@@ -149,6 +150,8 @@ struct PanoramaEngineRunReport: Codable, Equatable, Sendable {
     var highParallaxCount: Int?
     var outputFilePath: String?
     var failureReason: String?
+    /// Optional OpenCV metrics JSON blob (Phase 2D).
+    var openCVMetricsJSON: String?
 }
 
 /// Side-by-side A/B summary written to `ab_report.json`.

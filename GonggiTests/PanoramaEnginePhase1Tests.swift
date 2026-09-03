@@ -187,7 +187,8 @@ final class PanoramaEnginePhase1Tests: XCTestCase {
                 fallbackCount: 0,
                 highParallaxCount: 0,
                 outputFilePath: legacyURL.path,
-                failureReason: nil
+                failureReason: nil,
+                openCVMetricsJSON: nil
             )
         )
         let openCV = PanoramaEngineOutput.failure(

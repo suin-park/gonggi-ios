@@ -98,7 +98,8 @@ struct OpenCVPanoramaEngine: PanoramaEngineProtocol {
                 fallbackCount: nil,
                 highParallaxCount: nil,
                 outputFilePath: input.outputPanoramaURL.path,
-                failureReason: nil
+                failureReason: nil,
+                openCVMetricsJSON: bridgeResult.metricsJSON
             )
             return PanoramaEngineOutput(
                 engineIdentifier: identifier,
@@ -145,7 +146,8 @@ struct OpenCVPanoramaEngine: PanoramaEngineProtocol {
                 fallbackCount: nil,
                 highParallaxCount: nil,
                 outputFilePath: nil,
-                failureReason: reason
+                failureReason: reason,
+                openCVMetricsJSON: bridgeResult.metricsJSON
             )
         )
     }

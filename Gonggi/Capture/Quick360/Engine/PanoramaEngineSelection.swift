@@ -57,7 +57,7 @@ enum PanoramaABTestWriter {
             )
         }
 
-        // Phase 1: opencv_panorama.jpg may be absent; report still written.
+        // Phase 2+: prefer in-memory rgba; else copy JPEG written by OpenCV bridge.
         if let rgba = openCV.rgba, openCV.width > 0, openCV.height > 0, openCV.success {
             try PanoramaExporter.writeJPEG(
                 rgba: rgba,
@@ -65,6 +65,12 @@ enum PanoramaABTestWriter {
                 height: openCV.height,
                 to: dir.appendingPathComponent(PanoramaABPaths.openCVPanorama)
             )
+        } else if openCV.success,
+                  let url = openCV.panoramaURL,
+                  FileManager.default.fileExists(atPath: url.path) {
+            let dest = dir.appendingPathComponent(PanoramaABPaths.openCVPanorama)
+            try? FileManager.default.removeItem(at: dest)
+            try? FileManager.default.copyItem(at: url, to: dest)
         }
 
         var legacyReport = legacy.report

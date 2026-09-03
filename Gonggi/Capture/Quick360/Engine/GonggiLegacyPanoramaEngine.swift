@@ -50,7 +50,8 @@ struct GonggiLegacyPanoramaEngine: PanoramaEngineProtocol {
             fallbackCount: fallback,
             highParallaxCount: stitchOutput.highParallaxFrameCount,
             outputFilePath: input.outputPanoramaURL.path,
-            failureReason: nil
+            failureReason: nil,
+            openCVMetricsJSON: nil
         )
 
         return PanoramaEngineOutput(
