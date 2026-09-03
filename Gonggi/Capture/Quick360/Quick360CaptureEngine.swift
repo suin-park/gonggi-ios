@@ -12,6 +12,8 @@ final class Quick360CaptureEngine {
     private(set) var captureId: String = ""
     private(set) var startedAt = Date()
     private(set) var originTransform: simd_float4x4 = matrix_identity_float4x4
+    /// True after capture/Test A locks `originTransform` (even if matrix equals identity).
+    private var hasLockedOrigin = false
     private(set) var targets: [Quick360SphericalTarget] = []
     private(set) var selectedKeyframes: [Quick360SelectedKeyframe] = []
     private(set) var candidateSlots: [Int: Quick360CandidateBuffer.Slot] = [:]
@@ -104,6 +106,7 @@ final class Quick360CaptureEngine {
         isCapturing = true
         isComplete = false
         originTransform = frame.cameraTransform
+        hasLockedOrigin = true
         sphereBrush.reset()
         sphereBrush.paint(
             thumbRGBA: frame.brushRGBA,
@@ -147,6 +150,7 @@ final class Quick360CaptureEngine {
         isCapturing = false
         isComplete = false
         originTransform = matrix_identity_float4x4
+        hasLockedOrigin = false
         splitDebugTestPhase = .idle
         sphereBrush.reset()
         publishSpherePreviewLocked()
@@ -189,6 +193,7 @@ final class Quick360CaptureEngine {
         self.captureId = captureId
         startedAt = Date()
         originTransform = matrix_identity_float4x4
+        hasLockedOrigin = false
         targets = Quick360SphericalTargetLayout.makeTargets()
         selectedKeyframes = []
         candidateSlots = [:]
@@ -225,6 +230,7 @@ final class Quick360CaptureEngine {
         guard isRunning, !isCapturing else { return }
         isCapturing = true
         originTransform = matrix_identity_float4x4
+        hasLockedOrigin = false
         // Split debug default: first frame only until continuous paint is re-enabled.
         pendingSingleFramePaint = splitDebug.enabled && (splitDebug.singleFrameMode || splitDebug.paintEnabled)
         refreshUILocked(guidance: splitDebug.enabled ? .holdStill : .lookAround)
@@ -232,8 +238,9 @@ final class Quick360CaptureEngine {
 
     /// Caller must hold `stateLock`.
     private func setOriginTransform(_ transform: simd_float4x4) {
-        if originTransform == matrix_identity_float4x4 {
+        if !hasLockedOrigin {
             originTransform = transform
+            hasLockedOrigin = true
         }
     }
 
@@ -832,7 +839,7 @@ final class Quick360CaptureEngine {
     ) {
         let origin = treatAsIdentityOrigin
             ? cameraTransform
-            : (originTransform == matrix_identity_float4x4 ? cameraTransform : originTransform)
+            : (hasLockedOrigin ? originTransform : cameraTransform)
         let (yaw, pitch) = SphericalMath.relativeYawPitchRad(
             cameraTransform: cameraTransform,
             originTransform: origin
@@ -859,7 +866,7 @@ final class Quick360CaptureEngine {
             halfFOVx: halfX,
             halfFOVy: halfY
         )
-        if splitDebug.enabled, originTransform != matrix_identity_float4x4 || treatAsIdentityOrigin {
+        if splitDebug.enabled, hasLockedOrigin || treatAsIdentityOrigin {
             Quick360FOVDiagnostics.logCorners(corners)
         }
         // Never clobber live source WxH with empty brush frames (throttle gaps).
@@ -874,7 +881,7 @@ final class Quick360CaptureEngine {
             interfaceOrientation: "portrait",
             brushWidth: resolvedW,
             brushHeight: resolvedH,
-            originLocked: !treatAsIdentityOrigin && originTransform != matrix_identity_float4x4,
+            originLocked: !treatAsIdentityOrigin && hasLockedOrigin,
             cameraForward: camFwd,
             referenceForward: refFwd,
             worldUp: SIMD3(0, 1, 0),
@@ -901,7 +908,7 @@ final class Quick360CaptureEngine {
         stateLock.lock()
         defer { stateLock.unlock() }
         let now = CACurrentMediaTime()
-        let origin: simd_float4x4? = (isCapturing && originTransform != matrix_identity_float4x4)
+        let origin: simd_float4x4? = (isCapturing && hasLockedOrigin)
             ? originTransform
             : nil
         return (
