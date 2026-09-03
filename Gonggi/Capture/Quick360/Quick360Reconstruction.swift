@@ -2,6 +2,9 @@ import Foundation
 import simd
 
 /// Orchestrates panorama reconstruction and file export after Hybrid Space Capture.
+///
+/// Reconstruction uses `PanoramaEngineProtocol` (production default: Legacy).
+/// `Panorama360ViewerView` only receives the resulting panorama URL — never the engine id.
 enum Quick360Reconstruction {
     struct Result: Equatable {
         let panoramaURL: URL
@@ -21,10 +24,17 @@ enum Quick360Reconstruction {
         _ = try CaptureSessionStore.createPanoramaDirectory(sessionId: sessionId)
 
         let originTransform = engine.originTransform
+        let panoramaURL = try CaptureSessionStore.quick360EquirectangularURL(sessionId: sessionId)
         let stitchOutput: PanoramaStitcher.Output
 
         if mockMode {
             stitchOutput = PanoramaStitcher.mockPanorama()
+            try PanoramaExporter.writeJPEG(
+                rgba: stitchOutput.rgba,
+                width: stitchOutput.width,
+                height: stitchOutput.height,
+                to: panoramaURL
+            )
         } else {
             let inputs = engine.pendingKeyframeJPEGs().enumerated().compactMap { idx, pair -> PanoramaStitcher.InputKeyframe? in
                 let (kf, jpeg) = pair
@@ -51,11 +61,25 @@ enum Quick360Reconstruction {
                     pitchRad: kf.pitchRad
                 )
             }
-            stitchOutput = PanoramaStitcher.stitch(
+
+            let engineInput = PanoramaEngineInput(
+                sessionId: sessionId,
                 keyframes: inputs,
                 originTransform: originTransform,
-                captureBasis: engine.captureBasis
+                captureBasis: engine.captureBasis,
+                selectedKeyframeMeta: engine.selectedKeyframes,
+                targets: engine.targets,
+                coverageReport: engine.sphericalCoverage.report(),
+                outputWidth: Quick360Config.outputWidth,
+                outputHeight: Quick360Config.outputHeight,
+                outputPanoramaURL: panoramaURL
             )
+
+            stitchOutput = try await runSelectedEngine(
+                input: engineInput,
+                selection: PanoramaEngineSelection.resolved()
+            )
+
             if Quick360Config.writeStitchDebugArtifacts {
                 _ = try? PanoramaStitchDebug.write(sessionId: sessionId, output: stitchOutput)
                 if let first = inputs.first {
@@ -70,11 +94,11 @@ enum Quick360Reconstruction {
             }
         }
 
-        let panoramaURL = try CaptureSessionStore.quick360EquirectangularURL(sessionId: sessionId)
         let maskURL = try CaptureSessionStore.quick360CoverageMaskURL(sessionId: sessionId)
         let metadataURL = try CaptureSessionStore.quick360MetadataURL(sessionId: sessionId)
         let reportURL = try CaptureSessionStore.quick360ReportURL(sessionId: sessionId)
 
+        // Production path may already have JPEG from Legacy engine; rewrite is byte-identical.
         try PanoramaExporter.writeJPEG(
             rgba: stitchOutput.rgba,
             width: stitchOutput.width,
@@ -210,6 +234,49 @@ enum Quick360Reconstruction {
             floorTextureURL: floorTextureURL,
             report: report
         )
+    }
+
+    /// Runs the selected engine. Production / default: Legacy only.
+    /// DEBUG `.abCompare`: Legacy user output + OpenCV stub A/B artifacts.
+    /// DEBUG `.openCV` (Phase 1): OpenCV fails → fall back to Legacy for session usability.
+    static func runSelectedEngine(
+        input: PanoramaEngineInput,
+        selection: PanoramaEngineSelection
+    ) async throws -> PanoramaStitcher.Output {
+        switch selection {
+        case .legacy:
+            let out = try await GonggiLegacyPanoramaEngine().stitch(input: input)
+            guard let stitch = out.stitchOutput else {
+                throw PanoramaEngineError.encodeFailed
+            }
+            return stitch
+
+        case .openCV:
+            let openCVOut = try await OpenCVPanoramaEngine().stitch(input: input)
+            if openCVOut.success, let stitch = openCVOut.stitchOutput {
+                return stitch
+            }
+            // Phase 1 stub: keep capture usable.
+            let legacy = try await GonggiLegacyPanoramaEngine().stitch(input: input)
+            guard let stitch = legacy.stitchOutput else {
+                throw PanoramaEngineError.encodeFailed
+            }
+            return stitch
+
+        case .abCompare:
+            let legacyEngine = GonggiLegacyPanoramaEngine()
+            let legacyOut = try await legacyEngine.stitch(input: input)
+            guard let stitch = legacyOut.stitchOutput else {
+                throw PanoramaEngineError.encodeFailed
+            }
+            let openCVOut = try await OpenCVPanoramaEngine().stitch(input: input)
+            try? PanoramaABTestWriter.write(
+                sessionId: input.sessionId,
+                legacy: legacyOut,
+                openCV: openCVOut
+            )
+            return stitch
+        }
     }
 }
 

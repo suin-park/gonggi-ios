@@ -3,6 +3,8 @@ import SwiftUI
 
 /// Inside-out equirectangular 360° viewer (SceneKit).
 /// Pitch ≈ ±89° so zenith/nadir are reachable without exact-pole singularity.
+/// Engine-agnostic: displays `PanoramaEngineOutput.panoramaURL` (or any equirect JPEG) only —
+/// does not know Legacy vs OpenCV.
 struct Panorama360ViewerView: View {
     let imageURL: URL
     @Environment(\.dismiss) private var dismiss
