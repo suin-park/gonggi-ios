@@ -116,7 +116,8 @@ final class Quick360CaptureEngine {
             originTransform: originTransform,
             intrinsics: frame.intrinsics,
             observationConfidence: 1.0,
-            now: frame.timestamp
+            now: frame.timestamp,
+            options: .singleFrameDebug
         )
         latestBrushSourceImage = Quick360ImageBuffer.uiImage(
             rgba: frame.brushRGBA,
@@ -474,7 +475,8 @@ final class Quick360CaptureEngine {
                 originTransform: originTransform,
                 intrinsics: payload.intrinsics,
                 observationConfidence: 1.0,
-                now: payload.timestamp
+                now: payload.timestamp,
+                options: .singleFrameDebug
             )
             pendingSingleFramePaint = false
             pendingPaintOneThenFreeze = false
@@ -566,6 +568,8 @@ final class Quick360CaptureEngine {
         if !payload.brushRGBA.isEmpty {
             let shouldPaint = shouldPaintSphereLocked()
             if shouldPaint {
+                let paintOptions: Quick360BrushPaintOptions =
+                    (splitDebug.enabled && splitDebug.singleFrameMode) ? .singleFrameDebug : .production
                 sphereBrush.paint(
                     thumbRGBA: payload.brushRGBA,
                     thumbWidth: payload.brushWidth,
@@ -574,7 +578,8 @@ final class Quick360CaptureEngine {
                     originTransform: originTransform,
                     intrinsics: payload.intrinsics,
                     observationConfidence: obsConf * (dynamicRatio > 0.35 ? 0.5 : 1),
-                    now: now
+                    now: now,
+                    options: paintOptions
                 )
                 if splitDebug.singleFrameMode {
                     pendingSingleFramePaint = false
@@ -859,19 +864,25 @@ final class Quick360CaptureEngine {
             intrinsics,
             interface: Quick360BrushOrientation.primaryInterfaceOrientation
         )
+        let resolvedW = brushWidth > 0 ? brushWidth : (cachedBrushFrame?.brushWidth ?? max(brushDebug.brushWidth, 1))
+        let resolvedH = brushHeight > 0 ? brushHeight : (cachedBrushFrame?.brushHeight ?? max(brushDebug.brushHeight, 1))
+        let thumbK = Quick360PerspectiveProjection.scaledIntrinsics(
+            oriented,
+            thumbWidth: max(resolvedW, 2),
+            thumbHeight: max(resolvedH, 2)
+        )
+        let R = Quick360PerspectiveProjection.relativeRotation(
+            cameraTransform: cameraTransform,
+            originTransform: origin
+        )
         let (halfX, halfY) = Quick360BrushOrientation.halfFOV(orientedIntrinsics: oriented)
         let corners = Quick360FOVDiagnostics.footprintCorners(
-            centerYawRad: yaw,
-            centerPitchRad: pitch,
-            halfFOVx: halfX,
-            halfFOVy: halfY
+            thumbIntrinsics: thumbK,
+            relativeRotation: R
         )
         if splitDebug.enabled, hasLockedOrigin || treatAsIdentityOrigin {
             Quick360FOVDiagnostics.logCorners(corners)
         }
-        // Never clobber live source WxH with empty brush frames (throttle gaps).
-        let resolvedW = brushWidth > 0 ? brushWidth : (cachedBrushFrame?.brushWidth ?? brushDebug.brushWidth)
-        let resolvedH = brushHeight > 0 ? brushHeight : (cachedBrushFrame?.brushHeight ?? brushDebug.brushHeight)
         brushDebug = Quick360BrushDebugState(
             relativeYawDeg: yaw * 180 / .pi,
             relativePitchDeg: pitch * 180 / .pi,
@@ -879,8 +890,8 @@ final class Quick360CaptureEngine {
             centerU: uv.x,
             centerV: uv.y,
             interfaceOrientation: "portrait",
-            brushWidth: resolvedW,
-            brushHeight: resolvedH,
+            brushWidth: brushWidth > 0 ? brushWidth : (cachedBrushFrame?.brushWidth ?? brushDebug.brushWidth),
+            brushHeight: brushHeight > 0 ? brushHeight : (cachedBrushFrame?.brushHeight ?? brushDebug.brushHeight),
             originLocked: !treatAsIdentityOrigin && hasLockedOrigin,
             cameraForward: camFwd,
             referenceForward: refFwd,

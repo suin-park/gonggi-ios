@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// FOV footprint diagnostics for Split Debug (same nx/ny convention as `Quick360LiveSphereBrush.paint`).
+/// FOV footprint diagnostics for Split Debug (perspective corner rays).
 enum Quick360FOVDiagnostics {
     struct Corner: Equatable, Sendable {
         var label: String
@@ -14,32 +14,15 @@ enum Quick360FOVDiagnostics {
         var pitchDeg: Float { pitchRad * 180 / .pi }
     }
 
-    /// Portrait brush FOV: `nx = dyaw / halfFOVx`, `ny = -dpitch / halfFOVy`
-    /// with image TL=(-1,-1), TR=(1,-1), BR=(1,1), BL=(-1,1).
+    /// Perspective FOV corners from oriented+scaled brush intrinsics and relative camera rotation.
     static func footprintCorners(
-        centerYawRad: Float,
-        centerPitchRad: Float,
-        halfFOVx: Float,
-        halfFOVy: Float
+        thumbIntrinsics: CameraIntrinsics,
+        relativeRotation: simd_float3x3
     ) -> [Corner] {
-        let samples: [(String, Float, Float)] = [
-            ("TL", -1, -1),
-            ("TR", 1, -1),
-            ("BR", 1, 1),
-            ("BL", -1, 1)
-        ]
-        return samples.map { label, nx, ny in
-            let yaw = centerYawRad + nx * halfFOVx
-            let pitch = centerPitchRad - ny * halfFOVy
-            let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: pitch)
-            return Corner(
-                label: label,
-                yawRad: yaw,
-                pitchRad: pitch,
-                u: uv.x,
-                v: uv.y
-            )
-        }
+        Quick360PerspectiveProjection.footprintCorners(
+            thumbIntrinsics: thumbIntrinsics,
+            relativeRotation: relativeRotation
+        )
     }
 
     /// True when all four corners stay near equirect center (normal forward FOV, no pole/seam jump).
@@ -67,7 +50,6 @@ enum Quick360FOVDiagnostics {
             cameraTransform: cameraTransform,
             originTransform: originTransform
         )
-        // Optical frame: columns.0 = right, columns.1 = up.
         return atan2(relative.columns.0.y, relative.columns.1.y)
     }
 

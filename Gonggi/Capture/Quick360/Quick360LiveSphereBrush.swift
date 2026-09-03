@@ -52,7 +52,8 @@ final class Quick360LiveSphereBrush {
         now - lastPaintAt >= Quick360Config.liveBrushMinIntervalSec
     }
 
-    /// Fill current camera FOV densely into equirect (no sparse mosaic stamps).
+    /// Fill current camera FOV into equirect via **perspective** reverse projection
+    /// (sphere direction → camera pixel), not linear center±halfFOV boxes.
     func paint(
         thumbRGBA: [UInt8],
         thumbWidth: Int,
@@ -61,62 +62,104 @@ final class Quick360LiveSphereBrush {
         originTransform: simd_float4x4,
         intrinsics: CameraIntrinsics,
         observationConfidence: Float,
-        now: TimeInterval
+        now: TimeInterval,
+        options: Quick360BrushPaintOptions = .production
     ) {
         guard thumbWidth > 1, thumbHeight > 1, thumbRGBA.count >= thumbWidth * thumbHeight * 4 else { return }
         lastPaintAt = now
         updateCount += 1
 
-        let (yaw0, pitch0) = SphericalMath.relativeYawPitchRad(
-            cameraTransform: cameraTransform,
-            originTransform: originTransform
-        )
-        // FOV from portrait-normalized intrinsics (image orientation), not sensor landscape.
         let orientedIntrinsics = Quick360BrushOrientation.remappedIntrinsics(
             intrinsics,
             interface: Quick360BrushOrientation.primaryInterfaceOrientation
         )
-        let (halfFOVx, halfFOVy) = Quick360BrushOrientation.halfFOV(orientedIntrinsics: orientedIntrinsics)
+        let thumbK = Quick360PerspectiveProjection.scaledIntrinsics(
+            orientedIntrinsics,
+            thumbWidth: thumbWidth,
+            thumbHeight: thumbHeight
+        )
+        let R = Quick360PerspectiveProjection.relativeRotation(
+            cameraTransform: cameraTransform,
+            originTransform: originTransform
+        )
+        let corners = Quick360PerspectiveProjection.footprintCorners(
+            thumbIntrinsics: thumbK,
+            relativeRotation: R
+        )
+        let bounds = Quick360PerspectiveProjection.equirectScanBounds(
+            corners: corners,
+            equirectWidth: width,
+            equirectHeight: height,
+            padPixels: 4
+        )
+
         let conf = simd_clamp(observationConfidence, 0, 1)
-
-        let pad: Float = 0.04
-        let pitchLo = pitch0 - halfFOVy - pad
-        let pitchHi = pitch0 + halfFOVy + pad
-
-        let y0 = max(0, SphericalMath.equirectangularPixel(yawRad: yaw0, pitchRad: pitchHi, width: width, height: height).y - 2)
-        let y1 = min(height - 1, SphericalMath.equirectangularPixel(yawRad: yaw0, pitchRad: pitchLo, width: width, height: height).y + 2)
-
-        let featherStart = Quick360Config.brushBoundaryFeatherStart
         let interiorConf = UInt8(clamping: Int((max(conf, 0.85) * 255).rounded()))
+        let featherStart = Quick360Config.brushBoundaryFeatherStart
+        let maxU = Float(thumbWidth - 1)
+        let maxV = Float(thumbHeight - 1)
 
-        for y in y0...y1 {
-            for x in 0..<width {
-                let dirYawPitch = equirectYawPitch(x: x, y: y)
-                var dyaw = dirYawPitch.yaw - yaw0
-                while dyaw > .pi { dyaw -= 2 * .pi }
-                while dyaw < -.pi { dyaw += 2 * .pi }
-                let dpitch = dirYawPitch.pitch - pitch0
-                // Portrait brush: +nx → image right, +ny → image down.
-                let nx = dyaw / max(halfFOVx, 1e-4)
-                let ny = -dpitch / max(halfFOVy, 1e-4)
-                let edge = max(abs(nx), abs(ny))
-                guard edge <= 1.02 else { continue }
+        for y in bounds.y0...bounds.y1 {
+            let xRange: ClosedRange<Int> = bounds.wrapsSeam ? (0...(width - 1)) : (bounds.x0...bounds.x1)
+            for x in xRange {
+                let sphereDir = SphericalMath.opticalDirectionFromEquirectangularPixel(
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: height
+                )
+                guard let uv = Quick360PerspectiveProjection.projectSphereDirectionToPixel(
+                    sphereDirection: sphereDir,
+                    relativeRotation: R,
+                    thumbIntrinsics: thumbK,
+                    edgePad: options.enableFeather ? 1.0 : 0.02
+                ) else { continue }
 
-                let boundaryWeight: Float
-                if edge <= featherStart {
-                    boundaryWeight = 1
+                let tu = uv.x
+                let tv = uv.y
+                // Soft edge only when feather enabled (normalized distance outside image).
+                var boundaryWeight: Float = 1
+                if options.enableFeather {
+                    let ou: Float
+                    if tu < 0 { ou = -tu / maxU }
+                    else if tu > maxU { ou = (tu - maxU) / maxU }
+                    else { ou = 0 }
+                    let ov: Float
+                    if tv < 0 { ov = -tv / maxV }
+                    else if tv > maxV { ov = (tv - maxV) / maxV }
+                    else { ov = 0 }
+                    let edgeOut = max(ou, ov)
+                    if edgeOut > 0 {
+                        boundaryWeight = simd_clamp(1 - edgeOut / 0.02, 0, 1)
+                    } else {
+                        // Interior: slight fade near image border (same start ratio idea).
+                        let nx = abs((tu / maxU) * 2 - 1)
+                        let ny = abs((tv / maxV) * 2 - 1)
+                        let edge = max(nx, ny)
+                        if edge > featherStart {
+                            boundaryWeight = simd_clamp((1 - edge) / max(1 - featherStart, 1e-4), 0, 1)
+                        }
+                    }
+                    guard boundaryWeight > 0.04 else { continue }
                 } else {
-                    boundaryWeight = simd_clamp((1.02 - edge) / max(1.02 - featherStart, 1e-4), 0, 1)
+                    guard tu >= 0, tv >= 0, tu <= maxU, tv <= maxV else { continue }
                 }
-                guard boundaryWeight > 0.04 else { continue }
 
-                let tu = (nx * 0.5 + 0.5) * Float(thumbWidth - 1)
-                let tv = (ny * 0.5 + 0.5) * Float(thumbHeight - 1)
                 let (r, g, b) = sampleBilinear(thumbRGBA, width: thumbWidth, height: thumbHeight, u: tu, v: tv)
-
                 let idx = y * width + x
                 let prev = confidence[idx]
                 let o = idx * 4
+
+                if options.opaqueReplace {
+                    rgba[o] = r
+                    rgba[o + 1] = g
+                    rgba[o + 2] = b
+                    rgba[o + 3] = 255
+                    // Skip reveal fade so Test A freeze shows the true patch immediately.
+                    firstSeen[idx] = now - Quick360Config.brushRevealFadeSec - 0.05
+                    confidence[idx] = 255
+                    continue
+                }
 
                 if boundaryWeight >= 0.98 {
                     rgba[o] = r
@@ -139,14 +182,6 @@ final class Quick360LiveSphereBrush {
                 }
             }
         }
-    }
-
-    private func equirectYawPitch(x: Int, y: Int) -> (yaw: Float, pitch: Float) {
-        let u = Float(x) / Float(max(width - 1, 1))
-        let v = Float(y) / Float(max(height - 1, 1))
-        let yaw = u * 2 * .pi - .pi
-        let pitch = .pi / 2 - v * .pi
-        return (yaw, pitch)
     }
 
     private func sampleBilinear(_ rgba: [UInt8], width: Int, height: Int, u: Float, v: Float) -> (UInt8, UInt8, UInt8) {
@@ -229,7 +264,6 @@ final class Quick360LiveSphereBrush {
             var g = Float(rgba[o + 1])
             var b = Float(rgba[o + 2])
 
-            // Reveal fade: gray → clear color, then stays fully clear.
             let seen = firstSeen[i]
             let age = seen > 0 ? now - seen : fade
             let reveal = simd_clamp(Float(age / fade), 0, 1)
@@ -238,7 +272,6 @@ final class Quick360LiveSphereBrush {
             g = gray * (1 - reveal) + g * reveal
             b = gray * (1 - reveal) + b * reveal
 
-            // Weak: keep recognizable color, tiny gray veil only (no desaturate/blur).
             if c < goodThr {
                 let amount = c < weakThr ? veil * 1.25 : veil
                 r = r * (1 - amount) + gray * amount

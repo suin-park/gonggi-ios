@@ -60,6 +60,29 @@ enum SphericalMath {
         ))
     }
 
+    /// Sphere brush / optical space: yaw=0,pitch=0 → local **−Z** (matches ARKit forward + `sphereYawPitchFromOpticalForward`).
+    static func opticalDirectionFromSphereYawPitch(yawRad: Float, pitchRad: Float) -> simd_float3 {
+        let cosPitch = cos(pitchRad)
+        return simd_normalize(simd_float3(
+            sin(yawRad) * cosPitch,
+            sin(pitchRad),
+            -cos(yawRad) * cosPitch
+        ))
+    }
+
+    static func opticalDirectionFromEquirectangularPixel(
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int
+    ) -> simd_float3 {
+        let u = Float(x) / Float(max(width - 1, 1))
+        let v = Float(y) / Float(max(height - 1, 1))
+        let yaw = u * 2 * .pi - .pi
+        let pitch = .pi / 2 - v * .pi
+        return opticalDirectionFromSphereYawPitch(yawRad: yaw, pitchRad: pitch)
+    }
+
     static func angularDistanceRad(
         yawA: Float, pitchA: Float,
         yawB: Float, pitchB: Float
