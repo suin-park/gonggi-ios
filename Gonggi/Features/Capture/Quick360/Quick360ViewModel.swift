@@ -175,6 +175,7 @@ final class Quick360ViewModel: ObservableObject {
         didRunSession = false
 
         isStitching = true
+        engine.logLiveBrushReport()
         let result: Quick360Reconstruction.Result?
         do {
             result = try await Quick360Reconstruction.reconstruct(engine: engine, mockMode: useMockCamera)

@@ -38,6 +38,13 @@ final class Quick360CaptureEngine {
     private var planeCandidates: [UUID: Quick360FloorDetector.Candidate] = [:]
     private var floorStabilizeCount = 0
     private var lastBrushAt: TimeInterval = -1
+    /// Force next owned payload to include brush bytes (first paint / hole fill).
+    private var forceBrushInclude = false
+    private var lastGateYawRad: Float?
+    private var lastGatePitchRad: Float?
+    private var lastGateTime: TimeInterval = -1
+    private var liveBrushIntervalSec: Double = Quick360Config.liveBrushMinIntervalSec
+    let liveBrushStats = Quick360LiveBrushStats()
     private var showedFloorRecorded = false
     private var splitDebug = Quick360SplitDebugSettings.default
     /// When `singleFrameMode`, paint exactly once after start (or after `requestSingleFramePaint`).
@@ -221,6 +228,12 @@ final class Quick360CaptureEngine {
         planeCandidates = [:]
         floorStabilizeCount = 0
         lastBrushAt = -1
+        forceBrushInclude = false
+        lastGateYawRad = nil
+        lastGatePitchRad = nil
+        lastGateTime = -1
+        liveBrushIntervalSec = Quick360Config.liveBrushMinIntervalSec
+        liveBrushStats.reset()
         showedFloorRecorded = false
         pendingSingleFramePaint = false
         pendingPaintOneThenFreeze = false
@@ -233,7 +246,7 @@ final class Quick360CaptureEngine {
         refreshUILocked(guidance: .faceForward)
     }
 
-    /// User tapped 「촬영 시작」 — lock origin on next frame and begin brushing.
+    /// User tapped 「촬영 시작」 — immediate paint from latest owned frame, then continuous loop.
     func beginCapture() {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -242,9 +255,112 @@ final class Quick360CaptureEngine {
         originTransform = matrix_identity_float4x4
         hasLockedOrigin = false
         captureBasis = nil
+        forceBrushInclude = true
+        lastBrushAt = -1
+        liveBrushIntervalSec = Quick360Config.liveBrushMinIntervalSec
+        liveBrushStats.setAdaptiveInterval(liveBrushIntervalSec)
         // Split debug default: first frame only until continuous paint is re-enabled.
         pendingSingleFramePaint = splitDebug.enabled && (splitDebug.singleFrameMode || splitDebug.paintEnabled)
         refreshUILocked(guidance: splitDebug.enabled ? .holdStill : .lookAround)
+
+        // Immediate first paint — do not wait for continuous loop throttle / next tick.
+        paintFirstFrameFromCacheLocked()
+    }
+
+    /// Caller must hold `stateLock`.
+    private func paintFirstFrameFromCacheLocked() {
+        guard splitDebug.paintEnabled else {
+            recordLiveBrushDecisionLocked(
+                .rejected(.paintDisabled, yawDeg: 0, pitchDeg: 0, angularSpeedDegPerSec: 0),
+                pixels: 0,
+                paintMs: 0
+            )
+            return
+        }
+        guard let frame = cachedBrushFrame, !frame.brushRGBA.isEmpty else {
+            recordLiveBrushDecisionLocked(
+                .rejected(
+                    .missingBrush,
+                    yawDeg: 0,
+                    pitchDeg: 0,
+                    angularSpeedDegPerSec: 0,
+                    note: "firstFrame no cache"
+                ),
+                pixels: 0,
+                paintMs: 0
+            )
+            Quick360Log.stage("firstFramePaint skipped: missing cached brush")
+            return
+        }
+        setOriginTransform(frame.cameraTransform)
+        guard let basis = captureBasis else {
+            recordLiveBrushDecisionLocked(
+                .rejected(
+                    .invalidProjection,
+                    yawDeg: 0,
+                    pitchDeg: 0,
+                    angularSpeedDegPerSec: 0,
+                    note: "firstFrame no basis"
+                ),
+                pixels: 0,
+                paintMs: 0
+            )
+            return
+        }
+        let now = CACurrentMediaTime()
+        let t0 = now
+        let paintOptions: Quick360BrushPaintOptions =
+            (splitDebug.enabled && splitDebug.singleFrameMode) ? .singleFrameDebug : .production
+        let pixels = sphereBrush.paint(
+            thumbRGBA: frame.brushRGBA,
+            thumbWidth: frame.brushWidth,
+            thumbHeight: frame.brushHeight,
+            cameraTransform: frame.cameraTransform,
+            captureBasis: basis,
+            intrinsics: frame.intrinsics,
+            observationConfidence: 1.0,
+            now: now,
+            options: paintOptions
+        )
+        let paintMs = (CACurrentMediaTime() - t0) * 1000
+        if splitDebug.singleFrameMode {
+            pendingSingleFramePaint = false
+        }
+        lastBrushAt = now
+        liveBrushStats.recordFirstFramePaint()
+        let (yaw, pitch) = basis.centerYawPitch(cameraTransform: frame.cameraTransform)
+        let decision = Quick360LiveBrushDecision.accepted(
+            yawDeg: yaw * 180 / .pi,
+            pitchDeg: pitch * 180 / .pi,
+            angularSpeedDegPerSec: 0,
+            note: "firstFrame"
+        )
+        recordLiveBrushDecisionLocked(decision, pixels: pixels, paintMs: paintMs)
+        updateBrushDebugLocked(
+            cameraTransform: frame.cameraTransform,
+            brushWidth: frame.brushWidth,
+            brushHeight: frame.brushHeight,
+            intrinsics: frame.intrinsics,
+            treatAsIdentityOrigin: false
+        )
+        publishSpherePreviewLocked()
+        Quick360Log.stage(
+            String(
+                format: "firstFramePaint ok pixels=%d paintMs=%.1f yaw=%.1f pitch=%.1f",
+                pixels,
+                paintMs,
+                yaw * 180 / .pi,
+                pitch * 180 / .pi
+            )
+        )
+        Quick360LiveBrushPerf.logSnapshot(
+            paintMs: paintMs,
+            intervalSec: liveBrushIntervalSec,
+            atlasW: sphereBrush.width,
+            atlasH: sphereBrush.height,
+            brushW: frame.brushWidth,
+            brushH: frame.brushHeight
+        )
     }
 
     /// Caller must hold `stateLock`.
@@ -348,6 +464,7 @@ final class Quick360CaptureEngine {
         )
         if sphereBrush.coveragePercent() >= Float(Quick360Config.sphereCoverageCompletePercent) {
             isComplete = true
+            Quick360Log.stage(liveBrushStats.summaryLine())
         }
         refreshUILocked(guidance: nil)
     }
@@ -356,12 +473,13 @@ final class Quick360CaptureEngine {
         stateLock.lock()
         defer { stateLock.unlock() }
         guard isRunning else { return false }
+        if forceBrushInclude { return true }
         // Split debug needs frequent camera-source frames before start.
         if splitDebug.enabled {
-            return now - lastBrushAt >= Quick360Config.liveBrushMinIntervalSec
+            return now - lastBrushAt >= liveBrushIntervalSec
         }
         if !isCapturing { return now - lastBrushAt >= 0.5 }
-        return now - lastBrushAt >= Quick360Config.liveBrushMinIntervalSec
+        return now - lastBrushAt >= liveBrushIntervalSec
     }
 
     func wantsJPEGCandidate(cameraTransform: simd_float4x4) -> Bool {
@@ -394,6 +512,7 @@ final class Quick360CaptureEngine {
         if includeBrush {
             stateLock.lock()
             lastBrushAt = frame.timestamp
+            forceBrushInclude = false
             stateLock.unlock()
         }
         return Quick360FramePayload.copyOwned(
@@ -578,14 +697,44 @@ final class Quick360CaptureEngine {
         )
         let exposure = Quick360ImageAnalysis.exposureScore(grayscale: gray)
         let obsConf = simd_clamp(0.35 + sharpness * 0.4 + exposure * 0.25, 0.2, 1)
+        let angularSpeed = angularSpeedDegPerSecLocked(
+            yawRad: yawRad,
+            pitchRad: pitchRad,
+            now: now
+        )
+        adaptLiveBrushIntervalLocked(angularSpeedDegPerSec: angularSpeed)
 
-        // Sphere brush (respect Paint ON/OFF + Single Frame mode)
-        if !payload.brushRGBA.isEmpty {
-            let shouldPaint = shouldPaintSphereLocked()
-            if shouldPaint, let basis = captureBasis {
+        // Sphere brush (respect Paint ON/OFF + Single Frame mode) + coverage-hole diagnostics.
+        let yawDeg = yawRad * 180 / .pi
+        let pitchDeg = pitchRad * 180 / .pi
+        if payload.brushRGBA.isEmpty {
+            // Brush bytes omitted by wantsBrushUpdate — count at paint cadence (not 60 Hz).
+            if now - lastThrottleRejectSampleAt >= liveBrushIntervalSec {
+                lastThrottleRejectSampleAt = now
+                recordLiveBrushDecisionLocked(
+                    .rejected(
+                        .throttle,
+                        yawDeg: yawDeg,
+                        pitchDeg: pitchDeg,
+                        angularSpeedDegPerSec: angularSpeed,
+                        note: "no brush bytes"
+                    ),
+                    pixels: 0,
+                    paintMs: 0
+                )
+            }
+        } else {
+            let decision = evaluateLiveBrushPaintLocked(
+                yawDeg: yawDeg,
+                pitchDeg: pitchDeg,
+                angularSpeedDegPerSec: angularSpeed,
+                observationConfidence: obsConf
+            )
+            if decision.accepted, let basis = captureBasis {
                 let paintOptions: Quick360BrushPaintOptions =
                     (splitDebug.enabled && splitDebug.singleFrameMode) ? .singleFrameDebug : .production
-                sphereBrush.paint(
+                let t0 = CACurrentMediaTime()
+                let pixels = sphereBrush.paint(
                     thumbRGBA: payload.brushRGBA,
                     thumbWidth: payload.brushWidth,
                     thumbHeight: payload.brushHeight,
@@ -596,9 +745,38 @@ final class Quick360CaptureEngine {
                     now: now,
                     options: paintOptions
                 )
+                let paintMs = (CACurrentMediaTime() - t0) * 1000
+                if pixels == 0 {
+                    recordLiveBrushDecisionLocked(
+                        .rejected(
+                            .invalidProjection,
+                            yawDeg: yawDeg,
+                            pitchDeg: pitchDeg,
+                            angularSpeedDegPerSec: angularSpeed,
+                            note: "zero pixels"
+                        ),
+                        pixels: 0,
+                        paintMs: paintMs
+                    )
+                } else {
+                    recordLiveBrushDecisionLocked(decision, pixels: pixels, paintMs: paintMs)
+                    if liveBrushStats.acceptedCount % 10 == 0 {
+                        Quick360LiveBrushPerf.logSnapshot(
+                            paintMs: paintMs,
+                            intervalSec: liveBrushIntervalSec,
+                            atlasW: sphereBrush.width,
+                            atlasH: sphereBrush.height,
+                            brushW: payload.brushWidth,
+                            brushH: payload.brushHeight
+                        )
+                    }
+                    adaptLiveBrushIntervalFromCPULocked(paintMs: paintMs)
+                }
                 if splitDebug.singleFrameMode {
                     pendingSingleFramePaint = false
                 }
+            } else {
+                recordLiveBrushDecisionLocked(decision, pixels: 0, paintMs: 0)
             }
             updateBrushDebugLocked(
                 cameraTransform: cameraTransform,
@@ -818,6 +996,147 @@ final class Quick360CaptureEngine {
             return pendingSingleFramePaint
         }
         return true
+    }
+
+    /// Live brush gates — confidence / translation / angular velocity do **not** hard-reject
+    /// (they were causing coverage holes). Soft confidence still weakens paint weight only.
+    private func evaluateLiveBrushPaintLocked(
+        yawDeg: Float,
+        pitchDeg: Float,
+        angularSpeedDegPerSec: Float,
+        observationConfidence: Float
+    ) -> Quick360LiveBrushDecision {
+        if !splitDebug.paintEnabled {
+            return .rejected(
+                .paintDisabled,
+                yawDeg: yawDeg,
+                pitchDeg: pitchDeg,
+                angularSpeedDegPerSec: angularSpeedDegPerSec
+            )
+        }
+        if splitDebug.singleFrameMode, !pendingSingleFramePaint {
+            return .rejected(
+                .singleFrameDone,
+                yawDeg: yawDeg,
+                pitchDeg: pitchDeg,
+                angularSpeedDegPerSec: angularSpeedDegPerSec
+            )
+        }
+        if captureBasis == nil {
+            return .rejected(
+                .invalidProjection,
+                yawDeg: yawDeg,
+                pitchDeg: pitchDeg,
+                angularSpeedDegPerSec: angularSpeedDegPerSec,
+                note: "nil captureBasis"
+            )
+        }
+        // Soft note only — do not skip paint for low confidence / translation / fast spin.
+        var note = ""
+        if observationConfidence < Quick360Config.sphereWeakConfidence {
+            note = "lowConf soft"
+        }
+        if translationState.level == .excessive {
+            note = note.isEmpty ? "translation soft" : note + "+translation"
+        }
+        if angularSpeedDegPerSec > Quick360Config.liveBrushFastMotionDegPerSec {
+            note = note.isEmpty ? "fastSpin boostRate" : note + "+fastSpin"
+        }
+        return .accepted(
+            yawDeg: yawDeg,
+            pitchDeg: pitchDeg,
+            angularSpeedDegPerSec: angularSpeedDegPerSec,
+            note: note
+        )
+    }
+
+    private func angularSpeedDegPerSecLocked(
+        yawRad: Float,
+        pitchRad: Float,
+        now: TimeInterval
+    ) -> Float {
+        defer {
+            lastGateYawRad = yawRad
+            lastGatePitchRad = pitchRad
+            lastGateTime = now
+        }
+        guard let ly = lastGateYawRad, let lp = lastGatePitchRad, lastGateTime > 0 else {
+            return 0
+        }
+        let dt = now - lastGateTime
+        guard dt > 1e-3 else { return 0 }
+        var dyaw = abs(yawRad - ly)
+        if dyaw > .pi { dyaw = 2 * .pi - dyaw }
+        let dpitch = abs(pitchRad - lp)
+        return ((dyaw + dpitch) * 180 / .pi) / Float(dt)
+    }
+
+    private func adaptLiveBrushIntervalLocked(angularSpeedDegPerSec: Float) {
+        var interval = Quick360Config.liveBrushMinIntervalSec
+        if angularSpeedDegPerSec >= Quick360Config.liveBrushFastMotionDegPerSec {
+            // Reduce throttle skips while turning (coverage holes).
+            interval = Quick360Config.liveBrushFastMotionIntervalSec
+        }
+        if liveBrushStats.averagePaintMs >= Quick360Config.liveBrushSlowCPUPaintMs {
+            interval = max(interval, Quick360Config.liveBrushSlowCPUIntervalSec)
+        }
+        if abs(interval - liveBrushIntervalSec) > 0.01 {
+            liveBrushIntervalSec = interval
+            liveBrushStats.setAdaptiveInterval(interval)
+            Quick360Log.stage(
+                String(format: "liveBrushInterval → %.2fs (spin=%.0f°/s avgPaintMs=%.1f)",
+                       interval, angularSpeedDegPerSec, liveBrushStats.averagePaintMs)
+            )
+        }
+    }
+
+    private func adaptLiveBrushIntervalFromCPULocked(paintMs: Double) {
+        guard paintMs >= Quick360Config.liveBrushSlowCPUPaintMs else { return }
+        let interval = Quick360Config.liveBrushSlowCPUIntervalSec
+        guard liveBrushIntervalSec + 0.01 < interval else { return }
+        liveBrushIntervalSec = interval
+        liveBrushStats.setAdaptiveInterval(interval)
+        Quick360Log.stage(String(format: "liveBrushInterval CPU backoff → %.2fs paintMs=%.1f", interval, paintMs))
+    }
+
+    private var lastThrottleRejectSampleAt: TimeInterval = -1
+
+    private func recordLiveBrushDecisionLocked(
+        _ decision: Quick360LiveBrushDecision,
+        pixels: Int,
+        paintMs: Double
+    ) {
+        liveBrushStats.record(decision, pixels: pixels, paintMs: paintMs)
+        if decision.accepted {
+            Quick360Log.stage(
+                String(
+                    format: "brushAccept yaw=%.1f pitch=%.1f spin=%.0f°/s px=%d ms=%.1f %@",
+                    decision.yawDeg,
+                    decision.pitchDeg,
+                    decision.angularSpeedDegPerSec,
+                    pixels,
+                    paintMs,
+                    decision.note
+                )
+            )
+        } else if let reason = decision.rejectReason {
+            Quick360Log.stage(
+                String(
+                    format: "brushReject reason=%@ yaw=%.1f pitch=%.1f spin=%.0f°/s %@",
+                    reason.rawValue,
+                    decision.yawDeg,
+                    decision.pitchDeg,
+                    decision.angularSpeedDegPerSec,
+                    decision.note
+                )
+            )
+        }
+    }
+
+    func logLiveBrushReport() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        Quick360Log.stage(liveBrushStats.summaryLine())
     }
 
     private func publishBrushSourceLocked(_ payload: Quick360FramePayload) {

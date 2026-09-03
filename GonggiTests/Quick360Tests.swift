@@ -1472,6 +1472,63 @@ final class Quick360SphereCoordinateConventionTests: XCTestCase {
         XCTAssertFalse(Quick360Config.splitDebugCaptureModeDefault)
         XCTAssertFalse(Quick360Config.splitDebugCaptureMode)
     }
+
+    func testLivePreviewResolutionBump() {
+        XCTAssertEqual(Quick360Config.livePreviewWidth, 1024)
+        XCTAssertEqual(Quick360Config.livePreviewHeight, 512)
+        XCTAssertEqual(Quick360Config.brushThumbMaxWidth, 512)
+        XCTAssertEqual(Quick360Config.liveBrushMinIntervalSec, 0.2, accuracy: 0.001)
+    }
+
+    func testBeginCapturePaintsImmediateFirstFrameFromCache() {
+        let engine = Quick360CaptureEngine(mockMode: true)
+        engine.start(sessionId: "first-paint", captureId: "c1")
+        let w = 32
+        let h = 48
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        for i in 0..<(w * h) {
+            let o = i * 4
+            rgba[o] = 200
+            rgba[o + 1] = 40
+            rgba[o + 2] = 40
+            rgba[o + 3] = 255
+        }
+        let payload = Quick360FramePayload(
+            timestamp: 1.0,
+            cameraTransform: matrix_identity_float4x4,
+            intrinsics: CameraIntrinsics(fx: 500, fy: 500, cx: 16, cy: 24, width: 32, height: 48),
+            analysisGrayscale: [UInt8](repeating: 128, count: Quick360FrameEncoder.analysisWidth * Quick360FrameEncoder.analysisHeight),
+            jpegData: nil,
+            brushRGBA: rgba,
+            brushWidth: w,
+            brushHeight: h,
+            ambientIntensity: nil,
+            ambientColorTemperature: nil
+        )
+        engine.ingest(payload: payload)
+        XCTAssertEqual(engine.sphereBrush.coveragePercent(), 0, accuracy: 0.01)
+        engine.beginCapture()
+        XCTAssertEqual(engine.liveBrushStats.firstFramePaintCount, 1)
+        XCTAssertGreaterThan(engine.sphereBrush.coveragePercent(), 0.5)
+        XCTAssertGreaterThan(engine.liveBrushStats.acceptedCount, 0)
+    }
+
+    func testLiveBrushStatsTracksRejectReasons() {
+        let stats = Quick360LiveBrushStats()
+        stats.record(
+            .rejected(.throttle, yawDeg: 10, pitchDeg: 0, angularSpeedDegPerSec: 80),
+            pixels: 0,
+            paintMs: 0
+        )
+        stats.record(
+            .accepted(yawDeg: 20, pitchDeg: 5, angularSpeedDegPerSec: 10),
+            pixels: 100,
+            paintMs: 12
+        )
+        let line = stats.summaryLine()
+        XCTAssertTrue(line.contains("accept=1"))
+        XCTAssertTrue(line.contains("throttle=1"))
+    }
 }
 
 

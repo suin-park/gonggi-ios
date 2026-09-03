@@ -40,12 +40,17 @@ enum Quick360Config {
     static let writeStitchDebugArtifacts = true
 
     // Live sphere brush proxy (separate from final panorama)
-    /// Keep 512×256; clarity comes from dense FOV fill + bilinear display, not resolution jump.
-    static let livePreviewWidth = 512
-    static let livePreviewHeight = 256
-    static let liveBrushMinIntervalSec: Double = 0.2 // ~5 Hz
-    /// Slightly sharper source for FOV sampling (not a proxy resolution increase).
-    static let brushThumbMaxWidth = 256
+    /// Live equirect atlas (UX preview — not final stitch resolution).
+    static let livePreviewWidth = 1024
+    static let livePreviewHeight = 512
+    /// Nominal continuous paint rate (~5 Hz). May adapt 3–7 Hz from motion/CPU.
+    static let liveBrushMinIntervalSec: Double = 0.2
+    static let liveBrushFastMotionIntervalSec: Double = 0.14 // ~7 Hz when rotating quickly
+    static let liveBrushSlowCPUIntervalSec: Double = 0.28 // ~3.5 Hz if paintMs high
+    static let liveBrushFastMotionDegPerSec: Float = 55
+    static let liveBrushSlowCPUPaintMs: Double = 40
+    /// Brush source thumb max edge (bilinear sample into atlas).
+    static let brushThumbMaxWidth = 512
     /// Fade-in for newly painted pixels; settles to full opacity (not persistent translucency).
     static let brushRevealFadeSec: Double = 0.22
     /// FOV edge-only feather band (normalized |nx|/|ny| beyond this gets soft blend).

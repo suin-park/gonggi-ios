@@ -54,6 +54,8 @@ final class Quick360LiveSphereBrush {
 
     /// Fill current camera FOV into equirect via perspective reverse projection
     /// in a **gravity-aligned** capture basis (not `inverse(start)*current`).
+    /// Returns approximate pixels written (for coverage / perf diagnostics).
+    @discardableResult
     func paint(
         thumbRGBA: [UInt8],
         thumbWidth: Int,
@@ -64,8 +66,8 @@ final class Quick360LiveSphereBrush {
         observationConfidence: Float,
         now: TimeInterval,
         options: Quick360BrushPaintOptions = .production
-    ) {
-        guard thumbWidth > 1, thumbHeight > 1, thumbRGBA.count >= thumbWidth * thumbHeight * 4 else { return }
+    ) -> Int {
+        guard thumbWidth > 1, thumbHeight > 1, thumbRGBA.count >= thumbWidth * thumbHeight * 4 else { return 0 }
         lastPaintAt = now
         updateCount += 1
 
@@ -95,6 +97,7 @@ final class Quick360LiveSphereBrush {
         let featherStart = Quick360Config.brushBoundaryFeatherStart
         let maxU = Float(thumbWidth - 1)
         let maxV = Float(thumbHeight - 1)
+        var pixelsWritten = 0
 
         for y in bounds.y0...bounds.y1 {
             let xRange: ClosedRange<Int> = bounds.wrapsSeam ? (0...(width - 1)) : (bounds.x0...bounds.x1)
@@ -151,6 +154,7 @@ final class Quick360LiveSphereBrush {
                     rgba[o + 3] = 255
                     firstSeen[idx] = now - Quick360Config.brushRevealFadeSec - 0.05
                     confidence[idx] = 255
+                    pixelsWritten += 1
                     continue
                 }
 
@@ -163,6 +167,7 @@ final class Quick360LiveSphereBrush {
                         firstSeen[idx] = now
                     }
                     confidence[idx] = max(prev, interiorConf)
+                    pixelsWritten += 1
                 } else {
                     let w = boundaryWeight * conf
                     let prevC = Float(prev) / 255
@@ -172,9 +177,11 @@ final class Quick360LiveSphereBrush {
                     rgba[o + 2] = mix(rgba[o + 2], b, w)
                     if prev == 0 { firstSeen[idx] = now }
                     confidence[idx] = UInt8(clamping: Int((min(1, max(prevC, w)) * 255).rounded()))
+                    pixelsWritten += 1
                 }
             }
         }
+        return pixelsWritten
     }
 
     private func sampleBilinear(_ rgba: [UInt8], width: Int, height: Int, u: Float, v: Float) -> (UInt8, UInt8, UInt8) {
