@@ -43,9 +43,9 @@ final class Quick360SphericalCoverageMap {
         quality: Quick360CoverageCell
     ) {
         guard quality != .unseen else { return }
-        let stride = max(1, Quick360Config.coverageStampStride)
-        for y in stride(from: 0, to: height, by: stride) {
-            for x in stride(from: 0, to: width, by: stride) {
+        let step = max(1, Quick360Config.coverageStampStride)
+        for y in stride(from: 0, to: height, by: step) {
+            for x in stride(from: 0, to: width, by: step) {
                 let (yaw, pitch) = yawPitch(atX: x, y: y)
                 guard captureBasis.projectSphereDirectionToPixel(
                     yawRad: yaw,
@@ -55,10 +55,10 @@ final class Quick360SphericalCoverageMap {
                     edgePad: 1.0
                 ) != nil else { continue }
                 upgrade(x: x, y: y, to: quality)
-                // Soft neighborhood fill for stride > 1
-                if stride > 1 {
-                    for dy in 0..<stride where y + dy < height {
-                        for dx in 0..<stride where x + dx < width {
+                // Soft neighborhood fill for step > 1
+                if step > 1 {
+                    for dy in 0..<step where y + dy < height {
+                        for dx in 0..<step where x + dx < width {
                             upgrade(x: x + dx, y: y + dy, to: quality)
                         }
                     }
