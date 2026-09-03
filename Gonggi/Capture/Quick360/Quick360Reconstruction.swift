@@ -36,13 +36,22 @@ enum Quick360Reconstruction {
                     height: h,
                     cameraTransform: kf.cameraTransform,
                     intrinsics: kf.intrinsics,
-                    dynamicRatio: kf.dynamicRatio
+                    dynamicRatio: kf.dynamicRatio,
+                    sharpness: kf.sharpness,
+                    exposure: kf.exposure,
+                    translationM: kf.translationM,
+                    fileName: kf.fileName,
+                    yawRad: kf.yawRad,
+                    pitchRad: kf.pitchRad
                 )
             }
             stitchOutput = PanoramaStitcher.stitch(
                 keyframes: inputs,
                 originTransform: originTransform
             )
+            if Quick360Config.writeStitchDebugArtifacts {
+                _ = try? PanoramaStitchDebug.write(sessionId: sessionId, output: stitchOutput)
+            }
         }
 
         let panoramaURL = try CaptureSessionStore.quick360EquirectangularURL(sessionId: sessionId)
@@ -140,7 +149,17 @@ enum Quick360Reconstruction {
             floorExtentM: floor.map { [$0.extent.x, $0.extent.y, $0.extent.z] } ?? [],
             floorTextureUpdateCount: floor?.textureUpdateCount ?? 0,
             sphereBrushUpdateCount: engine.sphereBrush.updateCount,
-            captureDurationSec: duration
+            captureDurationSec: duration,
+            acceptedKeyframeCount: stitchOutput.acceptedKeyframeCount,
+            rejectedKeyframeCount: stitchOutput.rejectedKeyframeCount,
+            averageAngularSpacingDeg: stitchOutput.averageAngularSpacingDeg,
+            visualRefinementAttempts: stitchOutput.visualRefinementAttempts,
+            successfulRefinements: stitchOutput.successfulRefinements,
+            averageMatchCount: stitchOutput.averageMatchCount,
+            averageInlierRatio: stitchOutput.averageInlierRatio,
+            averageReprojectionError: stitchOutput.averageReprojectionError,
+            highParallaxFrameCount: stitchOutput.highParallaxFrameCount,
+            keyframePlacements: stitchOutput.keyframePlacements
         )
         try PanoramaExporter.writeJSON(report, to: reportURL)
 

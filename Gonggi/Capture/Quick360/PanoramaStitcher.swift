@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// Full panorama stitching pipeline: pose → spherical reprojection → blend → exposure.
+/// Full panorama stitching: selected keyframes → visual refinement → project → seam → export.
 enum PanoramaStitcher {
     struct InputKeyframe {
         let index: Int
@@ -11,6 +11,42 @@ enum PanoramaStitcher {
         let cameraTransform: simd_float4x4
         let intrinsics: CameraIntrinsics
         let dynamicRatio: Float
+        let sharpness: Float
+        let exposure: Float
+        let translationM: Float
+        let fileName: String
+        let yawRad: Float
+        let pitchRad: Float
+
+        init(
+            index: Int,
+            rgba: [UInt8],
+            width: Int,
+            height: Int,
+            cameraTransform: simd_float4x4,
+            intrinsics: CameraIntrinsics,
+            dynamicRatio: Float,
+            sharpness: Float = 1,
+            exposure: Float = 1,
+            translationM: Float = 0,
+            fileName: String = "",
+            yawRad: Float = 0,
+            pitchRad: Float = 0
+        ) {
+            self.index = index
+            self.rgba = rgba
+            self.width = width
+            self.height = height
+            self.cameraTransform = cameraTransform
+            self.intrinsics = intrinsics
+            self.dynamicRatio = dynamicRatio
+            self.sharpness = sharpness
+            self.exposure = exposure
+            self.translationM = translationM
+            self.fileName = fileName
+            self.yawRad = yawRad
+            self.pitchRad = pitchRad
+        }
     }
 
     struct Output {
@@ -22,6 +58,18 @@ enum PanoramaStitcher {
         let uncoveredPercent: Double
         let alignmentApplied: Bool
         let stitchTimeSec: Double
+        let acceptedKeyframeCount: Int
+        let rejectedKeyframeCount: Int
+        let averageAngularSpacingDeg: Double
+        let visualRefinementAttempts: Int
+        let successfulRefinements: Int
+        let averageMatchCount: Double
+        let averageInlierRatio: Double
+        let averageReprojectionError: Double
+        let highParallaxFrameCount: Int
+        let keyframePlacements: [PanoramaKeyframePlacementReport]
+        let seamPreferredFrame: [Int16]
+        let refinementMatchDebug: [PanoramaAlignmentRefiner.PairMatchDebug]
     }
 
     static func stitch(
@@ -31,27 +79,48 @@ enum PanoramaStitcher {
         outHeight: Int = Quick360Config.outputHeight
     ) -> Output {
         let start = Date()
+        let gate = PanoramaKeyframeAngularGate.selectForFinalStitch(
+            yawRad: keyframes.map(\.yawRad),
+            pitchRad: keyframes.map(\.pitchRad),
+            sharpness: keyframes.map(\.sharpness),
+            exposure: keyframes.map(\.exposure),
+            dynamicRatio: keyframes.map(\.dynamicRatio),
+            translationM: keyframes.map(\.translationM)
+        )
+        let selected = gate.acceptedIndices.map { keyframes[$0] }
+        let working: [InputKeyframe] = selected.isEmpty ? keyframes : selected
+
+        let refinement = PanoramaAlignmentRefiner.refineSequence(
+            keyframes: working,
+            fileNames: working.map(\.fileName),
+            originTransform: originTransform
+        )
+
+        let colorGains = PanoramaExposureCompensator.computeScalesWithOverlap(
+            keyframes: working,
+            originTransform: originTransform
+        )
+
         let pixelCount = outWidth * outHeight
-
-        // Exposure compensation scales
-        let means = keyframes.map { PanoramaExposureCompensator.brightnessMeans(rgba: $0.rgba) }
-        let scales = PanoramaExposureCompensator.computeScales(means: means)
-
         var accumColors = [SIMD3<Float>](repeating: .zero, count: pixelCount)
         var accumWeights = [Float](repeating: 0, count: pixelCount)
         var coverage = [Bool](repeating: false, count: pixelCount)
         var perFrameColors: [[SIMD3<Float>]] = []
         var perFrameWeights: [[Float]] = []
         var perFrameDynamic: [Float] = []
-        var alignmentApplied = false
+        var highParallaxFlags: [Bool] = []
 
-        for (i, kf) in keyframes.enumerated() {
-            let scaledRGBA = PanoramaExposureCompensator.applyScale(to: kf.rgba, scale: scales[i])
+        for (i, kf) in working.enumerated() {
+            let gain = i < colorGains.count ? colorGains[i] : SIMD3<Float>(1, 1, 1)
+            let scaledRGBA = PanoramaExposureCompensator.applyColorGain(to: kf.rgba, gain: gain)
+            let transform = i < refinement.placements.count
+                ? refinement.placements[i].projectionTransform
+                : kf.cameraTransform
             let (colors, weights, cov) = PanoramaSphericalProjector.projectKeyframe(
                 rgba: scaledRGBA,
                 width: kf.width,
                 height: kf.height,
-                cameraTransform: kf.cameraTransform,
+                cameraTransform: transform,
                 originTransform: originTransform,
                 intrinsics: kf.intrinsics,
                 keyframeIndex: kf.index,
@@ -61,47 +130,42 @@ enum PanoramaStitcher {
             perFrameColors.append(colors)
             perFrameWeights.append(weights)
             perFrameDynamic.append(kf.dynamicRatio)
+            highParallaxFlags.append(
+                i < refinement.placements.count ? refinement.placements[i].highParallax : false
+            )
 
+            let weightScale: Float = highParallaxFlags[i] ? 0.75 : 1
             for p in 0..<pixelCount {
-                accumColors[p] += colors[p]
-                accumWeights[p] += weights[p]
+                accumColors[p] += colors[p] * weightScale
+                accumWeights[p] += weights[p] * weightScale
                 coverage[p] = coverage[p] || cov[p]
             }
         }
 
-        var blended = PanoramaSeamBlender.blend(
+        let blended = PanoramaSeamBlender.blend(
             accumColors: accumColors,
             accumWeights: accumWeights,
             perFrameColors: perFrameColors,
             perFrameWeights: perFrameWeights,
-            perFrameDynamic: perFrameDynamic
+            perFrameDynamic: perFrameDynamic,
+            highParallaxFlags: highParallaxFlags,
+            width: outWidth,
+            height: outHeight
         )
-        blended = PanoramaParallaxWarp.applyLocalCorrection(
-            colors: blended,
+        let corrected = PanoramaParallaxWarp.applyLocalCorrection(
+            colors: blended.colors,
             width: outWidth,
             height: outHeight
         )
 
-        // Alignment refinement between adjacent keyframes (thumbnail cross-correlation)
-        if keyframes.count >= 2 {
-            let refThumb = downsampleToGrayscale(keyframes[0].rgba, w: keyframes[0].width, h: keyframes[0].height)
-            let tgtThumb = downsampleToGrayscale(keyframes[1].rgba, w: keyframes[1].width, h: keyframes[1].height)
-            let refinement = PanoramaAlignmentRefiner.estimateTranslationalOffset(
-                reference: refThumb,
-                target: tgtThumb,
-                width: 32,
-                height: 18
-            )
-            alignmentApplied = refinement.applied
-        }
-
-        let rgba = colorsToRGBA(blended, width: outWidth, height: outHeight)
+        let rgba = colorsToRGBA(corrected, width: outWidth, height: outHeight)
         let (_, covPct, uncovPct) = PanoramaCoverageMask.generate(
             coverageFlags: coverage,
             width: outWidth,
             height: outHeight
         )
         let elapsed = Date().timeIntervalSince(start)
+        let rejectedCount = keyframes.count - working.count
 
         return Output(
             rgba: rgba,
@@ -110,8 +174,20 @@ enum PanoramaStitcher {
             coverageFlags: coverage,
             coveragePercent: covPct,
             uncoveredPercent: uncovPct,
-            alignmentApplied: alignmentApplied,
-            stitchTimeSec: elapsed
+            alignmentApplied: refinement.anyApplied,
+            stitchTimeSec: elapsed,
+            acceptedKeyframeCount: working.count,
+            rejectedKeyframeCount: max(0, rejectedCount),
+            averageAngularSpacingDeg: gate.averageSpacingDeg,
+            visualRefinementAttempts: refinement.attempts,
+            successfulRefinements: refinement.successes,
+            averageMatchCount: refinement.averageMatchCount,
+            averageInlierRatio: refinement.averageInlierRatio,
+            averageReprojectionError: refinement.averageReprojError,
+            highParallaxFrameCount: refinement.highParallaxCount,
+            keyframePlacements: refinement.placements.map(\.report),
+            seamPreferredFrame: blended.seam.preferredFrame,
+            refinementMatchDebug: refinement.matchDebug
         )
     }
 
@@ -126,16 +202,6 @@ enum PanoramaStitcher {
             rgba[bi + 3] = 255
         }
         return rgba
-    }
-
-    private static func downsampleToGrayscale(_ rgba: [UInt8], w: Int, h: Int) -> [UInt8] {
-        Quick360ImageAnalysis.downsampleGrayscale(
-            rgba: rgba,
-            srcWidth: w,
-            srcHeight: h,
-            dstWidth: 32,
-            dstHeight: 18
-        )
     }
 
     /// Synthetic panorama for mock mode.
@@ -164,7 +230,19 @@ enum PanoramaStitcher {
             coveragePercent: 100,
             uncoveredPercent: 0,
             alignmentApplied: false,
-            stitchTimeSec: 0.01
+            stitchTimeSec: 0.01,
+            acceptedKeyframeCount: 0,
+            rejectedKeyframeCount: 0,
+            averageAngularSpacingDeg: 0,
+            visualRefinementAttempts: 0,
+            successfulRefinements: 0,
+            averageMatchCount: 0,
+            averageInlierRatio: 0,
+            averageReprojectionError: 0,
+            highParallaxFrameCount: 0,
+            keyframePlacements: [],
+            seamPreferredFrame: [Int16](repeating: -1, count: width * height),
+            refinementMatchDebug: []
         )
     }
 }

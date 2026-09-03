@@ -60,7 +60,8 @@ struct Quick360SummaryView: View {
                    ? String(format: "%.0f%%", report.floorCoveragePercent)
                    : "미검출")
             metric("파노라마", String(format: "%.1f%%", report.coveragePercent))
-            metric("키프레임", "\(report.selectedKeyframeCount)")
+            metric("키프레임", "\(report.acceptedKeyframeCount)/\(report.selectedKeyframeCount)")
+            metric("정렬 보정", "\(report.successfulRefinements)/\(report.visualRefinementAttempts)")
             metric("최대 이동", String(format: "%.0f cm", report.maxTranslationM * 100))
             metric("촬영 시간", String(format: "%.0fs", report.captureDurationSec))
         }

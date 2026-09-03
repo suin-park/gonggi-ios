@@ -7,15 +7,37 @@ enum Quick360Config {
     static let outputWidth = 2048
     static let outputHeight = 1024
 
-    /// Internal sector layout for keyframe selection (not shown in UI).
-    static let yawStepCount = 8
+    /// Nominal yaw spacing for horizontal keyframe ring (config-driven; ~20–30°).
+    static let keyframeYawIntervalDeg: Float = 25
+    /// `round(360 / keyframeYawIntervalDeg)` → ~14 steps (~8–16 horizontal keyframes).
+    static let yawStepCount = 14
     static let pitchBandsDeg: [Float] = [0, 30, -30]
-    static let targetAngularToleranceDeg: Float = 18
+    static let targetAngularToleranceDeg: Float = 12
     static let candidateWindowSec: Double = 0.65
     static let maxCandidatesPerTarget = 10
     static let minCandidatesBeforeSelect = 3
     static let keyframeJPEGQuality: CGFloat = 0.82
     static let keyframeMaxPixelWidth = 1920
+    /// Candidate quality gates before accepting a keyframe for final stitch.
+    static let keyframeMinSharpness: Float = 0.12
+    static let keyframeMinExposure: Float = 0.18
+    static let keyframeMaxDynamicRatio: Float = 0.45
+    static let keyframeMaxTranslationM: Float = 0.4
+    /// Minimum expected FOV overlap fraction vs previous keyframe.
+    static let keyframeMinOverlapFraction: Float = 0.18
+
+    // Visual refinement (ARKit pose = initial guess only)
+    static let refinementMinMatches = 8
+    static let refinementMinInlierRatio: Float = 0.4
+    static let refinementMaxReprojPx: Float = 3.5
+    static let refinementMaxYawDeltaDeg: Float = 8
+    static let refinementMaxPitchDeltaDeg: Float = 6
+    static let refinementRansacIterations = 48
+    static let refinementInlierThresholdPx: Float = 2.5
+    static let refinementParallaxDisagreementPx: Float = 4.0
+    static let refinementMatchThumbMaxWidth = 320
+    static let refinementMaxCorners = 120
+    static let writeStitchDebugArtifacts = true
 
     // Live sphere brush proxy (separate from final panorama)
     /// Keep 512×256; clarity comes from dense FOV fill + bilinear display, not resolution jump.
@@ -247,6 +269,36 @@ struct Quick360PanoramaReport: Codable, Equatable {
     let floorTextureUpdateCount: Int
     let sphereBrushUpdateCount: Int
     let captureDurationSec: Double
+    // Visual refinement / keyframe stitch metrics
+    let acceptedKeyframeCount: Int
+    let rejectedKeyframeCount: Int
+    let averageAngularSpacingDeg: Double
+    let visualRefinementAttempts: Int
+    let successfulRefinements: Int
+    let averageMatchCount: Double
+    let averageInlierRatio: Double
+    let averageReprojectionError: Double
+    let highParallaxFrameCount: Int
+    let keyframePlacements: [PanoramaKeyframePlacementReport]
+}
+
+/// Per-keyframe ARKit initial vs visually refined spherical placement (final stitch).
+struct PanoramaKeyframePlacementReport: Codable, Equatable {
+    let index: Int
+    let fileName: String
+    let initialYawDeg: Float
+    let initialPitchDeg: Float
+    let refinedYawDeg: Float
+    let refinedPitchDeg: Float
+    let deltaYawDeg: Float
+    let deltaPitchDeg: Float
+    let matchCount: Int
+    let inlierCount: Int
+    let inlierRatio: Float
+    let reprojectionError: Float
+    let refinementAccepted: Bool
+    let highParallax: Bool
+    let rejectReason: String?
 }
 
 struct Quick360SessionSummary: Identifiable, Equatable {
