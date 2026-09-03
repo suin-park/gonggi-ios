@@ -102,7 +102,9 @@ enum PanoramaAlignmentRefiner {
                 }
                 if count > 0 {
                     score /= Float(count)
-                    if score > bestScore {
+                    let displacement = abs(dx) + abs(dy)
+                    let bestDisplacement = abs(bestDx) + abs(bestDy)
+                    if score > bestScore || (score == bestScore && displacement < bestDisplacement) {
                         bestScore = score
                         bestDx = dx
                         bestDy = dy

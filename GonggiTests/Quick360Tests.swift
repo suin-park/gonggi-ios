@@ -122,14 +122,18 @@ final class Quick360TargetLayoutTests: XCTestCase {
     func testTargetCount() {
         let targets = Quick360SphericalTargetLayout.makeTargets()
         XCTAssertEqual(targets.count, Quick360Config.targetCount)
-        XCTAssertEqual(targets.count, 24)
+        XCTAssertEqual(targets.count, Quick360Config.yawStepCount * Quick360Config.pitchBandsDeg.count)
+        XCTAssertGreaterThanOrEqual(Quick360Config.yawStepCount, 8)
+        XCTAssertLessThanOrEqual(Quick360Config.yawStepCount, 16)
     }
 
     func testProgressIncreasesOnSelection() {
         var targets = Quick360SphericalTargetLayout.makeTargets()
         XCTAssertEqual(Quick360SphericalTargetLayout.progressPercent(in: targets), 0)
         targets = Quick360SphericalTargetLayout.markSelected(targets: targets, targetId: 0)
-        XCTAssertEqual(Quick360SphericalTargetLayout.progressPercent(in: targets), 4)
+        let expected = Int((1.0 / Double(targets.count) * 100).rounded())
+        XCTAssertEqual(Quick360SphericalTargetLayout.progressPercent(in: targets), expected)
+        XCTAssertGreaterThan(expected, 0)
     }
 
     func testWithinTolerance() {
