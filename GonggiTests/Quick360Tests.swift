@@ -1095,6 +1095,113 @@ final class Quick360BrushOrientationTests: XCTestCase {
         XCTAssertEqual(yp.pitch, base.pitch, accuracy: 0.05)
     }
 
+    // MARK: - Roll-free patch orientation
+
+    func testStabilizedFrameDropsRollKeepsForward() {
+        let level = cameraLooking(yawRad: 0, pitchRad: 0.15)
+        let rolled = cameraLooking(yawRad: 0, pitchRad: 0.15, rollRad: 0.45) // ~26°
+        let f0 = Quick360StabilizedCameraFrame.make(fromCamera: level)!
+        let fR = Quick360StabilizedCameraFrame.make(fromCamera: rolled)!
+        XCTAssertEqual(f0.forward.x, fR.forward.x, accuracy: 0.02)
+        XCTAssertEqual(f0.forward.y, fR.forward.y, accuracy: 0.02)
+        XCTAssertEqual(f0.forward.z, fR.forward.z, accuracy: 0.02)
+        XCTAssertEqual(f0.right.x, fR.right.x, accuracy: 0.03)
+        XCTAssertEqual(f0.right.y, fR.right.y, accuracy: 0.03)
+        XCTAssertEqual(f0.right.z, fR.right.z, accuracy: 0.03)
+        XCTAssertEqual(f0.up.x, fR.up.x, accuracy: 0.03)
+        XCTAssertEqual(f0.up.y, fR.up.y, accuracy: 0.03)
+        XCTAssertEqual(f0.up.z, fR.up.z, accuracy: 0.03)
+        // Raw camera +X must differ under roll (otherwise test is vacuous).
+        let rawRight0 = simd_float3(level.columns.0.x, level.columns.0.y, level.columns.0.z)
+        let rawRightR = simd_float3(rolled.columns.0.x, rolled.columns.0.y, rolled.columns.0.z)
+        XCTAssertGreaterThan(simd_length(rawRight0 - rawRightR), 0.2)
+    }
+
+    func testRollOnlyKeepsPatchPixelYawPitchUpright() {
+        let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
+        let level = cameraLooking(yawRad: 0, pitchRad: 0)
+        let rolled = cameraLooking(yawRad: 0, pitchRad: 0, rollRad: 0.4) // ~23°
+        let basis = Quick360CaptureBasis.make(fromStartCamera: level)!
+        let yp0 = Quick360PerspectiveProjection.sampleAxisYawPitch(
+            thumbIntrinsics: thumb, cameraTransform: level, basis: basis
+        )
+        let ypR = Quick360PerspectiveProjection.sampleAxisYawPitch(
+            thumbIntrinsics: thumb, cameraTransform: rolled, basis: basis
+        )
+        // Center stays; top → pitch only; right → yaw only — identical under roll.
+        XCTAssertEqual(ypR.center.yaw, yp0.center.yaw, accuracy: 0.03)
+        XCTAssertEqual(ypR.center.pitch, yp0.center.pitch, accuracy: 0.03)
+        XCTAssertEqual(ypR.topCenter.yaw, yp0.topCenter.yaw, accuracy: 0.04)
+        XCTAssertEqual(ypR.topCenter.pitch, yp0.topCenter.pitch, accuracy: 0.04)
+        XCTAssertEqual(ypR.rightCenter.yaw, yp0.rightCenter.yaw, accuracy: 0.04)
+        XCTAssertEqual(ypR.rightCenter.pitch, yp0.rightCenter.pitch, accuracy: 0.04)
+        XCTAssertEqual(ypR.topCenter.yaw, 0, accuracy: 0.05)
+        XCTAssertGreaterThan(ypR.topCenter.pitch, 0.15)
+        XCTAssertGreaterThan(ypR.rightCenter.yaw, 0.15)
+        XCTAssertEqual(ypR.rightCenter.pitch, 0, accuracy: 0.05)
+    }
+
+    func testRollOnlyStabilizedWorldRaysMatchLevel() {
+        let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
+        let level = cameraLooking(yawRad: 0.1, pitchRad: 0.08)
+        let rolled = cameraLooking(yawRad: 0.1, pitchRad: 0.08, rollRad: 0.5)
+        let basis = Quick360CaptureBasis.make(fromStartCamera: level)!
+        let w0 = Quick360PerspectiveProjection.sampleAxisWorldRays(
+            thumbIntrinsics: thumb, cameraTransform: level, basis: basis
+        )
+        let wR = Quick360PerspectiveProjection.sampleAxisWorldRays(
+            thumbIntrinsics: thumb, cameraTransform: rolled, basis: basis
+        )
+        XCTAssertEqual(w0.center.x, wR.center.x, accuracy: 0.03)
+        XCTAssertEqual(w0.center.y, wR.center.y, accuracy: 0.03)
+        XCTAssertEqual(w0.center.z, wR.center.z, accuracy: 0.03)
+        XCTAssertEqual(w0.topCenter.x, wR.topCenter.x, accuracy: 0.03)
+        XCTAssertEqual(w0.topCenter.y, wR.topCenter.y, accuracy: 0.03)
+        XCTAssertEqual(w0.topCenter.z, wR.topCenter.z, accuracy: 0.03)
+        XCTAssertEqual(w0.rightCenter.x, wR.rightCenter.x, accuracy: 0.03)
+        XCTAssertEqual(w0.rightCenter.y, wR.rightCenter.y, accuracy: 0.03)
+        XCTAssertEqual(w0.rightCenter.z, wR.rightCenter.z, accuracy: 0.03)
+
+        // Full camera rotation WOULD spin the top ray under roll — that was the bug.
+        let topLocal = Quick360PerspectiveProjection.sampleAxisRays(thumbIntrinsics: thumb).topCenter
+        let raw0 = simd_normalize(Quick360CaptureBasis.cameraRotation(from: level) * topLocal)
+        let rawR = simd_normalize(Quick360CaptureBasis.cameraRotation(from: rolled) * topLocal)
+        XCTAssertGreaterThan(simd_length(raw0 - rawR), 0.15)
+    }
+
+    func testBodyYawMovesPatchRightWhileKeepingUprightAxes() {
+        let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
+        let start = cameraLooking(yawRad: 0, pitchRad: 0)
+        let basis = Quick360CaptureBasis.make(fromStartCamera: start)!
+        let turned = cameraLooking(yawRad: 0.4, pitchRad: 0) // ~23° body right
+        let yp = Quick360PerspectiveProjection.sampleAxisYawPitch(
+            thumbIntrinsics: thumb, cameraTransform: turned, basis: basis
+        )
+        XCTAssertGreaterThan(yp.center.yaw, 0.3)
+        XCTAssertEqual(yp.center.pitch, 0, accuracy: 0.05)
+        // Patch upright: top still pitch-only relative to center; right still yaw-only.
+        XCTAssertEqual(yp.topCenter.yaw, yp.center.yaw, accuracy: 0.05)
+        XCTAssertGreaterThan(yp.topCenter.pitch, yp.center.pitch + 0.15)
+        XCTAssertGreaterThan(yp.rightCenter.yaw, yp.center.yaw + 0.15)
+        XCTAssertEqual(yp.rightCenter.pitch, yp.center.pitch, accuracy: 0.05)
+    }
+
+    func testActualPitchUpMovesPatchUpWithStabilizedFrame() {
+        let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
+        let start = cameraLooking(yawRad: 0, pitchRad: 0)
+        let basis = Quick360CaptureBasis.make(fromStartCamera: start)!
+        let lookingUp = cameraLooking(yawRad: 0, pitchRad: 0.35)
+        let yp = Quick360PerspectiveProjection.sampleAxisYawPitch(
+            thumbIntrinsics: thumb, cameraTransform: lookingUp, basis: basis
+        )
+        XCTAssertEqual(yp.center.yaw, 0, accuracy: 0.05)
+        XCTAssertGreaterThan(yp.center.pitch, 0.3)
+        let world = Quick360PerspectiveProjection.sampleAxisWorldRays(
+            thumbIntrinsics: thumb, cameraTransform: lookingUp, basis: basis
+        )
+        XCTAssertGreaterThan(world.center.y, 0.25)
+    }
+
     func testGravityBasisActualPitchUpIncreasesPitch() {
         let start = cameraLooking(yawRad: 0, pitchRad: 0)
         let basis = Quick360CaptureBasis.make(fromStartCamera: start)!

@@ -85,6 +85,24 @@ enum Quick360PerspectiveProjection {
         )
     }
 
+    /// Center / top-center / right-center world rays via roll-free stabilized frame.
+    static func sampleAxisWorldRays(
+        thumbIntrinsics: CameraIntrinsics,
+        cameraTransform: simd_float4x4,
+        basis: Quick360CaptureBasis
+    ) -> (
+        center: simd_float3,
+        topCenter: simd_float3,
+        rightCenter: simd_float3
+    ) {
+        let local = sampleAxisRays(thumbIntrinsics: thumbIntrinsics)
+        return (
+            basis.worldRay(cameraRay: local.center, cameraTransform: cameraTransform),
+            basis.worldRay(cameraRay: local.topCenter, cameraTransform: cameraTransform),
+            basis.worldRay(cameraRay: local.rightCenter, cameraTransform: cameraTransform)
+        )
+    }
+
     /// Normalized image UV (0…1) → camera ray.
     static func cameraRayFromNormalizedUV(
         u: Float,

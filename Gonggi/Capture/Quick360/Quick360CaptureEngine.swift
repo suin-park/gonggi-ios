@@ -917,11 +917,22 @@ final class Quick360CaptureEngine {
             topCenter: (yaw: Float, pitch: Float),
             rightCenter: (yaw: Float, pitch: Float)
         )?
+        var worldRays: (center: simd_float3, topCenter: simd_float3, rightCenter: simd_float3) = (.zero, .zero, .zero)
+        var stabFrame: Quick360StabilizedCameraFrame?
         if let basis {
             axisYP = Quick360PerspectiveProjection.sampleAxisYawPitch(
                 thumbIntrinsics: thumbK,
                 cameraTransform: cameraTransform,
                 basis: basis
+            )
+            worldRays = Quick360PerspectiveProjection.sampleAxisWorldRays(
+                thumbIntrinsics: thumbK,
+                cameraTransform: cameraTransform,
+                basis: basis
+            )
+            stabFrame = Quick360StabilizedCameraFrame.make(
+                fromCamera: cameraTransform,
+                worldUp: basis.worldUp
             )
         }
         if splitDebug.enabled, hasLockedOrigin || treatAsIdentityOrigin {
@@ -932,6 +943,13 @@ final class Quick360CaptureEngine {
                 rightCenter: axisRays.rightCenter,
                 yawPitch: axisYP
             )
+            if let stabFrame {
+                Quick360FOVDiagnostics.logStabilizedFrame(
+                    frame: stabFrame,
+                    worldRays: worldRays,
+                    rawRollDeg: roll * 180 / .pi
+                )
+            }
         }
         brushDebug = Quick360BrushDebugState(
             relativeYawDeg: yaw * 180 / .pi,
@@ -957,7 +975,13 @@ final class Quick360CaptureEngine {
             rightCenterRay: axisRays.rightCenter,
             centerYawPitchDeg: axisYP.map { SIMD2($0.center.yaw * 180 / .pi, $0.center.pitch * 180 / .pi) } ?? .zero,
             topCenterYawPitchDeg: axisYP.map { SIMD2($0.topCenter.yaw * 180 / .pi, $0.topCenter.pitch * 180 / .pi) } ?? .zero,
-            rightCenterYawPitchDeg: axisYP.map { SIMD2($0.rightCenter.yaw * 180 / .pi, $0.rightCenter.pitch * 180 / .pi) } ?? .zero
+            rightCenterYawPitchDeg: axisYP.map { SIMD2($0.rightCenter.yaw * 180 / .pi, $0.rightCenter.pitch * 180 / .pi) } ?? .zero,
+            stabilizedRight: stabFrame?.right ?? .zero,
+            stabilizedUp: stabFrame?.up ?? .zero,
+            stabilizedForward: stabFrame?.forward ?? .zero,
+            centerWorldRay: worldRays.center,
+            topCenterWorldRay: worldRays.topCenter,
+            rightCenterWorldRay: worldRays.rightCenter
         )
     }
 

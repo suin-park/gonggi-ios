@@ -97,4 +97,28 @@ enum Quick360FOVDiagnostics {
             )
         }
     }
+
+    static func logStabilizedFrame(
+        frame: Quick360StabilizedCameraFrame,
+        worldRays: (center: simd_float3, topCenter: simd_float3, rightCenter: simd_float3),
+        rawRollDeg: Float
+    ) {
+        Quick360Log.stage(
+            String(
+                format: "stabFrame rollRaw=%.1f° R=(%.3f,%.3f,%.3f) U=(%.3f,%.3f,%.3f) F=(%.3f,%.3f,%.3f)",
+                rawRollDeg,
+                frame.right.x, frame.right.y, frame.right.z,
+                frame.up.x, frame.up.y, frame.up.z,
+                frame.forward.x, frame.forward.y, frame.forward.z
+            )
+        )
+        Quick360Log.stage(
+            String(
+                format: "stabWorldRays C=(%.3f,%.3f,%.3f) T=(%.3f,%.3f,%.3f) R=(%.3f,%.3f,%.3f)",
+                worldRays.center.x, worldRays.center.y, worldRays.center.z,
+                worldRays.topCenter.x, worldRays.topCenter.y, worldRays.topCenter.z,
+                worldRays.rightCenter.x, worldRays.rightCenter.y, worldRays.rightCenter.z
+            )
+        )
+    }
 }

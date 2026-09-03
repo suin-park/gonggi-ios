@@ -152,6 +152,14 @@ struct Quick360BrushDebugState: Equatable {
     var centerYawPitchDeg: SIMD2<Float> = .zero
     var topCenterYawPitchDeg: SIMD2<Float> = .zero
     var rightCenterYawPitchDeg: SIMD2<Float> = .zero
+    /// Gravity-stabilized (roll-free) axes used for patch paint.
+    var stabilizedRight: SIMD3<Float> = .zero
+    var stabilizedUp: SIMD3<Float> = .zero
+    var stabilizedForward: SIMD3<Float> = .zero
+    /// World rays via stabilized frame (center / top-center / right-center).
+    var centerWorldRay: SIMD3<Float> = .zero
+    var topCenterWorldRay: SIMD3<Float> = .zero
+    var rightCenterWorldRay: SIMD3<Float> = .zero
 
     var overlayText: String {
         let origin = originLocked ? "LOCKED" : "NOT LOCKED"
@@ -162,6 +170,16 @@ struct Quick360BrushDebugState: Equatable {
             String(format: "rawYP: %.1f / %.1f", rawRelativeYawDeg, rawRelativePitchDeg),
             "",
             String(format: "centerUV:\n%.3f / %.3f", centerU, centerV),
+            "",
+            "stab axes:",
+            String(format: "R %.2f %.2f %.2f", stabilizedRight.x, stabilizedRight.y, stabilizedRight.z),
+            String(format: "U %.2f %.2f %.2f", stabilizedUp.x, stabilizedUp.y, stabilizedUp.z),
+            String(format: "F %.2f %.2f %.2f", stabilizedForward.x, stabilizedForward.y, stabilizedForward.z),
+            "",
+            "world rays:",
+            String(format: "C %.2f %.2f %.2f", centerWorldRay.x, centerWorldRay.y, centerWorldRay.z),
+            String(format: "T %.2f %.2f %.2f", topCenterWorldRay.x, topCenterWorldRay.y, topCenterWorldRay.z),
+            String(format: "R %.2f %.2f %.2f", rightCenterWorldRay.x, rightCenterWorldRay.y, rightCenterWorldRay.z),
             "",
             "rays cam:",
             String(format: "C %.2f %.2f %.2f", centerRay.x, centerRay.y, centerRay.z),

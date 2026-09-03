@@ -66,7 +66,7 @@ struct Quick360CaptureBasis: Equatable, Sendable {
         )
     }
 
-    /// 3×3 camera rotation (columns = camera axes in world).
+    /// Raw ARKit 3×3 (includes roll). Debug / comparison only — not used for patch paint.
     static func cameraRotation(from transform: simd_float4x4) -> simd_float3x3 {
         simd_float3x3(
             SIMD3(transform.columns.0.x, transform.columns.0.y, transform.columns.0.z),
@@ -75,13 +75,19 @@ struct Quick360CaptureBasis: Equatable, Sendable {
         )
     }
 
-    /// Portrait camera-local ray → world ray via current camera rotation.
+    /// Portrait camera-local ray → world via **gravity-stabilized** (roll-free) frame.
     func worldRay(cameraRay: simd_float3, cameraTransform: simd_float4x4) -> simd_float3 {
-        let R = Self.cameraRotation(from: cameraTransform)
-        return simd_normalize(R * cameraRay)
+        guard let frame = Quick360StabilizedCameraFrame.make(
+            fromCamera: cameraTransform,
+            worldUp: worldUp
+        ) else {
+            let R = Self.cameraRotation(from: cameraTransform)
+            return simd_normalize(R * cameraRay)
+        }
+        return frame.worldRay(fromCameraRay: cameraRay)
     }
 
-    /// Pixel → camera ray → world → gravity yaw/pitch.
+    /// Pixel → camera ray → roll-free world → gravity yaw/pitch.
     func sphereYawPitchFromPixel(
         pixelU: Float,
         pixelV: Float,
@@ -96,7 +102,7 @@ struct Quick360CaptureBasis: Equatable, Sendable {
         return yawPitch(fromWorldDirection: worldRay(cameraRay: ray, cameraTransform: cameraTransform))
     }
 
-    /// Reverse: sphere (equirect) direction in this basis → camera pixel.
+    /// Reverse: sphere direction → pixel using roll-free camera frame (matches paint).
     func projectSphereDirectionToPixel(
         yawRad: Float,
         pitchRad: Float,
@@ -105,8 +111,11 @@ struct Quick360CaptureBasis: Equatable, Sendable {
         edgePad: Float = 0.5
     ) -> SIMD2<Float>? {
         let worldDir = worldDirection(yawRad: yawRad, pitchRad: pitchRad)
-        let R = Self.cameraRotation(from: cameraTransform)
-        let dirCam = simd_normalize(simd_transpose(R) * worldDir)
+        guard let frame = Quick360StabilizedCameraFrame.make(
+            fromCamera: cameraTransform,
+            worldUp: worldUp
+        ) else { return nil }
+        let dirCam = frame.cameraRay(fromWorldDirection: worldDir)
         let depth = -dirCam.z
         guard depth > 1e-5 else { return nil }
         let u = thumbIntrinsics.fx * (dirCam.x / depth) + thumbIntrinsics.cx
@@ -126,5 +135,68 @@ struct Quick360CaptureBasis: Equatable, Sendable {
             cameraTransform: cameraTransform,
             originTransform: originTransform
         )
+    }
+}
+
+/// Roll-free camera axes for patch image orientation (keeps look pitch/yaw, drops phone roll).
+///
+/// ```
+/// forward = normalize(-camera.columns.2)
+/// right   = normalize(cross(forward, worldUp))
+/// up      = normalize(cross(right, forward))
+/// worldRay = right*x + up*y + forward*(-z)   // cameraRay z≈−1 → along forward
+/// ```
+struct Quick360StabilizedCameraFrame: Equatable, Sendable {
+    var forward: simd_float3
+    var right: simd_float3
+    var up: simd_float3
+
+    /// Columns = (right, up, −forward) — same layout as ARKit without roll.
+    var rotation: simd_float3x3 {
+        simd_float3x3(right, up, -forward)
+    }
+
+    static func make(
+        fromCamera transform: simd_float4x4,
+        worldUp: simd_float3 = Quick360CaptureBasis.gravityUp
+    ) -> Quick360StabilizedCameraFrame? {
+        let forward = simd_normalize(SphericalMath.forwardVector(from: transform))
+        var right = simd_cross(forward, worldUp)
+        var rightLen = simd_length(right)
+        if rightLen < 1e-4 {
+            // Looking nearly straight up/down — keep a horizontal right from camera +X.
+            let camRight = simd_float3(
+                transform.columns.0.x, transform.columns.0.y, transform.columns.0.z
+            )
+            let horiz = camRight - simd_dot(camRight, worldUp) * worldUp
+            rightLen = simd_length(horiz)
+            guard rightLen > 1e-4 else { return nil }
+            right = horiz / rightLen
+        } else {
+            right = right / rightLen
+        }
+        let up = simd_normalize(simd_cross(right, forward))
+        // Re-orthogonalize right against forward/up for numerical stability.
+        right = simd_normalize(simd_cross(forward, up))
+        return Quick360StabilizedCameraFrame(forward: forward, right: right, up: up)
+    }
+
+    /// Portrait camera-local ray (x right, y up, z≈−1) → world.
+    func worldRay(fromCameraRay cameraRay: simd_float3) -> simd_float3 {
+        let x = cameraRay.x
+        let y = cameraRay.y
+        let z = cameraRay.z
+        // forward * (-z): center (0,0,−1) → +forward
+        return simd_normalize(right * x + up * y + forward * (-z))
+    }
+
+    /// World direction → camera-local ray in this roll-free frame.
+    func cameraRay(fromWorldDirection worldDir: simd_float3) -> simd_float3 {
+        let d = simd_normalize(worldDir)
+        return simd_normalize(simd_float3(
+            simd_dot(d, right),
+            simd_dot(d, up),
+            -simd_dot(d, forward)
+        ))
     }
 }
