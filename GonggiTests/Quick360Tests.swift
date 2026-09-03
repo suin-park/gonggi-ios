@@ -122,9 +122,12 @@ final class Quick360TargetLayoutTests: XCTestCase {
     func testTargetCount() {
         let targets = Quick360SphericalTargetLayout.makeTargets()
         XCTAssertEqual(targets.count, Quick360Config.targetCount)
-        XCTAssertEqual(targets.count, Quick360Config.yawStepCount * Quick360Config.pitchBandsDeg.count)
-        XCTAssertGreaterThanOrEqual(Quick360Config.yawStepCount, 8)
-        XCTAssertLessThanOrEqual(Quick360Config.yawStepCount, 16)
+        XCTAssertEqual(targets.count, Quick360Config.pitchBandSpecs.reduce(0) { $0 + $1.yawSteps })
+        XCTAssertGreaterThanOrEqual(targets.count, 30)
+        XCTAssertLessThanOrEqual(targets.count, 80)
+        XCTAssertTrue(Quick360Config.pitchBandsDeg.contains(0))
+        XCTAssertTrue(Quick360Config.pitchBandsDeg.contains { $0 >= 70 })
+        XCTAssertTrue(Quick360Config.pitchBandsDeg.contains { $0 <= -70 })
     }
 
     func testProgressIncreasesOnSelection() {
@@ -272,8 +275,11 @@ final class Quick360CoverageMaskTests: XCTestCase {
 
 final class Quick360StitcherTests: XCTestCase {
     func testMockPanoramaOutputSize() {
-        let out = PanoramaStitcher.mockPanorama()
-        XCTAssertEqual(out.width, 2048)
+        let out = PanoramaStitcher.mockPanorama(width: 128, height: 64)
+        XCTAssertEqual(out.width, 128)
+        XCTAssertEqual(out.height, 64)
+        XCTAssertEqual(Quick360Config.outputWidth, 4096)
+        XCTAssertEqual(Quick360Config.outputHeight, 2048)
         XCTAssertEqual(out.height, 1024)
         XCTAssertTrue(SphericalMath.isValidEquirectangularAspect(width: out.width, height: out.height))
     }
@@ -1533,5 +1539,40 @@ final class Quick360SphereCoordinateConventionTests: XCTestCase {
     }
 }
 
+final class Quick360SphericalCoverageMapTests: XCTestCase {
+    func testUnseenStartsEmpty() {
+        let map = Quick360SphericalCoverageMap(width: 36, height: 18)
+        let report = map.report()
+        XCTAssertEqual(report.missingPercent, 100, accuracy: 0.1)
+        XCTAssertEqual(report.guidePhase, .horizon)
+    }
 
+    func testKeyframeMarksCapturedNearCenter() {
+        let map = Quick360SphericalCoverageMap(width: 36, height: 18)
+        map.markCapturedKeyframe(yawRad: 0, pitchRad: 0, halfAngleRad: 0.6)
+        let report = map.report()
+        XCTAssertGreaterThan(report.horizontalPercent, 5)
+        XCTAssertLessThan(report.missingPercent, 100)
+    }
+
+    func testBandClassification() {
+        XCTAssertEqual(Quick360SphericalCoverageBands.band(forPitchDeg: 0), .horizon)
+        XCTAssertEqual(Quick360SphericalCoverageBands.band(forPitchDeg: 50), .upper)
+        XCTAssertEqual(Quick360SphericalCoverageBands.band(forPitchDeg: -50), .lower)
+        XCTAssertEqual(Quick360SphericalCoverageBands.band(forPitchDeg: 80), .zenith)
+        XCTAssertEqual(Quick360SphericalCoverageBands.band(forPitchDeg: -80), .nadir)
+    }
+
+    func testOutputIs4KEquirect() {
+        XCTAssertEqual(Quick360Config.outputWidth, 4096)
+        XCTAssertEqual(Quick360Config.outputHeight, 2048)
+        XCTAssertEqual(Quick360Config.livePreviewWidth, 1024)
+        XCTAssertNotEqual(Quick360Config.outputWidth, Quick360Config.livePreviewWidth)
+    }
+
+    func testViewerPitchAllowsNearPoles() {
+        XCTAssertGreaterThan(Quick360Config.viewerMaxPitchRad, 1.4)
+        XCTAssertLessThan(Quick360Config.viewerMaxPitchRad, Float.pi / 2)
+    }
+}
 

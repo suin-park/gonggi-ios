@@ -33,6 +33,7 @@ final class Quick360CaptureEngine {
 
     let sphereBrush = Quick360LiveSphereBrush()
     let floorAtlas = Quick360FloorAtlas()
+    let sphericalCoverage = Quick360SphericalCoverageMap()
     private(set) var floorSurface: CapturedFloorSurface?
     private(set) var lightingSamples: [Quick360LightingSample] = []
     private var planeCandidates: [UUID: Quick360FloorDetector.Candidate] = [:]
@@ -55,6 +56,10 @@ final class Quick360CaptureEngine {
     private var cachedBrushFrame: CachedSplitDebugBrushFrame?
     /// After PAINT 1 while frozen: accept one live frame then freeze again.
     private var pendingPaintOneThenFreeze = false
+    /// After START: force-accept the first front keyframe when JPEG arrives.
+    private var needsFrontKeyframe = false
+    private var lastCoverageReport = Quick360SphericalCoverageReport.empty
+    private var lastThrottleRejectSampleAt: TimeInterval = -1
 
     private struct CachedSplitDebugBrushFrame {
         let timestamp: Double
@@ -243,6 +248,9 @@ final class Quick360CaptureEngine {
         latestSpherePreviewImage = nil
         sphereBrush.reset()
         floorAtlas.reset()
+        sphericalCoverage.reset()
+        lastCoverageReport = .empty
+        needsFrontKeyframe = false
         refreshUILocked(guidance: .faceForward)
     }
 
@@ -261,6 +269,7 @@ final class Quick360CaptureEngine {
         liveBrushStats.setAdaptiveInterval(liveBrushIntervalSec)
         // Split debug default: first frame only until continuous paint is re-enabled.
         pendingSingleFramePaint = splitDebug.enabled && (splitDebug.singleFrameMode || splitDebug.paintEnabled)
+        needsFrontKeyframe = true
         refreshUILocked(guidance: splitDebug.enabled ? .holdStill : .lookAround)
 
         // Immediate first paint — do not wait for continuous loop throttle / next tick.
@@ -336,6 +345,13 @@ final class Quick360CaptureEngine {
             note: "firstFrame"
         )
         recordLiveBrushDecisionLocked(decision, pixels: pixels, paintMs: paintMs)
+        sphericalCoverage.recordViewing(
+            captureBasis: basis,
+            cameraTransform: frame.cameraTransform,
+            intrinsics: frame.intrinsics,
+            quality: .seenWeak
+        )
+        lastCoverageReport = sphericalCoverage.report()
         updateBrushDebugLocked(
             cameraTransform: frame.cameraTransform,
             brushWidth: frame.brushWidth,
@@ -466,6 +482,25 @@ final class Quick360CaptureEngine {
             isComplete = true
             Quick360Log.stage(liveBrushStats.summaryLine())
         }
+        // Mock: synthesize spherical coverage from brush progress so guided UI advances.
+        let brushPct = sphereBrush.coveragePercent()
+        lastCoverageReport = Quick360SphericalCoverageReport(
+            horizontalPercent: min(100, brushPct * 1.1),
+            upperPercent: min(100, brushPct * 0.85),
+            lowerPercent: min(100, brushPct * 0.8),
+            zenithPercent: min(100, brushPct * 0.55),
+            nadirPercent: min(100, brushPct * 0.5),
+            overallPercent: brushPct,
+            weakPercent: max(0, 20 - brushPct * 0.1),
+            missingPercent: max(0, 100 - brushPct),
+            guidePhase: brushPct >= Quick360Config.coverageEnoughOverallPercent ? .enough
+                : brushPct < 40 ? .horizon
+                : brushPct < 55 ? .upper
+                : brushPct < 70 ? .lower
+                : .fillGaps,
+            sparseHint: nil,
+            missingYawHintDeg: nil
+        )
         refreshUILocked(guidance: nil)
     }
 
@@ -487,9 +522,7 @@ final class Quick360CaptureEngine {
         defer { stateLock.unlock() }
         guard isRunning, isCapturing, !isComplete else { return false }
         if originTransform == matrix_identity_float4x4 { return true }
-        guard let currentTarget = Quick360SphericalTargetLayout.currentTarget(in: targets) else {
-            return false
-        }
+        if needsFrontKeyframe { return true }
         let (yawRad, pitchRad): (Float, Float) = {
             if let basis = captureBasis {
                 return basis.centerYawPitch(cameraTransform: cameraTransform)
@@ -499,6 +532,12 @@ final class Quick360CaptureEngine {
                 originTransform: originTransform
             )
         }()
+        if nearestAccumulableTargetLocked(yawRad: yawRad, pitchRad: pitchRad) != nil {
+            return true
+        }
+        guard let currentTarget = Quick360SphericalTargetLayout.currentTarget(in: targets) else {
+            return false
+        }
         return Quick360SphericalTargetLayout.isWithinTolerance(
             cameraYawRad: yawRad,
             cameraPitchRad: pitchRad,
@@ -704,6 +743,17 @@ final class Quick360CaptureEngine {
         )
         adaptLiveBrushIntervalLocked(angularSpeedDegPerSec: angularSpeed)
 
+        // Spherical coverage — independent of live paint accept/reject.
+        if let basis = captureBasis {
+            sphericalCoverage.recordViewing(
+                captureBasis: basis,
+                cameraTransform: cameraTransform,
+                intrinsics: payload.intrinsics,
+                quality: .seenWeak
+            )
+            lastCoverageReport = sphericalCoverage.report()
+        }
+
         // Sphere brush (respect Paint ON/OFF + Single Frame mode) + coverage-hole diagnostics.
         let yawDeg = yawRad * 180 / .pi
         let pitchDeg = pitchRad * 180 / .pi
@@ -812,13 +862,28 @@ final class Quick360CaptureEngine {
 
         if Quick360DynamicRegionDetector.shouldWaitForClear(ratio: dynamicRatio) {
             refreshUILocked(guidance: .waitForClear)
-            // Still painted above; skip keyframe accumulate this frame
+            // Still painted / coverage-recorded above; skip keyframe accumulate this frame
             return
         }
 
-        // Internal keyframe path (not shown in UI)
-        guard let currentTarget = Quick360SphericalTargetLayout.currentTarget(in: targets) else {
-            // All internal sectors done — coverage may still guide finish
+        // Internal keyframe path — nearest pending target in FOV (full sphere, not sequential-only).
+        if needsFrontKeyframe, let jpeg = payload.jpegData, let basis = captureBasis {
+            forceFrontKeyframeLocked(
+                jpeg: jpeg,
+                yawRad: yawRad,
+                pitchRad: pitchRad,
+                translationM: translationM,
+                sharpness: sharpness,
+                exposure: exposure,
+                dynamicRatio: dynamicRatio,
+                intrinsics: payload.intrinsics,
+                cameraTransform: cameraTransform,
+                now: now
+            )
+        }
+
+        guard let activeTarget = nearestAccumulableTargetLocked(yawRad: yawRad, pitchRad: pitchRad)
+                ?? Quick360SphericalTargetLayout.currentTarget(in: targets) else {
             refreshUILocked(guidance: nil)
             return
         }
@@ -826,11 +891,11 @@ final class Quick360CaptureEngine {
         let inTolerance = Quick360SphericalTargetLayout.isWithinTolerance(
             cameraYawRad: yawRad,
             cameraPitchRad: pitchRad,
-            target: currentTarget
+            target: activeTarget
         )
 
         if inTolerance {
-            targets = Quick360SphericalTargetLayout.markAccumulating(targets: targets, targetId: currentTarget.id)
+            targets = Quick360SphericalTargetLayout.markAccumulating(targets: targets, targetId: activeTarget.id)
             keyframeIndex += 1
             let fileName = String(format: "keyframe_%04d.jpg", keyframeIndex)
             let candidate = Quick360FrameCandidate(
@@ -848,20 +913,89 @@ final class Quick360CaptureEngine {
             )
             candidateSlots = Quick360CandidateBuffer.ingest(
                 slots: candidateSlots,
-                targetId: currentTarget.id,
+                targetId: activeTarget.id,
                 candidate: candidate,
                 now: now
             )
             candidateFrameCount += 1
 
-            let slot = candidateSlots[currentTarget.id]
+            let slot = candidateSlots[activeTarget.id]
             if Quick360CandidateBuffer.shouldEvaluate(slot: slot, now: now) {
-                finalizeTarget(currentTarget.id)
+                finalizeTarget(activeTarget.id)
             }
         }
 
         candidateSlots = Quick360CandidateBuffer.evictStale(slots: candidateSlots, now: now)
         refreshUILocked(guidance: nil)
+    }
+
+    /// Prefer a pending target currently inside the camera FOV (any ring), else nil.
+    private func nearestAccumulableTargetLocked(yawRad: Float, pitchRad: Float) -> Quick360SphericalTarget? {
+        let pending = targets.filter { $0.state == .pending || $0.state == .accumulating }
+        let inView = pending.filter {
+            Quick360SphericalTargetLayout.isWithinTolerance(
+                cameraYawRad: yawRad,
+                cameraPitchRad: pitchRad,
+                target: $0
+            )
+        }
+        guard !inView.isEmpty else { return nil }
+        return inView.min { a, b in
+            SphericalMath.angularDistanceDeg(
+                yawA: yawRad, pitchA: pitchRad,
+                yawB: a.yawRad, pitchB: a.pitchRad
+            ) < SphericalMath.angularDistanceDeg(
+                yawA: yawRad, pitchA: pitchRad,
+                yawB: b.yawRad, pitchB: b.pitchRad
+            )
+        }
+    }
+
+    private func forceFrontKeyframeLocked(
+        jpeg: Data,
+        yawRad: Float,
+        pitchRad: Float,
+        translationM: Float,
+        sharpness: Float,
+        exposure: Float,
+        dynamicRatio: Float,
+        intrinsics: CameraIntrinsics,
+        cameraTransform: simd_float4x4,
+        now: Double
+    ) {
+        needsFrontKeyframe = false
+        guard let front = targets.first(where: { abs($0.pitchDeg) < 5 && abs($0.yawDeg) < 5 })
+                ?? targets.first else { return }
+        guard !selectedKeyframes.contains(where: { $0.targetId == front.id }) else { return }
+        keyframeIndex += 1
+        let fileName = String(format: "keyframe_%04d.jpg", keyframeIndex)
+        let keyframe = Quick360SelectedKeyframe(
+            targetId: front.id,
+            targetYawDeg: front.yawDeg,
+            targetPitchDeg: front.pitchDeg,
+            fileName: fileName,
+            timestamp: now,
+            yawRad: yawRad,
+            pitchRad: pitchRad,
+            translationM: translationM,
+            qualityScore: max(sharpness, 0.5),
+            sharpness: sharpness,
+            exposure: exposure,
+            dynamicRatio: dynamicRatio,
+            intrinsics: intrinsics,
+            transform: CaptureKeyframeRecord.encodeTransform(cameraTransform)
+        )
+        selectedKeyframes.append(keyframe)
+        try? writeKeyframe(jpeg, fileName: fileName)
+        targets = Quick360SphericalTargetLayout.markSelected(targets: targets, targetId: front.id)
+        sphericalCoverage.markCapturedKeyframe(
+            yawRad: yawRad,
+            pitchRad: pitchRad,
+            halfAngleRad: Quick360Config.coverageKeyframeHalfAngleRad
+        )
+        lastCoverageReport = sphericalCoverage.report()
+        lastSuccessAt = now
+        Quick360Log.stage("front keyframe forced file=\(fileName)")
     }
 
     private func finalizeTarget(_ targetId: Int) {
@@ -907,6 +1041,12 @@ final class Quick360CaptureEngine {
         targets = Quick360SphericalTargetLayout.markSelected(targets: targets, targetId: targetId)
         candidateSlots = Quick360CandidateBuffer.clearSlot(slots: candidateSlots, targetId: targetId)
         lastSuccessAt = best.candidate.timestamp
+        sphericalCoverage.markCapturedKeyframe(
+            yawRad: best.candidate.yawRad,
+            pitchRad: best.candidate.pitchRad,
+            halfAngleRad: Quick360Config.coverageKeyframeHalfAngleRad
+        )
+        lastCoverageReport = sphericalCoverage.report()
     }
 
     private func writeKeyframe(_ data: Data, fileName: String) throws {
@@ -915,16 +1055,21 @@ final class Quick360CaptureEngine {
     }
 
     private func refreshUILocked(guidance: Quick360GuidanceKind?, forceCanStart: Bool? = nil) {
-        let sphereCov = Int(sphereBrush.coveragePercent().rounded())
-        let sphereGood = Int(sphereBrush.goodCoveragePercent().rounded())
+        let cov = lastCoverageReport
+        let sphereCov = Int(cov.overallPercent.rounded())
+        let brushCov = Int(sphereBrush.coveragePercent().rounded())
         let floorCov = Int((floorSurface.map { _ in floorAtlas.coveragePercent() } ?? 0).rounded())
-        let floorGood = Int((floorSurface.map { _ in floorAtlas.goodCoveragePercent() } ?? 0).rounded())
         let floorDetected = floorSurface != nil
-        let ceilingSparse = sphereBrush.upperBandCoveragePercent() < Float(Quick360Config.sphereCeilingSparsePercent)
 
         var phase = uiState.phase
         var canStart = forceCanStart ?? uiState.canStart
         var resolved = guidance
+        var coverageHint = cov.sparseHint
+
+        let enough = cov.overallPercent >= Quick360Config.coverageEnoughOverallPercent
+            && cov.horizontalPercent >= Quick360Config.coveragePhaseThresholds.horizon * 0.85
+            && cov.upperPercent >= Quick360Config.coveragePhaseThresholds.upper * 0.75
+            && cov.lowerPercent >= Quick360Config.coveragePhaseThresholds.lower * 0.75
 
         if !isCapturing {
             phase = canStart ? .readyToStart : .alignFront
@@ -937,41 +1082,36 @@ final class Quick360CaptureEngine {
             if translationState.level == .excessive {
                 resolved = .stayInPlace
             } else if resolved == nil {
-                if sphereCov >= Quick360Config.sphereCoverageCompletePercent {
-                    if floorDetected && floorCov >= Quick360Config.floorGoodCoveragePercent {
-                        resolved = .spaceReady
-                        isComplete = true
-                        phase = .complete
-                    } else if floorDetected && floorCov >= Quick360Config.floorCoverageHintPercent {
-                        if !showedFloorRecorded {
-                            resolved = .floorRecorded
-                            showedFloorRecorded = true
-                        } else {
-                            resolved = .spaceReady
-                            isComplete = true
-                            phase = .complete
-                        }
-                    } else {
-                        resolved = floorDetected ? .lookDownFloor : .spaceReadyNoFloor
-                        if !floorDetected && sphereGood >= Quick360Config.sphereCoverageCompletePercent - 5 {
-                            isComplete = true
-                            phase = .complete
-                        }
-                    }
-                } else if floorDetected && floorCov < Quick360Config.floorCoverageHintPercent && sphereCov > 30 {
-                    resolved = .lookDownFloor
-                } else if ceilingSparse && sphereCov > 25 {
-                    resolved = .lookUp
-                } else {
+                switch cov.guidePhase {
+                case .horizon:
                     resolved = .lookAround
+                case .upper:
+                    resolved = .lookUp
+                case .lower:
+                    resolved = .lookDown
+                case .fillGaps:
+                    resolved = .fillGaps
+                    if let hint = cov.sparseHint {
+                        coverageHint = hint
+                    }
+                case .enough:
+                    resolved = .spaceReady
+                    isComplete = true
+                    phase = .complete
+                }
+                if enough {
+                    resolved = .spaceReady
+                    isComplete = true
+                    phase = .complete
                 }
             }
         }
 
         let canFinish = isCapturing && (
-            sphereCov >= 40
-            || selectedKeyframes.count >= max(6, Quick360Config.targetCount / 3)
+            cov.overallPercent >= Quick360Config.coverageFinishUnlockPercent
+            || selectedKeyframes.count >= 4
             || isComplete
+            || brushCov >= 40
         )
 
         uiState = Quick360CaptureUIState(
@@ -985,10 +1125,19 @@ final class Quick360CaptureEngine {
             canStart: canStart && !isCapturing,
             canFinish: canFinish,
             isComplete: isComplete,
+            coverageEnough: enough || isComplete,
+            coverageHint: coverageHint,
+            horizontalCoveragePercent: Int(cov.horizontalPercent.rounded()),
+            upperCoveragePercent: Int(cov.upperPercent.rounded()),
+            lowerCoveragePercent: Int(cov.lowerPercent.rounded()),
+            zenithCoveragePercent: Int(cov.zenithPercent.rounded()),
+            nadirCoveragePercent: Int(cov.nadirPercent.rounded()),
             selectedCount: selectedKeyframes.count,
             totalTargets: targets.count
         )
     }
+
+    // MARK: - Legacy finalize/write/refresh removed (replaced above)
 
     private func shouldPaintSphereLocked() -> Bool {
         guard splitDebug.paintEnabled else { return false }
@@ -1098,8 +1247,6 @@ final class Quick360CaptureEngine {
         liveBrushStats.setAdaptiveInterval(interval)
         Quick360Log.stage(String(format: "liveBrushInterval CPU backoff → %.2fs paintMs=%.1f", interval, paintMs))
     }
-
-    private var lastThrottleRejectSampleAt: TimeInterval = -1
 
     private func recordLiveBrushDecisionLocked(
         _ decision: Quick360LiveBrushDecision,

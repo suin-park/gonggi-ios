@@ -2,22 +2,48 @@ import SceneKit
 import SwiftUI
 
 /// Inside-out equirectangular 360° viewer (SceneKit).
+/// Pitch ≈ ±89° so zenith/nadir are reachable without exact-pole singularity.
 struct Panorama360ViewerView: View {
     let imageURL: URL
     @Environment(\.dismiss) private var dismiss
     @State private var fieldOfView: CGFloat = 75
+    @State private var loadFailed = false
 
     var body: some View {
         NavigationStack {
-            Panorama360SceneView(imageURL: imageURL, fieldOfView: $fieldOfView)
-                .ignoresSafeArea()
-                .navigationTitle("360° 공간 미리보기")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("닫기") { dismiss() }
+            Group {
+                if loadFailed {
+                    VStack(spacing: GonggiSpacing.md) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 36, weight: .light))
+                            .foregroundStyle(GonggiColors.accentTeal)
+                        Text("미리보기를 불러오지 못했어요")
+                            .font(GonggiTypography.body(17))
+                            .foregroundStyle(GonggiColors.textPrimary)
+                        Text("파노라마 파일이 없거나 손상되었을 수 있어요.")
+                            .font(GonggiTypography.caption(13))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, GonggiSpacing.lg)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black)
+                } else {
+                    Panorama360SceneView(
+                        imageURL: imageURL,
+                        fieldOfView: $fieldOfView,
+                        onLoadFailed: { loadFailed = true }
+                    )
+                    .ignoresSafeArea()
                 }
+            }
+            .navigationTitle("360° 공간 미리보기")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("닫기") { dismiss() }
+                }
+            }
         }
     }
 }
@@ -25,6 +51,7 @@ struct Panorama360ViewerView: View {
 private struct Panorama360SceneView: UIViewRepresentable {
     let imageURL: URL
     @Binding var fieldOfView: CGFloat
+    var onLoadFailed: () -> Void
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -39,11 +66,16 @@ private struct Panorama360SceneView: UIViewRepresentable {
         let material = SCNMaterial()
         material.isDoubleSided = true
         // Raw equirect + insideOutScale only (same as live capture RealityKit).
-        if let raw = UIImage(contentsOfFile: imageURL.path),
+        let fileExists = FileManager.default.fileExists(atPath: imageURL.path)
+        let raw = fileExists ? UIImage(contentsOfFile: imageURL.path) : nil
+        if let raw,
            let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
             material.diffuse.contents = prepared
+        } else if let raw {
+            material.diffuse.contents = raw
         } else {
-            material.diffuse.contents = UIImage(contentsOfFile: imageURL.path)
+            DispatchQueue.main.async { onLoadFailed() }
+            material.diffuse.contents = UIColor.darkGray
         }
         material.diffuse.wrapS = .repeat
         material.diffuse.wrapT = .clamp
@@ -61,6 +93,8 @@ private struct Panorama360SceneView: UIViewRepresentable {
         cameraNode.camera?.zNear = 0.1
         cameraNode.camera?.zFar = 100
         cameraNode.position = SCNVector3(0, 0, 0)
+        // Start facing capture forward (yaw/pitch 0) — no arbitrary offset.
+        cameraNode.eulerAngles = SCNVector3(0, 0, 0)
         scene.rootNode.addChildNode(cameraNode)
 
         view.scene = scene
@@ -87,6 +121,7 @@ private struct Panorama360SceneView: UIViewRepresentable {
         var cameraNode: SCNNode?
         var fieldOfViewBinding: Binding<CGFloat>?
         private var lastPan = CGPoint.zero
+        private let maxPitch = Quick360Config.viewerMaxPitchRad
 
         @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
             guard let view = gesture.view as? SCNView, let camera = cameraNode else { return }
@@ -96,7 +131,7 @@ private struct Panorama360SceneView: UIViewRepresentable {
             let dy = Float(translation.y - lastPan.y) * 0.005
             lastPan = translation
             camera.eulerAngles.y -= dx
-            camera.eulerAngles.x = max(-.pi / 3, min(.pi / 3, camera.eulerAngles.x - dy))
+            camera.eulerAngles.x = max(-maxPitch, min(maxPitch, camera.eulerAngles.x - dy))
             if gesture.state == .ended { lastPan = .zero }
         }
 

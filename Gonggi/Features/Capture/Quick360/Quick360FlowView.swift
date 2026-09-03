@@ -4,7 +4,6 @@ struct Quick360FlowView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel = Quick360ViewModel()
     @State private var showSummary = false
-    @State private var showPanoramaViewer = false
     #if DEBUG
     @State private var sphereDisplayDebugMode: Quick360SphereDisplayDebugMode = .sphere
     #endif
@@ -69,21 +68,10 @@ struct Quick360FlowView: View {
                     onRetry: {
                         showSummary = false
                         viewModel.start()
-                    },
-                    onPreview360: summary.panoramaURL.map { _ in
-                        {
-                            GonggiHaptics.light()
-                            showPanoramaViewer = true
-                        }
                     }
                 )
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
-            }
-        }
-        .fullScreenCover(isPresented: $showPanoramaViewer) {
-            if let url = viewModel.lastSummary?.panoramaURL {
-                Panorama360ViewerView(imageURL: url)
             }
         }
     }

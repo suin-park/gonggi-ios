@@ -150,33 +150,30 @@ struct CaptureGuidanceCard: View {
 
 struct CaptureProgressChips: View {
     let spherePercent: Int
-    let floorPercent: Int?
-    let floorDetected: Bool
+    let horizontalPercent: Int
+    let upperPercent: Int
+    let lowerPercent: Int
     let enough: Bool
 
     var body: some View {
-        HStack(spacing: GonggiSpacing.xs) {
-            chip(
-                label: "공간",
-                value: "\(spherePercent)%",
-                active: enough || spherePercent >= 40
-            )
-            if floorDetected, let floorPercent {
-                chip(
-                    label: "바닥",
-                    value: "\(floorPercent)%",
-                    active: floorPercent >= Quick360Config.floorCoverageHintPercent
-                )
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: GonggiSpacing.xs) {
+                chip(label: "공간", value: "\(spherePercent)%", active: enough || spherePercent >= 40)
+                if enough {
+                    Text("충분해요")
+                        .font(GonggiTypography.label(11))
+                        .foregroundStyle(GonggiColors.accentTeal)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(GonggiColors.accentTeal.opacity(0.18))
+                        .clipShape(Capsule())
+                        .overlay(Capsule().strokeBorder(GonggiColors.accentTeal.opacity(0.35), lineWidth: 1))
+                }
             }
-            if enough {
-                Text("충분해요")
-                    .font(GonggiTypography.label(11))
-                    .foregroundStyle(GonggiColors.accentTeal)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(GonggiColors.accentTeal.opacity(0.18))
-                    .clipShape(Capsule())
-                    .overlay(Capsule().strokeBorder(GonggiColors.accentTeal.opacity(0.35), lineWidth: 1))
+            HStack(spacing: GonggiSpacing.xs) {
+                chip(label: "수평", value: "\(horizontalPercent)%", active: horizontalPercent >= 60)
+                chip(label: "위", value: "\(upperPercent)%", active: upperPercent >= 45)
+                chip(label: "아래", value: "\(lowerPercent)%", active: lowerPercent >= 45)
             }
         }
     }

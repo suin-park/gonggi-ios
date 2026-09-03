@@ -3,14 +3,19 @@ import SwiftUI
 struct Quick360SummaryView: View {
     let summary: Quick360SessionSummary
     let onRetry: () -> Void
-    let onPreview360: (() -> Void)?
+
+    @State private var showPanoramaViewer = false
+    @State private var viewerURL: URL?
+    @State private var previewError: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
                     GonggiSummaryHero(
-                        coveragePercent: summary.report.map { Int($0.coveragePercent.rounded()) } ?? summary.progressPercent,
+                        coveragePercent: summary.report.map {
+                            Int($0.overallSphericalCoveragePercent.rounded())
+                        } ?? summary.progressPercent,
                         qualityLabel: qualityLabel,
                         duration: formattedDuration(summary.duration)
                     )
@@ -28,10 +33,8 @@ struct Quick360SummaryView: View {
                         .foregroundStyle(GonggiColors.textTertiary)
 
                     VStack(spacing: GonggiSpacing.sm) {
-                        if summary.panoramaURL != nil, onPreview360 != nil {
-                            PrimaryButton(title: "360° 공간 미리보기", icon: "globe") {
-                                onPreview360?()
-                            }
+                        PrimaryButton(title: "360° 공간 미리보기", icon: "globe") {
+                            openPanoramaPreview()
                         }
                         SecondaryButton(title: "다시 촬영", icon: "arrow.counterclockwise") {
                             onRetry()
@@ -43,26 +46,68 @@ struct Quick360SummaryView: View {
             .background(GonggiAmbientBackground())
             .navigationTitle("공간 촬영 요약")
             .navigationBarTitleDisplayMode(.inline)
+            .fullScreenCover(isPresented: $showPanoramaViewer) {
+                if let viewerURL {
+                    Panorama360ViewerView(imageURL: viewerURL)
+                }
+            }
+            .alert("미리보기를 열 수 없어요", isPresented: Binding(
+                get: { previewError != nil },
+                set: { if !$0 { previewError = nil } }
+            )) {
+                Button("확인", role: .cancel) { previewError = nil }
+            } message: {
+                Text(previewError ?? "")
+            }
         }
+    }
+
+    private func openPanoramaPreview() {
+        GonggiHaptics.light()
+        guard let url = summary.panoramaURL else {
+            previewError = "파노라마 파일이 없어요. 다시 촬영해 주세요."
+            return
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            previewError = "파노라마 파일을 찾을 수 없어요."
+            return
+        }
+        guard UIImage(contentsOfFile: url.path) != nil else {
+            previewError = "파노라마 이미지를 불러오지 못했어요."
+            return
+        }
+        viewerURL = url
+        // Present from Summary itself (Method B) — avoids sheet + parent fullScreenCover conflict.
+        showPanoramaViewer = true
     }
 
     private var qualityLabel: String {
         guard let report = summary.report else { return "기록됨" }
-        if report.sphereCoveragePercent >= 55 || report.coveragePercent >= 75 { return "양호" }
-        if report.sphereCoveragePercent >= 35 || report.coveragePercent >= 50 { return "보통" }
+        if report.overallSphericalCoveragePercent >= 62
+            || report.sphereCoveragePercent >= 55
+            || report.coveragePercent >= 75 {
+            return "양호"
+        }
+        if report.overallSphericalCoveragePercent >= 40
+            || report.sphereCoveragePercent >= 35
+            || report.coveragePercent >= 50 {
+            return "보통"
+        }
         return "보강 필요"
     }
 
     private func reportGrid(_ report: Quick360PanoramaReport) -> some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: GonggiSpacing.sm) {
-            metric("공간 커버", String(format: "%.0f%%", report.sphereCoveragePercent))
-            metric("바닥", report.floorDetected
-                   ? String(format: "%.0f%%", report.floorCoveragePercent)
-                   : "미검출")
+            metric("전체 커버", String(format: "%.0f%%", report.overallSphericalCoveragePercent))
+            metric("수평", String(format: "%.0f%%", report.horizontalCoveragePercent))
+            metric("위쪽", String(format: "%.0f%%", report.upperCoveragePercent))
+            metric("아래쪽", String(format: "%.0f%%", report.lowerCoveragePercent))
+            metric("천장", String(format: "%.0f%%", report.zenithCoveragePercent))
+            metric("바닥(구체)", String(format: "%.0f%%", report.nadirCoveragePercent))
             metric("파노라마", String(format: "%.1f%%", report.coveragePercent))
+            metric("해상도", "\(report.outputWidth)×\(report.outputHeight)")
             metric("키프레임", "\(report.acceptedKeyframeCount)/\(report.selectedKeyframeCount)")
             metric("정렬 보정", "\(report.successfulRefinements)/\(report.visualRefinementAttempts)")
-            metric("최대 이동", String(format: "%.0f cm", report.maxTranslationM * 100))
             metric("촬영 시간", String(format: "%.0fs", report.captureDurationSec))
         }
     }

@@ -123,7 +123,12 @@ enum Quick360Reconstruction {
         let duration = endedAt.timeIntervalSince(engine.startedAt)
         let sphereCov = Double(engine.sphereBrush.coveragePercent())
         let sphereGood = Double(engine.sphereBrush.goodCoveragePercent())
+        let cov = engine.sphericalCoverage.report()
         let floor = engine.floorSurface
+        let peakMemEstimate =
+            Double(stitchOutput.width * stitchOutput.height * 4)
+            / (1024.0 * 1024.0)
+            + Double(engine.selectedKeyframes.count) * 1.5
         let report = Quick360PanoramaReport(
             candidateFrameCount: engine.candidateFrameCount,
             selectedKeyframeCount: engine.selectedKeyframes.count,
@@ -159,7 +164,16 @@ enum Quick360Reconstruction {
             averageInlierRatio: stitchOutput.averageInlierRatio,
             averageReprojectionError: stitchOutput.averageReprojectionError,
             highParallaxFrameCount: stitchOutput.highParallaxFrameCount,
-            keyframePlacements: stitchOutput.keyframePlacements
+            keyframePlacements: stitchOutput.keyframePlacements,
+            horizontalCoveragePercent: Double(cov.horizontalPercent),
+            upperCoveragePercent: Double(cov.upperPercent),
+            lowerCoveragePercent: Double(cov.lowerPercent),
+            zenithCoveragePercent: Double(cov.zenithPercent),
+            nadirCoveragePercent: Double(cov.nadirPercent),
+            overallSphericalCoveragePercent: Double(cov.overallPercent),
+            weakCoveragePercent: Double(cov.weakPercent),
+            missingCoveragePercent: Double(cov.missingPercent),
+            peakMemoryMBEstimate: peakMemEstimate
         )
         try PanoramaExporter.writeJSON(report, to: reportURL)
 

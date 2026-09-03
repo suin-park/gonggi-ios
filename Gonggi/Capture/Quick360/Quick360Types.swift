@@ -1,22 +1,32 @@
 import Foundation
 import simd
 
-/// Configuration for Quick 360 Hybrid Space Capture (V4).
+/// Configuration for Quick 360 Hybrid Space Capture (V4 → full sphere).
 enum Quick360Config {
-    // Final offline panorama (unchanged)
-    static let outputWidth = 2048
-    static let outputHeight = 1024
+    // Final offline panorama (high-res equirect — never upscale live atlas)
+    static let outputWidth = 4096
+    static let outputHeight = 2048
 
-    /// Nominal yaw spacing for horizontal keyframe ring (config-driven; ~20–30°).
-    static let keyframeYawIntervalDeg: Float = 25
-    /// `round(360 / keyframeYawIntervalDeg)` → ~14 steps (~8–16 horizontal keyframes).
-    static let yawStepCount = 14
-    static let pitchBandsDeg: [Float] = [0, 30, -30]
-    static let targetAngularToleranceDeg: Float = 12
+    /// Nominal yaw spacing for mid-latitude rings (~25–30°).
+    static let keyframeYawIntervalDeg: Float = 30
+    /// Horizon ring yaw steps (legacy accessor — prefer `pitchBandSpecs`).
+    static let yawStepCount = 12
+    /// Full-sphere rings: horizon / upper / lower / zenith / nadir.
+    /// Pole rings use fewer yaw steps (FOV converges). Values tuned for ~70° portrait VFOV + overlap.
+    static let pitchBandSpecs: [(pitchDeg: Float, yawSteps: Int)] = [
+        (0, 12),
+        (50, 10),
+        (-50, 10),
+        (78, 4),
+        (-78, 4)
+    ]
+    /// Legacy flat list for tests / callers that only need pitch angles.
+    static var pitchBandsDeg: [Float] { pitchBandSpecs.map(\.pitchDeg) }
+    static let targetAngularToleranceDeg: Float = 14
     static let candidateWindowSec: Double = 0.65
-    static let maxCandidatesPerTarget = 10
-    static let minCandidatesBeforeSelect = 3
-    static let keyframeJPEGQuality: CGFloat = 0.82
+    static let maxCandidatesPerTarget = 6
+    static let minCandidatesBeforeSelect = 2
+    static let keyframeJPEGQuality: CGFloat = 0.85
     static let keyframeMaxPixelWidth = 1920
     /// Candidate quality gates before accepting a keyframe for final stitch.
     static let keyframeMinSharpness: Float = 0.12
@@ -25,6 +35,22 @@ enum Quick360Config {
     static let keyframeMaxTranslationM: Float = 0.4
     /// Minimum expected FOV overlap fraction vs previous keyframe.
     static let keyframeMinOverlapFraction: Float = 0.18
+
+    // Spherical coverage map (independent of live paint)
+    static let coverageMapWidth = 72
+    static let coverageMapHeight = 36
+    static let coverageStampStride = 2
+    /// Half-angle (rad) stamped CAPTURED when a keyframe is selected (~FOV/2).
+    static let coverageKeyframeHalfAngleRad: Float = 0.55
+    static let coverageBandWeights: (
+        horizon: Float, upper: Float, lower: Float, zenith: Float, nadir: Float
+    ) = (0.35, 0.22, 0.22, 0.105, 0.105)
+    static let coveragePhaseThresholds: (
+        horizon: Float, upper: Float, lower: Float, zenith: Float, nadir: Float, enoughOverall: Float
+    ) = (70, 55, 55, 40, 35, 62)
+    /// Soft finish unlock (forced finish still allowed below this).
+    static let coverageFinishUnlockPercent: Float = 35
+    static let coverageEnoughOverallPercent: Float = 62
 
     // Visual refinement (ARKit pose = initial guess only)
     static let refinementMinMatches = 8
@@ -75,9 +101,12 @@ enum Quick360Config {
     static var splitDebugCaptureMode: Bool { splitDebugCaptureModeDefault }
     static let sphereWeakConfidence: Float = 0.35
     static let sphereGoodConfidence: Float = 0.65
+    /// Legacy brush-only threshold — prefer spherical coverage overall.
     static let sphereCoverageCompletePercent: Int = 55
     static let sphereLookUpPitchDeg: Float = 35
     static let sphereCeilingSparsePercent: Int = 25
+    /// Viewer pitch clamp (~±89°) — avoid exact ±90° singularity.
+    static let viewerMaxPitchRad: Float = (.pi / 2) - 0.02
 
     // Local floor placement surface
     static let floorTextureSize = 512
@@ -102,7 +131,7 @@ enum Quick360Config {
     static let weightSharpness: Float = 0.25
     static let weightExposure: Float = 0.15
 
-    static var targetCount: Int { yawStepCount * pitchBandsDeg.count }
+    static var targetCount: Int { pitchBandSpecs.reduce(0) { $0 + $1.yawSteps } }
 }
 
 enum Quick360CapturePhase: String, Codable, Equatable {
@@ -146,8 +175,10 @@ enum Quick360GuidanceKind: Equatable {
     case faceForward
     case readyToStart
     case lookAround
-    case lookDownFloor
     case lookUp
+    case lookDown
+    case lookDownFloor
+    case fillGaps
     case floorRecorded
     case spaceReady
     case spaceReadyNoFloor
@@ -169,17 +200,17 @@ enum Quick360GuidanceKind: Equatable {
         case .readyToStart:
             return "준비가 되면 촬영을 시작해보세요"
         case .lookAround, .rotateRight, .rotateLeft:
-            return "천천히 주변을 비춰보세요"
-        case .lookDownFloor:
-            return "바닥을 한 번 더 비추면 좋아요"
+            return "천천히 주변을 한 바퀴 비춰보세요"
         case .lookUp:
-            return "위쪽도 조금 더 채워보세요"
+            return "이제 위쪽을 천천히 비춰보세요"
+        case .lookDown, .lookDownFloor:
+            return "바닥 쪽도 천천히 비춰주세요"
+        case .fillGaps:
+            return "아직 비어 있는 공간이 있어요"
         case .floorRecorded:
             return "바닥도 잘 기록됐어요"
-        case .spaceReady:
+        case .spaceReady, .spaceReadyNoFloor:
             return "공간이 충분히 기록됐어요"
-        case .spaceReadyNoFloor:
-            return "공간 기록은 충분해요"
         case .stayInPlace, .returnToOrigin, .holdStill:
             return "가능하면 같은 자리에서 촬영해 주세요"
         case .waitForClear:
@@ -197,13 +228,17 @@ enum Quick360GuidanceKind: Equatable {
         case .readyToStart:
             return nil
         case .lookAround, .rotateRight, .rotateLeft:
-            return "비어 있는 공간을 조금 더 채워보세요"
-        case .lookDownFloor:
             return nil
+        case .lookUp:
+            return "천장 근처까지 천천히 올려 주세요"
+        case .lookDown, .lookDownFloor:
+            return "발밑을 너무 가깝지 않게 비춰 주세요"
+        case .fillGaps:
+            return "안내된 방향을 한 번 더 비춰보세요"
         case .spaceReady, .success:
             return "이제 마무리해도 괜찮아요"
         case .spaceReadyNoFloor:
-            return "바닥은 나중에 보강할 수 있어요"
+            return nil
         default:
             return nil
         }
@@ -311,6 +346,16 @@ struct Quick360PanoramaReport: Codable, Equatable {
     let averageReprojectionError: Double
     let highParallaxFrameCount: Int
     let keyframePlacements: [PanoramaKeyframePlacementReport]
+    // Full-sphere coverage (independent of live paint)
+    let horizontalCoveragePercent: Double
+    let upperCoveragePercent: Double
+    let lowerCoveragePercent: Double
+    let zenithCoveragePercent: Double
+    let nadirCoveragePercent: Double
+    let overallSphericalCoveragePercent: Double
+    let weakCoveragePercent: Double
+    let missingCoveragePercent: Double
+    let peakMemoryMBEstimate: Double?
 }
 
 /// Per-keyframe ARKit initial vs visually refined spherical placement (final stitch).
@@ -361,6 +406,15 @@ struct Quick360CaptureUIState: Equatable {
     var canStart: Bool
     var canFinish: Bool
     var isComplete: Bool
+    /// True when weighted spherical coverage meets finish-ready threshold.
+    var coverageEnough: Bool
+    /// Sparse-region hint for fillGaps (product copy, not debug).
+    var coverageHint: String?
+    var horizontalCoveragePercent: Int
+    var upperCoveragePercent: Int
+    var lowerCoveragePercent: Int
+    var zenithCoveragePercent: Int
+    var nadirCoveragePercent: Int
     /// Internal only — not shown in overlay.
     var selectedCount: Int
     var totalTargets: Int
@@ -376,6 +430,13 @@ struct Quick360CaptureUIState: Equatable {
         canStart: false,
         canFinish: false,
         isComplete: false,
+        coverageEnough: false,
+        coverageHint: nil,
+        horizontalCoveragePercent: 0,
+        upperCoveragePercent: 0,
+        lowerCoveragePercent: 0,
+        zenithCoveragePercent: 0,
+        nadirCoveragePercent: 0,
         selectedCount: 0,
         totalTargets: Quick360Config.targetCount
     )

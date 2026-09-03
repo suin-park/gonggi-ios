@@ -15,6 +15,7 @@ struct Quick360OverlayView: View {
     var sphereDisplayDebugLabel: String? = nil
 
     @State private var didCelebrateEnough = false
+    @State private var showFinishConfirm = false
 
     private var isReady: Bool {
         uiState.phase == .alignFront || uiState.phase == .readyToStart || uiState.canStart
@@ -25,11 +26,11 @@ struct Quick360OverlayView: View {
     }
 
     private var enoughCoverage: Bool {
-        uiState.isComplete
+        uiState.coverageEnough
+            || uiState.isComplete
             || uiState.guidance == .spaceReady
             || uiState.guidance == .spaceReadyNoFloor
             || uiState.guidance == .success
-            || (uiState.sphereCoveragePercent >= Quick360Config.sphereCoverageCompletePercent && uiState.canFinish)
     }
 
     private var guidanceEmphasis: CaptureProgressEmphasis {
@@ -46,6 +47,10 @@ struct Quick360OverlayView: View {
            uiState.guidance != .holdStill {
             return msg
         }
+        if uiState.guidance == .fillGaps, let hint = uiState.coverageHint,
+           hint != uiState.guidance.primaryText {
+            return hint
+        }
         if let secondary = uiState.guidance.secondaryText,
            secondary != uiState.guidance.primaryText {
             return secondary
@@ -61,7 +66,13 @@ struct Quick360OverlayView: View {
                     showFinish: uiState.canFinish,
                     enoughCoverage: enoughCoverage,
                     onClose: onClose,
-                    onFinish: onFinish,
+                    onFinish: {
+                        if enoughCoverage {
+                            onFinish()
+                        } else {
+                            showFinishConfirm = true
+                        }
+                    },
                     debugTrailing: debugTrailingView
                 )
 
@@ -91,6 +102,19 @@ struct Quick360OverlayView: View {
             didCelebrateEnough = true
             GonggiHaptics.success()
         }
+        .confirmationDialog(
+            "아직 비어 있는 공간이 있어요",
+            isPresented: $showFinishConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("지금 마무리") {
+                GonggiHaptics.medium()
+                onFinish()
+            }
+            Button("조금 더 기록하기", role: .cancel) {}
+        } message: {
+            Text("위·아래를 조금 더 비추면 공간이 더 완전해져요.")
+        }
     }
 
     private var bottomCluster: some View {
@@ -101,8 +125,9 @@ struct Quick360OverlayView: View {
                     Spacer(minLength: 0)
                     CaptureProgressChips(
                         spherePercent: uiState.sphereCoveragePercent,
-                        floorPercent: uiState.floorDetected ? uiState.floorCoveragePercent : nil,
-                        floorDetected: uiState.floorDetected,
+                        horizontalPercent: uiState.horizontalCoveragePercent,
+                        upperPercent: uiState.upperCoveragePercent,
+                        lowerPercent: uiState.lowerCoveragePercent,
                         enough: enoughCoverage
                     )
                 }
@@ -165,23 +190,48 @@ struct Quick360OverlayView: View {
     }
 }
 
+private func previewUIState(
+    phase: Quick360CapturePhase,
+    guidance: Quick360GuidanceKind,
+    sphere: Int,
+    enough: Bool,
+    canStart: Bool,
+    canFinish: Bool
+) -> Quick360CaptureUIState {
+    Quick360CaptureUIState(
+        phase: phase,
+        progressPercent: sphere,
+        sphereCoveragePercent: sphere,
+        floorCoveragePercent: 0,
+        floorDetected: false,
+        guidance: guidance,
+        translationLevel: .safe,
+        canStart: canStart,
+        canFinish: canFinish,
+        isComplete: enough,
+        coverageEnough: enough,
+        coverageHint: nil,
+        horizontalCoveragePercent: min(100, sphere + 8),
+        upperCoveragePercent: max(0, sphere - 15),
+        lowerCoveragePercent: max(0, sphere - 20),
+        zenithCoveragePercent: max(0, sphere - 30),
+        nadirCoveragePercent: max(0, sphere - 35),
+        selectedCount: 4,
+        totalTargets: Quick360Config.targetCount
+    )
+}
+
 #Preview("Ready") {
     ZStack {
         CaptureReadyCanvasBackdrop()
         Quick360OverlayView(
-            uiState: Quick360CaptureUIState(
+            uiState: previewUIState(
                 phase: .readyToStart,
-                progressPercent: 0,
-                sphereCoveragePercent: 0,
-                floorCoveragePercent: 0,
-                floorDetected: false,
                 guidance: .readyToStart,
-                translationLevel: .safe,
+                sphere: 0,
+                enough: false,
                 canStart: true,
-                canFinish: false,
-                isComplete: false,
-                selectedCount: 0,
-                totalTargets: 24
+                canFinish: false
             ),
             cameraSourcePreview: nil,
             onClose: {},
@@ -195,19 +245,13 @@ struct Quick360OverlayView: View {
     ZStack {
         Color(white: 0.15)
         Quick360OverlayView(
-            uiState: Quick360CaptureUIState(
+            uiState: previewUIState(
                 phase: .capturing,
-                progressPercent: 42,
-                sphereCoveragePercent: 42,
-                floorCoveragePercent: 0,
-                floorDetected: false,
                 guidance: .lookAround,
-                translationLevel: .safe,
+                sphere: 42,
+                enough: false,
                 canStart: false,
-                canFinish: true,
-                isComplete: false,
-                selectedCount: 4,
-                totalTargets: 24
+                canFinish: true
             ),
             cameraSourcePreview: nil,
             onClose: {},
@@ -221,19 +265,13 @@ struct Quick360OverlayView: View {
     ZStack {
         Color(white: 0.12)
         Quick360OverlayView(
-            uiState: Quick360CaptureUIState(
+            uiState: previewUIState(
                 phase: .complete,
-                progressPercent: 62,
-                sphereCoveragePercent: 62,
-                floorCoveragePercent: 88,
-                floorDetected: true,
                 guidance: .spaceReady,
-                translationLevel: .safe,
+                sphere: 68,
+                enough: true,
                 canStart: false,
-                canFinish: true,
-                isComplete: true,
-                selectedCount: 12,
-                totalTargets: 24
+                canFinish: true
             ),
             cameraSourcePreview: nil,
             onClose: {},

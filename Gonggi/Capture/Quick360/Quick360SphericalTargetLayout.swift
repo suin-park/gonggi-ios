@@ -1,20 +1,28 @@
 import Foundation
 
-/// Ordered spherical capture targets for guided 360° rotation.
+/// Ordered spherical capture targets for guided full-sphere capture.
 enum Quick360SphericalTargetLayout {
     static func makeTargets(
-        yawSteps: Int = Quick360Config.yawStepCount,
-        pitchBandsDeg: [Float] = Quick360Config.pitchBandsDeg
+        bands: [(pitchDeg: Float, yawSteps: Int)] = Quick360Config.pitchBandSpecs
     ) -> [Quick360SphericalTarget] {
         var targets: [Quick360SphericalTarget] = []
         var id = 0
-        for pitch in pitchBandsDeg {
-            for step in 0..<yawSteps {
-                let yaw = Float(step) * (360 / Float(yawSteps))
+        // Horizon → upper → lower → zenith → nadir (bands already ordered that way in config).
+        let ordered = bands.sorted { lhs, rhs in
+            // Prefer horizon first, then |pitch| ascending so guidance fills mid then poles.
+            let la = abs(lhs.pitchDeg)
+            let ra = abs(rhs.pitchDeg)
+            if la != ra { return la < ra }
+            return lhs.pitchDeg > rhs.pitchDeg
+        }
+        for band in ordered {
+            let steps = max(1, band.yawSteps)
+            for step in 0..<steps {
+                let yaw = Float(step) * (360 / Float(steps))
                 targets.append(Quick360SphericalTarget(
                     id: id,
                     yawDeg: yaw,
-                    pitchDeg: pitch,
+                    pitchDeg: band.pitchDeg,
                     state: .pending
                 ))
                 id += 1
@@ -44,11 +52,14 @@ enum Quick360SphericalTargetLayout {
     ) -> Bool {
         let targetYawRad = target.yawDeg * .pi / 180
         let targetPitchRad = target.pitchDeg * .pi / 180
+        // Widen yaw tolerance near poles where many yaws collapse.
+        let pitchAbs = abs(target.pitchDeg)
+        let yawScale: Float = pitchAbs >= 70 ? 2.2 : (pitchAbs >= 40 ? 1.35 : 1)
         let dist = SphericalMath.angularDistanceDeg(
             yawA: cameraYawRad, pitchA: cameraPitchRad,
             yawB: targetYawRad, pitchB: targetPitchRad
         )
-        return dist <= toleranceDeg
+        return dist <= toleranceDeg * yawScale
     }
 
     static func rotationHint(
