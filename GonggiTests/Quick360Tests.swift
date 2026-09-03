@@ -621,7 +621,7 @@ final class Quick360HybridSpaceTests: XCTestCase {
             thumbWidth: 32,
             thumbHeight: 24,
             cameraTransform: matrix_identity_float4x4,
-            originTransform: matrix_identity_float4x4,
+            captureBasis: Quick360CaptureBasis.make(fromStartCamera: matrix_identity_float4x4)!,
             intrinsics: CameraIntrinsics(fx: 400, fy: 400, cx: 320, cy: 240, width: 640, height: 480),
             observationConfidence: 0.8,
             now: 1
@@ -654,7 +654,7 @@ final class Quick360HybridSpaceTests: XCTestCase {
         brush.paint(
             thumbRGBA: thumb, thumbWidth: 16, thumbHeight: 12,
             cameraTransform: matrix_identity_float4x4,
-            originTransform: matrix_identity_float4x4,
+            captureBasis: Quick360CaptureBasis.make(fromStartCamera: matrix_identity_float4x4)!,
             intrinsics: CameraIntrinsics(fx: 300, fy: 300, cx: 160, cy: 120, width: 320, height: 240),
             observationConfidence: 0.9,
             now: 10
