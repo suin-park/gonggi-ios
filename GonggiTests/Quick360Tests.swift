@@ -1252,7 +1252,9 @@ final class Quick360BrushOrientationTests: XCTestCase {
     func testSplitDebugSettingsDefaultsHideFloor() {
         let s = Quick360SplitDebugSettings.default
         XCTAssertFalse(s.showFloorRenderer)
-        XCTAssertTrue(s.singleFrameMode)
+        XCTAssertFalse(s.enabled)
+        XCTAssertFalse(s.singleFrameMode) // production continuous paint
+        XCTAssertTrue(Quick360SplitDebugSettings.splitDebug.singleFrameMode)
     }
 
     func testSplitDebugTestALocksPaintsAndFreezesIndependentlyOfCanStart() {
