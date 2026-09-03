@@ -27,44 +27,8 @@ final class OpenCVPanoramaBridgePhase2ATests: XCTestCase {
     }
 
     func testStitchNotYetImplementedReturnsStructuredFailure() async throws {
-        let rgba = [UInt8](repeating: 128, count: 8 * 8 * 4)
-        let k = CameraIntrinsics(fx: 8, fy: 8, cx: 4, cy: 4, width: 8, height: 8)
-        let kf = PanoramaStitcher.InputKeyframe(
-            index: 0,
-            rgba: rgba,
-            width: 8,
-            height: 8,
-            cameraTransform: matrix_identity_float4x4,
-            intrinsics: k,
-            dynamicRatio: 0,
-            yawRad: 0,
-            pitchRad: 0
-        )
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("opencv-phase2a-\(UUID().uuidString).jpg")
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        let input = PanoramaEngineInput(
-            sessionId: "phase2a-\(UUID().uuidString)",
-            keyframes: [kf],
-            originTransform: matrix_identity_float4x4,
-            captureBasis: Quick360CaptureBasis.make(fromStartCamera: matrix_identity_float4x4),
-            selectedKeyframeMeta: [],
-            targets: [],
-            coverageReport: nil,
-            outputWidth: Quick360Config.outputWidth,
-            outputHeight: Quick360Config.outputHeight,
-            outputPanoramaURL: url
-        )
-
-        let out = try await OpenCVPanoramaEngine().stitch(input: input)
-        XCTAssertFalse(out.success)
-        XCTAssertNotNil(out.failureReason)
-        XCTAssertTrue(
-            (out.failureReason ?? "").contains("Phase 2B")
-                || (out.failureReason ?? "").contains("not implemented"),
-            out.failureReason ?? ""
-        )
+        // Replaced in Phase 2B/2C — keep smoke + version tests; stitch covered elsewhere.
+        XCTAssertTrue(OpenCVPanoramaBridge.isAvailable())
     }
 
     func testLegacyUnaffectedWhenOpenCVFails() async throws {

@@ -223,21 +223,29 @@ final class PanoramaEnginePhase1Tests: XCTestCase {
         XCTAssertNil(ab.openCV.peakMemoryMB)
     }
 
-    func testOpenCVBridgeAvailableButStitchDeferredGraceful() async throws {
+    func testOpenCVStitchGracefulOnTinyInput() async throws {
         let url = tempPanoramaURL()
         defer { try? FileManager.default.removeItem(at: url) }
         let engine = OpenCVPanoramaEngine()
-        // Phase 2A: xcframework + bridge linked; full stitch is Phase 2B/2C.
         XCTAssertTrue(engine.isAvailable)
         XCTAssertEqual(engine.identifier, PanoramaEngineID.openCV)
 
-        let out = try await engine.stitch(input: makeInput(keyframes: makeTinyKeyframes(), outURL: url))
-        XCTAssertFalse(out.success)
-        XCTAssertNil(out.panoramaURL)
-        XCTAssertNil(out.rgba)
-        XCTAssertNotNil(out.failureReason)
+        // Tiny synthetic frames: may succeed (ARKit-prior warp) or fail structured — never crash.
+        let out = try await engine.stitch(input: makeInput(
+            keyframes: makeTinyKeyframes(),
+            outURL: url,
+            width: Quick360Config.outputWidth,
+            height: Quick360Config.outputHeight
+        ))
         XCTAssertEqual(out.report.engine, PanoramaEngineID.openCV)
-        XCTAssertFalse(out.report.success)
+        if out.success {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+            XCTAssertEqual(out.width, Quick360Config.outputWidth)
+            XCTAssertEqual(out.height, Quick360Config.outputHeight)
+        } else {
+            XCTAssertNotNil(out.failureReason)
+            XCTAssertFalse(out.report.success)
+        }
     }
 
     func testReleaseDefaultEngineIsLegacy() {

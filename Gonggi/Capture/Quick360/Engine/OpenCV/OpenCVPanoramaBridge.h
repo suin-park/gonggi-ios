@@ -28,6 +28,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) float firstForwardPitchDeg;
 /// Optional debug root: …/panorama/debug/ab/opencv/
 @property (nonatomic, copy, nullable) NSString *debugDirectoryPath;
+/// CaptureBasis yaw/pitch degrees (pair selection). Same length as keyframes.
+@property (nonatomic, copy, nullable) NSArray<NSNumber *> *yawDeg;
+@property (nonatomic, copy, nullable) NSArray<NSNumber *> *pitchDeg;
+/// Translation magnitude (m) for high-parallax downweight.
+@property (nonatomic, copy, nullable) NSArray<NSNumber *> *translationM;
 @end
 
 @interface OpenCVPanoramaStitchResult : NSObject

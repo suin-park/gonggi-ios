@@ -65,6 +65,9 @@ struct OpenCVPanoramaEngine: PanoramaEngineProtocol {
         request.outputHeight = input.outputHeight
         request.firstForwardYawDeg = input.firstForwardYawRad * 180 / .pi
         request.firstForwardPitchDeg = input.firstForwardPitchRad * 180 / .pi
+        request.yawDeg = prepared.yawDeg.map { NSNumber(value: $0) }
+        request.pitchDeg = prepared.pitchDeg.map { NSNumber(value: $0) }
+        request.translationM = prepared.translationM.map { NSNumber(value: $0) }
 
         if let debugRoot = try? PanoramaABPaths.directory(sessionId: input.sessionId)
             .appendingPathComponent("opencv", isDirectory: true) {
@@ -158,6 +161,9 @@ struct OpenCVPanoramaEngine: PanoramaEngineProtocol {
         var cy: [Float]
         var widths: [Int]
         var heights: [Int]
+        var yawDeg: [Float]
+        var pitchDeg: [Float]
+        var translationM: [Float]
         var temporaryURLs: [URL]
     }
 
@@ -170,10 +176,18 @@ struct OpenCVPanoramaEngine: PanoramaEngineProtocol {
         var cy: [Float] = []
         var widths: [Int] = []
         var heights: [Int] = []
+        var yawDeg: [Float] = []
+        var pitchDeg: [Float] = []
+        var translationM: [Float] = []
         var temps: [URL] = []
 
         let basis = input.captureBasis
             ?? Quick360CaptureBasis.make(fromStartCamera: input.originTransform)
+            ?? Quick360CaptureBasis(
+                worldUp: Quick360CaptureBasis.gravityUp,
+                referenceForward: simd_float3(0, 0, -1),
+                referenceRight: simd_float3(1, 0, 0)
+            )
 
         for (i, kf) in input.keyframes.enumerated() {
             let jpegURL: URL
@@ -202,6 +216,9 @@ struct OpenCVPanoramaEngine: PanoramaEngineProtocol {
             fy.append(kf.intrinsics.fy)
             cx.append(kf.intrinsics.cx)
             cy.append(kf.intrinsics.cy)
+            yawDeg.append(kf.yawRad * 180 / .pi)
+            pitchDeg.append(kf.pitchRad * 180 / .pi)
+            translationM.append(kf.translationM)
 
             // Roll-free camera→world (same axes as live / Legacy spherical projector).
             let frame = Quick360StabilizedCameraFrame.make(
@@ -223,6 +240,9 @@ struct OpenCVPanoramaEngine: PanoramaEngineProtocol {
             fx: fx, fy: fy, cx: cx, cy: cy,
             widths: widths,
             heights: heights,
+            yawDeg: yawDeg,
+            pitchDeg: pitchDeg,
+            translationM: translationM,
             temporaryURLs: temps
         )
     }
