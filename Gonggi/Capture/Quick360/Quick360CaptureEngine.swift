@@ -14,6 +14,8 @@ final class Quick360CaptureEngine {
     private(set) var originTransform: simd_float4x4 = matrix_identity_float4x4
     /// True after capture/Test A locks `originTransform` (even if matrix equals identity).
     private var hasLockedOrigin = false
+    /// Gravity-aligned heading basis locked at START (drives sphere yaw/pitch).
+    private(set) var captureBasis: Quick360CaptureBasis?
     private(set) var targets: [Quick360SphericalTarget] = []
     private(set) var selectedKeyframes: [Quick360SelectedKeyframe] = []
     private(set) var candidateSlots: [Int: Quick360CandidateBuffer.Slot] = [:]
@@ -107,13 +109,18 @@ final class Quick360CaptureEngine {
         isComplete = false
         originTransform = frame.cameraTransform
         hasLockedOrigin = true
+        captureBasis = Quick360CaptureBasis.make(fromStartCamera: frame.cameraTransform)
+        guard let basis = captureBasis else {
+            Quick360Log.stage("splitDebug TestA aborted: captureBasis nil")
+            return false
+        }
         sphereBrush.reset()
         sphereBrush.paint(
             thumbRGBA: frame.brushRGBA,
             thumbWidth: frame.brushWidth,
             thumbHeight: frame.brushHeight,
             cameraTransform: frame.cameraTransform,
-            originTransform: originTransform,
+            captureBasis: basis,
             intrinsics: frame.intrinsics,
             observationConfidence: 1.0,
             now: frame.timestamp,
@@ -152,6 +159,7 @@ final class Quick360CaptureEngine {
         isComplete = false
         originTransform = matrix_identity_float4x4
         hasLockedOrigin = false
+        captureBasis = nil
         splitDebugTestPhase = .idle
         sphereBrush.reset()
         publishSpherePreviewLocked()
@@ -195,6 +203,7 @@ final class Quick360CaptureEngine {
         startedAt = Date()
         originTransform = matrix_identity_float4x4
         hasLockedOrigin = false
+        captureBasis = nil
         targets = Quick360SphericalTargetLayout.makeTargets()
         selectedKeyframes = []
         candidateSlots = [:]
@@ -232,6 +241,7 @@ final class Quick360CaptureEngine {
         isCapturing = true
         originTransform = matrix_identity_float4x4
         hasLockedOrigin = false
+        captureBasis = nil
         // Split debug default: first frame only until continuous paint is re-enabled.
         pendingSingleFramePaint = splitDebug.enabled && (splitDebug.singleFrameMode || splitDebug.paintEnabled)
         refreshUILocked(guidance: splitDebug.enabled ? .holdStill : .lookAround)
@@ -242,6 +252,10 @@ final class Quick360CaptureEngine {
         if !hasLockedOrigin {
             originTransform = transform
             hasLockedOrigin = true
+            captureBasis = Quick360CaptureBasis.make(fromStartCamera: transform)
+            if captureBasis == nil {
+                Quick360Log.stage("captureBasis failed (forward∥up); falling back unavailable")
+            }
         }
     }
 
@@ -280,21 +294,24 @@ final class Quick360CaptureEngine {
             }
             if originTransform == matrix_identity_float4x4 {
                 originTransform = matrix_identity_float4x4
+                captureBasis = Quick360CaptureBasis.make(fromStartCamera: matrix_identity_float4x4)
             }
             let yaw = Float(completed) / Float(max(targets.count, 1)) * 2 * .pi - .pi
             var cam = matrix_identity_float4x4
             cam.columns.2 = SIMD4(-sin(yaw), 0, -cos(yaw), 0)
             cam.columns.0 = SIMD4(cos(yaw), 0, -sin(yaw), 0)
-            sphereBrush.paint(
-                thumbRGBA: thumb,
-                thumbWidth: w,
-                thumbHeight: h,
-                cameraTransform: cam,
-                originTransform: originTransform,
-                intrinsics: CameraIntrinsics(fx: 500, fy: 500, cx: 320, cy: 240, width: 640, height: 480),
-                observationConfidence: mockConf,
-                now: elapsed
-            )
+            if let basis = captureBasis ?? Quick360CaptureBasis.make(fromStartCamera: matrix_identity_float4x4) {
+                sphereBrush.paint(
+                    thumbRGBA: thumb,
+                    thumbWidth: w,
+                    thumbHeight: h,
+                    cameraTransform: cam,
+                    captureBasis: basis,
+                    intrinsics: CameraIntrinsics(fx: 500, fy: 500, cx: 320, cy: 240, width: 640, height: 480),
+                    observationConfidence: mockConf,
+                    now: elapsed
+                )
+            }
         }
         if progress > 0.45, floorSurface == nil {
             floorSurface = CapturedFloorSurface.make(
@@ -355,10 +372,15 @@ final class Quick360CaptureEngine {
         guard let currentTarget = Quick360SphericalTargetLayout.currentTarget(in: targets) else {
             return false
         }
-        let (yawRad, pitchRad) = SphericalMath.relativeYawPitchRad(
-            cameraTransform: cameraTransform,
-            originTransform: originTransform
-        )
+        let (yawRad, pitchRad): (Float, Float) = {
+            if let basis = captureBasis {
+                return basis.centerYawPitch(cameraTransform: cameraTransform)
+            }
+            return SphericalMath.relativeYawPitchRad(
+                cameraTransform: cameraTransform,
+                originTransform: originTransform
+            )
+        }()
         return Quick360SphericalTargetLayout.isWithinTolerance(
             cameraYawRad: yawRad,
             cameraPitchRad: pitchRad,
@@ -467,17 +489,19 @@ final class Quick360CaptureEngine {
 
         if pendingPaintOneThenFreeze, isCapturing, !payload.brushRGBA.isEmpty {
             setOriginTransform(payload.cameraTransform)
-            sphereBrush.paint(
-                thumbRGBA: payload.brushRGBA,
-                thumbWidth: payload.brushWidth,
-                thumbHeight: payload.brushHeight,
-                cameraTransform: payload.cameraTransform,
-                originTransform: originTransform,
-                intrinsics: payload.intrinsics,
-                observationConfidence: 1.0,
-                now: payload.timestamp,
-                options: .singleFrameDebug
-            )
+            if let basis = captureBasis {
+                sphereBrush.paint(
+                    thumbRGBA: payload.brushRGBA,
+                    thumbWidth: payload.brushWidth,
+                    thumbHeight: payload.brushHeight,
+                    cameraTransform: payload.cameraTransform,
+                    captureBasis: basis,
+                    intrinsics: payload.intrinsics,
+                    observationConfidence: 1.0,
+                    now: payload.timestamp,
+                    options: .singleFrameDebug
+                )
+            }
             pendingSingleFramePaint = false
             pendingPaintOneThenFreeze = false
             updateBrushDebugLocked(
@@ -505,14 +529,14 @@ final class Quick360CaptureEngine {
             refreshUILocked(guidance: guidance, forceCanStart: stable)
             // Split debug: keep sphere neutral gray until start so Test A is unambiguous.
             // Production path (non-split): gentle pre-start hint paint remains.
-            if !splitDebug.enabled, !payload.brushRGBA.isEmpty {
-                let identity = matrix_identity_float4x4
+            if !splitDebug.enabled, !payload.brushRGBA.isEmpty,
+               let basis = Quick360CaptureBasis.make(fromStartCamera: payload.cameraTransform) {
                 sphereBrush.paint(
                     thumbRGBA: payload.brushRGBA,
                     thumbWidth: payload.brushWidth,
                     thumbHeight: payload.brushHeight,
                     cameraTransform: payload.cameraTransform,
-                    originTransform: identity,
+                    captureBasis: basis,
                     intrinsics: payload.intrinsics,
                     observationConfidence: 0.25,
                     now: payload.timestamp
@@ -538,10 +562,15 @@ final class Quick360CaptureEngine {
             originTransform: originTransform
         )
 
-        let (yawRad, pitchRad) = SphericalMath.relativeYawPitchRad(
-            cameraTransform: cameraTransform,
-            originTransform: originTransform
-        )
+        let (yawRad, pitchRad): (Float, Float) = {
+            if let basis = captureBasis {
+                return basis.centerYawPitch(cameraTransform: cameraTransform)
+            }
+            return SphericalMath.relativeYawPitchRad(
+                cameraTransform: cameraTransform,
+                originTransform: originTransform
+            )
+        }()
         let translationM = translationState.distanceM
         let now = payload.timestamp
 
@@ -567,7 +596,7 @@ final class Quick360CaptureEngine {
         // Sphere brush (respect Paint ON/OFF + Single Frame mode)
         if !payload.brushRGBA.isEmpty {
             let shouldPaint = shouldPaintSphereLocked()
-            if shouldPaint {
+            if shouldPaint, let basis = captureBasis {
                 let paintOptions: Quick360BrushPaintOptions =
                     (splitDebug.enabled && splitDebug.singleFrameMode) ? .singleFrameDebug : .production
                 sphereBrush.paint(
@@ -575,7 +604,7 @@ final class Quick360CaptureEngine {
                     thumbWidth: payload.brushWidth,
                     thumbHeight: payload.brushHeight,
                     cameraTransform: cameraTransform,
-                    originTransform: originTransform,
+                    captureBasis: basis,
                     intrinsics: payload.intrinsics,
                     observationConfidence: obsConf * (dynamicRatio > 0.35 ? 0.5 : 1),
                     now: now,
@@ -845,7 +874,12 @@ final class Quick360CaptureEngine {
         let origin = treatAsIdentityOrigin
             ? cameraTransform
             : (hasLockedOrigin ? originTransform : cameraTransform)
-        let (yaw, pitch) = SphericalMath.relativeYawPitchRad(
+        let basis = treatAsIdentityOrigin
+            ? Quick360CaptureBasis.make(fromStartCamera: cameraTransform)
+            : (captureBasis ?? Quick360CaptureBasis.make(fromStartCamera: origin))
+        let (yaw, pitch) = basis?.centerYawPitch(cameraTransform: cameraTransform)
+            ?? (0, 0)
+        let (rawYaw, rawPitch) = Quick360CaptureBasis.rawRelativeYawPitch(
             cameraTransform: cameraTransform,
             originTransform: origin
         )
@@ -854,12 +888,7 @@ final class Quick360CaptureEngine {
             originTransform: origin
         )
         let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: pitch)
-        let relative = SphericalMath.relativeCameraTransform(
-            cameraTransform: cameraTransform,
-            originTransform: origin
-        )
-        let camFwd = SphericalMath.forwardVector(from: relative)
-        let refFwd = SphericalMath.forwardVector(from: matrix_identity_float4x4)
+        let camFwd = SphericalMath.forwardVector(from: cameraTransform)
         let oriented = Quick360BrushOrientation.remappedIntrinsics(
             intrinsics,
             interface: Quick360BrushOrientation.primaryInterfaceOrientation
@@ -871,15 +900,17 @@ final class Quick360CaptureEngine {
             thumbWidth: max(resolvedW, 2),
             thumbHeight: max(resolvedH, 2)
         )
-        let R = Quick360PerspectiveProjection.relativeRotation(
-            cameraTransform: cameraTransform,
-            originTransform: origin
-        )
         let (halfX, halfY) = Quick360BrushOrientation.halfFOV(orientedIntrinsics: oriented)
-        let corners = Quick360FOVDiagnostics.footprintCorners(
-            thumbIntrinsics: thumbK,
-            relativeRotation: R
-        )
+        let corners: [Quick360FOVDiagnostics.Corner]
+        if let basis {
+            corners = Quick360FOVDiagnostics.footprintCorners(
+                thumbIntrinsics: thumbK,
+                cameraTransform: cameraTransform,
+                basis: basis
+            )
+        } else {
+            corners = []
+        }
         if splitDebug.enabled, hasLockedOrigin || treatAsIdentityOrigin {
             Quick360FOVDiagnostics.logCorners(corners)
         }
@@ -887,6 +918,8 @@ final class Quick360CaptureEngine {
             relativeYawDeg: yaw * 180 / .pi,
             relativePitchDeg: pitch * 180 / .pi,
             relativeRollDeg: roll * 180 / .pi,
+            rawRelativeYawDeg: rawYaw * 180 / .pi,
+            rawRelativePitchDeg: rawPitch * 180 / .pi,
             centerU: uv.x,
             centerV: uv.y,
             interfaceOrientation: "portrait",
@@ -894,8 +927,9 @@ final class Quick360CaptureEngine {
             brushHeight: brushHeight > 0 ? brushHeight : (cachedBrushFrame?.brushHeight ?? brushDebug.brushHeight),
             originLocked: !treatAsIdentityOrigin && hasLockedOrigin,
             cameraForward: camFwd,
-            referenceForward: refFwd,
-            worldUp: SIMD3(0, 1, 0),
+            referenceForward: basis?.referenceForward ?? .zero,
+            referenceRight: basis?.referenceRight ?? .zero,
+            worldUp: basis?.worldUp ?? SIMD3(0, 1, 0),
             halfFOVxDeg: halfX * 180 / .pi,
             halfFOVyDeg: halfY * 180 / .pi,
             fovCorners: corners

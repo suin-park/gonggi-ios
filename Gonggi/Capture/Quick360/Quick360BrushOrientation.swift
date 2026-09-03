@@ -108,9 +108,13 @@ enum Quick360BrushOrientation {
 
 /// Debug snapshot for coordinate verification (not shown in production UI).
 struct Quick360BrushDebugState: Equatable {
+    /// Gravity-aligned yaw/pitch used for paint.
     var relativeYawDeg: Float = 0
     var relativePitchDeg: Float = 0
     var relativeRollDeg: Float = 0
+    /// Legacy `inverse(start)*current` yaw/pitch (debug only — not used for paint).
+    var rawRelativeYawDeg: Float = 0
+    var rawRelativePitchDeg: Float = 0
     var centerU: Float = 0.5
     var centerV: Float = 0.5
     var interfaceOrientation: String = "portrait"
@@ -119,6 +123,7 @@ struct Quick360BrushDebugState: Equatable {
     var originLocked: Bool = false
     var cameraForward: SIMD3<Float> = .zero
     var referenceForward: SIMD3<Float> = .zero
+    var referenceRight: SIMD3<Float> = .zero
     var worldUp: SIMD3<Float> = SIMD3(0, 1, 0)
     var halfFOVxDeg: Float = 0
     var halfFOVyDeg: Float = 0
@@ -127,9 +132,10 @@ struct Quick360BrushDebugState: Equatable {
     var overlayText: String {
         let origin = originLocked ? "LOCKED" : "NOT LOCKED"
         var lines = [
-            String(format: "yaw:   %.1f°", relativeYawDeg),
-            String(format: "pitch: %.1f°", relativePitchDeg),
-            String(format: "roll:  %.1f°", relativeRollDeg),
+            String(format: "yaw:   %.1f°  (grav)", relativeYawDeg),
+            String(format: "pitch: %.1f°  (grav)", relativePitchDeg),
+            String(format: "roll:  %.1f°  (raw)", relativeRollDeg),
+            String(format: "rawYP: %.1f / %.1f", rawRelativeYawDeg, rawRelativePitchDeg),
             "",
             String(format: "centerUV:\n%.3f / %.3f", centerU, centerV),
             "",
@@ -150,16 +156,13 @@ struct Quick360BrushDebugState: Equatable {
         }
         lines.append("")
         lines.append(
-            String(
-                format: "camF %.2f %.2f %.2f",
-                cameraForward.x, cameraForward.y, cameraForward.z
-            )
+            String(format: "camF %.2f %.2f %.2f", cameraForward.x, cameraForward.y, cameraForward.z)
         )
         lines.append(
-            String(
-                format: "refF %.2f %.2f %.2f",
-                referenceForward.x, referenceForward.y, referenceForward.z
-            )
+            String(format: "refF %.2f %.2f %.2f", referenceForward.x, referenceForward.y, referenceForward.z)
+        )
+        lines.append(
+            String(format: "refR %.2f %.2f %.2f", referenceRight.x, referenceRight.y, referenceRight.z)
         )
         lines.append(
             String(format: "up   %.2f %.2f %.2f", worldUp.x, worldUp.y, worldUp.z)

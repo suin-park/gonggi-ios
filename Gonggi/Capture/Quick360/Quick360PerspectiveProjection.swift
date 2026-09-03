@@ -1,9 +1,8 @@
 import Foundation
 import simd
 
-/// Perspective-correct brush projection: pixel → camera ray → relative rotation → sphere yaw/pitch.
-///
-/// Does **not** use centerYaw±halfFOV / centerPitch±halfFOV linear FOV boxes.
+/// Perspective-correct brush projection helpers (intrinsics rays).
+/// Sphere yaw/pitch uses `Quick360CaptureBasis` (gravity-aligned), not raw relative rotation.
 enum Quick360PerspectiveProjection {
     /// Scale oriented (full-res) intrinsics into brush thumbnail pixel space.
     static func scaledIntrinsics(
@@ -25,24 +24,7 @@ enum Quick360PerspectiveProjection {
         )
     }
 
-    /// 3×3 rotation of `relative = inverse(origin) * camera` (camera axes in origin/sphere space).
-    static func relativeRotation(
-        cameraTransform: simd_float4x4,
-        originTransform: simd_float4x4
-    ) -> simd_float3x3 {
-        let relative = SphericalMath.relativeCameraTransform(
-            cameraTransform: cameraTransform,
-            originTransform: originTransform
-        )
-        return simd_float3x3(
-            SIMD3(relative.columns.0.x, relative.columns.0.y, relative.columns.0.z),
-            SIMD3(relative.columns.1.x, relative.columns.1.y, relative.columns.1.z),
-            SIMD3(relative.columns.2.x, relative.columns.2.y, relative.columns.2.z)
-        )
-    }
-
     /// Portrait brush pixel → camera-space optical ray (+X right, +Y up, −Z forward).
-    /// `pixelU` / `pixelV` in thumbnail coordinates (v increases downward).
     static func cameraRayFromPixel(
         pixelU: Float,
         pixelV: Float,
@@ -55,7 +37,7 @@ enum Quick360PerspectiveProjection {
         return simd_normalize(simd_float3(x, y, -1))
     }
 
-    /// Normalized image UV (0…1) → camera ray (same convention as `cameraRayFromPixel`).
+    /// Normalized image UV (0…1) → camera ray.
     static func cameraRayFromNormalizedUV(
         u: Float,
         v: Float,
@@ -66,49 +48,11 @@ enum Quick360PerspectiveProjection {
         return cameraRayFromPixel(pixelU: pixelU, pixelV: pixelV, thumbIntrinsics: thumbIntrinsics)
     }
 
-    /// Camera-local ray → origin/sphere-space direction via relative camera rotation.
-    static func sphereDirection(
-        cameraRay: simd_float3,
-        relativeRotation: simd_float3x3
-    ) -> simd_float3 {
-        simd_normalize(relativeRotation * cameraRay)
-    }
-
-    /// Full chain: pixel → ray → relative R → sphere yaw/pitch (optical −Z → yaw0/pitch0).
-    static func sphereYawPitchFromPixel(
-        pixelU: Float,
-        pixelV: Float,
-        thumbIntrinsics: CameraIntrinsics,
-        relativeRotation: simd_float3x3
-    ) -> (yaw: Float, pitch: Float) {
-        let ray = cameraRayFromPixel(pixelU: pixelU, pixelV: pixelV, thumbIntrinsics: thumbIntrinsics)
-        let dir = sphereDirection(cameraRay: ray, relativeRotation: relativeRotation)
-        return SphericalMath.sphereYawPitchFromOpticalForward(dir)
-    }
-
-    /// Reverse: sphere direction → camera pixel (nil if behind camera or outside image+pad).
-    static func projectSphereDirectionToPixel(
-        sphereDirection: simd_float3,
-        relativeRotation: simd_float3x3,
-        thumbIntrinsics: CameraIntrinsics,
-        edgePad: Float = 0.5
-    ) -> SIMD2<Float>? {
-        // dir_cam = R^T * dir_sphere (R orthonormal).
-        let dirCam = simd_normalize(simd_transpose(relativeRotation) * sphereDirection)
-        let depth = -dirCam.z
-        guard depth > 1e-5 else { return nil }
-        let u = thumbIntrinsics.fx * (dirCam.x / depth) + thumbIntrinsics.cx
-        let v = thumbIntrinsics.fy * (-dirCam.y / depth) + thumbIntrinsics.cy
-        let maxU = Float(thumbIntrinsics.width - 1) + edgePad
-        let maxV = Float(thumbIntrinsics.height - 1) + edgePad
-        guard u >= -edgePad, v >= -edgePad, u <= maxU, v <= maxV else { return nil }
-        return SIMD2(u, v)
-    }
-
-    /// Four image-corner rays → sphere yaw/pitch/UV (not a linear ±halfFOV rectangle).
+    /// Four image-corner rays → gravity-basis sphere yaw/pitch/UV.
     static func footprintCorners(
         thumbIntrinsics: CameraIntrinsics,
-        relativeRotation: simd_float3x3
+        cameraTransform: simd_float4x4,
+        basis: Quick360CaptureBasis
     ) -> [Quick360FOVDiagnostics.Corner] {
         let w = Float(max(thumbIntrinsics.width - 1, 1))
         let h = Float(max(thumbIntrinsics.height - 1, 1))
@@ -119,11 +63,11 @@ enum Quick360PerspectiveProjection {
             ("BL", 0, h)
         ]
         return samples.map { label, pu, pv in
-            let (yaw, pitch) = sphereYawPitchFromPixel(
+            let (yaw, pitch) = basis.sphereYawPitchFromPixel(
                 pixelU: pu,
                 pixelV: pv,
                 thumbIntrinsics: thumbIntrinsics,
-                relativeRotation: relativeRotation
+                cameraTransform: cameraTransform
             )
             let uv = SphericalMath.equirectangularUV(yawRad: yaw, pitchRad: pitch)
             return Quick360FOVDiagnostics.Corner(
@@ -155,7 +99,6 @@ enum Quick360PerspectiveProjection {
 
         let minU = us.min() ?? 0
         let maxU = us.max() ?? 1
-        // If FOV straddles the equirect seam, scan full width.
         let wraps = (maxU - minU) > 0.55
         if wraps {
             return (0, equirectWidth - 1, y0, y1, true)
@@ -168,9 +111,7 @@ enum Quick360PerspectiveProjection {
 
 /// Options for live sphere brush paint (Test A uses opaque replace, no feather).
 struct Quick360BrushPaintOptions: Equatable, Sendable {
-    /// Opaque write; ignore previous confidence / no alpha blend.
     var opaqueReplace: Bool
-    /// Soft FOV edge feather (production continuous brush).
     var enableFeather: Bool
 
     static let production = Quick360BrushPaintOptions(opaqueReplace: false, enableFeather: true)

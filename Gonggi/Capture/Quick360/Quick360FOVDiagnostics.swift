@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// FOV footprint diagnostics for Split Debug (perspective corner rays).
+/// FOV footprint diagnostics for Split Debug (perspective corner rays in gravity basis).
 enum Quick360FOVDiagnostics {
     struct Corner: Equatable, Sendable {
         var label: String
@@ -14,18 +14,18 @@ enum Quick360FOVDiagnostics {
         var pitchDeg: Float { pitchRad * 180 / .pi }
     }
 
-    /// Perspective FOV corners from oriented+scaled brush intrinsics and relative camera rotation.
     static func footprintCorners(
         thumbIntrinsics: CameraIntrinsics,
-        relativeRotation: simd_float3x3
+        cameraTransform: simd_float4x4,
+        basis: Quick360CaptureBasis
     ) -> [Corner] {
         Quick360PerspectiveProjection.footprintCorners(
             thumbIntrinsics: thumbIntrinsics,
-            relativeRotation: relativeRotation
+            cameraTransform: cameraTransform,
+            basis: basis
         )
     }
 
-    /// True when all four corners stay near equirect center (normal forward FOV, no pole/seam jump).
     static func isCompactAroundCenter(
         _ corners: [Corner],
         maxAbsYawDeg: Float = 70,

@@ -52,14 +52,14 @@ final class Quick360LiveSphereBrush {
         now - lastPaintAt >= Quick360Config.liveBrushMinIntervalSec
     }
 
-    /// Fill current camera FOV into equirect via **perspective** reverse projection
-    /// (sphere direction → camera pixel), not linear center±halfFOV boxes.
+    /// Fill current camera FOV into equirect via perspective reverse projection
+    /// in a **gravity-aligned** capture basis (not `inverse(start)*current`).
     func paint(
         thumbRGBA: [UInt8],
         thumbWidth: Int,
         thumbHeight: Int,
         cameraTransform: simd_float4x4,
-        originTransform: simd_float4x4,
+        captureBasis: Quick360CaptureBasis,
         intrinsics: CameraIntrinsics,
         observationConfidence: Float,
         now: TimeInterval,
@@ -78,13 +78,10 @@ final class Quick360LiveSphereBrush {
             thumbWidth: thumbWidth,
             thumbHeight: thumbHeight
         )
-        let R = Quick360PerspectiveProjection.relativeRotation(
-            cameraTransform: cameraTransform,
-            originTransform: originTransform
-        )
         let corners = Quick360PerspectiveProjection.footprintCorners(
             thumbIntrinsics: thumbK,
-            relativeRotation: R
+            cameraTransform: cameraTransform,
+            basis: captureBasis
         )
         let bounds = Quick360PerspectiveProjection.equirectScanBounds(
             corners: corners,
@@ -102,22 +99,20 @@ final class Quick360LiveSphereBrush {
         for y in bounds.y0...bounds.y1 {
             let xRange: ClosedRange<Int> = bounds.wrapsSeam ? (0...(width - 1)) : (bounds.x0...bounds.x1)
             for x in xRange {
-                let sphereDir = SphericalMath.opticalDirectionFromEquirectangularPixel(
-                    x: x,
-                    y: y,
-                    width: width,
-                    height: height
-                )
-                guard let uv = Quick360PerspectiveProjection.projectSphereDirectionToPixel(
-                    sphereDirection: sphereDir,
-                    relativeRotation: R,
+                let u = Float(x) / Float(max(width - 1, 1))
+                let v = Float(y) / Float(max(height - 1, 1))
+                let yaw = u * 2 * .pi - .pi
+                let pitch = .pi / 2 - v * .pi
+                guard let uv = captureBasis.projectSphereDirectionToPixel(
+                    yawRad: yaw,
+                    pitchRad: pitch,
+                    cameraTransform: cameraTransform,
                     thumbIntrinsics: thumbK,
                     edgePad: options.enableFeather ? 1.0 : 0.02
                 ) else { continue }
 
                 let tu = uv.x
                 let tv = uv.y
-                // Soft edge only when feather enabled (normalized distance outside image).
                 var boundaryWeight: Float = 1
                 if options.enableFeather {
                     let ou: Float
@@ -132,7 +127,6 @@ final class Quick360LiveSphereBrush {
                     if edgeOut > 0 {
                         boundaryWeight = simd_clamp(1 - edgeOut / 0.02, 0, 1)
                     } else {
-                        // Interior: slight fade near image border (same start ratio idea).
                         let nx = abs((tu / maxU) * 2 - 1)
                         let ny = abs((tv / maxV) * 2 - 1)
                         let edge = max(nx, ny)
@@ -155,7 +149,6 @@ final class Quick360LiveSphereBrush {
                     rgba[o + 1] = g
                     rgba[o + 2] = b
                     rgba[o + 3] = 255
-                    // Skip reveal fade so Test A freeze shows the true patch immediately.
                     firstSeen[idx] = now - Quick360Config.brushRevealFadeSec - 0.05
                     confidence[idx] = 255
                     continue

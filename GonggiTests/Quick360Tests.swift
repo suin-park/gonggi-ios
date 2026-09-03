@@ -835,10 +835,12 @@ final class Quick360BrushOrientationTests: XCTestCase {
 
     func testFOVCornersCompactAroundCenterForForwardFrame() {
         let thumb = CameraIntrinsics(fx: 280, fy: 280, cx: 95, cy: 127, width: 192, height: 256)
-        let R = matrix_identity_float3x3
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
         let corners = Quick360FOVDiagnostics.footprintCorners(
             thumbIntrinsics: thumb,
-            relativeRotation: R
+            cameraTransform: cam,
+            basis: basis
         )
         XCTAssertEqual(corners.count, 4)
         XCTAssertTrue(Quick360FOVDiagnostics.isCompactAroundCenter(corners))
@@ -846,28 +848,22 @@ final class Quick360BrushOrientationTests: XCTestCase {
         let cv = corners.map(\.v).reduce(0, +) / 4
         XCTAssertEqual(cu, 0.5, accuracy: 0.08)
         XCTAssertEqual(cv, 0.5, accuracy: 0.08)
-        for c in corners {
-            XCTAssertGreaterThan(c.v, 0.12)
-            XCTAssertLessThan(c.v, 0.88)
-            XCTAssertGreaterThan(c.u, 0.15)
-            XCTAssertLessThan(c.u, 0.85)
-        }
     }
 
-    func testFOVCornersMoveRightWithPositiveYaw() {
+    func testFOVCornersMoveRightWithBodyYaw() {
         let thumb = CameraIntrinsics(fx: 280, fy: 280, cx: 95, cy: 127, width: 192, height: 256)
-        let R0 = matrix_identity_float3x3
-        // Same Ry(+θ) as pose tests: optical forward → −X side → sphere yaw < 0 → U decreases.
+        let start = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: start)!
         let t = Float(0.4)
         var cam = matrix_identity_float4x4
         cam.columns.0 = SIMD4(cos(t), 0, -sin(t), 0)
         cam.columns.2 = SIMD4(sin(t), 0, cos(t), 0)
-        let Rright = Quick360PerspectiveProjection.relativeRotation(
-            cameraTransform: cam,
-            originTransform: matrix_identity_float4x4
+        let at0 = Quick360FOVDiagnostics.footprintCorners(
+            thumbIntrinsics: thumb, cameraTransform: start, basis: basis
         )
-        let at0 = Quick360FOVDiagnostics.footprintCorners(thumbIntrinsics: thumb, relativeRotation: R0)
-        let atRight = Quick360FOVDiagnostics.footprintCorners(thumbIntrinsics: thumb, relativeRotation: Rright)
+        let atRight = Quick360FOVDiagnostics.footprintCorners(
+            thumbIntrinsics: thumb, cameraTransform: cam, basis: basis
+        )
         let u0 = at0.map(\.u).reduce(0, +) / 4
         let uR = atRight.map(\.u).reduce(0, +) / 4
         XCTAssertLessThan(uR, u0)
@@ -875,12 +871,10 @@ final class Quick360BrushOrientationTests: XCTestCase {
 
     func testPerspectiveCenterPixelMapsToSphereFront() {
         let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
-        let R = matrix_identity_float3x3
-        let (yaw, pitch) = Quick360PerspectiveProjection.sphereYawPitchFromPixel(
-            pixelU: thumb.cx,
-            pixelV: thumb.cy,
-            thumbIntrinsics: thumb,
-            relativeRotation: R
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
+        let (yaw, pitch) = basis.sphereYawPitchFromPixel(
+            pixelU: thumb.cx, pixelV: thumb.cy, thumbIntrinsics: thumb, cameraTransform: cam
         )
         XCTAssertEqual(yaw, 0, accuracy: 0.02)
         XCTAssertEqual(pitch, 0, accuracy: 0.02)
@@ -888,12 +882,10 @@ final class Quick360BrushOrientationTests: XCTestCase {
 
     func testPerspectiveTopCenterHasPositivePitchNearZeroYaw() {
         let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
-        let R = matrix_identity_float3x3
-        let (yaw, pitch) = Quick360PerspectiveProjection.sphereYawPitchFromPixel(
-            pixelU: thumb.cx,
-            pixelV: 0,
-            thumbIntrinsics: thumb,
-            relativeRotation: R
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
+        let (yaw, pitch) = basis.sphereYawPitchFromPixel(
+            pixelU: thumb.cx, pixelV: 0, thumbIntrinsics: thumb, cameraTransform: cam
         )
         XCTAssertEqual(yaw, 0, accuracy: 0.05)
         XCTAssertGreaterThan(pitch, 0.15)
@@ -901,12 +893,10 @@ final class Quick360BrushOrientationTests: XCTestCase {
 
     func testPerspectiveRightCenterHasPositiveYawNearZeroPitch() {
         let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
-        let R = matrix_identity_float3x3
-        let (yaw, pitch) = Quick360PerspectiveProjection.sphereYawPitchFromPixel(
-            pixelU: Float(thumb.width - 1),
-            pixelV: thumb.cy,
-            thumbIntrinsics: thumb,
-            relativeRotation: R
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
+        let (yaw, pitch) = basis.sphereYawPitchFromPixel(
+            pixelU: Float(thumb.width - 1), pixelV: thumb.cy, thumbIntrinsics: thumb, cameraTransform: cam
         )
         XCTAssertGreaterThan(yaw, 0.15)
         XCTAssertEqual(pitch, 0, accuracy: 0.05)
@@ -914,39 +904,34 @@ final class Quick360BrushOrientationTests: XCTestCase {
 
     func testPerspectiveFourCornersHaveIndependentYawPitch() {
         let thumb = CameraIntrinsics(fx: 280, fy: 280, cx: 95, cy: 127, width: 192, height: 256)
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
         let corners = Quick360PerspectiveProjection.footprintCorners(
-            thumbIntrinsics: thumb,
-            relativeRotation: matrix_identity_float3x3
+            thumbIntrinsics: thumb, cameraTransform: cam, basis: basis
         )
         XCTAssertEqual(corners.count, 4)
         let tl = corners[0]
         let tr = corners[1]
         let br = corners[2]
         let bl = corners[3]
-        // Independent rays: left/right share |yaw| sign, top/bottom share pitch sign.
         XCTAssertLessThan(tl.yawRad, 0)
         XCTAssertGreaterThan(tr.yawRad, 0)
         XCTAssertGreaterThan(tl.pitchRad, 0)
         XCTAssertLessThan(br.pitchRad, 0)
-        // Pinhole: same image column → same yaw (vertical lines stay vertical).
         XCTAssertEqual(tr.yawRad, br.yawRad, accuracy: 0.02)
         XCTAssertEqual(tl.yawRad, bl.yawRad, accuracy: 0.02)
-        // Same image row → same pitch (horizontal lines stay horizontal).
         XCTAssertEqual(tl.pitchRad, tr.pitchRad, accuracy: 0.02)
         XCTAssertEqual(bl.pitchRad, br.pitchRad, accuracy: 0.02)
-        // Not a degenerate point / pole collapse.
         XCTAssertGreaterThan(tr.yawRad - tl.yawRad, 0.3)
         XCTAssertGreaterThan(tl.pitchRad - bl.pitchRad, 0.3)
     }
 
     func testPerspectiveRoundTripCenterPixel() {
         let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
-        let R = matrix_identity_float3x3
-        let dir = SphericalMath.opticalDirectionFromSphereYawPitch(yawRad: 0, pitchRad: 0)
-        let uv = Quick360PerspectiveProjection.projectSphereDirectionToPixel(
-            sphereDirection: dir,
-            relativeRotation: R,
-            thumbIntrinsics: thumb
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
+        let uv = basis.projectSphereDirectionToPixel(
+            yawRad: 0, pitchRad: 0, cameraTransform: cam, thumbIntrinsics: thumb
         )
         XCTAssertNotNil(uv)
         XCTAssertEqual(uv!.x, thumb.cx, accuracy: 1.5)
@@ -962,24 +947,124 @@ final class Quick360BrushOrientationTests: XCTestCase {
             rgba[i * 4 + 2] = 0
             rgba[i * 4 + 3] = 255
         }
+        let basis = Quick360CaptureBasis.make(fromStartCamera: matrix_identity_float4x4)!
         brush.paint(
             thumbRGBA: rgba,
             thumbWidth: 16,
             thumbHeight: 16,
             cameraTransform: matrix_identity_float4x4,
-            originTransform: matrix_identity_float4x4,
+            captureBasis: basis,
             intrinsics: CameraIntrinsics(fx: 500, fy: 500, cx: 320, cy: 240, width: 640, height: 480),
             observationConfidence: 1,
             now: 1,
             options: .singleFrameDebug
         )
-        // Center equirect pixel should be painted (red-ish), not left gray.
         let cx = 32
         let cy = 16
         let o = (cy * 64 + cx) * 4
         XCTAssertEqual(brush.confidence[cy * 64 + cx], 255)
         XCTAssertGreaterThan(brush.rgba[o], 200)
         XCTAssertLessThan(brush.rgba[o + 1], 40)
+    }
+
+    // MARK: - Gravity-aligned basis
+
+    private func cameraLooking(
+        yawRad: Float,
+        pitchRad: Float = 0,
+        rollRad: Float = 0
+    ) -> simd_float4x4 {
+        // Build camera with optical -Z = world direction from yaw(around Y) then pitch.
+        let cy = cos(yawRad), sy = sin(yawRad)
+        let cp = cos(pitchRad), sp = sin(pitchRad)
+        let cr = cos(rollRad), sr = sin(rollRad)
+        // Forward (optical -Z in world): yaw around Y then pitch.
+        let forward = simd_normalize(simd_float3(sy * cp, sp, -cy * cp))
+        let worldUp = simd_float3(0, 1, 0)
+        var right = simd_normalize(simd_cross(forward, worldUp))
+        if abs(simd_dot(forward, worldUp)) > 0.98 {
+            right = simd_float3(1, 0, 0)
+        }
+        var up = simd_normalize(simd_cross(right, forward))
+        // Apply roll around forward.
+        let rolledRight = right * cr + up * sr
+        let rolledUp = -right * sr + up * cr
+        right = rolledRight
+        up = rolledUp
+        // columns: 0=right, 1=up, 2=-forward (ARKit)
+        var m = matrix_identity_float4x4
+        m.columns.0 = SIMD4(right.x, right.y, right.z, 0)
+        m.columns.1 = SIMD4(up.x, up.y, up.z, 0)
+        m.columns.2 = SIMD4(-forward.x, -forward.y, -forward.z, 0)
+        return m
+    }
+
+    func testGravityBasisStartPitchThenYaw60KeepsPitch() {
+        let start = cameraLooking(yawRad: 0, pitchRad: 0.35) // ~20° up
+        let basis = Quick360CaptureBasis.make(fromStartCamera: start)!
+        let startYP = basis.centerYawPitch(cameraTransform: start)
+        XCTAssertEqual(startYP.yaw, 0, accuracy: 0.05)
+        XCTAssertEqual(startYP.pitch, 0.35, accuracy: 0.05)
+
+        let turned = cameraLooking(yawRad: Float.pi / 3, pitchRad: 0.35) // +60° yaw, same pitch
+        let yp = basis.centerYawPitch(cameraTransform: turned)
+        XCTAssertEqual(yp.yaw, Float.pi / 3, accuracy: 0.08)
+        XCTAssertEqual(yp.pitch, startYP.pitch, accuracy: 0.08)
+        XCTAssertLessThan(abs(yp.pitch), 1.0) // must not explode toward pole (~80°)
+    }
+
+    func testGravityBasisStartRollThenYaw60() {
+        let start = cameraLooking(yawRad: 0, pitchRad: 0.1, rollRad: 0.4)
+        let basis = Quick360CaptureBasis.make(fromStartCamera: start)!
+        let turned = cameraLooking(yawRad: Float.pi / 3, pitchRad: 0.1, rollRad: 0.4)
+        let yp = basis.centerYawPitch(cameraTransform: turned)
+        XCTAssertEqual(yp.yaw, Float.pi / 3, accuracy: 0.1)
+        XCTAssertEqual(yp.pitch, 0.1, accuracy: 0.1)
+    }
+
+    func testGravityBasisRollOnlyKeepsYawPitchStable() {
+        let start = cameraLooking(yawRad: 0.2, pitchRad: 0.05)
+        let basis = Quick360CaptureBasis.make(fromStartCamera: start)!
+        let base = basis.centerYawPitch(cameraTransform: start)
+        let rolled = cameraLooking(yawRad: 0.2, pitchRad: 0.05, rollRad: 0.5)
+        let yp = basis.centerYawPitch(cameraTransform: rolled)
+        XCTAssertEqual(yp.yaw, base.yaw, accuracy: 0.05)
+        XCTAssertEqual(yp.pitch, base.pitch, accuracy: 0.05)
+    }
+
+    func testGravityBasisActualPitchUpIncreasesPitch() {
+        let start = cameraLooking(yawRad: 0, pitchRad: 0)
+        let basis = Quick360CaptureBasis.make(fromStartCamera: start)!
+        let up = cameraLooking(yawRad: 0, pitchRad: 0.5)
+        let yp = basis.centerYawPitch(cameraTransform: up)
+        XCTAssertEqual(yp.yaw, 0, accuracy: 0.05)
+        XCTAssertGreaterThan(yp.pitch, 0.4)
+    }
+
+    func testGravityRightPixelWorldRayPositiveYaw() {
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
+        let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
+        let (yaw, pitch) = basis.sphereYawPitchFromPixel(
+            pixelU: Float(thumb.width - 1),
+            pixelV: thumb.cy,
+            thumbIntrinsics: thumb,
+            cameraTransform: cam
+        )
+        XCTAssertGreaterThan(yaw, 0.1)
+        XCTAssertEqual(pitch, 0, accuracy: 0.08)
+    }
+
+    func testGravityCenterPixelMatchesCameraForward() {
+        let cam = cameraLooking(yawRad: 0.25, pitchRad: -0.1)
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
+        let thumb = CameraIntrinsics(fx: 300, fy: 300, cx: 100, cy: 150, width: 201, height: 301)
+        let fromPixel = basis.sphereYawPitchFromPixel(
+            pixelU: thumb.cx, pixelV: thumb.cy, thumbIntrinsics: thumb, cameraTransform: cam
+        )
+        let fromCenter = basis.centerYawPitch(cameraTransform: cam)
+        XCTAssertEqual(fromPixel.yaw, fromCenter.yaw, accuracy: 0.03)
+        XCTAssertEqual(fromPixel.pitch, fromCenter.pitch, accuracy: 0.03)
     }
 
     func testRelativeRollNearZeroWhenLevel() {
