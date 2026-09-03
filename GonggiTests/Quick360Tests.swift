@@ -1579,3 +1579,87 @@ final class Quick360SphericalCoverageMapTests: XCTestCase {
     }
 }
 
+final class PanoramaOrientationPipelineTests: XCTestCase {
+    func testPortraitKeyframeIntrinsicsMatchJPEGAspect() {
+        let sensor = CameraIntrinsics(fx: 1400, fy: 1400, cx: 960, cy: 720, width: 1920, height: 1440)
+        // Portrait bake: dims (H,W) = (1440,1920) then maybe scaled
+        let jpegW = 1440
+        let jpegH = 1920
+        let k = Quick360FrameEncoder.portraitKeyframeIntrinsics(
+            sensor: sensor, jpegWidth: jpegW, jpegHeight: jpegH
+        )
+        XCTAssertEqual(k.width, jpegW)
+        XCTAssertEqual(k.height, jpegH)
+        XCTAssertGreaterThan(k.height, k.width) // portrait
+    }
+
+    func testProjectorMapsImageCenterToEquirectForward() {
+        let w = 80
+        let h = 100
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        // Paint center bright so we can detect coverage at equirect center
+        for y in (h / 2 - 2)...(h / 2 + 2) {
+            for x in (w / 2 - 2)...(w / 2 + 2) {
+                let i = (y * w + x) * 4
+                rgba[i] = 255; rgba[i + 1] = 255; rgba[i + 2] = 255; rgba[i + 3] = 255
+            }
+        }
+        let cam = matrix_identity_float4x4
+        let basis = Quick360CaptureBasis.make(fromStartCamera: cam)!
+        let k = CameraIntrinsics(fx: 60, fy: 60, cx: Float(w / 2), cy: Float(h / 2), width: w, height: h)
+        let outW = 64
+        let outH = 32
+        let (_, _, cov) = PanoramaSphericalProjector.projectKeyframe(
+            rgba: rgba,
+            width: w,
+            height: h,
+            cameraTransform: cam,
+            captureBasis: basis,
+            intrinsics: k,
+            keyframeIndex: 0,
+            outWidth: outW,
+            outHeight: outH
+        )
+        let cx = outW / 2
+        let cy = outH / 2
+        XCTAssertTrue(cov[cy * outW + cx], "equirect center (forward) should be covered by identity camera")
+    }
+
+    func testCanonicalEquirectViewerConvention() {
+        XCTAssertEqual(PanoramaCanonicalEquirect.expectedLabel(u: 0.5, v: 0.5), "FORWARD")
+        XCTAssertEqual(PanoramaCanonicalEquirect.expectedLabel(u: 0.75, v: 0.5), "RIGHT")
+        XCTAssertEqual(PanoramaCanonicalEquirect.expectedLabel(u: 0.25, v: 0.5), "LEFT")
+        XCTAssertEqual(PanoramaCanonicalEquirect.expectedLabel(u: 0.5, v: 0.05), "TOP")
+        XCTAssertEqual(PanoramaCanonicalEquirect.expectedLabel(u: 0.5, v: 0.95), "BOTTOM")
+        let (rgba, w, h) = PanoramaCanonicalEquirect.generate(width: 128, height: 64)
+        XCTAssertEqual(w, 128)
+        XCTAssertEqual(h, 64)
+        XCTAssertEqual(rgba.count, w * h * 4)
+        // prepareEquirect is identity — no 90° texture rotate
+        guard let cg = Quick360LiveSphereBrush.cgImage(rgba: rgba, width: w, height: h),
+              let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(cg) else {
+            XCTFail("prepare failed")
+            return
+        }
+        XCTAssertEqual(prepared.width, w)
+        XCTAssertEqual(prepared.height, h)
+    }
+
+    func testCaptureFOVOverlapTargetsMeetMinimum() {
+        let horizon = Quick360CaptureFOVAnalysis.horizonYawOverlap(steps: 12)
+        XCTAssertGreaterThanOrEqual(horizon, 0.30, "horizon yaw overlap should be ≥30%")
+        let mid = Quick360CaptureFOVAnalysis.verticalRingOverlap(pitchA: 0, pitchB: 45)
+        XCTAssertGreaterThanOrEqual(mid, 0.28)
+        let pole = Quick360CaptureFOVAnalysis.verticalRingOverlap(pitchA: 45, pitchB: 75)
+        XCTAssertGreaterThanOrEqual(pole, 0.30)
+    }
+
+    func testOpticalEquirectYaw0IsNegativeZNotPositiveZ() {
+        let optical = SphericalMath.opticalDirectionFromSphereYawPitch(yawRad: 0, pitchRad: 0)
+        let legacy = SphericalMath.directionVector(yawRad: 0, pitchRad: 0)
+        XCTAssertEqual(optical.z, -1, accuracy: 0.01)
+        XCTAssertEqual(legacy.z, 1, accuracy: 0.01)
+        // Stitch projector must follow optical/live path (via CaptureBasis), not legacy +Z.
+    }
+}
+

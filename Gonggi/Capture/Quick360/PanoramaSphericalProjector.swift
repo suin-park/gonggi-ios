@@ -1,17 +1,81 @@
 import Foundation
 import simd
 
-/// Spherical reprojection from camera keyframes to equirectangular canvas.
+/// Spherical reprojection aligned with **live** capture math.
+///
+/// Contract (must match `Quick360LiveSphereBrush` / `Quick360CaptureBasis`):
+/// - Equirect yaw/pitch: `u→yaw`, `v→pitch` via `SphericalMath.equirectangularUV` inverse
+/// - World direction: `captureBasis.worldDirection` (yaw=0 = capture forward)
+/// - Camera ray: roll-free `Quick360StabilizedCameraFrame`
+/// - Pixel: portrait-oriented keyframe + remapped/scaled intrinsics
+/// - Image Y: `v = fy * (-dirCam.y)/depth + cy` (same as live)
+///
+/// Do **not** use `directionFromEquirectangularPixel` (+Z at yaw=0) here — that is the
+/// legacy mismatch that rotated final VR ~90° vs live.
 enum PanoramaSphericalProjector {
-    struct ProjectedSample: Equatable {
-        let r: Float
-        let g: Float
-        let b: Float
-        let weight: Float
-        let keyframeIndex: Int
+    /// Project a single keyframe onto equirectangular canvas using gravity capture basis.
+    static func projectKeyframe(
+        rgba: [UInt8],
+        width: Int,
+        height: Int,
+        cameraTransform: simd_float4x4,
+        captureBasis: Quick360CaptureBasis,
+        intrinsics: CameraIntrinsics,
+        keyframeIndex: Int,
+        outWidth: Int,
+        outHeight: Int
+    ) -> (colors: [SIMD3<Float>], weights: [Float], coverage: [Bool]) {
+        let count = outWidth * outHeight
+        var colors = [SIMD3<Float>](repeating: .zero, count: count)
+        var weights = [Float](repeating: 0, count: count)
+        var coverage = [Bool](repeating: false, count: count)
+
+        // Intrinsics must match portrait keyframe pixel size.
+        let thumbK = Quick360PerspectiveProjection.scaledIntrinsics(
+            intrinsics,
+            thumbWidth: width,
+            thumbHeight: height
+        )
+        let forward = SphericalMath.forwardVector(from: cameraTransform)
+
+        for py in 0..<outHeight {
+            for px in 0..<outWidth {
+                let uNorm = Float(px) / Float(max(outWidth - 1, 1))
+                let vNorm = Float(py) / Float(max(outHeight - 1, 1))
+                let yaw = uNorm * 2 * .pi - .pi
+                let pitch = .pi / 2 - vNorm * .pi
+
+                guard let uv = captureBasis.projectSphereDirectionToPixel(
+                    yawRad: yaw,
+                    pitchRad: pitch,
+                    cameraTransform: cameraTransform,
+                    thumbIntrinsics: thumbK,
+                    edgePad: 0.5
+                ) else { continue }
+
+                let sampleU = uv.x
+                let sampleV = uv.y
+                guard sampleU >= 0, sampleV >= 0,
+                      sampleU < Float(width - 1), sampleV < Float(height - 1) else {
+                    continue
+                }
+
+                let worldDir = captureBasis.worldDirection(yawRad: yaw, pitchRad: pitch)
+                let facing = simd_dot(worldDir, forward)
+                let w = simd_clamp(facing, 0, 1)
+                guard w > 0.05 else { continue }
+
+                let color = bilinearSample(rgba: rgba, width: width, height: height, u: sampleU, v: sampleV)
+                let idx = py * outWidth + px
+                colors[idx] += color * w
+                weights[idx] += w
+                coverage[idx] = true
+            }
+        }
+        return (colors, weights, coverage)
     }
 
-    /// Project a single keyframe onto equirectangular canvas (relative to origin).
+    /// Legacy overload kept for older call sites / tests — builds basis from origin camera.
     static func projectKeyframe(
         rgba: [UInt8],
         width: Int,
@@ -23,54 +87,23 @@ enum PanoramaSphericalProjector {
         outWidth: Int,
         outHeight: Int
     ) -> (colors: [SIMD3<Float>], weights: [Float], coverage: [Bool]) {
-        let count = outWidth * outHeight
-        var colors = [SIMD3<Float>](repeating: .zero, count: count)
-        var weights = [Float](repeating: 0, count: count)
-        var coverage = [Bool](repeating: false, count: count)
-
-        let worldToOrigin = simd_inverse(originTransform)
-        let cameraToWorld = cameraTransform
-        let worldToCamera = simd_inverse(cameraToWorld)
-
-        for py in 0..<outHeight {
-            for px in 0..<outWidth {
-                let dirWorld = SphericalMath.directionFromEquirectangularPixel(
-                    x: px, y: py, width: outWidth, height: outHeight
-                )
-                // Direction in origin-local world space
-                let dirOrigin = simd_float3(
-                    worldToOrigin.columns.0.x * dirWorld.x + worldToOrigin.columns.1.x * dirWorld.y + worldToOrigin.columns.2.x * dirWorld.z,
-                    worldToOrigin.columns.0.y * dirWorld.x + worldToOrigin.columns.1.y * dirWorld.y + worldToOrigin.columns.2.y * dirWorld.z,
-                    worldToOrigin.columns.0.z * dirWorld.x + worldToOrigin.columns.1.z * dirWorld.y + worldToOrigin.columns.2.z * dirWorld.z
-                )
-                // To camera space
-                let dirCam = simd_float3(
-                    worldToCamera.columns.0.x * dirOrigin.x + worldToCamera.columns.1.x * dirOrigin.y + worldToCamera.columns.2.x * dirOrigin.z,
-                    worldToCamera.columns.0.y * dirOrigin.x + worldToCamera.columns.1.y * dirOrigin.y + worldToCamera.columns.2.y * dirOrigin.z,
-                    worldToCamera.columns.0.z * dirOrigin.x + worldToCamera.columns.1.z * dirOrigin.y + worldToCamera.columns.2.z * dirOrigin.z
-                )
-                let depth = -dirCam.z
-                guard depth > 0.05 else { continue }
-
-                let u = intrinsics.fx * dirCam.x / depth + intrinsics.cx
-                let v = intrinsics.fy * dirCam.y / depth + intrinsics.cy
-                guard u >= 0, v >= 0, u < Float(intrinsics.width - 1), v < Float(intrinsics.height - 1) else {
-                    continue
-                }
-
-                let color = bilinearSample(rgba: rgba, width: width, height: height, u: u, v: v)
-                let forward = SphericalMath.forwardVector(from: cameraTransform)
-                let facing = simd_dot(simd_normalize(dirWorld), forward)
-                let w = simd_clamp(facing, 0, 1)
-                guard w > 0.05 else { continue }
-
-                let idx = py * outWidth + px
-                colors[idx] += color * w
-                weights[idx] += w
-                coverage[idx] = true
-            }
-        }
-        return (colors, weights, coverage)
+        let basis = Quick360CaptureBasis.make(fromStartCamera: originTransform)
+            ?? Quick360CaptureBasis(
+                worldUp: Quick360CaptureBasis.gravityUp,
+                referenceForward: simd_float3(0, 0, -1),
+                referenceRight: simd_float3(1, 0, 0)
+            )
+        return projectKeyframe(
+            rgba: rgba,
+            width: width,
+            height: height,
+            cameraTransform: cameraTransform,
+            captureBasis: basis,
+            intrinsics: intrinsics,
+            keyframeIndex: keyframeIndex,
+            outWidth: outWidth,
+            outHeight: outHeight
+        )
     }
 
     static func bilinearSample(

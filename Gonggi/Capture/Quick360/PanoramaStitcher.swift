@@ -75,10 +75,18 @@ enum PanoramaStitcher {
     static func stitch(
         keyframes: [InputKeyframe],
         originTransform: simd_float4x4,
+        captureBasis: Quick360CaptureBasis? = nil,
         outWidth: Int = Quick360Config.outputWidth,
         outHeight: Int = Quick360Config.outputHeight
     ) -> Output {
         let start = Date()
+        let basis = captureBasis
+            ?? Quick360CaptureBasis.make(fromStartCamera: originTransform)
+            ?? Quick360CaptureBasis(
+                worldUp: Quick360CaptureBasis.gravityUp,
+                referenceForward: simd_float3(0, 0, -1),
+                referenceRight: simd_float3(1, 0, 0)
+            )
         let gate = PanoramaKeyframeAngularGate.selectForFinalStitch(
             yawRad: keyframes.map(\.yawRad),
             pitchRad: keyframes.map(\.pitchRad),
@@ -121,7 +129,7 @@ enum PanoramaStitcher {
                 width: kf.width,
                 height: kf.height,
                 cameraTransform: transform,
-                originTransform: originTransform,
+                captureBasis: basis,
                 intrinsics: kf.intrinsics,
                 keyframeIndex: kf.index,
                 outWidth: outWidth,

@@ -107,8 +107,31 @@ enum Quick360FrameEncoder {
     }
 
     static func jpegData(from pixelBuffer: CVPixelBuffer, maxWidth: Int = Quick360Config.keyframeMaxPixelWidth) -> Data? {
-        guard let (rgba, w, h) = renderRGBA(from: pixelBuffer, maxWidth: maxWidth) else { return nil }
+        // Portrait-bake pixels (same convention as live brush) so stitch K remap matches.
+        // No EXIF orientation — upright is in the pixel buffer itself.
+        guard let (rgba, w, h) = renderBrushRGBA(
+            from: pixelBuffer,
+            maxWidth: maxWidth,
+            interfaceOrientation: Quick360BrushOrientation.primaryInterfaceOrientation
+        ) else { return nil }
         return jpegFromRGBA(rgba, width: w, height: h)
+    }
+
+    /// Remap sensor intrinsics into portrait JPEG pixel space (matches `jpegData` / brush).
+    static func portraitKeyframeIntrinsics(
+        sensor: CameraIntrinsics,
+        jpegWidth: Int,
+        jpegHeight: Int
+    ) -> CameraIntrinsics {
+        let remapped = Quick360BrushOrientation.remappedIntrinsics(
+            sensor,
+            interface: Quick360BrushOrientation.primaryInterfaceOrientation
+        )
+        return Quick360PerspectiveProjection.scaledIntrinsics(
+            remapped,
+            thumbWidth: jpegWidth,
+            thumbHeight: jpegHeight
+        )
     }
 
     static func jpegFromRGBA(_ rgba: [UInt8], width: Int, height: Int) -> Data? {

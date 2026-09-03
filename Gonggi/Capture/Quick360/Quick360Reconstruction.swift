@@ -29,13 +29,19 @@ enum Quick360Reconstruction {
             let inputs = engine.pendingKeyframeJPEGs().enumerated().compactMap { idx, pair -> PanoramaStitcher.InputKeyframe? in
                 let (kf, jpeg) = pair
                 guard let (rgba, w, h) = Quick360FrameEncoder.loadRGBA(fromJPEG: jpeg) else { return nil }
+                // Sensor K on metadata → portrait remap + scale to JPEG pixels (matches live brush).
+                let portraitK = Quick360FrameEncoder.portraitKeyframeIntrinsics(
+                    sensor: kf.intrinsics,
+                    jpegWidth: w,
+                    jpegHeight: h
+                )
                 return PanoramaStitcher.InputKeyframe(
                     index: idx,
                     rgba: rgba,
                     width: w,
                     height: h,
                     cameraTransform: kf.cameraTransform,
-                    intrinsics: kf.intrinsics,
+                    intrinsics: portraitK,
                     dynamicRatio: kf.dynamicRatio,
                     sharpness: kf.sharpness,
                     exposure: kf.exposure,
@@ -47,10 +53,20 @@ enum Quick360Reconstruction {
             }
             stitchOutput = PanoramaStitcher.stitch(
                 keyframes: inputs,
-                originTransform: originTransform
+                originTransform: originTransform,
+                captureBasis: engine.captureBasis
             )
             if Quick360Config.writeStitchDebugArtifacts {
                 _ = try? PanoramaStitchDebug.write(sessionId: sessionId, output: stitchOutput)
+                if let first = inputs.first {
+                    _ = try? PanoramaOrientationDebug.writeKeyframeArtifacts(
+                        sessionId: sessionId,
+                        rgba: first.rgba,
+                        width: first.width,
+                        height: first.height,
+                        index: 0
+                    )
+                }
             }
         }
 
@@ -65,6 +81,15 @@ enum Quick360Reconstruction {
             height: stitchOutput.height,
             to: panoramaURL
         )
+
+        if Quick360Config.writeStitchDebugArtifacts {
+            _ = try? PanoramaOrientationDebug.writeEquirectArtifacts(
+                sessionId: sessionId,
+                rgba: stitchOutput.rgba,
+                width: stitchOutput.width,
+                height: stitchOutput.height
+            )
+        }
 
         let (maskRGBA, _, _) = PanoramaCoverageMask.generate(
             coverageFlags: stitchOutput.coverageFlags,

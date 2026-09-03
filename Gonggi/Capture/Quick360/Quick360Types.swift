@@ -11,14 +11,14 @@ enum Quick360Config {
     static let keyframeYawIntervalDeg: Float = 30
     /// Horizon ring yaw steps (legacy accessor — prefer `pitchBandSpecs`).
     static let yawStepCount = 12
-    /// Full-sphere rings: horizon / upper / lower / zenith / nadir.
-    /// Pole rings use fewer yaw steps (FOV converges). Values tuned for ~70° portrait VFOV + overlap.
+    /// Full-sphere rings tuned for iPhone 14 Plus portrait FOV (~53° H × ~67° V after remap).
+    /// Ring spacing targets ≥30% FOV overlap with neighbors (not just more targets).
     static let pitchBandSpecs: [(pitchDeg: Float, yawSteps: Int)] = [
-        (0, 12),
-        (50, 10),
-        (-50, 10),
-        (78, 4),
-        (-78, 4)
+        (0, 12),   // horizon: step ~30° → ~43% H overlap at 53° HFOV
+        (45, 10),  // upper: 45° from horizon → ~33% V overlap at 67° VFOV
+        (-45, 10),
+        (75, 4),   // zenith: 30° from upper → ~55% V overlap
+        (-75, 4)
     ]
     /// Legacy flat list for tests / callers that only need pitch angles.
     static var pitchBandsDeg: [Float] { pitchBandSpecs.map(\.pitchDeg) }
