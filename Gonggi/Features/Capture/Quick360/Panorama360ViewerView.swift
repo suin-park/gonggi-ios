@@ -38,6 +38,7 @@ private struct Panorama360SceneView: UIViewRepresentable {
 
         let material = SCNMaterial()
         material.isDoubleSided = true
+        // Raw equirect + insideOutScale only (same as live capture RealityKit).
         if let raw = UIImage(contentsOfFile: imageURL.path),
            let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
             material.diffuse.contents = prepared

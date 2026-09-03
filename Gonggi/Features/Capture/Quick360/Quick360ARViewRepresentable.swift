@@ -146,7 +146,7 @@ final class Quick360HybridSceneController {
         view.scene.addAnchor(anchor)
         rootAnchor = anchor
 
-        // Inside-out via negative X (iOS 17–safe). Compensate horizontal mirror when applying texture.
+        // Inside-out via negative X only (iOS 17–safe). No extra texture H-flip.
         let sphere = ModelEntity(
             mesh: .generateSphere(radius: 8),
             materials: [sphereMaterial]
@@ -169,6 +169,7 @@ final class Quick360HybridSceneController {
             // Re-apply inside-out scale after setting full transform.
             sphereEntity?.scale = Quick360SphereCoordinateConvention.insideOutScale
         }
+        // Raw equirect — same pixels Split Debug / RAW 2D shows. Scale.x=-1 handles inside-out UV.
         if let cg = snap.sphere,
            let display = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(cg),
            let resource = try? TextureResource.generate(from: display, options: .init(semantic: .color)) {

@@ -1375,6 +1375,35 @@ final class Quick360SphereCoordinateConventionTests: XCTestCase {
         XCTAssertEqual(s.z, 1, accuracy: 0.001)
     }
 
+    func testPrepareEquirectForInsideOutIsPassthroughNoHorizontalFlip() {
+        // Asymmetric 2×1 RGBA: left pixel red, right pixel blue.
+        let rgba: [UInt8] = [
+            255, 0, 0, 255,
+            0, 0, 255, 255
+        ]
+        guard let src = Quick360ImageBuffer.cgImage(rgba: rgba, width: 2, height: 1) else {
+            XCTFail("cgImage")
+            return
+        }
+        guard let out = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(src) else {
+            XCTFail("prepare")
+            return
+        }
+        XCTAssertEqual(out.width, 2)
+        XCTAssertEqual(out.height, 1)
+        guard let data = out.dataProvider?.data as Data? else {
+            XCTFail("data")
+            return
+        }
+        // Left stays red — must not be horizontally mirrored for inside-out scale.
+        XCTAssertEqual(data[0], 255)
+        XCTAssertEqual(data[1], 0)
+        XCTAssertEqual(data[2], 0)
+        XCTAssertEqual(data[4], 0)
+        XCTAssertEqual(data[5], 0)
+        XCTAssertEqual(data[6], 255)
+    }
+
     func testProductionSplitDebugDefaultsAllowContinuousPaint() {
         let s = Quick360SplitDebugSettings.production
         XCTAssertFalse(s.enabled)

@@ -5,6 +5,9 @@ struct Quick360FlowView: View {
     @StateObject private var viewModel = Quick360ViewModel()
     @State private var showSummary = false
     @State private var showPanoramaViewer = false
+    #if DEBUG
+    @State private var sphereDisplayDebugMode: Quick360SphereDisplayDebugMode = .sphere
+    #endif
     let onClose: () -> Void
 
     var body: some View {
@@ -38,6 +41,11 @@ struct Quick360FlowView: View {
                     showFloorRenderer: false
                 )
                 .ignoresSafeArea()
+                #if DEBUG
+                if sphereDisplayDebugMode == .raw2D {
+                    rawEquirectDebugOverlay
+                }
+                #endif
                 productionOverlay
             }
 
@@ -78,6 +86,37 @@ struct Quick360FlowView: View {
             }
         }
     }
+
+    #if DEBUG
+    /// Same raw brush equirect as Split Debug — compare vs inside-out sphere orientation.
+    private var rawEquirectDebugOverlay: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let sphere = viewModel.spherePreview {
+                Image(uiImage: sphere)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .padding(12)
+            } else {
+                Text("neutral gray — paint 전 (raw equirect)")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            VStack {
+                Text("RAW EQUIRECT (no sphere transform)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.cyan)
+                    .padding(8)
+                    .background(.black.opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.top, 56)
+                Spacer()
+            }
+        }
+        .allowsHitTesting(false)
+    }
+    #endif
 
     /// Hidden AR session driver + visible Split Debug panes (DEBUG toggle only).
     private var splitDebugStack: some View {
@@ -153,9 +192,24 @@ struct Quick360FlowView: View {
                 #if DEBUG
                 viewModel.toggleSplitDebugMode()
                 #endif
-            }
+            },
+            onToggleSphereDisplayDebug: debugToggleSphereDisplay,
+            sphereDisplayDebugLabel: debugSphereDisplayLabel
         )
     }
+
+    #if DEBUG
+    private var debugSphereDisplayLabel: String? { sphereDisplayDebugMode.label }
+
+    private var debugToggleSphereDisplay: (() -> Void)? {
+        {
+            sphereDisplayDebugMode = sphereDisplayDebugMode == .sphere ? .raw2D : .sphere
+        }
+    }
+    #else
+    private var debugSphereDisplayLabel: String? { nil }
+    private var debugToggleSphereDisplay: (() -> Void)? { nil }
+    #endif
 
     private var mockBackground: some View {
         LinearGradient(

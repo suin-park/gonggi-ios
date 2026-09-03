@@ -11,6 +11,9 @@ struct Quick360OverlayView: View {
     let onFinish: () -> Void
     /// DEBUG-only: reopen Split Debug for coordinate regression.
     var onToggleSplitDebug: (() -> Void)? = nil
+    /// DEBUG-only: toggle RAW 2D equirect vs inside-out sphere.
+    var onToggleSphereDisplayDebug: (() -> Void)? = nil
+    var sphereDisplayDebugLabel: String? = nil
 
     var body: some View {
         ZStack {
@@ -49,6 +52,17 @@ struct Quick360OverlayView: View {
             }
             Spacer()
             #if DEBUG
+            if let onToggleSphereDisplayDebug, let sphereDisplayDebugLabel {
+                Button(action: onToggleSphereDisplayDebug) {
+                    Text(sphereDisplayDebugLabel)
+                        .font(GonggiTypography.caption(12))
+                        .foregroundStyle(.cyan.opacity(0.95))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.45))
+                        .clipShape(Capsule())
+                }
+            }
             if let onToggleSplitDebug {
                 Button(action: onToggleSplitDebug) {
                     Text("Split")
