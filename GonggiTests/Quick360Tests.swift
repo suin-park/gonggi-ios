@@ -280,8 +280,11 @@ final class Quick360StitcherTests: XCTestCase {
         XCTAssertEqual(out.height, 64)
         XCTAssertEqual(Quick360Config.outputWidth, 4096)
         XCTAssertEqual(Quick360Config.outputHeight, 2048)
-        XCTAssertEqual(out.height, 1024)
         XCTAssertTrue(SphericalMath.isValidEquirectangularAspect(width: out.width, height: out.height))
+        XCTAssertTrue(SphericalMath.isValidEquirectangularAspect(
+            width: Quick360Config.outputWidth,
+            height: Quick360Config.outputHeight
+        ))
     }
 
     func testSeamFeatherBlend() {
