@@ -163,13 +163,18 @@ final class Quick360HybridSceneController {
         showFloorRenderer: Bool = true
     ) {
         let snap = engine.snapshotBrushCGImages()
-        // Align sphere local frame with capture origin so relative yaw=0 → texture U≈0.5 in view.
+        // Gravity-aligned pose (not raw camera matrix) so equirect pitch ↔ mesh +Y ↔ world up.
         if let origin = snap.originTransform {
-            sphereEntity?.transform.matrix = origin
-            // Re-apply inside-out scale after setting full transform.
+            if let gravityPose = Quick360SphereCoordinateConvention.gravityAlignedSphereTransform(
+                originCamera: origin
+            ) {
+                sphereEntity?.transform.matrix = gravityPose
+            } else {
+                sphereEntity?.transform.matrix = origin
+            }
             sphereEntity?.scale = Quick360SphereCoordinateConvention.insideOutScale
         }
-        // Raw equirect — same pixels Split Debug / RAW 2D shows. Scale.x=-1 handles inside-out UV.
+        // Raw equirect — same pixels RAW 2D shows. Scale.x=-1 handles inside-out UV.
         if let cg = snap.sphere,
            let display = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(cg),
            let resource = try? TextureResource.generate(from: display, options: .init(semantic: .color)) {

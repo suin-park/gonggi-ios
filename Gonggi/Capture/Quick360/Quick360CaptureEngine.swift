@@ -937,6 +937,14 @@ final class Quick360CaptureEngine {
                 )
             }
         }
+        // Always log orientation diagnostics (throttled) for RAW 2D vs SPHERE triage.
+        Quick360FOVDiagnostics.logOrientationPipelineThrottled(
+            sensor: intrinsics,
+            oriented: oriented,
+            brushWidth: resolvedW,
+            brushHeight: resolvedH,
+            axisRays: axisRays
+        )
         brushDebug = Quick360BrushDebugState(
             relativeYawDeg: yaw * 180 / .pi,
             relativePitchDeg: pitch * 180 / .pi,

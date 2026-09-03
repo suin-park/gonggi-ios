@@ -246,11 +246,11 @@ final class Quick360ViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 let images = self.engine.previewImages()
-                self.spherePreview = images.sphere
                 self.floorPreview = images.floor
+                // Sync sphere + brush source for RAW 2D / SPHERE compare (Release).
                 self.syncSplitDebugPublishedState()
-                if !self.isSplitDebugMode {
-                    // keep floor preview from images above
+                if self.spherePreview == nil {
+                    self.spherePreview = images.sphere
                 }
             }
     }

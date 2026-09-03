@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import simd
 
 /// FOV footprint diagnostics for Split Debug (perspective corner rays in gravity basis).
@@ -118,6 +119,47 @@ enum Quick360FOVDiagnostics {
                 worldRays.center.x, worldRays.center.y, worldRays.center.z,
                 worldRays.topCenter.x, worldRays.topCenter.y, worldRays.topCenter.z,
                 worldRays.rightCenter.x, worldRays.rightCenter.y, worldRays.rightCenter.z
+            )
+        )
+    }
+
+    private static var lastOrientationLogAt: TimeInterval = 0
+
+    /// Throttled brush orientation pipeline log (sensor → oriented → rays).
+    static func logOrientationPipelineThrottled(
+        sensor: CameraIntrinsics,
+        oriented: CameraIntrinsics,
+        brushWidth: Int,
+        brushHeight: Int,
+        axisRays: (center: simd_float3, topCenter: simd_float3, rightCenter: simd_float3),
+        minIntervalSec: TimeInterval = 1.0
+    ) {
+        let now = CACurrentMediaTime()
+        guard now - lastOrientationLogAt >= minIntervalSec else { return }
+        lastOrientationLogAt = now
+        let orientTag = Quick360BrushOrientation.cgImageOrientation(for: .portrait)
+        Quick360Log.stage(
+            String(
+                format: "orientDiag sensor=%dx%d brush=%dx%d orientTag=%u (expect .right=6 CW)",
+                sensor.width, sensor.height,
+                brushWidth, brushHeight,
+                orientTag.rawValue
+            )
+        )
+        Quick360Log.stage(
+            String(
+                format: "orientDiag K sensor fx=%.1f fy=%.1f cx=%.1f cy=%.1f → oriented fx=%.1f fy=%.1f cx=%.1f cy=%.1f (%dx%d)",
+                sensor.fx, sensor.fy, sensor.cx, sensor.cy,
+                oriented.fx, oriented.fy, oriented.cx, oriented.cy,
+                oriented.width, oriented.height
+            )
+        )
+        Quick360Log.stage(
+            String(
+                format: "orientDiag rays C=(%.3f,%.3f,%.3f) T=(%.3f,%.3f,%.3f) R=(%.3f,%.3f,%.3f) (expect T.y>0 R.x>0)",
+                axisRays.center.x, axisRays.center.y, axisRays.center.z,
+                axisRays.topCenter.x, axisRays.topCenter.y, axisRays.topCenter.z,
+                axisRays.rightCenter.x, axisRays.rightCenter.y, axisRays.rightCenter.z
             )
         )
     }

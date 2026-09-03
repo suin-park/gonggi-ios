@@ -1404,6 +1404,62 @@ final class Quick360SphereCoordinateConventionTests: XCTestCase {
         XCTAssertEqual(data[6], 255)
     }
 
+    /// Portrait-like camera: +X = world up, +Y = world −X (90° from identity).
+    /// Raw camera parenting would map equirect pitch along world −X; gravity pose keeps +Y = up.
+    func testGravityAlignedSphereKeepsMeshYAsWorldUpUnderPortraitRoll() {
+        // columns: X=(0,1,0), Y=(-1,0,0), Z=(0,0,1) — look still −Z.
+        let origin = simd_float4x4(
+            SIMD4<Float>(0, 1, 0, 0),
+            SIMD4<Float>(-1, 0, 0, 0),
+            SIMD4<Float>(0, 0, 1, 0),
+            SIMD4<Float>(0, 0, 0, 1)
+        )
+        let camY = simd_float3(origin.columns.1.x, origin.columns.1.y, origin.columns.1.z)
+        XCTAssertEqual(camY.x, -1, accuracy: 0.01)
+        XCTAssertEqual(simd_dot(camY, SIMD3<Float>(0, 1, 0)), 0, accuracy: 0.01)
+
+        guard let pose = Quick360SphereCoordinateConvention.gravityAlignedSphereTransform(
+            originCamera: origin
+        ) else {
+            XCTFail("gravity pose")
+            return
+        }
+        let meshUp = simd_float3(pose.columns.1.x, pose.columns.1.y, pose.columns.1.z)
+        XCTAssertEqual(meshUp.x, 0, accuracy: 0.05)
+        XCTAssertEqual(meshUp.y, 1, accuracy: 0.05)
+        XCTAssertEqual(meshUp.z, 0, accuracy: 0.05)
+
+        let meshForward = -simd_float3(pose.columns.2.x, pose.columns.2.y, pose.columns.2.z)
+        XCTAssertEqual(meshForward.x, 0, accuracy: 0.05)
+        XCTAssertEqual(meshForward.y, 0, accuracy: 0.05)
+        XCTAssertEqual(meshForward.z, -1, accuracy: 0.05)
+    }
+
+    func testPortraitRemappedUnprojectWithoutAxisFixDiffersFromSensorRay() {
+        // Documents why we align sphere to gravity instead of inventing texture ±90°.
+        // Sensor ray at left-center vs portrait-top (CW maps sensor left → portrait top)
+        // share a scene direction only after gravity/stabilized display — remapped K
+        // alone is for portrait thumb sampling, not raw ARKit R*ray equivalence.
+        let sensor = CameraIntrinsics(fx: 1000, fy: 800, cx: 640, cy: 360, width: 1280, height: 720)
+        let oriented = Quick360BrushOrientation.remappedIntrinsics(sensor, interface: .portrait)
+        let sensorLeft = Quick360PerspectiveProjection.cameraRayFromPixel(
+            pixelU: 0, pixelV: sensor.cy, thumbIntrinsics: sensor
+        )
+        let portraitTop = Quick360PerspectiveProjection.cameraRayFromPixel(
+            pixelU: oriented.cx, pixelV: 0, thumbIntrinsics: oriented
+        )
+        // Same geometric edge after CW — rays must not silently match without the
+        // stabilized/gravity path; portrait-top is +Y in image space, sensor-left is −X.
+        XCTAssertLessThan(sensorLeft.x, -0.2)
+        XCTAssertEqual(sensorLeft.y, 0, accuracy: 0.08)
+        XCTAssertEqual(portraitTop.x, 0, accuracy: 0.08)
+        XCTAssertGreaterThan(portraitTop.y, 0.2)
+        XCTAssertGreaterThan(
+            abs(sensorLeft.x - portraitTop.x) + abs(sensorLeft.y - portraitTop.y),
+            0.5
+        )
+    }
+
     func testProductionSplitDebugDefaultsAllowContinuousPaint() {
         let s = Quick360SplitDebugSettings.production
         XCTAssertFalse(s.enabled)

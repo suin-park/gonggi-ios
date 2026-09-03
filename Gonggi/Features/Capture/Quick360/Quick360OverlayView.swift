@@ -51,7 +51,6 @@ struct Quick360OverlayView: View {
                     .clipShape(Circle())
             }
             Spacer()
-            #if DEBUG
             if let onToggleSphereDisplayDebug, let sphereDisplayDebugLabel {
                 Button(action: onToggleSphereDisplayDebug) {
                     Text(sphereDisplayDebugLabel)
@@ -63,6 +62,7 @@ struct Quick360OverlayView: View {
                         .clipShape(Capsule())
                 }
             }
+            #if DEBUG
             if let onToggleSplitDebug {
                 Button(action: onToggleSplitDebug) {
                     Text("Split")

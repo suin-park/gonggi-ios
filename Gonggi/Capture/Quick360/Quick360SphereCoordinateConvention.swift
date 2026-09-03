@@ -9,11 +9,13 @@ import UIKit
 /// outside this helper. Portrait sensor→brush remapping stays in `Quick360BrushOrientation`.
 ///
 /// ## Inside-out display
-/// RealityKit + SceneKit use `insideOutScale = (-1, 1, 1)` only.
-/// Negative X flips winding (see inside) **and** mirrors mesh U — that mirror is the
-/// correct handedness for equirect skyboxes. Do **not** also horizontally flip the
-/// texture (that was a duplicate compensation and, via CGBitmapContext redraw, could
-/// introduce an unintended vertical flip → large rotate/flip on the sphere).
+/// RealityKit + SceneKit use `insideOutScale = (-1, 1, 1)` only (no texture H-flip).
+///
+/// ## Sphere mesh orientation
+/// Live equirect is painted in a **gravity** yaw/pitch basis (V↑ = world up).
+/// The display sphere must use the same gravity frame — **not** the raw ARKit camera
+/// matrix. In portrait, ARKit camera +Y often lies along the phone short axis (≈ world
+/// left/right), so parenting the sphere to `camera.transform` rotates patch content ~90°.
 enum Quick360SphereCoordinateConvention {
     /// Inside-out display scale (negative X). Capture RealityKit + SceneKit viewer share this.
     static let insideOutScale = SIMD3<Float>(-1, 1, 1)
@@ -26,6 +28,21 @@ enum Quick360SphereCoordinateConvention {
     /// Optical forward for sphere brush: yaw=0,pitch=0 → camera local −Z.
     static func opticalForward(yawRad: Float, pitchRad: Float) -> simd_float3 {
         SphericalMath.opticalDirectionFromSphereYawPitch(yawRad: yawRad, pitchRad: pitchRad)
+    }
+
+    /// Gravity-aligned sphere pose at capture origin (translation from camera, rotation roll-free).
+    /// Mesh +Y tracks world up so equirect pitch matches gravity — fixes portrait 90° content.
+    static func gravityAlignedSphereTransform(
+        originCamera: simd_float4x4,
+        worldUp: simd_float3 = Quick360CaptureBasis.gravityUp
+    ) -> simd_float4x4? {
+        guard let frame = Quick360StabilizedCameraFrame.make(
+            fromCamera: originCamera,
+            worldUp: worldUp
+        ) else { return nil }
+        var m = simd_float4x4(frame.rotation)
+        m.columns.3 = originCamera.columns.3
+        return m
     }
 
     /// Prepare equirect for an inside-out mesh that already uses `insideOutScale`.
@@ -41,7 +58,7 @@ enum Quick360SphereCoordinateConvention {
     }
 }
 
-/// DEBUG comparison: raw equirect 2D vs production inside-out sphere.
+/// Compare raw equirect 2D vs production inside-out sphere (available in Release TestFlight).
 enum Quick360SphereDisplayDebugMode: String, CaseIterable, Equatable {
     case sphere
     case raw2D
