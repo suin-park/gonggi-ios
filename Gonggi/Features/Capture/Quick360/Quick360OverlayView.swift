@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// Hybrid Space Capture overlay — coverage is shown by in-world sphere paint, not a washed HUD.
+/// Production Hybrid Space Capture chrome — immersive canvas + calm product overlays.
 struct Quick360OverlayView: View {
     let uiState: Quick360CaptureUIState
-    let spherePreview: UIImage?
-    let floorPreview: UIImage?
+    let cameraSourcePreview: UIImage?
     var brushDebug: Quick360BrushDebugState? = nil
     let onClose: () -> Void
     let onStart: () -> Void
@@ -15,155 +14,160 @@ struct Quick360OverlayView: View {
     var onToggleSphereDisplayDebug: (() -> Void)? = nil
     var sphereDisplayDebugLabel: String? = nil
 
+    @State private var didCelebrateEnough = false
+
+    private var isReady: Bool {
+        uiState.phase == .alignFront || uiState.phase == .readyToStart || uiState.canStart
+    }
+
+    private var isCapturing: Bool {
+        uiState.phase == .capturing || uiState.phase == .complete
+    }
+
+    private var enoughCoverage: Bool {
+        uiState.isComplete
+            || uiState.guidance == .spaceReady
+            || uiState.guidance == .spaceReadyNoFloor
+            || uiState.guidance == .success
+            || (uiState.sphereCoveragePercent >= Quick360Config.sphereCoverageCompletePercent && uiState.canFinish)
+    }
+
+    private var guidanceEmphasis: CaptureProgressEmphasis {
+        if enoughCoverage { return .ready }
+        if uiState.translationLevel == .excessive { return .needsWork }
+        return .progressing
+    }
+
+    private var guidanceSubtitle: String? {
+        if let msg = uiState.translationLevel.guidanceMessage,
+           msg != uiState.guidance.primaryText,
+           uiState.guidance != .stayInPlace,
+           uiState.guidance != .returnToOrigin,
+           uiState.guidance != .holdStill {
+            return msg
+        }
+        if let secondary = uiState.guidance.secondaryText,
+           secondary != uiState.guidance.primaryText {
+            return secondary
+        }
+        return nil
+    }
+
     var body: some View {
         ZStack {
-            VStack {
-                topBar
+            VStack(spacing: 0) {
+                CaptureTopBar(
+                    modeTitle: "공간 기록",
+                    showFinish: uiState.canFinish,
+                    enoughCoverage: enoughCoverage,
+                    onClose: onClose,
+                    onFinish: onFinish,
+                    debugTrailing: debugTrailingView
+                )
+
+                #if DEBUG
                 if let brushDebug {
                     HStack {
                         Text(brushDebug.overlayText)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.9))
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.85))
                             .padding(8)
-                            .background(.black.opacity(0.55))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .background(.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         Spacer()
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
+                    .padding(.top, 4)
                 }
-                Spacer()
-                if let floorPreview, uiState.floorDetected {
-                    floorStrip(floorPreview)
-                }
-                bottomGuidance
+                #endif
+
+                Spacer(minLength: 0)
+
+                bottomCluster
             }
+        }
+        .onChange(of: enoughCoverage) { _, enough in
+            guard enough, !didCelebrateEnough else { return }
+            didCelebrateEnough = true
+            GonggiHaptics.success()
         }
     }
 
-    private var topBar: some View {
-        HStack {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(.black.opacity(0.45))
-                    .clipShape(Circle())
-            }
-            Spacer()
-            if let onToggleSphereDisplayDebug, let sphereDisplayDebugLabel {
-                Button(action: onToggleSphereDisplayDebug) {
-                    Text(sphereDisplayDebugLabel)
-                        .font(GonggiTypography.caption(12))
-                        .foregroundStyle(.cyan.opacity(0.95))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(.black.opacity(0.45))
-                        .clipShape(Capsule())
+    private var bottomCluster: some View {
+        VStack(spacing: GonggiSpacing.md) {
+            if isCapturing {
+                HStack(alignment: .bottom, spacing: GonggiSpacing.md) {
+                    LiveSourceInsetCard(image: cameraSourcePreview)
+                    Spacer(minLength: 0)
+                    CaptureProgressChips(
+                        spherePercent: uiState.sphereCoveragePercent,
+                        floorPercent: uiState.floorDetected ? uiState.floorCoveragePercent : nil,
+                        floorDetected: uiState.floorDetected,
+                        enough: enoughCoverage
+                    )
                 }
-            }
-            #if DEBUG
-            if let onToggleSplitDebug {
-                Button(action: onToggleSplitDebug) {
-                    Text("Split")
-                        .font(GonggiTypography.caption(12))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(.black.opacity(0.45))
-                        .clipShape(Capsule())
-                }
-            }
-            #endif
-            if uiState.canFinish {
-                Button(action: onFinish) {
-                    Text("완료")
-                        .font(GonggiTypography.body(15))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(GonggiColors.accentTeal)
-                        .clipShape(Capsule())
-                }
-            }
-        }
-        .padding(.horizontal, GonggiSpacing.lg)
-        .padding(.top, GonggiSpacing.md)
-    }
-
-    private func floorStrip(_ image: UIImage) -> some View {
-        HStack(spacing: GonggiSpacing.sm) {
-            Image(uiImage: image)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFill()
-                .frame(width: 72, height: 72)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(.white.opacity(0.25), lineWidth: 1)
-                )
-            VStack(alignment: .leading, spacing: 4) {
-                Text("바닥")
-                    .font(GonggiTypography.caption(11))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                Text("\(uiState.floorCoveragePercent)%")
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(.white)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, GonggiSpacing.lg)
-        .padding(.bottom, GonggiSpacing.sm)
-        .allowsHitTesting(false)
-    }
-
-    private var bottomGuidance: some View {
-        VStack(spacing: GonggiSpacing.sm) {
-            Text(uiState.guidance.primaryText)
-                .font(GonggiTypography.title(22))
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .shadow(color: .black.opacity(0.5), radius: 4)
-
-            // Avoid duplicating the same sentence as title + caption.
-            if let msg = uiState.translationLevel.guidanceMessage,
-               msg != uiState.guidance.primaryText,
-               uiState.guidance != .stayInPlace,
-               uiState.guidance != .returnToOrigin,
-               uiState.guidance != .holdStill {
-                Text(msg)
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.warning)
+                .padding(.horizontal, GonggiSpacing.lg)
             }
 
-            if uiState.phase == .capturing || uiState.phase == .complete {
-                Text("공간 \(uiState.sphereCoveragePercent)%")
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.textTertiary)
-            }
+            CaptureGuidanceCard(
+                title: uiState.guidance.primaryText,
+                subtitle: isReady && uiState.canStart
+                    ? "정면을 먼저 비추고, 천천히 주변을 기록해보세요"
+                    : guidanceSubtitle,
+                emphasis: guidanceEmphasis
+            )
 
             if uiState.canStart {
-                Button(action: onStart) {
-                    Text("촬영 시작")
-                        .font(GonggiTypography.body(17))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(GonggiColors.accentTeal)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                }
-                .padding(.horizontal, GonggiSpacing.xl)
-                .padding(.top, GonggiSpacing.sm)
+                CapturePrimaryCTA(title: "촬영 시작", action: onStart)
+                    .padding(.bottom, GonggiSpacing.sm)
             }
         }
-        .padding(.bottom, GonggiSpacing.xl)
+        .padding(.bottom, GonggiSpacing.lg)
+        .padding(.top, GonggiSpacing.md)
+        .background(
+            Quick360CaptureTheme.bottomScrim
+                .ignoresSafeArea(edges: .bottom)
+                .allowsHitTesting(false)
+        )
+    }
+
+    private var debugTrailingView: AnyView? {
+        #if DEBUG
+        return AnyView(
+            HStack(spacing: 6) {
+                if let onToggleSphereDisplayDebug, let sphereDisplayDebugLabel {
+                    Button(action: onToggleSphereDisplayDebug) {
+                        Text(sphereDisplayDebugLabel)
+                            .font(GonggiTypography.label(11))
+                            .foregroundStyle(GonggiColors.accentCyan.opacity(0.9))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .background(Quick360CaptureTheme.glassFill)
+                            .clipShape(Capsule())
+                    }
+                }
+                if let onToggleSplitDebug {
+                    Button(action: onToggleSplitDebug) {
+                        Text("Split")
+                            .font(GonggiTypography.label(11))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                            .background(Quick360CaptureTheme.glassFill)
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+        )
+        #else
+        return nil
+        #endif
     }
 }
 
-#Preview {
+#Preview("Ready") {
     ZStack {
-        Color.black
+        CaptureReadyCanvasBackdrop()
         Quick360OverlayView(
             uiState: Quick360CaptureUIState(
                 phase: .readyToStart,
@@ -179,8 +183,59 @@ struct Quick360OverlayView: View {
                 selectedCount: 0,
                 totalTargets: 24
             ),
-            spherePreview: nil,
-            floorPreview: nil,
+            cameraSourcePreview: nil,
+            onClose: {},
+            onStart: {},
+            onFinish: {}
+        )
+    }
+}
+
+#Preview("Capturing") {
+    ZStack {
+        Color(white: 0.15)
+        Quick360OverlayView(
+            uiState: Quick360CaptureUIState(
+                phase: .capturing,
+                progressPercent: 42,
+                sphereCoveragePercent: 42,
+                floorCoveragePercent: 0,
+                floorDetected: false,
+                guidance: .lookAround,
+                translationLevel: .safe,
+                canStart: false,
+                canFinish: true,
+                isComplete: false,
+                selectedCount: 4,
+                totalTargets: 24
+            ),
+            cameraSourcePreview: nil,
+            onClose: {},
+            onStart: {},
+            onFinish: {}
+        )
+    }
+}
+
+#Preview("Enough") {
+    ZStack {
+        Color(white: 0.12)
+        Quick360OverlayView(
+            uiState: Quick360CaptureUIState(
+                phase: .complete,
+                progressPercent: 62,
+                sphereCoveragePercent: 62,
+                floorCoveragePercent: 88,
+                floorDetected: true,
+                guidance: .spaceReady,
+                translationLevel: .safe,
+                canStart: false,
+                canFinish: true,
+                isComplete: true,
+                selectedCount: 12,
+                totalTargets: 24
+            ),
+            cameraSourcePreview: nil,
             onClose: {},
             onStart: {},
             onFinish: {}

@@ -5,8 +5,9 @@ struct Quick360FlowView: View {
     @StateObject private var viewModel = Quick360ViewModel()
     @State private var showSummary = false
     @State private var showPanoramaViewer = false
-    /// Release TestFlight: compare raw equirect vs inside-out sphere orientation.
+    #if DEBUG
     @State private var sphereDisplayDebugMode: Quick360SphereDisplayDebugMode = .sphere
+    #endif
     let onClose: () -> Void
 
     var body: some View {
@@ -14,19 +15,18 @@ struct Quick360FlowView: View {
             if viewModel.isSplitDebugMode {
                 splitDebugStack
             } else if viewModel.useMockCamera {
-                mockBackground
+                CaptureReadyCanvasBackdrop()
                 if let sphere = viewModel.spherePreview {
                     Image(uiImage: sphere)
                         .resizable()
                         .interpolation(.high)
                         .scaledToFill()
-                        .opacity(0.92)
+                        .opacity(0.88)
                         .ignoresSafeArea()
                         .allowsHitTesting(false)
                 }
                 productionOverlay
             } else {
-                // Full-screen inside-out sphere paint (camera at sphere center).
                 Quick360ARViewRepresentable(
                     session: viewModel.arSession,
                     engine: viewModel.engine,
@@ -40,23 +40,24 @@ struct Quick360FlowView: View {
                     showFloorRenderer: false
                 )
                 .ignoresSafeArea()
+                #if DEBUG
                 if sphereDisplayDebugMode == .raw2D {
                     rawEquirectDebugOverlay
                 }
+                #endif
                 productionOverlay
             }
 
             if viewModel.isStopping || viewModel.isStitching {
-                Color.black.opacity(0.45).ignoresSafeArea()
-                VStack(spacing: GonggiSpacing.sm) {
-                    ProgressView()
-                        .tint(GonggiColors.accentCyan)
-                    Text(viewModel.isStitching ? "파노라마 생성 중…" : "촬영 마무리 중…")
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
+                CaptureProcessingOverlay(
+                    message: viewModel.isStitching ? "기록을 정리하고 있어요" : "촬영을 마무리하고 있어요",
+                    detail: viewModel.isStitching
+                        ? "공간 미리보기를 준비 중이에요"
+                        : "잠시만 기다려 주세요"
+                )
             }
         }
+        .background(Color.black.ignoresSafeArea())
         .onAppear {
             Quick360Log.stage("Quick360FlowView onAppear splitDebug=\(viewModel.isSplitDebugMode)")
             viewModel.configure(mockMode: appState.isMockMode)
@@ -70,7 +71,10 @@ struct Quick360FlowView: View {
                         viewModel.start()
                     },
                     onPreview360: summary.panoramaURL.map { _ in
-                        { showPanoramaViewer = true }
+                        {
+                            GonggiHaptics.light()
+                            showPanoramaViewer = true
+                        }
                     }
                 )
                 .presentationDetents([.large])
@@ -84,13 +88,13 @@ struct Quick360FlowView: View {
         }
     }
 
-    /// Same raw brush equirect pixels as applied to the sphere (no mesh/UV transform).
+    #if DEBUG
     private var rawEquirectDebugOverlay: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 8) {
                 if let source = viewModel.cameraSourcePreview {
-                    Text("brush source (oriented)")
+                    Text("brush source")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.7))
                     Image(uiImage: source)
@@ -100,7 +104,7 @@ struct Quick360FlowView: View {
                         .frame(maxHeight: 120)
                         .padding(.horizontal, 12)
                 }
-                Text("RAW EQUIRECT (paint canvas)")
+                Text("RAW EQUIRECT")
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .foregroundStyle(.cyan)
                 if let sphere = viewModel.spherePreview {
@@ -109,22 +113,18 @@ struct Quick360FlowView: View {
                         .interpolation(.high)
                         .scaledToFit()
                         .padding(.horizontal, 12)
-                } else {
-                    Text("neutral gray — paint 전")
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.6))
                 }
             }
             .padding(.top, 52)
         }
         .allowsHitTesting(false)
     }
+    #endif
 
-    /// Hidden AR session driver + visible Split Debug panes (DEBUG toggle only).
     private var splitDebugStack: some View {
         ZStack {
             if viewModel.useMockCamera {
-                mockBackground
+                CaptureReadyCanvasBackdrop()
             } else {
                 Quick360ARViewRepresentable(
                     session: viewModel.arSession,
@@ -173,8 +173,7 @@ struct Quick360FlowView: View {
     private var productionOverlay: some View {
         Quick360OverlayView(
             uiState: viewModel.uiState,
-            spherePreview: viewModel.useMockCamera ? nil : viewModel.spherePreview,
-            floorPreview: nil,
+            cameraSourcePreview: viewModel.cameraSourcePreview,
             brushDebug: viewModel.showBrushDebug ? viewModel.brushDebug : nil,
             onClose: {
                 viewModel.cancelCapture()
@@ -195,20 +194,19 @@ struct Quick360FlowView: View {
                 #endif
             },
             onToggleSphereDisplayDebug: {
+                #if DEBUG
                 sphereDisplayDebugMode = sphereDisplayDebugMode == .sphere ? .raw2D : .sphere
                 Quick360Log.stage("sphereDisplayMode → \(sphereDisplayDebugMode.label)")
+                #endif
             },
-            sphereDisplayDebugLabel: sphereDisplayDebugMode.label
+            sphereDisplayDebugLabel: {
+                #if DEBUG
+                return sphereDisplayDebugMode.label
+                #else
+                return nil
+                #endif
+            }()
         )
-    }
-
-    private var mockBackground: some View {
-        LinearGradient(
-            colors: [Color(white: 0.18), Color(white: 0.08)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .ignoresSafeArea()
     }
 }
 

@@ -137,7 +137,7 @@ final class Quick360HybridSceneController {
     private var sphereEntity: ModelEntity?
     private var floorEntity: ModelEntity?
     private var debugMarker: ModelEntity?
-    private var sphereMaterial = UnlitMaterial(color: .gray)
+    private var sphereMaterial = UnlitMaterial(color: UIColor(red: 0.36, green: 0.40, blue: 0.46, alpha: 1))
     private var floorMaterial = UnlitMaterial(color: UIColor(white: 0.55, alpha: 1))
 
     func attach(to view: ARView) {

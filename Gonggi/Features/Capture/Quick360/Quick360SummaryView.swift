@@ -29,7 +29,7 @@ struct Quick360SummaryView: View {
 
                     VStack(spacing: GonggiSpacing.sm) {
                         if summary.panoramaURL != nil, onPreview360 != nil {
-                            PrimaryButton(title: "360° 공간 미리보기 (Experimental)", icon: "globe") {
+                            PrimaryButton(title: "360° 공간 미리보기", icon: "globe") {
                                 onPreview360?()
                             }
                         }
@@ -47,7 +47,7 @@ struct Quick360SummaryView: View {
     }
 
     private var qualityLabel: String {
-        guard let report = summary.report else { return "Prototype" }
+        guard let report = summary.report else { return "기록됨" }
         if report.sphereCoveragePercent >= 55 || report.coveragePercent >= 75 { return "양호" }
         if report.sphereCoveragePercent >= 35 || report.coveragePercent >= 50 { return "보통" }
         return "보강 필요"

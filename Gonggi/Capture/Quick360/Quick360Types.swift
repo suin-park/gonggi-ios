@@ -55,7 +55,10 @@ enum Quick360Config {
     static let brushRevealFadeSec: Double = 0.22
     /// FOV edge-only feather band (normalized |nx|/|ny| beyond this gets soft blend).
     static let brushBoundaryFeatherStart: Float = 0.88
-    static let unseenNeutralGray: UInt8 = 168
+    static let unseenNeutralGray: UInt8 = 148
+    /// Cool mist bias for unfilled canvas (presentation only).
+    static let unseenFogBlueBias: Int = 8
+    static let unseenFogGreenBias: Int = 4
     /// Subtle veil on weak confidence (does not desaturate/blur captured content).
     static let weakConfidenceVeil: Float = 0.12
     /// Debug coordinate HUD (DEBUG builds only unless overridden).
@@ -164,25 +167,45 @@ enum Quick360GuidanceKind: Equatable {
         case .faceForward, .alignTarget:
             return "정면을 먼저 비춰주세요"
         case .readyToStart:
-            return "준비가 됐어요"
+            return "준비가 되면 촬영을 시작해보세요"
         case .lookAround, .rotateRight, .rotateLeft:
-            return "카메라를 천천히 주변에 비춰보세요"
+            return "천천히 주변을 비춰보세요"
         case .lookDownFloor:
-            return "바닥도 조금 비춰주세요"
+            return "바닥을 한 번 더 비추면 좋아요"
         case .lookUp:
-            return "위쪽도 조금 담아주세요"
+            return "위쪽도 조금 더 채워보세요"
         case .floorRecorded:
-            return "좋아요. 바닥도 기록됐어요"
+            return "바닥도 잘 기록됐어요"
         case .spaceReady:
-            return "공간과 바닥이 충분히 기록됐어요"
+            return "공간이 충분히 기록됐어요"
         case .spaceReadyNoFloor:
-            return "공간 기록은 완료됐어요. 바닥 정보는 충분하지 않아요"
+            return "공간 기록은 충분해요"
         case .stayInPlace, .returnToOrigin, .holdStill:
             return "가능하면 같은 자리에서 촬영해 주세요"
         case .waitForClear:
             return "잠시 기다렸다 다시 비춰주세요"
         case .success:
-            return "좋아요"
+            return "이제 마무리해도 괜찮아요"
+        }
+    }
+
+    /// Optional second line — never duplicates `primaryText`.
+    var secondaryText: String? {
+        switch self {
+        case .faceForward, .alignTarget:
+            return "정면을 맞춘 뒤 천천히 주변을 기록해보세요"
+        case .readyToStart:
+            return nil
+        case .lookAround, .rotateRight, .rotateLeft:
+            return "비어 있는 공간을 조금 더 채워보세요"
+        case .lookDownFloor:
+            return nil
+        case .spaceReady, .success:
+            return "이제 마무리해도 괜찮아요"
+        case .spaceReadyNoFloor:
+            return "바닥은 나중에 보강할 수 있어요"
+        default:
+            return nil
         }
     }
 }

@@ -10,21 +10,21 @@ enum CaptureMode: String, Identifiable {
     var title: String {
         switch self {
         case .spaceScan3DGS: return "공간 스캔 (3DGS)"
-        case .quick360: return "Hybrid Space Capture"
+        case .quick360: return "공간 기록"
         }
     }
 
     var subtitle: String {
         switch self {
         case .spaceScan3DGS: return "이동하며 multi-view 촬영"
-        case .quick360: return "주변을 비추면 공간이 채워져요"
+        case .quick360: return "한자리에서 주변을 비추며 공간을 채워보세요"
         }
     }
 
     var icon: String {
         switch self {
         case .spaceScan3DGS: return "viewfinder"
-        case .quick360: return "circle.dashed"
+        case .quick360: return "globe.americas.fill"
         }
     }
 }

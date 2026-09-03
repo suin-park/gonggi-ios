@@ -38,12 +38,20 @@ final class Quick360LiveSphereBrush {
     }
 
     private func fillUnseenGray() {
+        // Match composePreviewRGBA fog base so reset canvas isn't flat tool-gray.
         let count = width * height
+        let base = Int(Quick360Config.unseenNeutralGray)
         for i in 0..<count {
+            let y = i / width
+            let x = i % width
+            let v = Float(y) / Float(max(height - 1, 1))
+            let pole = abs(v - 0.5) * 2
+            let grain = Float((x &* 13 &+ y &* 7) % 5) - 2
+            let shade = Float(base) - pole * 18 + grain
             let o = i * 4
-            rgba[o] = neutralGray
-            rgba[o + 1] = neutralGray
-            rgba[o + 2] = neutralGray
+            rgba[o] = UInt8(clamping: Int((shade - 4).rounded()))
+            rgba[o + 1] = UInt8(clamping: Int((shade + Float(Quick360Config.unseenFogGreenBias)).rounded()))
+            rgba[o + 2] = UInt8(clamping: Int((shade + Float(Quick360Config.unseenFogBlueBias)).rounded()))
             rgba[o + 3] = 255
         }
     }
@@ -241,21 +249,37 @@ final class Quick360LiveSphereBrush {
         return total == 0 ? 0 : Float(hit) / Float(total) * 100
     }
 
-    /// Compose display buffer: solid gray unseen, clear captured, edge fade-in only.
+    /// Compose display buffer: spatial fog unseen, clear captured, soft weak veil, edge fade-in.
     func composePreviewRGBA(now: TimeInterval) -> [UInt8] {
         let fade = max(Quick360Config.brushRevealFadeSec, 0.05)
         let weakThr = UInt8(clamping: Int(Quick360Config.sphereWeakConfidence * 255))
         let goodThr = UInt8(clamping: Int(Quick360Config.sphereGoodConfidence * 255))
         let veil = Quick360Config.weakConfidenceVeil
+        let base = Float(Quick360Config.unseenNeutralGray)
         var out = [UInt8](repeating: 0, count: width * height * 4)
 
         for i in 0..<(width * height) {
             let o = i * 4
             let c = confidence[i]
             if c == 0 {
-                out[o] = neutralGray
-                out[o + 1] = neutralGray
-                out[o + 2] = neutralGray
+                // Soft spatial fog: latitude darkening + subtle cool mist (not flat tool gray).
+                let y = i / width
+                let x = i % width
+                let v = Float(y) / Float(max(height - 1, 1))
+                let u = Float(x) / Float(max(width - 1, 1))
+                let pole = abs(v - 0.5) * 2
+                let grain = Float((x &* 13 &+ y &* 7) % 5) - 2
+                let shade = base - pole * 18 + grain
+                let r = simd_clamp(shade - 4, 0, 255)
+                let g = simd_clamp(shade + Float(Quick360Config.unseenFogGreenBias) - pole * 2, 0, 255)
+                let b = simd_clamp(
+                    shade + Float(Quick360Config.unseenFogBlueBias) + (0.5 - abs(u - 0.5)) * 6,
+                    0,
+                    255
+                )
+                out[o] = UInt8(clamping: Int(r.rounded()))
+                out[o + 1] = UInt8(clamping: Int(g.rounded()))
+                out[o + 2] = UInt8(clamping: Int(b.rounded()))
                 out[o + 3] = 255
                 continue
             }
@@ -267,16 +291,20 @@ final class Quick360LiveSphereBrush {
             let seen = firstSeen[i]
             let age = seen > 0 ? now - seen : fade
             let reveal = simd_clamp(Float(age / fade), 0, 1)
-            let gray = Float(neutralGray)
-            r = gray * (1 - reveal) + r * reveal
-            g = gray * (1 - reveal) + g * reveal
-            b = gray * (1 - reveal) + b * reveal
+            let fogR = base - 4
+            let fogG = base + Float(Quick360Config.unseenFogGreenBias)
+            let fogB = base + Float(Quick360Config.unseenFogBlueBias)
+            r = fogR * (1 - reveal) + r * reveal
+            g = fogG * (1 - reveal) + g * reveal
+            b = fogB * (1 - reveal) + b * reveal
 
+            // Weak: soft desat veil only — not a full blur wash.
             if c < goodThr {
-                let amount = c < weakThr ? veil * 1.25 : veil
-                r = r * (1 - amount) + gray * amount
-                g = g * (1 - amount) + gray * amount
-                b = b * (1 - amount) + gray * amount
+                let amount = c < weakThr ? veil * 1.1 : veil * 0.7
+                let luma = 0.299 * r + 0.587 * g + 0.114 * b
+                r = r * (1 - amount) + luma * amount
+                g = g * (1 - amount) + luma * amount
+                b = b * (1 - amount) + luma * amount
             }
 
             out[o] = UInt8(clamping: Int(r.rounded()))
