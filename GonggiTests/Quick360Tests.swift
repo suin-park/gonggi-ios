@@ -919,18 +919,24 @@ final class Quick360BrushOrientationTests: XCTestCase {
             relativeRotation: matrix_identity_float3x3
         )
         XCTAssertEqual(corners.count, 4)
-        // Not a flat ±halfFOV rectangle: corner |yaw| and |pitch| both nonzero and distinct.
         let tl = corners[0]
         let tr = corners[1]
         let br = corners[2]
         let bl = corners[3]
+        // Independent rays: left/right share |yaw| sign, top/bottom share pitch sign.
         XCTAssertLessThan(tl.yawRad, 0)
         XCTAssertGreaterThan(tr.yawRad, 0)
         XCTAssertGreaterThan(tl.pitchRad, 0)
         XCTAssertLessThan(br.pitchRad, 0)
-        XCTAssertGreaterThan(abs(abs(tl.yawRad) - abs(tl.pitchRad)), 0.01)
-        XCTAssertGreaterThan(abs(tr.yawRad - br.yawRad), 0.001)
-        _ = bl
+        // Pinhole: same image column → same yaw (vertical lines stay vertical).
+        XCTAssertEqual(tr.yawRad, br.yawRad, accuracy: 0.02)
+        XCTAssertEqual(tl.yawRad, bl.yawRad, accuracy: 0.02)
+        // Same image row → same pitch (horizontal lines stay horizontal).
+        XCTAssertEqual(tl.pitchRad, tr.pitchRad, accuracy: 0.02)
+        XCTAssertEqual(bl.pitchRad, br.pitchRad, accuracy: 0.02)
+        // Not a degenerate point / pole collapse.
+        XCTAssertGreaterThan(tr.yawRad - tl.yawRad, 0.3)
+        XCTAssertGreaterThan(tl.pitchRad - bl.pitchRad, 0.3)
     }
 
     func testPerspectiveRoundTripCenterPixel() {
