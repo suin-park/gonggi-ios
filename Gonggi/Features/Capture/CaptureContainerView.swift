@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Capture mode selection — panorama is the primary “공간 기록” path.
-/// Quick360 / full-sphere remains available as an experimental entry only.
+/// Capture mode selection — 10-direction capture is the primary guided path.
+/// Panorama / Quick360 remain available as alternate / experimental entries.
 enum CaptureMode: String, Identifiable {
+    case directionCapture
     case panoramaCapture
     case spaceScan3DGS
     case quick360Experimental
@@ -11,6 +12,7 @@ enum CaptureMode: String, Identifiable {
 
     var title: String {
         switch self {
+        case .directionCapture: return "10방향 공간 기록"
         case .panoramaCapture: return "파노라마 기록"
         case .spaceScan3DGS: return "공간 스캔 (3DGS)"
         case .quick360Experimental: return "실험 · 360 공간 기록"
@@ -19,6 +21,8 @@ enum CaptureMode: String, Identifiable {
 
     var subtitle: String {
         switch self {
+        case .directionCapture:
+            return "한 번 시작하면 8방향 + 위/아래를 자동으로 저장해요"
         case .panoramaCapture:
             return "제자리에서 천천히 회전하며 수평 파노라마를 만들어요"
         case .spaceScan3DGS:
@@ -30,6 +34,7 @@ enum CaptureMode: String, Identifiable {
 
     var icon: String {
         switch self {
+        case .directionCapture: return "camera.aperture"
         case .panoramaCapture: return "pano"
         case .spaceScan3DGS: return "viewfinder"
         case .quick360Experimental: return "globe.americas.fill"
@@ -59,6 +64,21 @@ struct CaptureContainerView: View {
                 }
             }
             .navigationBarHidden(true)
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { isCapturing && selectedMode == .directionCapture },
+            set: { presented in
+                if !presented {
+                    isCapturing = false
+                    selectedMode = nil
+                }
+            }
+        )) {
+            DirectionCaptureView(onClose: {
+                isCapturing = false
+                selectedMode = nil
+            })
+            .environmentObject(appState)
         }
         .fullScreenCover(isPresented: Binding(
             get: { isCapturing && selectedMode == .panoramaCapture },
@@ -98,7 +118,7 @@ struct CaptureContainerView: View {
         switch mode {
         case .spaceScan3DGS:
             CaptureFlowView(onClose: { isCapturing = false; selectedMode = nil })
-        case .panoramaCapture, .quick360Experimental:
+        case .directionCapture, .panoramaCapture, .quick360Experimental:
             EmptyView()
         }
     }
@@ -114,6 +134,7 @@ struct CaptureContainerView: View {
                 .foregroundStyle(GonggiColors.textSecondary)
 
             VStack(spacing: GonggiSpacing.md) {
+                modeCard(.directionCapture)
                 modeCard(.panoramaCapture)
                 modeCard(.spaceScan3DGS)
                 modeCard(.quick360Experimental)

@@ -16,6 +16,7 @@ enum CaptureSessionStore {
     static let panoramaMetadataFileName = "capture-metadata.json"
     static let panoramaReportFileName = "panorama-report.json"
     static let panoramaScanFolderName = "panorama_scan"
+    static let directionCaptureFolderName = "direction_capture"
     static let floorFolderName = "floor"
     static let floorTextureFileName = "floor-texture.jpg"
     static let floorConfidenceMaskFileName = "floor-confidence-mask.png"
@@ -136,6 +137,18 @@ enum CaptureSessionStore {
             .appendingPathComponent(panoramaScanFolderName, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    static func createDirectionCaptureDirectory(sessionId: String) throws -> URL {
+        let dir = try createSessionDirectory(sessionId: sessionId)
+            .appendingPathComponent(directionCaptureFolderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func directionCaptureReportURL(sessionId: String) throws -> URL {
+        try createDirectionCaptureDirectory(sessionId: sessionId)
+            .appendingPathComponent("capture_report.json")
     }
 
     static func panoramaScanReportURL(sessionId: String) throws -> URL {
