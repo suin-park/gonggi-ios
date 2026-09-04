@@ -5,6 +5,7 @@
 
 #import "OpenCVPanoramaBridge.h"
 #import "OpenCVPanoramaReconstructor.hpp"
+#import "OpenCVPanoramaRegistration.hpp"
 
 #import <CoreFoundation/CoreFoundation.h>
 #import <mach/mach.h>
@@ -187,6 +188,15 @@ double gonggi_peak_memory_mb() {
             @"baConfidentEdgeCount": @(metrics.baConfidentEdgeCount),
             @"baInvalidMatchCount": @(metrics.baInvalidMatchCount),
             @"baInvalidIndexCount": @(metrics.baInvalidIndexCount),
+            @"acceptedPairCount": @(metrics.acceptedPairCount),
+            @"rejectedPairCount": @(metrics.rejectedPairCount),
+            @"medianPairAngularErrorDeg": @(metrics.medianPairAngularErrorDeg),
+            @"p90PairAngularErrorDeg": @(metrics.p90PairAngularErrorDeg),
+            @"finalCoveragePercent": @(metrics.finalCoveragePercent),
+            @"registrationMode": [NSString stringWithUTF8String:metrics.registrationMode.c_str()],
+            @"baRole": [NSString stringWithUTF8String:metrics.baRole.c_str()],
+            @"poseGraphConverged": @(metrics.poseGraphConverged),
+            @"poseGraphEdgeCount": @(metrics.poseGraphEdgeCount),
             @"memoryStartMB": @(metrics.memoryStartMB),
             @"memoryAfterLoadMB": @(metrics.memoryAfterLoadMB),
             @"memoryAfterFeatureMB": @(metrics.memoryAfterFeatureMB),
@@ -240,6 +250,11 @@ double gonggi_peak_memory_mb() {
     result.processingTimeMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0;
     result.peakMemoryMB = gonggi_peak_memory_mb();
     return result;
+}
+
++ (NSString *)captureOverlapAnalysisJSON {
+    std::string json = GonggiCaptureOverlapAnalysisJSON();
+    return [NSString stringWithUTF8String:json.c_str()];
 }
 
 @end

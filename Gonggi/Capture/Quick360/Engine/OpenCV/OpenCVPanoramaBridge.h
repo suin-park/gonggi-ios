@@ -61,6 +61,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Returns JSON detail; `success` means scenario behaved safely (no invalid BA input path).
 + (OpenCVPanoramaStitchResult *)runBAContractTestScenario:(NSString *)scenario;
 
+/// Build 26: guided-target FOV overlap analysis JSON (report only; does not change layout).
++ (NSString *)captureOverlapAnalysisJSON;
+
 @end
 
 NS_ASSUME_NONNULL_END

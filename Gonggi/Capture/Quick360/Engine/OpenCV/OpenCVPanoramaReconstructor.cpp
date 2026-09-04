@@ -5,6 +5,7 @@
 //
 
 #include "OpenCVPanoramaReconstructor.hpp"
+#include "OpenCVPanoramaRegistration.hpp"
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -26,6 +27,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <exception>
 #include <fstream>
 #include <functional>
@@ -84,111 +86,6 @@ float rotationAngleDeg(const Mat &Ra, const Mat &Rb) {
     return std::acos(c) * 180.f / kPi;
 }
 
-float angularDistanceDeg(float yawA, float pitchA, float yawB, float pitchB) {
-    // Unit directions in CaptureBasis-style yaw/pitch.
-    float ya = yawA * kPi / 180.f, pa = pitchA * kPi / 180.f;
-    float yb = yawB * kPi / 180.f, pb = pitchB * kPi / 180.f;
-    float cpa = std::cos(pa), cpb = std::cos(pb);
-    Vec3f a(std::sin(ya) * cpa, std::sin(pa), std::cos(ya) * cpa);
-    Vec3f b(std::sin(yb) * cpb, std::sin(pb), std::cos(yb) * cpb);
-    float d = std::max(-1.f, std::min(1.f, a.dot(b)));
-    return std::acos(d) * 180.f / kPi;
-}
-
-float estimateHFovDeg(float fx, int width) {
-    return 2.f * std::atan(0.5f * width / std::max(fx, 1.f)) * 180.f / kPi;
-}
-
-float estimateVFovDeg(float fy, int height) {
-    return 2.f * std::atan(0.5f * height / std::max(fy, 1.f)) * 180.f / kPi;
-}
-
-float expectedOverlap(float fovDeg, float separationDeg) {
-    float o = fovDeg - std::abs(separationDeg);
-    return std::max(0.f, o / std::max(fovDeg, 1.f));
-}
-
-struct PairCandidate {
-    int i, j;
-    float angularDeg;
-    float overlap;
-};
-
-std::vector<PairCandidate> selectPairs(const std::vector<GonggiOpenCVFrameInput> &frames) {
-    const int n = static_cast<int>(frames.size());
-    std::vector<PairCandidate> pairs;
-    if (n < 2) return pairs;
-
-    // Bucket by pitch band for neighbor selection.
-    std::vector<int> order(n);
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](int a, int b) {
-        if (std::abs(frames[a].pitchDeg - frames[b].pitchDeg) > 8.f) {
-            return frames[a].pitchDeg > frames[b].pitchDeg;
-        }
-        return frames[a].yawDeg < frames[b].yawDeg;
-    });
-
-    auto maybeAdd = [&](int i, int j) {
-        if (i == j) return;
-        if (i > j) std::swap(i, j);
-        for (const auto &p : pairs) {
-            if (p.i == i && p.j == j) return;
-        }
-        float ang = angularDistanceDeg(
-            frames[i].yawDeg, frames[i].pitchDeg,
-            frames[j].yawDeg, frames[j].pitchDeg
-        );
-        float hfov = 0.5f * (estimateHFovDeg(frames[i].fx, frames[i].width)
-            + estimateHFovDeg(frames[j].fx, frames[j].width));
-        float ov = expectedOverlap(hfov, ang);
-        // Keep geometrically plausible overlaps (≥ ~15%).
-        if (ov < 0.15f && ang > 55.f) return;
-        pairs.push_back({i, j, ang, ov});
-    };
-
-    // Same-ring neighbors + next-neighbors by sorted yaw within pitch bands.
-    for (int a = 0; a < n; ++a) {
-        std::vector<int> ring;
-        for (int b = 0; b < n; ++b) {
-            if (std::abs(frames[a].pitchDeg - frames[b].pitchDeg) <= 18.f) {
-                ring.push_back(b);
-            }
-        }
-        std::sort(ring.begin(), ring.end(), [&](int x, int y) {
-            return frames[x].yawDeg < frames[y].yawDeg;
-        });
-        for (size_t k = 0; k < ring.size(); ++k) {
-            maybeAdd(ring[k], ring[(k + 1) % ring.size()]);
-            if (ring.size() > 2) {
-                maybeAdd(ring[k], ring[(k + 2) % ring.size()]);
-            }
-        }
-    }
-
-    // Cross-band: horizon ↔ upper/lower, upper/lower ↔ poles.
-    for (int i = 0; i < n; ++i) {
-        for (int j = i + 1; j < n; ++j) {
-            float dp = std::abs(frames[i].pitchDeg - frames[j].pitchDeg);
-            float dy = std::abs(frames[i].yawDeg - frames[j].yawDeg);
-            if (dy > 180.f) dy = 360.f - dy;
-            if (dp >= 25.f && dp <= 55.f && dy <= 40.f) {
-                maybeAdd(i, j);
-            }
-            // Pole-ish frames: |pitch| > 60
-            bool poleI = std::abs(frames[i].pitchDeg) > 60.f;
-            bool poleJ = std::abs(frames[j].pitchDeg) > 60.f;
-            if ((poleI || poleJ) && angularDistanceDeg(
-                    frames[i].yawDeg, frames[i].pitchDeg,
-                    frames[j].yawDeg, frames[j].pitchDeg) < 70.f) {
-                maybeAdd(i, j);
-            }
-        }
-    }
-
-    return pairs;
-}
-
 void ensureDir(const std::string &path) {
     if (path.empty()) return;
     std::string cur;
@@ -232,6 +129,15 @@ std::string metricsToJSON(const GonggiOpenCVStitchMetrics &m) {
       << "\"baConfidentEdgeCount\":" << m.baConfidentEdgeCount << ","
       << "\"baInvalidMatchCount\":" << m.baInvalidMatchCount << ","
       << "\"baInvalidIndexCount\":" << m.baInvalidIndexCount << ","
+      << "\"acceptedPairCount\":" << m.acceptedPairCount << ","
+      << "\"rejectedPairCount\":" << m.rejectedPairCount << ","
+      << "\"medianPairAngularErrorDeg\":" << m.medianPairAngularErrorDeg << ","
+      << "\"p90PairAngularErrorDeg\":" << m.p90PairAngularErrorDeg << ","
+      << "\"finalCoveragePercent\":" << m.finalCoveragePercent << ","
+      << "\"registrationMode\":\"" << m.registrationMode << "\","
+      << "\"baRole\":\"" << m.baRole << "\","
+      << "\"poseGraphConverged\":" << (m.poseGraphConverged ? "true" : "false") << ","
+      << "\"poseGraphEdgeCount\":" << m.poseGraphEdgeCount << ","
       << "\"bundleAdjustmentBeforeError\":" << m.bundleAdjustmentBeforeError << ","
       << "\"bundleAdjustmentAfterError\":" << m.bundleAdjustmentAfterError << ","
       << "\"optimizedCameraCount\":" << m.optimizedCameraCount << ","
@@ -295,6 +201,28 @@ float uniformAnalysisScale(const std::vector<Mat> &imgs, float targetLongEdge) {
         }
     }
     return std::min(1.f, targetLongEdge / static_cast<float>(std::max(maxLE, 1)));
+}
+
+void stampCoverageUnion(Mat &canvas, const Point &canvasOrigin, const Point &corner, const Mat &mask) {
+    if (canvas.empty() || mask.empty()) return;
+    const int ox = corner.x - canvasOrigin.x;
+    const int oy = corner.y - canvasOrigin.y;
+    for (int y = 0; y < mask.rows; ++y) {
+        const int cy = oy + y;
+        if (cy < 0 || cy >= canvas.rows) continue;
+        const uchar *src = mask.ptr<uchar>(y);
+        uchar *dst = canvas.ptr<uchar>(cy);
+        for (int x = 0; x < mask.cols; ++x) {
+            const int cx = ox + x;
+            if (cx < 0 || cx >= canvas.cols) continue;
+            if (src[x]) dst[cx] = 255;
+        }
+    }
+}
+
+double coveragePercent(const Mat &mask) {
+    if (mask.empty()) return 0;
+    return 100.0 * (double)countNonZero(mask) / (double)std::max(1, mask.rows * mask.cols);
 }
 
 std::string cameraParamsJSON(const std::vector<CameraParams> &cams) {
@@ -704,171 +632,15 @@ static bool GonggiOpenCVStitchPanoramaImpl(
     noteMemory(metrics, metrics.memoryAfterFeatureMB);
     trace.checkpoint("features", -1, 0, 0);
 
-    // ---- Pair selection + matching (unchanged logic) ----
+    // ---- Build 26: rotation-only pair registration + ARKit pose graph ----
     const double tMatch0 = nowMs();
-    auto pairCands = selectPairs(frames);
-    Ptr<DescriptorMatcher> matcher = BFMatcher::create(NORM_HAMMING, false);
-
-    std::vector<MatchesInfo> pairwise;
-    double sumRaw = 0, sumFilt = 0, sumInliers = 0, sumInlierRatio = 0, sumOverlap = 0;
-    int matched = 0, failed = 0;
-
-    for (const auto &pc : pairCands) {
-        MatchesInfo mi;
-        mi.src_img_idx = pc.i;
-        mi.dst_img_idx = pc.j;
-
-        if (features[pc.i].descriptors.empty() || features[pc.j].descriptors.empty()) {
-            mi.confidence = 0;
-            pairwise.push_back(mi);
-            failed++;
-            continue;
-        }
-
-        std::vector<std::vector<DMatch>> knn;
-        matcher->knnMatch(features[pc.i].descriptors, features[pc.j].descriptors, knn, 2);
-        std::vector<DMatch> good;
-        for (const auto &v : knn) {
-            if (v.size() >= 2 && v[0].distance < 0.75f * v[1].distance) {
-                good.push_back(v[0]);
-            }
-        }
-        std::vector<std::vector<DMatch>> knnBack;
-        matcher->knnMatch(features[pc.j].descriptors, features[pc.i].descriptors, knnBack, 2);
-        std::vector<DMatch> mutualGood;
-        for (const auto &m : good) {
-            bool ok = false;
-            if (m.trainIdx >= 0 && m.trainIdx < static_cast<int>(knnBack.size())) {
-                const auto &back = knnBack[m.trainIdx];
-                if (!back.empty() && back[0].trainIdx == m.queryIdx) ok = true;
-            }
-            if (ok) mutualGood.push_back(m);
-        }
-        good.swap(mutualGood);
-        mi.matches = good;
-        int rawCount = static_cast<int>(knn.size());
-        int filtCount = static_cast<int>(good.size());
-
-        std::vector<Point2f> pts1, pts2;
-        pts1.reserve(good.size());
-        pts2.reserve(good.size());
-        for (const auto &m : good) {
-            pts1.push_back(features[pc.i].keypoints[m.queryIdx].pt);
-            pts2.push_back(features[pc.j].keypoints[m.trainIdx].pt);
-        }
-
-        Mat inlierMask;
-        int inliers = 0;
-        Mat H;
-        bool geomOK = false;
-        if (pts1.size() >= 8) {
-            H = findHomography(pts1, pts2, RANSAC, 3.0, inlierMask, 2000, 0.995);
-            if (!inlierMask.empty()) {
-                inliers = countNonZero(inlierMask);
-            }
-        }
-
-        float inlierRatio = filtCount > 0 ? static_cast<float>(inliers) / filtCount : 0.f;
-        mi.num_inliers = inliers;
-        mi.confidence = inlierRatio;
-
-        if (!H.empty() && inliers >= config.minInliers && inlierRatio >= config.minInlierRatio) {
-            std::vector<Mat> Rs, Ts, Ns;
-            Mat Km64;
-            K_match[pc.i].convertTo(Km64, CV_64F);
-            int nsols = 0;
-            try {
-                nsols = decomposeHomographyMat(H, Km64, Rs, Ts, Ns);
-            } catch (...) {
-                nsols = 0;
-            }
-            Mat Ri, Rj, Rprior;
-            R0_cv[pc.i].convertTo(Ri, CV_64F);
-            R0_cv[pc.j].convertTo(Rj, CV_64F);
-            Rprior = Ri.t() * Rj;
-            double bestAng = 1e9;
-            int best = -1;
-            for (int s = 0; s < nsols; ++s) {
-                double ang = rotationAngleDeg(Mat(Rprior), Rs[s]);
-                if (ang < bestAng) {
-                    bestAng = ang;
-                    best = s;
-                }
-            }
-            if (best >= 0 && bestAng <= config.maxVisualCorrectionDeg * 2.5) {
-                mi.H = H;
-                mi.confidence = std::max(mi.confidence, 0.55);
-                mi.inliers_mask.assign(good.size(), 0);
-                if (!inlierMask.empty()) {
-                    for (size_t k = 0; k < good.size() && k < static_cast<size_t>(inlierMask.rows); ++k) {
-                        mi.inliers_mask[k] = inlierMask.at<uchar>(static_cast<int>(k)) ? 1 : 0;
-                    }
-                }
-                geomOK = true;
-            }
-        }
-
-        if (!geomOK) {
-            failed++;
-            mi.confidence = 0;
-        } else {
-            matched++;
-            sumRaw += rawCount;
-            sumFilt += filtCount;
-            sumInliers += inliers;
-            sumInlierRatio += inlierRatio;
-            sumOverlap += pc.overlap;
-        }
-        pairwise.push_back(mi);
-
-        if (!config.debugDirectory.empty()) {
-            std::ostringstream name;
-            name << config.debugDirectory << "/matches/pair_" << pc.i << "_" << pc.j << ".txt";
-            std::ostringstream body;
-            body << "angularDeg=" << pc.angularDeg << " overlap=" << pc.overlap
-                 << " raw=" << rawCount << " filtered=" << filtCount
-                 << " inliers=" << inliers << " ratio=" << inlierRatio
-                 << " ok=" << (geomOK ? 1 : 0) << "\n";
-            writeText(name.str(), body.str());
-        }
+    std::vector<float> yawDeg(n), pitchDeg(n);
+    for (int i = 0; i < n; ++i) {
+        yawDeg[i] = frames[i].yawDeg;
+        pitchDeg[i] = frames[i].pitchDeg;
     }
 
-    metrics.matchingTimeMs = nowMs() - tMatch0;
-    metrics.matchedPairCount = matched;
-    metrics.failedPairCount = failed;
-    if (matched > 0) {
-        metrics.averageRawMatches = sumRaw / matched;
-        metrics.averageFilteredMatches = sumFilt / matched;
-        metrics.averageInliers = sumInliers / matched;
-        metrics.averageInlierRatio = sumInlierRatio / matched;
-        metrics.averageOverlap = sumOverlap / matched;
-    }
-    metrics.cameraGraphEdges = matched;
-    noteMemory(metrics, metrics.memoryAfterMatchMB);
-    trace.checkpoint("matching", -1, 0, 0);
-
-    // Connected components
-    std::vector<int> parent(n);
-    std::iota(parent.begin(), parent.end(), 0);
-    std::function<int(int)> find = [&](int x) {
-        return parent[x] == x ? x : parent[x] = find(parent[x]);
-    };
-    auto unite = [&](int a, int b) {
-        a = find(a); b = find(b);
-        if (a != b) parent[b] = a;
-    };
-    for (const auto &mi : pairwise) {
-        if (mi.confidence > 0 && mi.num_inliers >= config.minInliers) {
-            unite(mi.src_img_idx, mi.dst_img_idx);
-        }
-    }
-    std::vector<int> roots;
-    for (int i = 0; i < n; ++i) roots.push_back(find(i));
-    std::sort(roots.begin(), roots.end());
-    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
-    metrics.connectedComponents = static_cast<int>(roots.size());
-
-    // ---- Camera init from ARKit prior (full-res intrinsics for final warp) ----
+    // Camera init from ARKit prior (proxy + full intrinsics).
     std::vector<CameraParams> cameras(n);
     std::vector<CameraParams> camerasProxy(n);
     for (int i = 0; i < n; ++i) {
@@ -890,153 +662,110 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         writeText(config.debugDirectory + "/camera_before.json", cameraParamsJSON(cameras));
     }
 
-    // Build 25: OpenCV 4.10 BundleAdjusterRay requires N*N pairwise container
-    // indexed as pairwise[i * N + j] (see motion_estimators.cpp). Sparse
-    // push_back vectors cause SIGSEGV in calcError/calcJacobian.
-    std::vector<MatchesInfo> confidentPairs;
-    for (const auto &mi : pairwise) {
-        if (mi.confidence > 0 && mi.num_inliers >= config.minInliers) {
-            confidentPairs.push_back(mi);
-        }
-    }
-    std::vector<MatchesInfo> baMatchesNxN = buildNxNPairwise(n, confidentPairs);
+    GonggiRegistrationConfig regCfg;
+    regCfg.maxVisualCorrectionDeg = config.maxVisualCorrectionDeg;
+    regCfg.minInlierRatio = config.minInlierRatio;
+    regCfg.minInliers = config.minInliers;
+    regCfg.runSecondaryOpenCVBA = false;
+
+    std::vector<MatchesInfo> baMatchesNxN;
+    std::vector<GonggiRegPairDebug> pairDebug;
+    GonggiRegistrationMetrics regMetrics;
+    trace.checkpoint("baBegin", -1, 0, 0); // registration begin (legacy stage name for traces)
+
+    bool regOK = GonggiRunRotationRegistration(
+        features, K_match, R0_cv, matchImages, yawDeg, pitchDeg,
+        regCfg, config.debugDirectory,
+        camerasProxy, baMatchesNxN, pairDebug, regMetrics
+    );
+
+    metrics.matchingTimeMs = nowMs() - tMatch0;
+    metrics.matchedPairCount = regMetrics.acceptedPairCount;
+    metrics.failedPairCount = regMetrics.rejectedPairCount;
+    metrics.cameraGraphEdges = regMetrics.poseGraphEdgeCount;
+    metrics.connectedComponents = regMetrics.connectedComponents;
+    metrics.acceptedPairCount = regMetrics.acceptedPairCount;
+    metrics.rejectedPairCount = regMetrics.rejectedPairCount;
+    metrics.medianPairAngularErrorDeg = regMetrics.medianPairAngularErrorDeg;
+    metrics.p90PairAngularErrorDeg = regMetrics.p90PairAngularErrorDeg;
+    metrics.averageVisualCorrectionDeg = regMetrics.averageCameraCorrectionDeg;
+    metrics.maxVisualCorrectionDeg = regMetrics.maxCameraCorrectionDeg;
+    metrics.registrationMode = regMetrics.registrationMode;
+    metrics.baRole = regMetrics.baRole;
+    metrics.poseGraphConverged = regMetrics.poseGraphConverged;
+    metrics.poseGraphEdgeCount = regMetrics.poseGraphEdgeCount;
     metrics.baRepresentationType = "nxn_flat";
     metrics.baPairwiseContainerSize = static_cast<int>(baMatchesNxN.size());
-
-    const double baConfThresh = 0.15;
-    BAValidationReport baVal = validateBAInput(
-        features, baMatchesNxN, camerasProxy, baConfThresh, config.minInliers
-    );
-    metrics.baConfidentEdgeCount = baVal.confidentEdgeCount;
-    metrics.baInvalidMatchCount = baVal.invalidMatchCount;
-    metrics.baInvalidIndexCount = baVal.invalidIndexCount;
-    // Prefer validation-derived component count for BA gate.
-    if (baVal.ok) {
-        metrics.connectedComponents = baVal.connectedComponents;
-    }
-
-    if (!config.debugDirectory.empty()) {
-        std::ostringstream featCounts;
-        featCounts << "[";
-        for (int i = 0; i < n; ++i) {
-            if (i) featCounts << ",";
-            featCounts << features[i].keypoints.size();
+    metrics.baConfidentEdgeCount = regMetrics.poseGraphEdgeCount;
+    metrics.bundleAdjustmentConverged = regMetrics.poseGraphConverged;
+    metrics.optimizedCameraCount = n;
+    {
+        double sumRaw = 0, sumMut = 0, sumInl = 0, sumRatio = 0, sumOv = 0;
+        int acc = 0;
+        for (const auto &p : pairDebug) {
+            if (!p.accepted) continue;
+            sumRaw += p.rawMatches;
+            sumMut += p.mutualMatches;
+            sumInl += p.inliers;
+            sumRatio += p.inlierRatio;
+            sumOv += p.overlapEstimate;
+            acc++;
         }
-        featCounts << "]";
-        std::ostringstream bi;
-        bi << "{"
-           << "\"imageCount\":" << n << ","
-           << "\"featureCountPerImage\":" << featCounts.str() << ","
-           << "\"pairwiseContainerSize\":" << metrics.baPairwiseContainerSize << ","
-           << "\"confidentEdgeCount\":" << metrics.baConfidentEdgeCount << ","
-           << "\"connectedComponents\":" << metrics.connectedComponents << ","
-           << "\"cameraCount\":" << camerasProxy.size() << ","
-           << "\"invalidMatchCount\":" << metrics.baInvalidMatchCount << ","
-           << "\"invalidIndexCount\":" << metrics.baInvalidIndexCount << ","
-           << "\"representationType\":\"" << metrics.baRepresentationType << "\","
-           << "\"validationOk\":" << (baVal.ok ? "true" : "false") << ","
-           << "\"validationReason\":\"" << baVal.reason << "\""
-           << "}\n";
-        writeText(config.debugDirectory + "/ba_input.json", bi.str());
+        if (acc > 0) {
+            metrics.averageRawMatches = sumRaw / acc;
+            metrics.averageFilteredMatches = sumMut / acc;
+            metrics.averageInliers = sumInl / acc;
+            metrics.averageInlierRatio = sumRatio / acc;
+            metrics.averageOverlap = sumOv / acc;
+        }
     }
-    trace.checkpoint("baBegin", -1, 0, 0);
-
-    const double tBA0 = nowMs();
-    double errBefore = 0, errAfter = 0;
-    bool baOK = false;
-    std::string baSkip;
-    const bool gateOK = baSafetyGate(n, baVal, baSkip);
-
-    if (n == 1) {
-        baOK = true;
-        metrics.optimizedCameraCount = 1;
-        metrics.baSkipReason = "single_image";
+    if (!regOK) {
+        metrics.baSkipReason = "registration_failed_arkit_prior";
+        metrics.errorMessage = "rotation registration failed; using ARKit prior";
         trace.checkpoint("baSkipped", -1, 0, 0);
-    } else if (!gateOK) {
-        // ARKit prior fallback — BA is optional refinement only.
-        metrics.optimizedCameraCount = n;
-        metrics.baSkipReason = baSkip;
-        metrics.errorMessage = std::string("BA skipped: ") + baSkip + "; using ARKit prior";
-        baOK = false;
+    } else if (!regMetrics.poseGraphConverged || regMetrics.poseGraphEdgeCount == 0) {
+        metrics.baSkipReason = "arkit_prior_only_weak_graph";
         trace.checkpoint("baSkipped", -1, 0, 0);
     } else {
-        Ptr<BundleAdjusterBase> adjuster = makePtr<BundleAdjusterRay>();
-        adjuster->setConfThresh(baConfThresh);
-        std::vector<CameraParams> camsBefore = camerasProxy;
-        try {
-            bool ran = (*adjuster)(features, baMatchesNxN, camerasProxy);
-            baOK = ran;
-            double sumCorr = 0, maxCorr = 0;
-            int corrN = 0;
-            for (int i = 0; i < n; ++i) {
-                Mat Ra, Rb;
-                camsBefore[i].R.convertTo(Ra, CV_32F);
-                camerasProxy[i].R.convertTo(Rb, CV_32F);
-                double ang = rotationAngleDeg(Ra, Rb);
-                if (ang > config.maxVisualCorrectionDeg) {
-                    camerasProxy[i] = camsBefore[i];
-                    metrics.rejectedCameraCount++;
-                    ang = 0;
-                } else {
-                    metrics.optimizedCameraCount++;
-                    sumCorr += ang;
-                    maxCorr = std::max(maxCorr, ang);
-                    corrN++;
-                }
-                errAfter += ang;
-            }
-            errBefore = 0;
-            if (corrN > 0) {
-                metrics.averageVisualCorrectionDeg = sumCorr / corrN;
-            }
-            metrics.maxVisualCorrectionDeg = maxCorr;
-            metrics.bundleAdjustmentBeforeError = errBefore;
-            metrics.bundleAdjustmentAfterError = errAfter / std::max(n, 1);
-            if (!baOK) {
-                camerasProxy = camsBefore;
-                metrics.baSkipReason = "bundle_adjuster_returned_false";
-                metrics.errorMessage = "BA returned false; using ARKit prior";
-                metrics.optimizedCameraCount = n;
-            }
-            trace.checkpoint("baDone", -1, 0, 0);
-        } catch (const cv::Exception &ex) {
-            camerasProxy = camsBefore;
-            metrics.errorMessage = std::string("BA exception: ") + ex.what();
-            metrics.baSkipReason = "cv_exception";
-            metrics.optimizedCameraCount = n;
-            baOK = false;
-            trace.checkpoint("baSkipped", -1, 0, 0);
-        }
+        metrics.baSkipReason.clear();
+        trace.checkpoint("baDone", -1, 0, 0);
     }
-    // Propagate optimized (or prior) rotations to full-res cameras (intrinsics stay full-res).
+
+    // Propagate refined rotations to full-res cameras.
     for (int i = 0; i < n; ++i) {
         camerasProxy[i].R.copyTo(cameras[i].R);
     }
-    metrics.bundleAdjustmentTimeMs = nowMs() - tBA0;
-    metrics.bundleAdjustmentConverged = baOK;
+    metrics.bundleAdjustmentTimeMs = metrics.matchingTimeMs; // registration owns this stage time
+    noteMemory(metrics, metrics.memoryAfterMatchMB);
     noteMemory(metrics, metrics.memoryAfterBAMB);
-    if (metrics.baSkipReason.empty() && baOK) {
-        // keep baDone already traced
-    }
-
-    // Features no longer needed after BA.
-    features.clear();
-    features.shrink_to_fit();
-    pairwise.clear();
-    confidentPairs.clear();
-    baMatchesNxN.clear();
-
-    anchorFirstForward(cameras);
-    anchorFirstForward(camerasProxy);
 
     if (!config.debugDirectory.empty()) {
         writeText(config.debugDirectory + "/camera_after.json", cameraParamsJSON(cameras));
         std::ostringstream g;
         g << "{\"edges\":" << metrics.cameraGraphEdges
           << ",\"components\":" << metrics.connectedComponents
-          << ",\"nodes\":" << n << "}\n";
+          << ",\"nodes\":" << n
+          << ",\"registrationMode\":\"" << metrics.registrationMode << "\""
+          << "}\n";
         writeText(config.debugDirectory + "/camera_graph.json", g.str());
+        writeText(config.debugDirectory + "/ba_input.json",
+            std::string("{\"note\":\"Build26 uses Gonggi rotation graph; OpenCV BA secondary skipped\",")
+            + "\"acceptedPairCount\":" + std::to_string(metrics.acceptedPairCount)
+            + ",\"poseGraphEdgeCount\":" + std::to_string(metrics.poseGraphEdgeCount)
+            + ",\"connectedComponents\":" + std::to_string(metrics.connectedComponents)
+            + ",\"medianPairAngularErrorDeg\":" + std::to_string(metrics.medianPairAngularErrorDeg)
+            + ",\"p90PairAngularErrorDeg\":" + std::to_string(metrics.p90PairAngularErrorDeg)
+            + "}\n");
     }
+
+    // Features / pair buffers no longer needed after registration.
+    features.clear();
+    features.shrink_to_fit();
+    baMatchesNxN.clear();
+    pairDebug.clear();
+
+    anchorFirstForward(cameras);
+    anchorFirstForward(camerasProxy);
 
     // Soft memory budget → analysis resolution / blend bands
     float exposureLE = config.exposureAnalysisLongEdge;
@@ -1086,6 +815,33 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         matchImages[i].release();
     }
     matchImages.clear();
+
+    double proxyCoveragePercent = 0;
+    if (!config.debugDirectory.empty()) {
+        ensureDir(config.debugDirectory + "/warped");
+        std::vector<Size> proxySizes(n);
+        for (int i = 0; i < n; ++i) {
+            proxySizes[i] = proxyMask[i].size();
+            char tag[32];
+            std::snprintf(tag, sizeof(tag), "%02d", i);
+            if (!proxyWarped[i].empty()) {
+                imwrite(config.debugDirectory + "/warped/proxy_" + std::string(tag) + ".jpg", proxyWarped[i]);
+            }
+            if (!proxyMask[i].empty()) {
+                imwrite(config.debugDirectory + "/warped/proxy_mask_" + std::string(tag) + ".png", proxyMask[i]);
+            }
+        }
+        Rect proxyRoi = resultRoi(proxyCorners, proxySizes);
+        if (proxyRoi.width > 0 && proxyRoi.height > 0) {
+            Mat proxyCov = Mat::zeros(proxyRoi.size(), CV_8U);
+            for (int i = 0; i < n; ++i) {
+                stampCoverageUnion(proxyCov, proxyRoi.tl(), proxyCorners[i], proxyMask[i]);
+            }
+            proxyCoveragePercent = coveragePercent(proxyCov);
+            imwrite(config.debugDirectory + "/warped/proxy_coverage.png", proxyCov);
+        }
+    }
+
     metrics.warpTimeMs = nowMs() - tWarp0;
     noteMemory(metrics, metrics.memoryAfterWarpMB);
     // maxWarpedResidentCount tracks full-res only (proxy N is analysis-only).
@@ -1177,9 +933,17 @@ static bool GonggiOpenCVStitchPanoramaImpl(
             metrics.seamFinder = "DpColorGrad";
         }
         seamFinder->find(warpedF, cornersF, masksF);
+        if (!config.debugDirectory.empty()) {
+            ensureDir(config.debugDirectory + "/seams");
+        }
         for (int i = 0; i < n; ++i) {
             masksF[i].copyTo(seamMasksLo[i]);
             seamSizes[i] = seamMasksLo[i].size();
+            if (!config.debugDirectory.empty() && !seamMasksLo[i].empty()) {
+                char tag[32];
+                std::snprintf(tag, sizeof(tag), "%02d", i);
+                imwrite(config.debugDirectory + "/seams/seam_mask_" + std::string(tag) + ".png", seamMasksLo[i]);
+            }
             warpedF[i].release();
             masksF[i].release();
             proxyMask[i].release();
@@ -1227,6 +991,14 @@ static bool GonggiOpenCVStitchPanoramaImpl(
     }
     blender->prepare(dstRoi);
 
+    Mat coverageWarpOnly, coverageAfterSeam;
+    if (!config.debugDirectory.empty()) {
+        coverageWarpOnly = Mat::zeros(dstRoi.size(), CV_8U);
+        coverageAfterSeam = Mat::zeros(dstRoi.size(), CV_8U);
+    }
+    double fullWarpCoveragePercent = 0;
+    double afterSeamCoveragePercent = 0;
+
     int residentWarped = 0;
     for (int i = 0; i < n; ++i) {
         Mat full = imread(frames[i].jpegPath, IMREAD_COLOR);
@@ -1260,6 +1032,10 @@ static bool GonggiOpenCVStitchPanoramaImpl(
             multiply(warped, g, warped);
         }
 
+        if (!coverageWarpOnly.empty()) {
+            stampCoverageUnion(coverageWarpOnly, dstRoi.tl(), corner, warpedMask);
+        }
+
         // Upscale seam mask + intersect coverage.
         Mat seamFull;
         if (!seamMasksLo[i].empty()) {
@@ -1270,6 +1046,10 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         bitwise_and(seamFull, warpedMask, warpedMask);
         seamFull.release();
         seamMasksLo[i].release();
+
+        if (!coverageAfterSeam.empty()) {
+            stampCoverageUnion(coverageAfterSeam, dstRoi.tl(), corner, warpedMask);
+        }
 
         Mat warped16;
         warped.convertTo(warped16, CV_16S);
@@ -1282,6 +1062,15 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         std::ostringstream stage;
         stage << "renderFrame_" << i;
         trace.checkpoint(stage.str().c_str(), i, 0, 0);
+    }
+
+    if (!coverageWarpOnly.empty()) {
+        fullWarpCoveragePercent = coveragePercent(coverageWarpOnly);
+        afterSeamCoveragePercent = coveragePercent(coverageAfterSeam);
+        imwrite(config.debugDirectory + "/warped/full_warp_coverage.png", coverageWarpOnly);
+        imwrite(config.debugDirectory + "/seams/after_seam_coverage.png", coverageAfterSeam);
+        coverageWarpOnly.release();
+        coverageAfterSeam.release();
     }
 
     Mat result16, resultMask;
@@ -1328,6 +1117,35 @@ static bool GonggiOpenCVStitchPanoramaImpl(
     metrics.holePercent = 100.0 * hole / totalPx;
     metrics.zenithHolePercent = 100.0 * zenHole / (zenRows * outW);
     metrics.nadirHolePercent = 100.0 * nadHole / (zenRows * outW);
+    metrics.finalCoveragePercent = 100.0 - metrics.holePercent;
+
+    if (!config.debugDirectory.empty()) {
+        const double finalCov = metrics.finalCoveragePercent;
+        const double seamDrop = fullWarpCoveragePercent - afterSeamCoveragePercent;
+        const double resizeDrop = afterSeamCoveragePercent - finalCov;
+        std::string cause = "A_capture_or_pose_coverage_gap";
+        if (fullWarpCoveragePercent >= 92.0 && seamDrop > 8.0) {
+            cause = "C_seam_mask_over_removal";
+        } else if (fullWarpCoveragePercent >= 92.0 && std::abs(resizeDrop) > 5.0) {
+            cause = "B_warp_bounding_or_mask_resize";
+        } else if (proxyCoveragePercent >= 90.0 && fullWarpCoveragePercent < 85.0) {
+            cause = "B_warp_bounding_or_mask_bug";
+        } else if (fullWarpCoveragePercent < 85.0) {
+            cause = "A_actual_coverage_shortage_or_registration";
+        }
+        std::ostringstream cov;
+        cov << "{"
+            << "\"proxyCoveragePercent\":" << proxyCoveragePercent
+            << ",\"fullWarpCoveragePercent\":" << fullWarpCoveragePercent
+            << ",\"afterSeamCoveragePercent\":" << afterSeamCoveragePercent
+            << ",\"finalPanoCoveragePercent\":" << finalCov
+            << ",\"holePercent\":" << metrics.holePercent
+            << ",\"primaryCauseHint\":\"" << cause << "\""
+            << ",\"notes\":\"Compare proxy vs full-warp vs after-seam vs final; "
+               "do not blame capture if full-warp already covers the black region.\""
+            << "}\n";
+        writeText(config.debugDirectory + "/coverage_analysis.json", cov.str());
+    }
 
     for (int y = 0; y < outH; ++y) {
         uchar *row = pano.ptr<uchar>(y);

@@ -116,6 +116,16 @@ struct GonggiOpenCVStitchMetrics {
     float exposureAnalysisLongEdgeUsed = 0;
     float seamAnalysisLongEdgeUsed = 0;
     int blendBandsUsed = 3;
+    // Build 26 registration quality
+    int acceptedPairCount = 0;
+    int rejectedPairCount = 0;
+    double medianPairAngularErrorDeg = 0;
+    double p90PairAngularErrorDeg = 0;
+    double finalCoveragePercent = 0;
+    std::string registrationMode = "rotation_graph_arkit_prior";
+    std::string baRole = "secondary_skipped";
+    bool poseGraphConverged = false;
+    int poseGraphEdgeCount = 0;
 };
 
 /// Returns true on success and writes JPEG to config.outputPath.
