@@ -255,6 +255,12 @@ struct OpenCVPanoramaEngine: PanoramaEngineProtocol {
         index: Int,
         temps: inout [URL]
     ) throws -> URL {
+        guard !kf.rgba.isEmpty, kf.width > 0, kf.height > 0 else {
+            throw PanoramaEngineError.unavailable(
+                engine: PanoramaEngineID.openCV,
+                reason: "keyframe pixels released and no on-disk JPEG path"
+            )
+        }
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("gonggi-opencv-kf-\(UUID().uuidString)-\(index).jpg")
         try PanoramaExporter.writeJPEG(
