@@ -97,8 +97,8 @@ struct DirectionCaptureView: View {
             .padding(.top, 12)
 
             if let target = viewModel.currentTarget {
-                Text(target.displayLabel)
-                    .font(GonggiTypography.title(28))
+                Text("다음 촬영: \(target.displayLabel)")
+                    .font(GonggiTypography.title(22))
                     .foregroundStyle(.white)
                     .shadow(radius: 4)
                     .padding(.top, 18)
@@ -164,7 +164,7 @@ struct DirectionCaptureView: View {
                 }
                 .padding(.horizontal, 24)
             default:
-                Text("자동 촬영 중 · 셔터를 누르지 마세요")
+                Text("계속 움직여도 됩니다 · 자동 촬영 중")
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(.white.opacity(0.75))
             }

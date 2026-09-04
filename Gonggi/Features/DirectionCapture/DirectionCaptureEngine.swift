@@ -3,8 +3,8 @@ import CoreVideo
 import Foundation
 import UIKit
 
-/// Portrait camera + CoreMotion auto-capture for 10 named directions.
-/// Does not use panorama strip compositor / stitching / NCC.
+/// Portrait camera + continuous yaw-crossing capture for 10 named directions.
+/// No panorama strip compositor / stitching / NCC.
 final class DirectionCaptureEngine: NSObject {
     let session = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -22,24 +22,24 @@ final class DirectionCaptureEngine: NSObject {
         timestamp: 0, relativeYawDeg: 0, yaw0to360: 0,
         pitchDeg: 0, rollDeg: 0, rotationRate: 0
     )
+    private(set) var sessionId: String = ""
 
     private var isCapturing = false
-    private(set) var sessionId: String = ""
     private var outputDirectory: URL?
-    private var dwellDirection: DirectionName?
-    private var dwellStartedAt: TimeInterval?
-    private var latestPixelBuffer: CVPixelBuffer?
     private var useMock = false
-    private var mockTick: Int = 0
+    private var frameBuffer: [DirectionBufferedFrame] = []
+    private var previousUnwrappedYaw: Float?
+    private var previousPitch: Float?
+    private var horizontalTargetIndex: Int = 0
+    private var captureStartedAt: TimeInterval = 0
+    private var frontCaptured = false
+    private var warnFast = false
 
     var onUIUpdate: (() -> Void)?
     var onCaptured: ((DirectionName) -> Void)?
     var onCompleted: ((DirectionCaptureResult) -> Void)?
 
     var capturedCount: Int { captured.count }
-    var completedDirections: [DirectionName] {
-        DirectionName.captureOrder.filter { captured[$0] != nil }
-    }
 
     // MARK: - Lifecycle
 
@@ -96,13 +96,16 @@ final class DirectionCaptureEngine: NSObject {
         isCapturing = false
     }
 
-    /// Single user action: lock front = 0°, begin horizontal auto-capture.
+    /// Lock front = 0° and start continuous clockwise capture.
     func beginCapture() {
         captured.removeAll()
         images.removeAll()
-        dwellDirection = nil
-        dwellStartedAt = nil
-        mockTick = 0
+        frameBuffer.removeAll(keepingCapacity: true)
+        previousUnwrappedYaw = nil
+        previousPitch = nil
+        horizontalTargetIndex = 0
+        frontCaptured = false
+        warnFast = false
         yawTracker.reset()
         motion.resetReference()
         sessionId = "dir-\(UUID().uuidString)"
@@ -114,12 +117,13 @@ final class DirectionCaptureEngine: NSObject {
             return
         }
         isCapturing = true
+        captureStartedAt = ProcessInfo.processInfo.systemUptime
         phase = .capturingHorizontal
-        refreshTarget()
+        refreshTargetUI()
         notify()
 
         if useMock {
-            startMockProgression()
+            startMockContinuousSweep()
         }
     }
 
@@ -134,112 +138,221 @@ final class DirectionCaptureEngine: NSObject {
         beginCapture()
     }
 
-    // MARK: - Frame / motion
+    /// Test / synthetic injection: owned image + attitude sample (unwrapped yaw is absolute from start).
+    func ingestSyntheticFrame(
+        image: UIImage?,
+        unwrappedYaw: Float,
+        pitchDeg: Float,
+        rollDeg: Float = 0,
+        rotationRate: Float = 0.2,
+        timestamp: TimeInterval,
+        sharpness: Float = 100
+    ) {
+        guard isCapturing else { return }
+        let img = image ?? Self.makeMockImage(direction: currentTarget ?? .front)
+        let frame = DirectionBufferedFrame(
+            image: img,
+            unwrappedYaw: unwrappedYaw,
+            pitchDeg: pitchDeg,
+            rollDeg: rollDeg,
+            timestamp: timestamp,
+            sharpness: sharpness,
+            rotationRate: rotationRate
+        )
+        pushFrame(frame)
+        processSample(
+            unwrappedYaw: unwrappedYaw,
+            pitchDeg: pitchDeg,
+            rollDeg: rollDeg,
+            rotationRate: rotationRate,
+            timestamp: timestamp
+        )
+    }
 
-    private func processMotionAndMaybeCapture() {
+    // MARK: - Live pipeline
+
+    private func processLiveFrame(pixelBuffer: CVPixelBuffer) {
         guard isCapturing else { return }
         let m = motion.latest
         let unwrapped = yawTracker.update(rawYawDeg: m.yawDeg)
-        let yaw360 = DirectionCaptureGuide.normalizeYaw0to360(unwrapped)
-        lastMotion = DirectionMotionReading(
-            timestamp: m.timestamp,
-            relativeYawDeg: unwrapped,
-            yaw0to360: yaw360,
+        guard let image = Self.uprightJPEGImage(from: pixelBuffer) else { return }
+        let sharpness = Self.estimateSharpness(image)
+        let frame = DirectionBufferedFrame(
+            image: image,
+            unwrappedYaw: unwrapped,
             pitchDeg: m.pitchDeg,
             rollDeg: m.rollDeg,
+            timestamp: m.timestamp,
+            sharpness: sharpness,
             rotationRate: m.rotationRate
         )
-        evaluateCapture(reading: lastMotion)
-        refreshTarget()
+        pushFrame(frame)
+        processSample(
+            unwrappedYaw: unwrapped,
+            pitchDeg: m.pitchDeg,
+            rollDeg: m.rollDeg,
+            rotationRate: m.rotationRate,
+            timestamp: m.timestamp
+        )
+    }
+
+    private func processSample(
+        unwrappedYaw: Float,
+        pitchDeg: Float,
+        rollDeg: Float,
+        rotationRate: Float,
+        timestamp: TimeInterval
+    ) {
+        lastMotion = DirectionMotionReading(
+            timestamp: timestamp,
+            relativeYawDeg: unwrappedYaw,
+            yaw0to360: DirectionCaptureGuide.normalizeYaw0to360(unwrappedYaw),
+            pitchDeg: pitchDeg,
+            rollDeg: rollDeg,
+            rotationRate: rotationRate
+        )
+        warnFast = DirectionCaptureGuide.shouldWarnRotation(rotationRate)
+
+        switch phase {
+        case .capturingHorizontal:
+            processHorizontal(unwrappedYaw: unwrappedYaw, pitchDeg: pitchDeg, rollDeg: rollDeg, rotationRate: rotationRate)
+        case .capturingUp, .capturingDown:
+            processVertical(pitchDeg: pitchDeg, rollDeg: rollDeg, rotationRate: rotationRate)
+        default:
+            break
+        }
+        refreshTargetUI()
         notify()
     }
 
-    private func evaluateCapture(reading: DirectionMotionReading) {
-        let candidate: DirectionName?
-        switch phase {
-        case .capturingHorizontal:
-            candidate = DirectionCaptureGuide.classifyHorizontal(yawDeg: reading.yaw0to360)
-        case .capturingUp:
-            let v = DirectionCaptureGuide.classifyVertical(pitchDeg: reading.pitchDeg)
-            candidate = (v == .up) ? .up : nil
-        case .capturingDown:
-            let v = DirectionCaptureGuide.classifyVertical(pitchDeg: reading.pitchDeg)
-            candidate = (v == .down) ? .down : nil
-        default:
-            candidate = nil
-        }
-
-        guard let direction = candidate else {
-            clearDwell()
+    private func processHorizontal(
+        unwrappedYaw: Float,
+        pitchDeg: Float,
+        rollDeg: Float,
+        rotationRate: Float
+    ) {
+        // Front: auto-grab soon after start — no stop / dwell required.
+        if !frontCaptured {
+            let elapsed = ProcessInfo.processInfo.systemUptime - captureStartedAt
+            if !frameBuffer.isEmpty, elapsed >= DirectionCaptureConfig.frontAutoCaptureDelaySec {
+                if !DirectionCaptureGuide.isExtremePose(pitchDeg: pitchDeg, rollDeg: rollDeg) {
+                    if let best = DirectionCaptureGuide.bestFrame(in: frameBuffer, targetYaw: 0) {
+                        commitCapture(.front, frame: best)
+                        frontCaptured = true
+                        horizontalTargetIndex = 1
+                        previousUnwrappedYaw = unwrappedYaw
+                        return
+                    }
+                }
+            }
+            previousUnwrappedYaw = unwrappedYaw
             return
         }
-        // Duplicate prevention
-        if captured[direction] != nil {
-            clearDwell()
+
+        guard horizontalTargetIndex < DirectionName.horizontalOrder.count else {
             advancePhaseIfNeeded()
             return
         }
-        // Phase gating: don't accept up while still on horizontal, etc.
-        if phase == .capturingHorizontal, !direction.isHorizontal {
-            clearDwell()
+
+        if DirectionCaptureGuide.isExtremePose(pitchDeg: pitchDeg, rollDeg: rollDeg) {
+            previousUnwrappedYaw = unwrappedYaw
             return
         }
-        if phase == .capturingUp, direction != .up {
-            clearDwell()
-            return
-        }
-        if phase == .capturingDown, direction != .down {
-            clearDwell()
+        if DirectionCaptureGuide.isExtremeRotation(rotationRate) {
+            previousUnwrappedYaw = unwrappedYaw
             return
         }
 
-        guard DirectionCaptureGuide.isStable(
-            rotationRate: reading.rotationRate,
-            pitchDeg: reading.pitchDeg,
-            rollDeg: reading.rollDeg,
-            for: direction
-        ) else {
-            clearDwell()
+        let targetDir = DirectionName.horizontalOrder[horizontalTargetIndex]
+        guard let targetYaw = targetDir.targetYawDeg else { return }
+        guard let prev = previousUnwrappedYaw else {
+            previousUnwrappedYaw = unwrappedYaw
             return
         }
 
-        let now = ProcessInfo.processInfo.systemUptime
-        if dwellDirection != direction {
-            dwellDirection = direction
-            dwellStartedAt = now
-            return
+        if DirectionCaptureGuide.crossesTarget(
+            previousYaw: prev,
+            currentYaw: unwrappedYaw,
+            targetYaw: targetYaw
+        ) {
+            if let best = DirectionCaptureGuide.bestFrame(in: frameBuffer, targetYaw: targetYaw) {
+                commitCapture(targetDir, frame: best)
+                horizontalTargetIndex += 1
+                if horizontalTargetIndex >= DirectionName.horizontalOrder.count {
+                    advancePhaseIfNeeded()
+                }
+            }
         }
-        guard let started = dwellStartedAt,
-              now - started >= DirectionCaptureConfig.stabilityDwellSec else {
-            return
-        }
-
-        accept(direction: direction, reading: reading)
+        previousUnwrappedYaw = unwrappedYaw
     }
 
-    private func clearDwell() {
-        dwellDirection = nil
-        dwellStartedAt = nil
+    private func processVertical(pitchDeg: Float, rollDeg: Float, rotationRate: Float) {
+        if DirectionCaptureGuide.isExtremeRotation(rotationRate) {
+            previousPitch = pitchDeg
+            return
+        }
+        if abs(rollDeg) > DirectionCaptureConfig.extremeRollRejectDeg {
+            previousPitch = pitchDeg
+            return
+        }
+
+        let prev = previousPitch
+        previousPitch = pitchDeg
+
+        switch phase {
+        case .capturingUp:
+            guard captured[.up] == nil else { return }
+            let crossed: Bool
+            if let prev {
+                crossed = prev < DirectionCaptureConfig.upPitchMinDeg
+                    && pitchDeg >= DirectionCaptureConfig.upPitchMinDeg
+            } else {
+                crossed = pitchDeg >= DirectionCaptureConfig.upPitchMinDeg
+            }
+            if crossed || DirectionCaptureGuide.classifyVertical(pitchDeg: pitchDeg) == .up {
+                let best = frameBuffer.max(by: { $0.pitchDeg < $1.pitchDeg })
+                    ?? frameBuffer.last
+                if let best {
+                    commitCapture(.up, frame: best)
+                    advancePhaseIfNeeded()
+                }
+            }
+        case .capturingDown:
+            guard captured[.down] == nil else { return }
+            let crossed: Bool
+            if let prev {
+                crossed = prev > DirectionCaptureConfig.downPitchMaxDeg
+                    && pitchDeg <= DirectionCaptureConfig.downPitchMaxDeg
+            } else {
+                crossed = pitchDeg <= DirectionCaptureConfig.downPitchMaxDeg
+            }
+            if crossed || DirectionCaptureGuide.classifyVertical(pitchDeg: pitchDeg) == .down {
+                let best = frameBuffer.min(by: { $0.pitchDeg < $1.pitchDeg })
+                    ?? frameBuffer.last
+                if let best {
+                    commitCapture(.down, frame: best)
+                    advancePhaseIfNeeded()
+                }
+            }
+        default:
+            break
+        }
     }
 
-    private func accept(direction: DirectionName, reading: DirectionMotionReading) {
-        clearDwell()
+    private func pushFrame(_ frame: DirectionBufferedFrame) {
+        frameBuffer.append(frame)
+        let cap = DirectionCaptureConfig.frameBufferCapacity
+        if frameBuffer.count > cap {
+            frameBuffer.removeFirst(frameBuffer.count - cap)
+        }
+    }
+
+    private func commitCapture(_ direction: DirectionName, frame: DirectionBufferedFrame) {
         guard captured[direction] == nil else { return }
         guard let dirURL = outputDirectory else { return }
 
-        let image: UIImage
-        if useMock {
-            image = Self.makeMockImage(direction: direction)
-        } else {
-            guard let pb = latestPixelBuffer,
-                  let img = Self.uprightJPEGImage(from: pb) else {
-                return
-            }
-            image = img
-        }
-
         let fileURL = dirURL.appendingPathComponent(direction.fileName)
-        guard let data = image.jpegData(compressionQuality: 0.9) else { return }
+        guard let data = frame.image.jpegData(compressionQuality: 0.9) else { return }
         do {
             try data.write(to: fileURL, options: .atomic)
         } catch {
@@ -251,21 +364,15 @@ final class DirectionCaptureEngine: NSObject {
         let record = DirectionCaptureRecord(
             direction: direction,
             filePath: "direction_capture/\(direction.fileName)",
-            yawDeg: reading.yaw0to360,
-            pitchDeg: reading.pitchDeg,
-            rollDeg: reading.rollDeg,
-            timestamp: reading.timestamp
+            yawDeg: DirectionCaptureGuide.normalizeYaw0to360(frame.unwrappedYaw),
+            pitchDeg: frame.pitchDeg,
+            rollDeg: frame.rollDeg,
+            timestamp: frame.timestamp
         )
         captured[direction] = record
-        images[direction] = image
+        images[direction] = frame.image
         progressText = "\(captured.count) / 10"
         onCaptured?(direction)
-        advancePhaseIfNeeded()
-        refreshTarget()
-        if phase == .completed {
-            finishAndEmitResult()
-        }
-        notify()
     }
 
     private func advancePhaseIfNeeded() {
@@ -273,19 +380,45 @@ final class DirectionCaptureEngine: NSObject {
         switch phase {
         case .capturingHorizontal where horizontalDone:
             phase = .capturingUp
+            previousPitch = lastMotion.pitchDeg
+            frameBuffer.removeAll(keepingCapacity: true)
         case .capturingUp where captured[.up] != nil:
             phase = .capturingDown
+            previousPitch = lastMotion.pitchDeg
+            frameBuffer.removeAll(keepingCapacity: true)
         case .capturingDown where captured[.down] != nil:
             phase = .completed
             isCapturing = false
+            finishAndEmitResult()
         default:
             break
         }
     }
 
-    private func refreshTarget() {
-        currentTarget = DirectionCaptureGuide.nextTarget(captured: Set(captured.keys), phase: phase)
-        guideText = DirectionCaptureGuide.guideMessage(for: currentTarget)
+    private func refreshTargetUI() {
+        switch phase {
+        case .capturingHorizontal:
+            if horizontalTargetIndex < DirectionName.horizontalOrder.count {
+                currentTarget = DirectionName.horizontalOrder[horizontalTargetIndex]
+            } else {
+                currentTarget = nil
+            }
+            guideText = DirectionCaptureGuide.horizontalGuideMessage(
+                target: currentTarget,
+                warnFast: warnFast
+            )
+        case .capturingUp:
+            currentTarget = .up
+            guideText = DirectionCaptureGuide.verticalGuideMessage(for: .up)
+        case .capturingDown:
+            currentTarget = .down
+            guideText = DirectionCaptureGuide.verticalGuideMessage(for: .down)
+        case .completed:
+            currentTarget = nil
+            guideText = "완료"
+        default:
+            break
+        }
         progressText = "\(captured.count) / 10"
     }
 
@@ -321,49 +454,81 @@ final class DirectionCaptureEngine: NSObject {
         DispatchQueue.main.async { [weak self] in self?.onUIUpdate?() }
     }
 
-    // MARK: - Mock progression (simulator / CI)
+    // MARK: - Mock continuous sweep
 
-    private func startMockProgression() {
-        // Drive synthetic attitudes so unit/UI mock completes without device motion.
+    private func startMockContinuousSweep() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let sequence: [(DirectionName, Float, Float)] = [
-                (.front, 0, 0),
-                (.frontRight, 45, 0),
-                (.right, 90, 0),
-                (.backRight, 135, 0),
-                (.back, 180, 0),
-                (.backLeft, 225, 0),
-                (.left, 270, 0),
-                (.frontLeft, 315, 0),
-                (.up, 0, 80),
-                (.down, 0, -80)
-            ]
-            for (dir, yaw, pitch) in sequence {
+            // Dense yaw steps that do not land exactly on 45° multiples.
+            var yaws: [Float] = []
+            var y: Float = 0
+            while y <= 360 {
+                yaws.append(y)
+                y += 4.3
+            }
+            // Ensure crossings: inject near-miss pairs around each target after front.
+            for t in stride(from: 45, through: 315, by: 45) {
+                yaws.append(Float(t) - 2)
+                yaws.append(Float(t) + 2)
+            }
+            yaws.sort()
+
+            var t: TimeInterval = 0
+            // Front auto-capture delay
+            for i in 0..<6 {
                 guard self.isCapturing else { return }
-                // Dwell slightly longer than stability window
-                let steps = 8
-                for s in 0..<steps {
-                    let reading = DirectionMotionReading(
-                        timestamp: TimeInterval(self.mockTick) * 0.05,
-                        relativeYawDeg: yaw,
-                        yaw0to360: DirectionCaptureGuide.normalizeYaw0to360(yaw),
-                        pitchDeg: pitch,
-                        rollDeg: 0,
-                        rotationRate: 0.05
+                let yaw: Float = Float(i) * 0.4
+                let img = Self.makeMockImage(direction: .front)
+                DispatchQueue.main.sync {
+                    // Force front delay clock: first call sets start; sleep outside
+                    self.ingestSyntheticFrame(
+                        image: img, unwrappedYaw: yaw, pitchDeg: -5,
+                        timestamp: t, sharpness: 80 + Float(i)
                     )
-                    self.mockTick += 1
-                    self.lastMotion = reading
-                    // Force phase-appropriate accept path
-                    DispatchQueue.main.sync {
-                        self.evaluateCapture(reading: reading)
-                        self.refreshTarget()
-                        self.notify()
-                    }
-                    Thread.sleep(forTimeInterval: DirectionCaptureConfig.stabilityDwellSec / Double(steps - 1))
-                    _ = dir
-                    _ = s
                 }
+                t += 0.04
+                Thread.sleep(forTimeInterval: 0.04)
+            }
+            Thread.sleep(forTimeInterval: max(0, DirectionCaptureConfig.frontAutoCaptureDelaySec - 0.2))
+
+            for yaw in yaws {
+                guard self.isCapturing else { return }
+                if self.capturedCount >= 8 { break }
+                let img = Self.makeMockImage(direction: .frontRight)
+                DispatchQueue.main.sync {
+                    self.ingestSyntheticFrame(
+                        image: img, unwrappedYaw: yaw, pitchDeg: -12,
+                        rotationRate: 0.3, timestamp: t, sharpness: 90
+                    )
+                }
+                t += 0.03
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+
+            // Up / down
+            for pitch in stride(from: 0, through: 85, by: 8) {
+                guard self.isCapturing else { return }
+                DispatchQueue.main.sync {
+                    self.ingestSyntheticFrame(
+                        image: Self.makeMockImage(direction: .up),
+                        unwrappedYaw: 360, pitchDeg: Float(pitch),
+                        timestamp: t, sharpness: 95
+                    )
+                }
+                t += 0.03
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            for pitch in stride(from: 40, through: -85, by: -10) {
+                guard self.isCapturing else { return }
+                DispatchQueue.main.sync {
+                    self.ingestSyntheticFrame(
+                        image: Self.makeMockImage(direction: .down),
+                        unwrappedYaw: 360, pitchDeg: Float(pitch),
+                        timestamp: t, sharpness: 95
+                    )
+                }
+                t += 0.03
+                Thread.sleep(forTimeInterval: 0.01)
             }
         }
     }
@@ -416,6 +581,37 @@ final class DirectionCaptureEngine: NSObject {
         return UIImage(cgImage: cg, scale: 1, orientation: .up)
     }
 
+    static func estimateSharpness(_ image: UIImage) -> Float {
+        guard let cg = image.cgImage else { return 0 }
+        let w = min(64, cg.width)
+        let h = min(64, cg.height)
+        var gray = [UInt8](repeating: 0, count: w * h)
+        let cs = CGColorSpaceCreateDeviceGray()
+        guard let ctx = CGContext(
+            data: &gray, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: cs, bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else { return 0 }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var sum: Float = 0
+        var sumSq: Float = 0
+        var n: Float = 0
+        for y in 1..<(h - 1) {
+            for x in 1..<(w - 1) {
+                let i = y * w + x
+                let lap = Float(gray[i - 1]) + Float(gray[i + 1])
+                    + Float(gray[i - w]) + Float(gray[i + w])
+                    - 4 * Float(gray[i])
+                sum += lap
+                sumSq += lap * lap
+                n += 1
+            }
+        }
+        guard n > 0 else { return 0 }
+        let mean = sum / n
+        return max(0, sumSq / n - mean * mean)
+    }
+
     static func makeMockImage(direction: DirectionName) -> UIImage {
         let size = CGSize(width: 360, height: 640)
         let renderer = UIGraphicsImageRenderer(size: size)
@@ -447,7 +643,7 @@ extension DirectionCaptureEngine: AVCaptureVideoDataOutputSampleBufferDelegate {
         from connection: AVCaptureConnection
     ) {
         guard isCapturing, !useMock else { return }
-        latestPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
-        processMotionAndMaybeCapture()
+        guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        processLiveFrame(pixelBuffer: pb)
     }
 }

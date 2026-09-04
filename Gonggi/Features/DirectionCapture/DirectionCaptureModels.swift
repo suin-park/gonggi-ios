@@ -16,7 +16,6 @@ enum DirectionName: String, CaseIterable, Codable, Identifiable, Equatable {
 
     var id: String { rawValue }
     var fileName: String { "\(rawValue).jpg" }
-
     var displayLabel: String { rawValue }
 
     var isHorizontal: Bool {
@@ -26,7 +25,7 @@ enum DirectionName: String, CaseIterable, Codable, Identifiable, Equatable {
         }
     }
 
-    /// Target relative yaw in degrees [0, 360), front = 0 at capture start.
+    /// Target relative yaw on first clockwise lap (unwrapped degrees from front=0).
     var targetYawDeg: Float? {
         switch self {
         case .front: return 0
@@ -61,20 +60,22 @@ enum DirectionCapturePhase: Equatable {
 }
 
 struct DirectionCaptureConfig {
-    /// Yaw half-width around target for horizontal auto-capture (degrees).
-    static var yawToleranceDeg: Float = 7
     /// Pitch threshold for up (degrees, relative to start).
-    static var upPitchMinDeg: Float = 72
+    static var upPitchMinDeg: Float = 70
     /// Pitch threshold for down (degrees, relative to start).
-    static var downPitchMaxDeg: Float = -72
-    /// Max |pitch| while accepting a horizontal direction.
-    static var maxHorizontalPitchDeg: Float = 28
-    /// Max |roll| while accepting any still frame.
-    static var maxRollDeg: Float = 22
-    /// Angular velocity (rad/s, CoreMotion rotationRate magnitude) must stay below.
-    static var maxRotationRate: Float = 0.45
-    /// Dwell time inside target window before accept (seconds).
-    static var stabilityDwellSec: TimeInterval = 0.22
+    static var downPitchMaxDeg: Float = -70
+    /// Extreme pitch hard-reject for horizontal frames only.
+    static var extremePitchRejectDeg: Float = 60
+    /// Extreme roll hard-reject.
+    static var extremeRollRejectDeg: Float = 50
+    /// Soft UX warning threshold (rotationRate rad/s).
+    static var rotationWarnRate: Float = 1.6
+    /// Extreme rotation — briefly hold capture (still not dwell-based).
+    static var rotationExtremeHoldRate: Float = 3.5
+    /// Owned frame ring capacity (~0.5–0.7s at 30fps).
+    static var frameBufferCapacity: Int = 18
+    /// Auto-capture front after this many seconds once frames exist.
+    static var frontAutoCaptureDelaySec: TimeInterval = 0.18
 }
 
 struct DirectionCaptureRecord: Codable, Equatable, Identifiable {
@@ -105,9 +106,20 @@ struct DirectionMotionReading: Equatable {
     var timestamp: TimeInterval
     /// Relative yaw unwrapped from capture start (degrees).
     var relativeYawDeg: Float
-    /// Yaw normalized to [0, 360) for classification.
+    /// Yaw normalized to [0, 360) for display.
     var yaw0to360: Float
     var pitchDeg: Float
     var rollDeg: Float
+    var rotationRate: Float
+}
+
+/// Owned frame sample for crossing selection (never holds live CVPixelBuffer).
+struct DirectionBufferedFrame {
+    var image: UIImage
+    var unwrappedYaw: Float
+    var pitchDeg: Float
+    var rollDeg: Float
+    var timestamp: TimeInterval
+    var sharpness: Float
     var rotationRate: Float
 }
