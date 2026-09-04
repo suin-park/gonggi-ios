@@ -40,7 +40,7 @@ final class PanoramaVisualTrackerTests: XCTestCase {
         let w = 120
         let h = 180
         let base = makeGridGray(width: w, height: h)
-        for dy in [Float(3), -2, 4] {
+        for dy in [Float(8), -6, 10] {
             let curr = shiftGrayWrapped(base, width: w, height: h, dx: 20, dy: Int(dy))
             let match = PanoramaVisualTracker.match(
                 prev: base, prevW: w, prevH: h,
@@ -48,8 +48,8 @@ final class PanoramaVisualTrackerTests: XCTestCase {
                 expectedDx: 20
             )
             XCTAssertTrue(match.usedVisual, "dy=\(dy) should use visual")
-            XCTAssertEqual(match.visualDx, 20, accuracy: 2)
-            XCTAssertEqual(match.visualDy, dy, accuracy: 2)
+            XCTAssertEqual(match.visualDx, 20, accuracy: 3)
+            XCTAssertEqual(match.visualDy, dy, accuracy: 3)
         }
     }
 

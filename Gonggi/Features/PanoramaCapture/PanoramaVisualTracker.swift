@@ -141,23 +141,32 @@ enum PanoramaVisualTracker {
             step: 1
         )
 
-        // Level 2: 1/2 scale refine
+        // Level 2: 1/2 scale — refine dx primarily (keep dy near coarse*2)
         let (p2, w2, h2) = downsample(prev, prevW, prevH, factor: 2)
         let (c2, _, _) = downsample(curr, currW, currH, factor: 2)
-        let center2x = coarse.bestDx * 2
-        let center2y = coarse.bestDy * 2
-        let refine = nccSearch(
+        let refineX = nccSearch(
             prev: p2, prevW: w2, prevH: h2,
             curr: c2, currW: w2, currH: h2,
-            centerDx: center2x, centerDy: center2y,
-            searchX: 6, searchY: 4,
+            centerDx: coarse.bestDx * 2, centerDy: coarse.bestDy * 2,
+            searchX: 6, searchY: 3,
             step: 1
         )
 
-        let dx = refine.bestDx * 2
-        let dy = refine.bestDy * 2
-        let best = refine.bestScore
-        let second = refine.secondScore
+        // Level 3: full-scale 1D dy refine at locked dx (avoids dx/dy swap false peaks)
+        let fullDx = Int(round(refineX.bestDx * 2))
+        let fullDyCenter = Int(round(refineX.bestDy * 2))
+        let dyRefine = nccSearch(
+            prev: prev, prevW: prevW, prevH: prevH,
+            curr: curr, currW: currW, currH: currH,
+            centerDx: Float(fullDx), centerDy: Float(fullDyCenter),
+            searchX: 2, searchY: PanoramaCaptureConfig.trackingSearchYPx,
+            step: 1
+        )
+
+        let dx = dyRefine.bestDx
+        let dy = dyRefine.bestDy
+        let best = dyRefine.bestScore
+        let second = max(dyRefine.secondScore, refineX.secondScore)
         let margin = best - second
 
         if best < PanoramaCaptureConfig.minNCCScore {
