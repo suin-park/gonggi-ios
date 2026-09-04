@@ -26,8 +26,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <exception>
 #include <fstream>
 #include <functional>
+#include <new>
 #include <numeric>
 #include <sstream>
 
@@ -241,6 +243,22 @@ std::string metricsToJSON(const GonggiOpenCVStitchMetrics &m) {
       << "\"encodeTimeMs\":" << m.encodeTimeMs << ","
       << "\"totalTimeMs\":" << m.processingTimeMs << ","
       << "\"peakMemoryMB\":" << m.peakMemoryMB << ","
+      << "\"memoryStartMB\":" << m.memoryStartMB << ","
+      << "\"memoryAfterLoadMB\":" << m.memoryAfterLoadMB << ","
+      << "\"memoryAfterFeatureMB\":" << m.memoryAfterFeatureMB << ","
+      << "\"memoryAfterMatchMB\":" << m.memoryAfterMatchMB << ","
+      << "\"memoryAfterBAMB\":" << m.memoryAfterBAMB << ","
+      << "\"memoryAfterWarpMB\":" << m.memoryAfterWarpMB << ","
+      << "\"memoryBeforeExposureMB\":" << m.memoryBeforeExposureMB << ","
+      << "\"memoryAfterExposureMB\":" << m.memoryAfterExposureMB << ","
+      << "\"memoryBeforeSeamMB\":" << m.memoryBeforeSeamMB << ","
+      << "\"memoryAfterSeamMB\":" << m.memoryAfterSeamMB << ","
+      << "\"memoryBeforeBlendMB\":" << m.memoryBeforeBlendMB << ","
+      << "\"memoryAfterBlendMB\":" << m.memoryAfterBlendMB << ","
+      << "\"memoryAfterEncodeMB\":" << m.memoryAfterEncodeMB << ","
+      << "\"exposureAnalysisLongEdgeUsed\":" << m.exposureAnalysisLongEdgeUsed << ","
+      << "\"seamAnalysisLongEdgeUsed\":" << m.seamAnalysisLongEdgeUsed << ","
+      << "\"blendBandsUsed\":" << m.blendBandsUsed << ","
       << "\"holePercent\":" << m.holePercent << ","
       << "\"zenithHolePercent\":" << m.zenithHolePercent << ","
       << "\"nadirHolePercent\":" << m.nadirHolePercent << ","
@@ -253,6 +271,21 @@ std::string metricsToJSON(const GonggiOpenCVStitchMetrics &m) {
       << "\"blender\":\"" << m.blender << "\""
       << "}";
     return o.str();
+}
+
+void noteMemory(GonggiOpenCVStitchMetrics &metrics, double &slot) {
+    slot = peakMemoryMB();
+    metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, slot);
+}
+
+float uniformAnalysisScale(const std::vector<Mat> &imgs, float targetLongEdge) {
+    int maxLE = 1;
+    for (const auto &m : imgs) {
+        if (!m.empty()) {
+            maxLE = std::max(maxLE, std::max(m.cols, m.rows));
+        }
+    }
+    return std::min(1.f, targetLongEdge / static_cast<float>(std::max(maxLE, 1)));
 }
 
 std::string cameraParamsJSON(const std::vector<CameraParams> &cams) {
@@ -295,7 +328,7 @@ void anchorFirstForward(std::vector<CameraParams> &cameras) {
 
 } // namespace
 
-bool GonggiOpenCVStitchPanorama(
+static bool GonggiOpenCVStitchPanoramaImpl(
     const std::vector<GonggiOpenCVFrameInput> &frames,
     const GonggiOpenCVStitchConfig &config,
     GonggiOpenCVStitchMetrics &metrics
@@ -303,12 +336,16 @@ bool GonggiOpenCVStitchPanorama(
     const double tAll = nowMs();
     metrics = GonggiOpenCVStitchMetrics();
     metrics.inputKeyframeCount = static_cast<int>(frames.size());
-    metrics.peakMemoryMB = peakMemoryMB();
+    noteMemory(metrics, metrics.memoryStartMB);
     metrics.featureDetector = "AKAZE";
     metrics.featureMatcher = "BF_HAMMING_KNN";
-    metrics.exposureMode = "BlocksGain";
+    // Build 23: GainCompensator (not BlocksGain) — BlocksCompensator::feed Mat::create crashed on device.
+    metrics.exposureMode = "Gain";
     metrics.seamFinder = "GraphCutColorGrad";
     metrics.blender = "MultiBand";
+    metrics.blendBandsUsed = 5;
+    metrics.exposureAnalysisLongEdgeUsed = config.exposureAnalysisLongEdge;
+    metrics.seamAnalysisLongEdgeUsed = config.seamAnalysisLongEdge;
 
     auto fail = [&](const std::string &msg) {
         metrics.success = false;
@@ -380,6 +417,7 @@ bool GonggiOpenCVStitchPanorama(
         K_match[i].at<float>(1, 2) *= scale;
         R0_cv[i] = gonggiRToOpenCVR(frames[i].R_gonggi);
     }
+    noteMemory(metrics, metrics.memoryAfterLoadMB);
 
     // ---- Features (AKAZE — indoor edges / frames) ----
     const double tFeat0 = nowMs();
@@ -391,6 +429,7 @@ bool GonggiOpenCVStitchPanorama(
         akaze->detectAndCompute(matchGray[i], noArray(), features[i].keypoints, features[i].descriptors);
     }
     metrics.featureTimeMs = nowMs() - tFeat0;
+    noteMemory(metrics, metrics.memoryAfterFeatureMB);
 
     // ---- Pair selection + matching ----
     const double tMatch0 = nowMs();
@@ -537,6 +576,13 @@ bool GonggiOpenCVStitchPanorama(
     }
     metrics.cameraGraphEdges = matched;
 
+    // Matching-scale images no longer needed (features keep descriptors/keypoints).
+    for (int i = 0; i < n; ++i) {
+        matchImages[i].release();
+        matchGray[i].release();
+    }
+    noteMemory(metrics, metrics.memoryAfterMatchMB);
+
     // Connected components on successful edges
     std::vector<int> parent(n);
     std::iota(parent.begin(), parent.end(), 0);
@@ -643,6 +689,7 @@ bool GonggiOpenCVStitchPanorama(
     }
     metrics.bundleAdjustmentTimeMs = nowMs() - tBA0;
     metrics.bundleAdjustmentConverged = baOK;
+    noteMemory(metrics, metrics.memoryAfterBAMB);
 
     // First-forward anchor: camera 0 fixed to panorama center.
     anchorFirstForward(cameras);
@@ -656,7 +703,7 @@ bool GonggiOpenCVStitchPanorama(
         writeText(config.debugDirectory + "/camera_graph.json", g.str());
     }
 
-    // ---- Warp + exposure + seam + blend (full resolution) ----
+    // ---- Warp (full-res) → exposure (low-res Gain) → seam (downscaled) → blend ----
     const double tWarp0 = nowMs();
     std::vector<Point> corners(n);
     std::vector<Size> sizes(n);
@@ -681,70 +728,146 @@ bool GonggiOpenCVStitchPanorama(
         Mat R;
         cameras[i].R.convertTo(R, CV_32F);
 
-        // High parallax → slightly erode mask later via weight (C9).
         corners[i] = warper->warp(fullImages[i], K, R, INTER_LINEAR, BORDER_REFLECT, warped[i]);
         Mat mask = Mat::ones(fullImages[i].size(), CV_8U) * 255;
         if (frames[i].translationM > 0.35f) {
-            // Shrink contribution for high-parallax frames.
             erode(mask, mask, getStructuringElement(MORPH_ELLIPSE, Size(31, 31)));
         }
         corners[i] = warper->warp(mask, K, R, INTER_NEAREST, BORDER_CONSTANT, warpedMask[i]);
         sizes[i] = warped[i].size();
 
-        // Free full-res source after warp to limit peak memory.
+        // Release source JPEG buffers immediately after this frame's warp.
         fullImages[i].release();
-        matchImages[i].release();
-        matchGray[i].release();
     }
+    fullImages.clear();
     metrics.warpTimeMs = nowMs() - tWarp0;
-    metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, peakMemoryMB());
+    noteMemory(metrics, metrics.memoryAfterWarpMB);
 
-    // Exposure
-    const double tExp0 = nowMs();
-    Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(ExposureCompensator::GAIN_BLOCKS);
-    std::vector<UMat> warpedU(n), warpedMaskU(n);
-    for (int i = 0; i < n; ++i) {
-        warped[i].copyTo(warpedU[i]);
-        warpedMask[i].copyTo(warpedMaskU[i]);
+    // Soft memory budget → analysis resolution / blend bands (iPhone 14 Plus).
+    float exposureLE = config.exposureAnalysisLongEdge;
+    float seamLE = config.seamAnalysisLongEdge;
+    int blendBands = 5;
+    if (metrics.peakMemoryMB >= config.memoryCriticalMB) {
+        exposureLE = std::min(exposureLE, 384.f);
+        seamLE = std::min(seamLE, 512.f);
+        blendBands = 3;
+    } else if (metrics.peakMemoryMB >= config.memoryWarnMB) {
+        exposureLE = std::min(exposureLE, 512.f);
+        seamLE = std::min(seamLE, 640.f);
+        blendBands = 4;
     }
-    compensator->feed(corners, warpedU, warpedMaskU);
-    for (int i = 0; i < n; ++i) {
-        compensator->apply(i, corners[i], warped[i], warpedMask[i]);
+    metrics.exposureAnalysisLongEdgeUsed = exposureLE;
+    metrics.seamAnalysisLongEdgeUsed = seamLE;
+    metrics.blendBandsUsed = blendBands;
+
+    // Exposure: estimate gains on downscaled copies — never duplicate full-res into UMat arrays.
+    metrics.memoryBeforeExposureMB = peakMemoryMB();
+    metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, metrics.memoryBeforeExposureMB);
+    const double tExp0 = nowMs();
+    {
+        const float expScale = uniformAnalysisScale(warped, exposureLE);
+        std::vector<Point> cornersLo(n);
+        std::vector<UMat> imgsLo(n), masksLo(n);
+        for (int i = 0; i < n; ++i) {
+            Mat imgLo, maskLo;
+            if (expScale < 0.999f) {
+                resize(warped[i], imgLo, Size(), expScale, expScale, INTER_AREA);
+                resize(warpedMask[i], maskLo, Size(), expScale, expScale, INTER_NEAREST);
+            } else {
+                imgLo = warped[i];
+                maskLo = warpedMask[i];
+            }
+            cornersLo[i] = Point(
+                cvRound(corners[i].x * expScale),
+                cvRound(corners[i].y * expScale)
+            );
+            imgLo.copyTo(imgsLo[i]);
+            maskLo.copyTo(masksLo[i]);
+            if (expScale < 0.999f) {
+                imgLo.release();
+                maskLo.release();
+            }
+        }
+        // GainCompensator: per-image scalar; BlocksGain avoided (Build 22 SIGABRT in singleFeed).
+        Ptr<ExposureCompensator> compensator =
+            ExposureCompensator::createDefault(ExposureCompensator::GAIN);
+        metrics.exposureMode = "Gain";
+        compensator->feed(cornersLo, imgsLo, masksLo);
+        imgsLo.clear();
+        masksLo.clear();
+        for (int i = 0; i < n; ++i) {
+            compensator->apply(i, corners[i], warped[i], warpedMask[i]);
+        }
     }
     metrics.exposureTimeMs = nowMs() - tExp0;
+    noteMemory(metrics, metrics.memoryAfterExposureMB);
 
-    // Seam on downscaled images for memory
+    // Seam: real downscale for GraphCut, then upscale mask back to full-res.
+    metrics.memoryBeforeSeamMB = peakMemoryMB();
+    metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, metrics.memoryBeforeSeamMB);
     const double tSeam0 = nowMs();
-    std::vector<UMat> warpedF(n), masksF(n);
-    std::vector<Point> cornersF = corners;
-    for (int i = 0; i < n; ++i) {
-        Mat w; warped[i].convertTo(w, CV_32F);
-        w.copyTo(warpedF[i]);
-        warpedMask[i].copyTo(masksF[i]);
-    }
-    Ptr<SeamFinder> seamFinder;
-    try {
-        seamFinder = makePtr<GraphCutSeamFinder>(GraphCutSeamFinderBase::COST_COLOR_GRAD);
-        metrics.seamFinder = "GraphCutColorGrad";
-    } catch (...) {
-        seamFinder = makePtr<DpSeamFinder>(DpSeamFinder::COLOR_GRAD);
-        metrics.seamFinder = "DpColorGrad";
-    }
-    seamFinder->find(warpedF, cornersF, masksF);
-    for (int i = 0; i < n; ++i) {
-        masksF[i].copyTo(warpedMask[i]);
-        warpedF[i].release();
-        masksF[i].release();
+    {
+        const float seamScale = uniformAnalysisScale(warped, seamLE);
+        std::vector<UMat> warpedF(n), masksF(n);
+        std::vector<Point> cornersF(n);
+        std::vector<Mat> coverageFull(n);
+        for (int i = 0; i < n; ++i) {
+            coverageFull[i] = warpedMask[i].clone();
+            Mat w8, w32, mLo;
+            if (seamScale < 0.999f) {
+                resize(warped[i], w8, Size(), seamScale, seamScale, INTER_AREA);
+                resize(warpedMask[i], mLo, Size(), seamScale, seamScale, INTER_NEAREST);
+            } else {
+                w8 = warped[i];
+                mLo = warpedMask[i];
+            }
+            w8.convertTo(w32, CV_32F);
+            w32.copyTo(warpedF[i]);
+            mLo.copyTo(masksF[i]);
+            cornersF[i] = Point(
+                cvRound(corners[i].x * seamScale),
+                cvRound(corners[i].y * seamScale)
+            );
+            if (seamScale < 0.999f) {
+                w8.release();
+                w32.release();
+                mLo.release();
+            }
+        }
+        Ptr<SeamFinder> seamFinder;
+        try {
+            seamFinder = makePtr<GraphCutSeamFinder>(GraphCutSeamFinderBase::COST_COLOR_GRAD);
+            metrics.seamFinder = "GraphCutColorGrad";
+        } catch (...) {
+            seamFinder = makePtr<DpSeamFinder>(DpSeamFinder::COLOR_GRAD);
+            metrics.seamFinder = "DpColorGrad";
+        }
+        seamFinder->find(warpedF, cornersF, masksF);
+        for (int i = 0; i < n; ++i) {
+            Mat seamLo;
+            masksF[i].copyTo(seamLo);
+            Mat seamFull;
+            if (seamScale < 0.999f) {
+                resize(seamLo, seamFull, warpedMask[i].size(), 0, 0, INTER_NEAREST);
+            } else {
+                seamFull = seamLo;
+            }
+            bitwise_and(seamFull, coverageFull[i], warpedMask[i]);
+            warpedF[i].release();
+            masksF[i].release();
+            coverageFull[i].release();
+        }
     }
     metrics.seamTimeMs = nowMs() - tSeam0;
+    noteMemory(metrics, metrics.memoryAfterSeamMB);
 
-    // Blend into fixed 4096×2048 equirect canvas.
-    // OpenCV spherical warper produces a variable ROI pano; we composite into Gonggi canvas.
+    // Blend into fixed equirect canvas.
+    metrics.memoryBeforeBlendMB = peakMemoryMB();
+    metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, metrics.memoryBeforeBlendMB);
     const double tBlend0 = nowMs();
     const int outW = config.outputWidth;
     const int outH = config.outputHeight;
 
-    // Determine OpenCV pano bounds
     std::vector<Size> sizesW = sizes;
     Rect dstRoi = resultRoi(corners, sizesW);
     if (dstRoi.width < 10 || dstRoi.height < 10) {
@@ -754,7 +877,7 @@ bool GonggiOpenCVStitchPanorama(
     Ptr<Blender> blender = Blender::createDefault(Blender::MULTI_BAND, false);
     MultiBandBlender *mb = dynamic_cast<MultiBandBlender *>(blender.get());
     if (mb) {
-        mb->setNumBands(5);
+        mb->setNumBands(blendBands);
     }
     blender->prepare(dstRoi);
 
@@ -763,32 +886,34 @@ bool GonggiOpenCVStitchPanorama(
         warped[i].convertTo(warped16, CV_16S);
         blender->feed(warped16, warpedMask[i], corners[i]);
         warped[i].release();
+        warpedMask[i].release();
+        warped16.release();
     }
     Mat result16, resultMask;
     blender->blend(result16, resultMask);
     Mat result8;
     result16.convertTo(result8, CV_8U);
+    result16.release();
     metrics.blendTimeMs = nowMs() - tBlend0;
+    noteMemory(metrics, metrics.memoryAfterBlendMB);
 
     if (!config.debugDirectory.empty()) {
         imwrite(config.debugDirectory + "/preblend_preview.jpg", result8);
         imwrite(config.debugDirectory + "/hole_mask.png", resultMask);
     }
 
-    // Map OpenCV spherical result → Gonggi 2:1 equirect (first-forward U=0.5, zenith top).
-    // SphericalWarper output is already equirectangular-like in a horizontal unwrap.
-    // Resize to exact 4096×2048 and ensure vertical orientation (zenith at top).
     const double tEnc0 = nowMs();
     Mat pano;
     resize(result8, pano, Size(outW, outH), 0, 0, INTER_AREA);
+    result8.release();
     Mat panoMask;
     if (!resultMask.empty()) {
         resize(resultMask, panoMask, Size(outW, outH), 0, 0, INTER_NEAREST);
+        resultMask.release();
     } else {
         panoMask = Mat::ones(outH, outW, CV_8U) * 255;
     }
 
-    // Hole metrics
     int hole = 0, zenHole = 0, nadHole = 0;
     const int zenRows = std::max(1, outH / 10);
     const int nadStart = outH - zenRows;
@@ -807,7 +932,6 @@ bool GonggiOpenCVStitchPanorama(
     metrics.zenithHolePercent = 100.0 * zenHole / (zenRows * outW);
     metrics.nadirHolePercent = 100.0 * nadHole / (zenRows * outW);
 
-    // Leave holes black (no AI fill).
     for (int y = 0; y < outH; ++y) {
         uchar *row = pano.ptr<uchar>(y);
         const uchar *m = panoMask.ptr<uchar>(y);
@@ -825,8 +949,8 @@ bool GonggiOpenCVStitchPanorama(
         return fail("failed to write output JPEG");
     }
     metrics.encodeTimeMs = nowMs() - tEnc0;
+    noteMemory(metrics, metrics.memoryAfterEncodeMB);
 
-    // File size
     struct stat st {};
     if (::stat(config.outputPath.c_str(), &st) == 0) {
         metrics.outputFileSizeMB = static_cast<double>(st.st_size) / (1024.0 * 1024.0);
@@ -842,4 +966,55 @@ bool GonggiOpenCVStitchPanorama(
         writeText(config.debugDirectory + "/metrics.json", metricsToJSON(metrics));
     }
     return true;
+}
+
+bool GonggiOpenCVStitchPanorama(
+    const std::vector<GonggiOpenCVFrameInput> &frames,
+    const GonggiOpenCVStitchConfig &config,
+    GonggiOpenCVStitchMetrics &metrics
+) {
+    const double tAll = nowMs();
+    try {
+        return GonggiOpenCVStitchPanoramaImpl(frames, config, metrics);
+    } catch (const cv::Exception &e) {
+        metrics.success = false;
+        metrics.errorMessage = std::string("cv::Exception: ") + e.what();
+        metrics.processingTimeMs = nowMs() - tAll;
+        metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, peakMemoryMB());
+        if (!config.debugDirectory.empty()) {
+            ensureDir(config.debugDirectory);
+            writeText(config.debugDirectory + "/metrics.json", metricsToJSON(metrics));
+        }
+        return false;
+    } catch (const std::bad_alloc &e) {
+        metrics.success = false;
+        metrics.errorMessage = std::string("std::bad_alloc: ") + e.what();
+        metrics.processingTimeMs = nowMs() - tAll;
+        metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, peakMemoryMB());
+        if (!config.debugDirectory.empty()) {
+            ensureDir(config.debugDirectory);
+            writeText(config.debugDirectory + "/metrics.json", metricsToJSON(metrics));
+        }
+        return false;
+    } catch (const std::exception &e) {
+        metrics.success = false;
+        metrics.errorMessage = std::string("std::exception: ") + e.what();
+        metrics.processingTimeMs = nowMs() - tAll;
+        metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, peakMemoryMB());
+        if (!config.debugDirectory.empty()) {
+            ensureDir(config.debugDirectory);
+            writeText(config.debugDirectory + "/metrics.json", metricsToJSON(metrics));
+        }
+        return false;
+    } catch (...) {
+        metrics.success = false;
+        metrics.errorMessage = "unknown C++ exception in OpenCV stitch";
+        metrics.processingTimeMs = nowMs() - tAll;
+        metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, peakMemoryMB());
+        if (!config.debugDirectory.empty()) {
+            ensureDir(config.debugDirectory);
+            writeText(config.debugDirectory + "/metrics.json", metricsToJSON(metrics));
+        }
+        return false;
+    }
 }

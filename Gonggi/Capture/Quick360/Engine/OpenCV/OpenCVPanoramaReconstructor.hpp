@@ -31,6 +31,14 @@ struct GonggiOpenCVStitchConfig {
     float maxVisualCorrectionDeg = 12.f;
     float minInlierRatio = 0.25f;
     int minInliers = 16;
+    /// Exposure gain estimation long-edge (Build 23: never full-res feed).
+    float exposureAnalysisLongEdge = 768.f;
+    /// Seam finder analysis long-edge (Build 23: real downscale).
+    float seamAnalysisLongEdge = 800.f;
+    /// Soft phys_footprint budgets (MB) for iPhone 14 Plus (~6GB).
+    /// Warn: reduce analysis resolution. Critical: more aggressive + fewer blend bands.
+    double memoryWarnMB = 1800.0;
+    double memoryCriticalMB = 2200.0;
 };
 
 struct GonggiOpenCVStitchMetrics {
@@ -70,12 +78,31 @@ struct GonggiOpenCVStitchMetrics {
     double outputFileSizeMB = 0;
     std::string featureDetector = "AKAZE";
     std::string featureMatcher = "BF_HAMMING_KNN";
-    std::string exposureMode = "BlocksGain";
+    /// Build 23 default: Gain (not BlocksGain) for iPhone memory safety.
+    std::string exposureMode = "Gain";
     std::string seamFinder = "GraphCutColorGrad";
     std::string blender = "MultiBand";
+    // Memory telemetry (phys_footprint MB)
+    double memoryStartMB = 0;
+    double memoryAfterLoadMB = 0;
+    double memoryAfterFeatureMB = 0;
+    double memoryAfterMatchMB = 0;
+    double memoryAfterBAMB = 0;
+    double memoryAfterWarpMB = 0;
+    double memoryBeforeExposureMB = 0;
+    double memoryAfterExposureMB = 0;
+    double memoryBeforeSeamMB = 0;
+    double memoryAfterSeamMB = 0;
+    double memoryBeforeBlendMB = 0;
+    double memoryAfterBlendMB = 0;
+    double memoryAfterEncodeMB = 0;
+    float exposureAnalysisLongEdgeUsed = 0;
+    float seamAnalysisLongEdgeUsed = 0;
+    int blendBandsUsed = 5;
 };
 
 /// Returns true on success and writes JPEG to config.outputPath.
+/// Never throws across this boundary — all C++/OpenCV exceptions become structured failure.
 bool GonggiOpenCVStitchPanorama(
     const std::vector<GonggiOpenCVFrameInput> &frames,
     const GonggiOpenCVStitchConfig &config,

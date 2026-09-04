@@ -59,6 +59,11 @@ struct Quick360SummaryView: View {
                                     url: PanoramaABPaths.openCVPanoramaURL(sessionId: summary.sessionId)
                                 )
                             }
+                        } else if Quick360Config.testFlightABCompareEnabled || hasABArtifacts {
+                            Text("OpenCV 재구성 실패 — Legacy 미리보기는 유지됩니다.")
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         if hasABArtifacts {
                             SecondaryButton(title: "A/B 결과 공유", icon: "square.and.arrow.up") {
