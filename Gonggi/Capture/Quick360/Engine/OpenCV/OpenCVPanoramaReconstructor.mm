@@ -5,6 +5,7 @@
 
 #import "OpenCVPanoramaReconstructor.hpp"
 
+#import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
 #import <opencv2/core.hpp>
 #import <opencv2/imgproc.hpp>
