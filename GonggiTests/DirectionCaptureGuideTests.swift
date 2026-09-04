@@ -122,6 +122,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
 
     func testFullContinuousSweepCapturesEightHorizontalsOnce() throws {
         let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
         try engine.prepareCamera(mockMode: true)
         engine.beginCapture()
 
@@ -184,6 +185,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
 
     func testDuplicateHorizontalNotRecaptured() throws {
         let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
         try engine.prepareCamera(mockMode: true)
         engine.beginCapture()
         engine.ingestSyntheticFrame(
@@ -201,6 +203,32 @@ final class DirectionCaptureGuideTests: XCTestCase {
             engine.captured.keys.filter { $0 == .frontRight }.count,
             1
         )
+        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
+    }
+
+    /// Regression: Build 32-style motion samples must keep updating lastMotion for UI yaw/pitch.
+    func testMotionSequenceKeepsUpdatingLastMotion() throws {
+        let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
+        try engine.prepareCamera(mockMode: true)
+        engine.beginCapture()
+
+        let samples: [(Float, Float)] = [
+            (0, 0), (20, -5), (45, -10), (70, -12), (90, -8),
+            (135, -15), (180, -20), (225, -18), (270, -10), (315, -6)
+        ]
+        for (i, sample) in samples.enumerated() {
+            engine.ingestSyntheticFrame(
+                image: DirectionCaptureEngine.makeMockImage(direction: .front),
+                unwrappedYaw: sample.0,
+                pitchDeg: sample.1,
+                timestamp: TimeInterval(i) * 0.05,
+                sharpness: 80
+            )
+            XCTAssertEqual(engine.lastMotion.relativeYawDeg, sample.0, accuracy: 0.01)
+            XCTAssertEqual(engine.lastMotion.yaw0to360, DirectionCaptureGuide.normalizeYaw0to360(sample.0), accuracy: 0.01)
+            XCTAssertEqual(engine.lastMotion.pitchDeg, sample.1, accuracy: 0.01)
+        }
         CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
     }
 }

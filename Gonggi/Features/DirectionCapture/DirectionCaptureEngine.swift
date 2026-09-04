@@ -34,6 +34,8 @@ final class DirectionCaptureEngine: NSObject {
     private var captureStartedAt: TimeInterval = 0
     private var frontCaptured = false
     private var warnFast = false
+    /// Latest live buffer (Build 32 style). Used as capture fallback; not retained across async hops.
+    private var latestPixelBuffer: CVPixelBuffer?
     /// When false, beginCapture will not spawn the demo mock yaw sweep (unit tests).
     var enableMockSweep = true
 
@@ -108,6 +110,7 @@ final class DirectionCaptureEngine: NSObject {
         horizontalTargetIndex = 0
         frontCaptured = false
         warnFast = false
+        latestPixelBuffer = nil
         yawTracker.reset()
         motion.resetReference()
         sessionId = "dir-\(UUID().uuidString)"
@@ -124,7 +127,7 @@ final class DirectionCaptureEngine: NSObject {
         refreshTargetUI()
         notify()
 
-        if useMock {
+        if useMock, enableMockSweep {
             startMockContinuousSweep()
         }
     }
@@ -171,31 +174,65 @@ final class DirectionCaptureEngine: NSObject {
         )
     }
 
-    // MARK: - Live pipeline
+    // MARK: - Live pipeline (Build 32 motion + Build 33 capture)
 
-    private func processLiveFrame(pixelBuffer: CVPixelBuffer) {
+    /// Build 32 motion path restored: always refresh `lastMotion` from `motion.latest`,
+    /// then best-effort frame buffer + crossing capture. Image conversion must never
+    /// block or skip motion/UI updates.
+    private func processMotionAndMaybeCapture(pixelBuffer: CVPixelBuffer?) {
         guard isCapturing else { return }
+
+        // 1) Motion update — identical lifecycle to Build 32
         let m = motion.latest
         let unwrapped = yawTracker.update(rawYawDeg: m.yawDeg)
-        guard let image = Self.uprightJPEGImage(from: pixelBuffer) else { return }
-        let sharpness = Self.estimateSharpness(image)
-        let frame = DirectionBufferedFrame(
-            image: image,
-            unwrappedYaw: unwrapped,
+        lastMotion = DirectionMotionReading(
+            timestamp: m.timestamp,
+            relativeYawDeg: unwrapped,
+            yaw0to360: DirectionCaptureGuide.normalizeYaw0to360(unwrapped),
             pitchDeg: m.pitchDeg,
             rollDeg: m.rollDeg,
-            timestamp: m.timestamp,
-            sharpness: sharpness,
             rotationRate: m.rotationRate
         )
-        pushFrame(frame)
-        processSample(
-            unwrappedYaw: unwrapped,
-            pitchDeg: m.pitchDeg,
-            rollDeg: m.rollDeg,
-            rotationRate: m.rotationRate,
-            timestamp: m.timestamp
-        )
+        warnFast = DirectionCaptureGuide.shouldWarnRotation(m.rotationRate)
+
+        // 2) Frame buffer (Build 33) — best effort only
+        if let pb = pixelBuffer {
+            latestPixelBuffer = pb
+            if let image = Self.uprightJPEGImage(from: pb) {
+                pushFrame(
+                    DirectionBufferedFrame(
+                        image: image,
+                        unwrappedYaw: unwrapped,
+                        pitchDeg: m.pitchDeg,
+                        rollDeg: m.rollDeg,
+                        timestamp: m.timestamp,
+                        sharpness: Self.estimateSharpness(image),
+                        rotationRate: m.rotationRate
+                    )
+                )
+            }
+        }
+
+        // 3) Capture algorithm (Build 33 crossing) — uses motion values above
+        switch phase {
+        case .capturingHorizontal:
+            processHorizontal(
+                unwrappedYaw: unwrapped,
+                pitchDeg: m.pitchDeg,
+                rollDeg: m.rollDeg,
+                rotationRate: m.rotationRate
+            )
+        case .capturingUp, .capturingDown:
+            processVertical(
+                pitchDeg: m.pitchDeg,
+                rollDeg: m.rollDeg,
+                rotationRate: m.rotationRate
+            )
+        default:
+            break
+        }
+        refreshTargetUI()
+        notify()
     }
 
     private func processSample(
@@ -227,6 +264,45 @@ final class DirectionCaptureEngine: NSObject {
         notify()
     }
 
+    /// Prefer ring-buffer frame closest to target; else convert `latestPixelBuffer` at accept time (Build 32).
+    private func frameForCommit(targetYaw: Float) -> DirectionBufferedFrame? {
+        if let best = DirectionCaptureGuide.bestFrame(in: frameBuffer, targetYaw: targetYaw) {
+            return best
+        }
+        guard let pb = latestPixelBuffer,
+              let image = Self.uprightJPEGImage(from: pb) else { return nil }
+        return DirectionBufferedFrame(
+            image: image,
+            unwrappedYaw: lastMotion.relativeYawDeg,
+            pitchDeg: lastMotion.pitchDeg,
+            rollDeg: lastMotion.rollDeg,
+            timestamp: lastMotion.timestamp,
+            sharpness: Self.estimateSharpness(image),
+            rotationRate: lastMotion.rotationRate
+        )
+    }
+
+    private func frameForVerticalCommit(preferUp: Bool) -> DirectionBufferedFrame? {
+        if preferUp, let best = frameBuffer.max(by: { $0.pitchDeg < $1.pitchDeg }) {
+            return best
+        }
+        if !preferUp, let best = frameBuffer.min(by: { $0.pitchDeg < $1.pitchDeg }) {
+            return best
+        }
+        if let last = frameBuffer.last { return last }
+        guard let pb = latestPixelBuffer,
+              let image = Self.uprightJPEGImage(from: pb) else { return nil }
+        return DirectionBufferedFrame(
+            image: image,
+            unwrappedYaw: lastMotion.relativeYawDeg,
+            pitchDeg: lastMotion.pitchDeg,
+            rollDeg: lastMotion.rollDeg,
+            timestamp: lastMotion.timestamp,
+            sharpness: Self.estimateSharpness(image),
+            rotationRate: lastMotion.rotationRate
+        )
+    }
+
     private func processHorizontal(
         unwrappedYaw: Float,
         pitchDeg: Float,
@@ -236,9 +312,9 @@ final class DirectionCaptureEngine: NSObject {
         // Front: auto-grab soon after start — no stop / dwell required.
         if !frontCaptured {
             let elapsed = ProcessInfo.processInfo.systemUptime - captureStartedAt
-            if !frameBuffer.isEmpty, elapsed >= DirectionCaptureConfig.frontAutoCaptureDelaySec {
+            if elapsed >= DirectionCaptureConfig.frontAutoCaptureDelaySec {
                 if !DirectionCaptureGuide.isExtremePose(pitchDeg: pitchDeg, rollDeg: rollDeg) {
-                    if let best = DirectionCaptureGuide.bestFrame(in: frameBuffer, targetYaw: 0) {
+                    if let best = frameForCommit(targetYaw: 0) {
                         commitCapture(.front, frame: best)
                         frontCaptured = true
                         horizontalTargetIndex = 1
@@ -277,7 +353,7 @@ final class DirectionCaptureEngine: NSObject {
             currentYaw: unwrappedYaw,
             targetYaw: targetYaw
         ) {
-            if let best = DirectionCaptureGuide.bestFrame(in: frameBuffer, targetYaw: targetYaw) {
+            if let best = frameForCommit(targetYaw: targetYaw) {
                 commitCapture(targetDir, frame: best)
                 horizontalTargetIndex += 1
                 if horizontalTargetIndex >= DirectionName.horizontalOrder.count {
@@ -312,9 +388,7 @@ final class DirectionCaptureEngine: NSObject {
                 crossed = pitchDeg >= DirectionCaptureConfig.upPitchMinDeg
             }
             if crossed || DirectionCaptureGuide.classifyVertical(pitchDeg: pitchDeg) == .up {
-                let best = frameBuffer.max(by: { $0.pitchDeg < $1.pitchDeg })
-                    ?? frameBuffer.last
-                if let best {
+                if let best = frameForVerticalCommit(preferUp: true) {
                     commitCapture(.up, frame: best)
                     advancePhaseIfNeeded()
                 }
@@ -329,9 +403,7 @@ final class DirectionCaptureEngine: NSObject {
                 crossed = pitchDeg <= DirectionCaptureConfig.downPitchMaxDeg
             }
             if crossed || DirectionCaptureGuide.classifyVertical(pitchDeg: pitchDeg) == .down {
-                let best = frameBuffer.min(by: { $0.pitchDeg < $1.pitchDeg })
-                    ?? frameBuffer.last
-                if let best {
+                if let best = frameForVerticalCommit(preferUp: false) {
                     commitCapture(.down, frame: best)
                     advancePhaseIfNeeded()
                 }
@@ -645,7 +717,8 @@ extension DirectionCaptureEngine: AVCaptureVideoDataOutputSampleBufferDelegate {
         from connection: AVCaptureConnection
     ) {
         guard isCapturing, !useMock else { return }
-        guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        processLiveFrame(pixelBuffer: pb)
+        // Build 32: keep buffer ref, then always run motion → capture (image convert is best-effort inside).
+        let pb = CMSampleBufferGetImageBuffer(sampleBuffer)
+        processMotionAndMaybeCapture(pixelBuffer: pb)
     }
 }
