@@ -24,21 +24,23 @@ final class PanoramaStripComposerTests: XCTestCase {
         let composer = PanoramaStripComposer()
         let w = 160
         let h = 200
-        for i in 0..<30 {
-            let yaw = Float(i) * 1.0
+        for i in 0..<60 {
+            let yaw = Float(i) * 1.5
             let rgba = makeFeatureFrame(width: w, height: h, featureOffset: i * 2)
             XCTAssertTrue(
                 composer.acceptFrame(rgba: rgba, width: w, height: h, yawDeg: yaw),
                 "strip \(i) should accept"
             )
         }
-        XCTAssertEqual(composer.placements.count, 30)
-        XCTAssertGreaterThan(composer.yawSpanDeg(), 25)
+        XCTAssertEqual(composer.placements.count, 60)
+        XCTAssertGreaterThan(composer.yawSpanDeg(), 80)
         let image = composer.composeUIImage(cropToContent: true)
         XCTAssertNotNil(image)
         guard let image else { return }
-        XCTAssertGreaterThan(image.size.width, image.size.height * 0.8)
+        // ~88° sweep should produce a clearly wider-than-tall crop.
+        XCTAssertGreaterThan(image.size.width, image.size.height)
         XCTAssertEqual(Int(image.size.height.rounded()), h)
+        XCTAssertGreaterThan(composer.canvasWidth, 500)
     }
 
     func testVerticalOffsetFindsShiftedStrip() {
