@@ -191,14 +191,33 @@ jobs:
       - name: Build (iOS Simulator, unsigned)
         run: |
           set -euo pipefail
+          set +e
           xcodebuild build \
             -project "${{ env.PROJECT }}" \
             -scheme "${{ env.SCHEME }}" \
             -sdk iphonesimulator \
             -destination "generic/platform=iOS Simulator" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            EXCLUDED_ARCHS=x86_64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee xcodebuild-debug.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "::group::xcodebuild errors (filtered)"
+          grep -E "error:|fatal error:|undefined symbol|ld:|clang\+\+:" xcodebuild-debug.log | tail -n 80 || true
+          echo "::endgroup::"
+          exit "${STATUS}"
+
+      - name: Upload xcodebuild log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-debug-log
+          path: xcodebuild-debug.log
+          if-no-files-found: ignore
 
       - name: Release build (iOS Simulator, unsigned)
         run: |
@@ -209,6 +228,9 @@ jobs:
             -configuration Release \
             -sdk iphonesimulator \
             -destination "generic/platform=iOS Simulator" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            EXCLUDED_ARCHS=x86_64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
