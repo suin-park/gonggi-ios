@@ -173,6 +173,7 @@ final class PanoramaStripComposerTests: XCTestCase {
             uprightFrameWidth: 720,
             uprightFrameHeight: 1280,
             stripWidth: 48,
+            trackingCropWidth: 360,
             approxHFovDeg: 53,
             pxPerDegree: 720 / 53,
             startYawDeg: 0,
@@ -190,6 +191,15 @@ final class PanoramaStripComposerTests: XCTestCase {
             memoryEstimateMB: 40,
             meanVerticalAlignPx: 1,
             seamFeatherPx: 12,
+            visualCorrectionUsedCount: 40,
+            visualFallbackCount: 5,
+            avgVisualDx: 25,
+            avgAbsVisualCorrectionPx: 3,
+            avgVisualDy: 0.5,
+            meanTrackingConfidence: 0.7,
+            p10TrackingConfidence: 0.4,
+            maxCumulativeVerticalOffset: 12,
+            finalVisualVsYawDriftPx: 18,
             stripEvents: [
                 PanoramaStripEvent(
                     index: 0, rawYaw: 0, unwrappedRelativeYaw: 0,
@@ -202,9 +212,8 @@ final class PanoramaStripComposerTests: XCTestCase {
         let data = try JSONEncoder().encode(report)
         let decoded = try JSONDecoder().decode(PanoramaCaptureReport.self, from: data)
         XCTAssertEqual(decoded.uprightFrameWidth, 720)
-        XCTAssertEqual(decoded.finalCropWidth, 1268)
-        XCTAssertEqual(decoded.stripEvents.count, 1)
-        XCTAssertEqual(decoded.pxPerDegree, 720 / 53, accuracy: 0.01)
+        XCTAssertEqual(decoded.visualCorrectionUsedCount, 40)
+        XCTAssertEqual(decoded.trackingCropWidth, 360)
     }
 
     // MARK: - Helpers

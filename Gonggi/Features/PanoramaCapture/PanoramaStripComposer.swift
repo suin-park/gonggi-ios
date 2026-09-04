@@ -24,6 +24,11 @@ final class PanoramaStripComposer {
     private var maxX: Float = 0
 
     var pxPerDegree: Float { max(1, _pxPerDegree) }
+    var canvasOriginX: Float { originX }
+
+    func yawPriorX(relativeYawDeg: Float) -> Float {
+        originX + relativeYawDeg * pxPerDegree
+    }
 
     var firstPlacementX: Float { placements.first?.xOnCanvas ?? 0 }
     var lastPlacementX: Float { placements.last?.xOnCanvas ?? 0 }
@@ -69,12 +74,22 @@ final class PanoramaStripComposer {
         _pxPerDegree = PanoramaCaptureConfig.pixelsPerDegree(uprightFrameWidth: width)
     }
 
-    /// Place a vertical strip using **unwrapped relative yaw** (degrees from capture start).
-    /// - Parameters:
-    ///   - rgba: strip pixels OR full upright frame (center strip extracted if wider than stripWidth)
-    ///   - width/height: rgba dimensions
-    ///   - uprightFrameWidth: full upright portrait width for FOV (required, must be >> strip)
-    ///   - relativeYawDeg: unwrapped relative yaw (0 at start; increases as user turns right)
+    /// Allocate empty canvas after `configureGeometry` (no strip yet).
+    func prepareEmptyCanvas(height: Int) {
+        guard canvasHeight == 0, uprightFrameWidth > 0, _pxPerDegree > 0 else { return }
+        canvasHeight = height
+        uprightFrameHeight = height
+        let estimate = Int(ceil(200 * _pxPerDegree)) + PanoramaCaptureConfig.stripWidthPx * 4
+        canvasWidth = max(estimate, 2048)
+        let n = canvasWidth * canvasHeight
+        canvasRGBA = [UInt8](repeating: 0, count: n * 4)
+        canvasWeight = [Float](repeating: 0, count: n)
+        originX = Float(canvasWidth) * 0.5
+        minX = originX
+        maxX = originX
+    }
+
+    /// Place a vertical strip at an explicit canvas X (yaw prior + visual correction).
     @discardableResult
     func acceptStrip(
         rgba: [UInt8],
@@ -82,12 +97,16 @@ final class PanoramaStripComposer {
         height: Int,
         uprightFrameWidth: Int,
         rawYawDeg: Float,
-        relativeYawDeg: Float
+        relativeYawDeg: Float,
+        canvasX: Float,
+        verticalOffsetPx: Int,
+        predictedX: Float,
+        usedVisualCorrection: Bool,
+        trackingConfidence: Float
     ) -> Bool {
         let stripW = PanoramaCaptureConfig.stripWidthPx
         guard stripW >= 8, height > 16 else { return false }
         guard uprightFrameWidth >= stripW * 2 else {
-            // Never treat strip width as FOV width.
             return false
         }
 
@@ -104,8 +123,7 @@ final class PanoramaStripComposer {
             maxX = originX
         }
 
-        // yaw → canvas X (monotone for increasing yaw)
-        let xCenter = originX + relativeYawDeg * _pxPerDegree
+        let xCenter = canvasX
         ensureCapacity(forX: xCenter)
 
         let srcStripW = min(stripW, width)
@@ -125,18 +143,11 @@ final class PanoramaStripComposer {
             }
         }
         let meanLuma = sumLuma / Float(max(1, srcStripW * height))
-
-        var vOffset = 0
-        if let prev = lastGrayStrip, lastStripHeight == height {
-            vOffset = Self.bestVerticalOffset(
-                prev: prev, prevW: srcStripW, curr: gray, currW: srcStripW, height: height,
-                search: PanoramaCaptureConfig.verticalAlignSearchPx
-            )
-            meanVerticalAlignPx =
-                (meanVerticalAlignPx * Double(alignSamples) + Double(abs(vOffset)))
-                / Double(alignSamples + 1)
-            alignSamples += 1
-        }
+        let vOffset = verticalOffsetPx
+        meanVerticalAlignPx =
+            (meanVerticalAlignPx * Double(alignSamples) + Double(abs(vOffset)))
+            / Double(alignSamples + 1)
+        alignSamples += 1
 
         var exposureScale: Float = 1
         if !placements.isEmpty, lastMeanLuma > 8 {
@@ -152,9 +163,12 @@ final class PanoramaStripComposer {
             index: placements.count,
             rawYawDeg: rawYawDeg,
             relativeYawDeg: relativeYawDeg,
+            predictedX: predictedX,
             xOnCanvas: xCenter,
             verticalOffsetPx: vOffset,
-            meanLuma: meanLuma
+            meanLuma: meanLuma,
+            usedVisualCorrection: usedVisualCorrection,
+            trackingConfidence: trackingConfidence
         ))
         lastGrayStrip = gray
         lastStripHeight = height
@@ -162,6 +176,38 @@ final class PanoramaStripComposer {
         minX = min(minX, xCenter - Float(srcStripW) / 2)
         maxX = max(maxX, xCenter + Float(srcStripW) / 2)
         return true
+    }
+
+    /// Convenience for geometry-only tests (yaw-only placement).
+    @discardableResult
+    func acceptStrip(
+        rgba: [UInt8],
+        width: Int,
+        height: Int,
+        uprightFrameWidth: Int,
+        rawYawDeg: Float,
+        relativeYawDeg: Float
+    ) -> Bool {
+        if canvasHeight == 0 {
+            configureGeometry(uprightFrameWidth: uprightFrameWidth, uprightFrameHeight: height)
+            canvasHeight = height
+            let estimate = Int(ceil(200 * _pxPerDegree)) + PanoramaCaptureConfig.stripWidthPx * 4
+            canvasWidth = max(estimate, 2048)
+            let n = canvasWidth * canvasHeight
+            canvasRGBA = [UInt8](repeating: 0, count: n * 4)
+            canvasWeight = [Float](repeating: 0, count: n)
+            originX = Float(canvasWidth) * 0.5
+            minX = originX
+            maxX = originX
+        }
+        let predicted = originX + relativeYawDeg * _pxPerDegree
+        return acceptStrip(
+            rgba: rgba, width: width, height: height,
+            uprightFrameWidth: uprightFrameWidth,
+            rawYawDeg: rawYawDeg, relativeYawDeg: relativeYawDeg,
+            canvasX: predicted, verticalOffsetPx: 0,
+            predictedX: predicted, usedVisualCorrection: false, trackingConfidence: 0
+        )
     }
 
     /// Convenience for tests: relative yaw == absolute when starting at 0.

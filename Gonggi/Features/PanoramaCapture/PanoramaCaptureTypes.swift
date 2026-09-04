@@ -158,6 +158,18 @@ struct PanoramaStripEvent: Codable, Equatable {
     var rejectReason: String?
 }
 
+struct PanoramaStripPlacement: Equatable {
+    var index: Int
+    var rawYawDeg: Float
+    var relativeYawDeg: Float
+    var predictedX: Float
+    var xOnCanvas: Float
+    var verticalOffsetPx: Int
+    var meanLuma: Float
+    var usedVisualCorrection: Bool
+    var trackingConfidence: Float
+}
+
 struct PanoramaCaptureReport: Codable, Equatable {
     var sessionId: String
     var captureId: String
@@ -170,6 +182,7 @@ struct PanoramaCaptureReport: Codable, Equatable {
     var uprightFrameWidth: Int
     var uprightFrameHeight: Int
     var stripWidth: Int
+    var trackingCropWidth: Int
     var approxHFovDeg: Float
     var pxPerDegree: Float
     var startYawDeg: Float
@@ -187,11 +200,19 @@ struct PanoramaCaptureReport: Codable, Equatable {
     var memoryEstimateMB: Double
     var meanVerticalAlignPx: Double
     var seamFeatherPx: Int
+    var visualCorrectionUsedCount: Int
+    var visualFallbackCount: Int
+    var avgVisualDx: Float
+    var avgAbsVisualCorrectionPx: Float
+    var avgVisualDy: Float
+    var meanTrackingConfidence: Float
+    var p10TrackingConfidence: Float
+    var maxCumulativeVerticalOffset: Float
+    var finalVisualVsYawDriftPx: Float
     var stripEvents: [PanoramaStripEvent]
     var finalPanoramaPath: String?
     var previewPath: String?
 
-    // Backward-compatible aliases used by older UI/tests.
     var rejectedFrameCount: Int { rejectedStripCount }
     var rejectReasons: [String: Int] { rejectReasonCounts }
     var yawSpanDeg: Float { unwrappedYawSpanDeg }
@@ -206,13 +227,4 @@ struct PanoramaCaptureResult: Equatable {
     var report: PanoramaCaptureReport
     var previewImage: UIImage?
     var finalImage: UIImage?
-}
-
-struct PanoramaStripPlacement: Equatable {
-    var index: Int
-    var rawYawDeg: Float
-    var relativeYawDeg: Float
-    var xOnCanvas: Float
-    var verticalOffsetPx: Int
-    var meanLuma: Float
 }

@@ -150,6 +150,13 @@ enum CaptureSessionStore {
         return dir
     }
 
+    static func createPanoramaTrackingDebugDirectory(sessionId: String) throws -> URL {
+        let dir = try createPanoramaScanDebugDirectory(sessionId: sessionId)
+            .appendingPathComponent("tracking", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     static func deleteSession(sessionId: String) {
         guard let dir = try? createSessionDirectory(sessionId: sessionId) else { return }
         try? FileManager.default.removeItem(at: dir)
