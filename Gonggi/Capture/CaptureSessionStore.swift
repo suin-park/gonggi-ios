@@ -15,6 +15,7 @@ enum CaptureSessionStore {
     static let panoramaCoverageMaskFileName = "capture-coverage-mask.png"
     static let panoramaMetadataFileName = "capture-metadata.json"
     static let panoramaReportFileName = "panorama-report.json"
+    static let panoramaScanFolderName = "panorama_scan"
     static let floorFolderName = "floor"
     static let floorTextureFileName = "floor-texture.jpg"
     static let floorConfidenceMaskFileName = "floor-confidence-mask.png"
@@ -126,6 +127,27 @@ enum CaptureSessionStore {
 
     static func quick360FloorMetadataURL(sessionId: String) throws -> URL {
         try createFloorDirectory(sessionId: sessionId).appendingPathComponent(floorMetadataFileName)
+    }
+
+    // MARK: - Horizontal Panorama Scan (V1)
+
+    static func createPanoramaScanDirectory(sessionId: String) throws -> URL {
+        let dir = try createSessionDirectory(sessionId: sessionId)
+            .appendingPathComponent(panoramaScanFolderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func panoramaScanReportURL(sessionId: String) throws -> URL {
+        try createPanoramaScanDirectory(sessionId: sessionId)
+            .appendingPathComponent("capture_report.json")
+    }
+
+    static func createPanoramaScanDebugDirectory(sessionId: String) throws -> URL {
+        let dir = try createPanoramaScanDirectory(sessionId: sessionId)
+            .appendingPathComponent("debug", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     static func deleteSession(sessionId: String) {
