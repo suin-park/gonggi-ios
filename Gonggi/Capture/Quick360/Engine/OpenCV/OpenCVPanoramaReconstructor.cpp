@@ -243,6 +243,9 @@ std::string metricsToJSON(const GonggiOpenCVStitchMetrics &m) {
       << "\"encodeTimeMs\":" << m.encodeTimeMs << ","
       << "\"totalTimeMs\":" << m.processingTimeMs << ","
       << "\"peakMemoryMB\":" << m.peakMemoryMB << ","
+      << "\"memoryArchitecture\":\"" << m.memoryArchitecture << "\","
+      << "\"maxLoadedFullResCount\":" << m.maxLoadedFullResCount << ","
+      << "\"maxWarpedResidentCount\":" << m.maxWarpedResidentCount << ","
       << "\"memoryStartMB\":" << m.memoryStartMB << ","
       << "\"memoryAfterLoadMB\":" << m.memoryAfterLoadMB << ","
       << "\"memoryAfterFeatureMB\":" << m.memoryAfterFeatureMB << ","
@@ -326,6 +329,47 @@ void anchorFirstForward(std::vector<CameraParams> &cameras) {
     }
 }
 
+/// Jetsam-safe stage checkpoint — flush every major stage immediately.
+struct MemoryTrace {
+    std::string path;
+    void open(const std::string &dir) {
+        if (dir.empty()) return;
+        ensureDir(dir);
+        path = dir + "/memory_trace.jsonl";
+        // Truncate previous incomplete run for this session debug dir.
+        std::ofstream(path, std::ios::trunc);
+    }
+    void checkpoint(
+        const char *stage,
+        int keyframeIndex = -1,
+        int loadedFullResCount = 0,
+        int warpedResidentCount = 0
+    ) {
+        if (path.empty()) return;
+        std::ostringstream o;
+        o << "{"
+          << "\"stage\":\"" << stage << "\","
+          << "\"timestamp\":" << nowMs() << ","
+          << "\"physFootprintMB\":" << peakMemoryMB() << ","
+          << "\"keyframeIndex\":" << keyframeIndex << ","
+          << "\"loadedFullResCount\":" << loadedFullResCount << ","
+          << "\"warpedResidentCount\":" << warpedResidentCount
+          << "}\n";
+        std::ofstream out(path, std::ios::app);
+        out << o.str();
+        out.flush();
+    }
+};
+
+Mat cameraK(const CameraParams &cam) {
+    Mat K = Mat::eye(3, 3, CV_32F);
+    K.at<float>(0, 0) = static_cast<float>(cam.focal);
+    K.at<float>(0, 2) = static_cast<float>(cam.ppx);
+    K.at<float>(1, 1) = static_cast<float>(cam.focal * cam.aspect);
+    K.at<float>(1, 2) = static_cast<float>(cam.ppy);
+    return K;
+}
+
 } // namespace
 
 static bool GonggiOpenCVStitchPanoramaImpl(
@@ -339,13 +383,17 @@ static bool GonggiOpenCVStitchPanoramaImpl(
     noteMemory(metrics, metrics.memoryStartMB);
     metrics.featureDetector = "AKAZE";
     metrics.featureMatcher = "BF_HAMMING_KNN";
-    // Build 23: GainCompensator (not BlocksGain) — BlocksCompensator::feed Mat::create crashed on device.
     metrics.exposureMode = "Gain";
     metrics.seamFinder = "GraphCutColorGrad";
     metrics.blender = "MultiBand";
-    metrics.blendBandsUsed = 5;
+    metrics.memoryArchitecture = "two_pass_streaming";
+    metrics.blendBandsUsed = config.blendBands;
     metrics.exposureAnalysisLongEdgeUsed = config.exposureAnalysisLongEdge;
     metrics.seamAnalysisLongEdgeUsed = config.seamAnalysisLongEdge;
+
+    MemoryTrace trace;
+    trace.open(config.debugDirectory);
+    trace.checkpoint("start", -1, 0, 0);
 
     auto fail = [&](const std::string &msg) {
         metrics.success = false;
@@ -356,6 +404,7 @@ static bool GonggiOpenCVStitchPanoramaImpl(
             ensureDir(config.debugDirectory);
             writeText(config.debugDirectory + "/metrics.json", metricsToJSON(metrics));
         }
+        trace.checkpoint("fail", -1, metrics.maxLoadedFullResCount, metrics.maxWarpedResidentCount);
         return false;
     };
 
@@ -373,36 +422,28 @@ static bool GonggiOpenCVStitchPanoramaImpl(
 
     const int n = static_cast<int>(frames.size());
 
-    // ---- Load full-res + matching-scale images ----
-    std::vector<Mat> fullImages(n), matchImages(n), matchGray(n);
+    // =====================================================================
+    // PASS A — analysis on proxy only (no fullImages[N], no full-res warped[N])
+    // =====================================================================
+    std::vector<Mat> matchImages(n), matchGray(n);
     std::vector<float> matchScale(n, 1.f);
+    std::vector<Size> nativeSizes(n);
     std::vector<Mat> K_full(n), K_match(n), R0_cv(n);
 
     for (int i = 0; i < n; ++i) {
+        // Load one JPEG, downscale to proxy, release full-res immediately.
         Mat bgr = imread(frames[i].jpegPath, IMREAD_COLOR);
         if (bgr.empty()) {
             return fail("failed to read keyframe: " + frames[i].jpegPath);
         }
-        if (bgr.cols != frames[i].width || bgr.rows != frames[i].height) {
-            // Trust actual pixels; rescale intrinsics.
-        }
-        fullImages[i] = bgr;
-        const float longEdge = static_cast<float>(std::max(bgr.cols, bgr.rows));
-        float scale = std::min(1.f, config.matchLongEdge / std::max(longEdge, 1.f));
-        matchScale[i] = scale;
-        if (scale < 0.999f) {
-            resize(bgr, matchImages[i], Size(), scale, scale, INTER_AREA);
-        } else {
-            matchImages[i] = bgr;
-        }
-        cvtColor(matchImages[i], matchGray[i], COLOR_BGR2GRAY);
+        metrics.maxLoadedFullResCount = std::max(metrics.maxLoadedFullResCount, 1);
+        nativeSizes[i] = bgr.size();
 
         Mat K = Mat::eye(3, 3, CV_32F);
         K.at<float>(0, 0) = frames[i].fx;
         K.at<float>(1, 1) = frames[i].fy;
         K.at<float>(0, 2) = frames[i].cx;
         K.at<float>(1, 2) = frames[i].cy;
-        // If JPEG size differs from metadata, scale K.
         float sx = static_cast<float>(bgr.cols) / std::max(frames[i].width, 1);
         float sy = static_cast<float>(bgr.rows) / std::max(frames[i].height, 1);
         K.at<float>(0, 0) *= sx;
@@ -410,16 +451,29 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         K.at<float>(1, 1) *= sy;
         K.at<float>(1, 2) *= sy;
         K_full[i] = K.clone();
+
+        const float longEdge = static_cast<float>(std::max(bgr.cols, bgr.rows));
+        float scale = std::min(1.f, config.matchLongEdge / std::max(longEdge, 1.f));
+        matchScale[i] = scale;
+        if (scale < 0.999f) {
+            resize(bgr, matchImages[i], Size(), scale, scale, INTER_AREA);
+        } else {
+            matchImages[i] = bgr.clone();
+        }
+        bgr.release(); // full-res gone — analysis keeps proxy only
+
         K_match[i] = K.clone();
         K_match[i].at<float>(0, 0) *= scale;
         K_match[i].at<float>(0, 2) *= scale;
         K_match[i].at<float>(1, 1) *= scale;
         K_match[i].at<float>(1, 2) *= scale;
         R0_cv[i] = gonggiRToOpenCVR(frames[i].R_gonggi);
+        cvtColor(matchImages[i], matchGray[i], COLOR_BGR2GRAY);
     }
     noteMemory(metrics, metrics.memoryAfterLoadMB);
+    trace.checkpoint("analysisLoad", -1, 0, 0);
 
-    // ---- Features (AKAZE — indoor edges / frames) ----
+    // ---- Features (AKAZE) ----
     const double tFeat0 = nowMs();
     Ptr<AKAZE> akaze = AKAZE::create(AKAZE::DESCRIPTOR_MLDB, 0, 3, 0.001f);
     std::vector<ImageFeatures> features(n);
@@ -427,11 +481,14 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         features[i].img_idx = i;
         features[i].img_size = matchImages[i].size();
         akaze->detectAndCompute(matchGray[i], noArray(), features[i].keypoints, features[i].descriptors);
+        matchGray[i].release();
     }
+    matchGray.clear();
     metrics.featureTimeMs = nowMs() - tFeat0;
     noteMemory(metrics, metrics.memoryAfterFeatureMB);
+    trace.checkpoint("features", -1, 0, 0);
 
-    // ---- Pair selection + matching ----
+    // ---- Pair selection + matching (unchanged logic) ----
     const double tMatch0 = nowMs();
     auto pairCands = selectPairs(frames);
     Ptr<DescriptorMatcher> matcher = BFMatcher::create(NORM_HAMMING, false);
@@ -460,10 +517,8 @@ static bool GonggiOpenCVStitchPanoramaImpl(
                 good.push_back(v[0]);
             }
         }
-        // Mutual check
         std::vector<std::vector<DMatch>> knnBack;
         matcher->knnMatch(features[pc.j].descriptors, features[pc.i].descriptors, knnBack, 2);
-        std::vector<char> mutual(good.size(), 0);
         std::vector<DMatch> mutualGood;
         for (const auto &m : good) {
             bool ok = false;
@@ -491,7 +546,6 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         Mat H;
         bool geomOK = false;
         if (pts1.size() >= 8) {
-            // Rotation-only model → homography between views (not essential/translation).
             H = findHomography(pts1, pts2, RANSAC, 3.0, inlierMask, 2000, 0.995);
             if (!inlierMask.empty()) {
                 inliers = countNonZero(inlierMask);
@@ -528,7 +582,6 @@ static bool GonggiOpenCVStitchPanoramaImpl(
             if (best >= 0 && bestAng <= config.maxVisualCorrectionDeg * 2.5) {
                 mi.H = H;
                 mi.confidence = std::max(mi.confidence, 0.55);
-                // Fill inlier mask into MatchesInfo
                 mi.inliers_mask.assign(good.size(), 0);
                 if (!inlierMask.empty()) {
                     for (size_t k = 0; k < good.size() && k < static_cast<size_t>(inlierMask.rows); ++k) {
@@ -575,15 +628,10 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         metrics.averageOverlap = sumOverlap / matched;
     }
     metrics.cameraGraphEdges = matched;
-
-    // Matching-scale images no longer needed (features keep descriptors/keypoints).
-    for (int i = 0; i < n; ++i) {
-        matchImages[i].release();
-        matchGray[i].release();
-    }
     noteMemory(metrics, metrics.memoryAfterMatchMB);
+    trace.checkpoint("matching", -1, 0, 0);
 
-    // Connected components on successful edges
+    // Connected components
     std::vector<int> parent(n);
     std::iota(parent.begin(), parent.end(), 0);
     std::function<int(int)> find = [&](int x) {
@@ -604,8 +652,9 @@ static bool GonggiOpenCVStitchPanoramaImpl(
     roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
     metrics.connectedComponents = static_cast<int>(roots.size());
 
-    // ---- Camera init from ARKit prior ----
+    // ---- Camera init from ARKit prior (full-res intrinsics for final warp) ----
     std::vector<CameraParams> cameras(n);
+    std::vector<CameraParams> camerasProxy(n);
     for (int i = 0; i < n; ++i) {
         cameras[i].focal = 0.5f * (K_full[i].at<float>(0, 0) + K_full[i].at<float>(1, 1));
         cameras[i].ppx = K_full[i].at<float>(0, 2);
@@ -613,22 +662,24 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         cameras[i].aspect = K_full[i].at<float>(1, 1) / std::max(K_full[i].at<float>(0, 0), 1.f);
         R0_cv[i].convertTo(cameras[i].R, CV_32F);
         cameras[i].t = Mat::zeros(3, 1, CV_32F);
+
+        camerasProxy[i].focal = 0.5f * (K_match[i].at<float>(0, 0) + K_match[i].at<float>(1, 1));
+        camerasProxy[i].ppx = K_match[i].at<float>(0, 2);
+        camerasProxy[i].ppy = K_match[i].at<float>(1, 2);
+        camerasProxy[i].aspect = K_match[i].at<float>(1, 1) / std::max(K_match[i].at<float>(0, 0), 1.f);
+        R0_cv[i].convertTo(camerasProxy[i].R, CV_32F);
+        camerasProxy[i].t = Mat::zeros(3, 1, CV_32F);
     }
     if (!config.debugDirectory.empty()) {
         writeText(config.debugDirectory + "/camera_before.json", cameraParamsJSON(cameras));
     }
 
-    // Build OpenCV matches graph for BA: use only confident pairs.
     std::vector<MatchesInfo> baMatches;
     for (const auto &mi : pairwise) {
         if (mi.confidence > 0 && mi.num_inliers >= config.minInliers) {
             baMatches.push_back(mi);
         }
     }
-
-    // Relative rotation edges from ARKit for weak visual pairs still connected by pose prior.
-    // Prefer visual; for BA we need MatchesInfo with matches — use OpenCV estimator on features
-    // via Homography-free path: BundleAdjusterRay with initial R.
 
     const double tBA0 = nowMs();
     double errBefore = 0, errAfter = 0;
@@ -638,27 +689,21 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         baOK = true;
         metrics.optimizedCameraCount = 1;
     } else if (!baMatches.empty()) {
-        // Estimate pairwise focals already set. Run rotation-only BA.
         Ptr<BundleAdjusterBase> adjuster = makePtr<BundleAdjusterRay>();
         adjuster->setConfThresh(0.15);
-        // Error before: mean angle vs ARKit prior after leaving component — use identity metric.
-        std::vector<CameraParams> camsBefore = cameras;
+        std::vector<CameraParams> camsBefore = camerasProxy;
         try {
-            // OpenCV BA expects features + matches covering cameras.
-            // Provide full features vector and baMatches.
-            bool ran = (*adjuster)(features, baMatches, cameras);
+            bool ran = (*adjuster)(features, baMatches, camerasProxy);
             baOK = ran;
-            // Measure visual correction vs ARKit R0.
             double sumCorr = 0, maxCorr = 0;
             int corrN = 0;
             for (int i = 0; i < n; ++i) {
                 Mat Ra, Rb;
                 camsBefore[i].R.convertTo(Ra, CV_32F);
-                cameras[i].R.convertTo(Rb, CV_32F);
+                camerasProxy[i].R.convertTo(Rb, CV_32F);
                 double ang = rotationAngleDeg(Ra, Rb);
-                // Reject cameras with excessive correction — revert to prior.
                 if (ang > config.maxVisualCorrectionDeg) {
-                    cameras[i] = camsBefore[i];
+                    camerasProxy[i] = camsBefore[i];
                     metrics.rejectedCameraCount++;
                     ang = 0;
                 } else {
@@ -669,7 +714,7 @@ static bool GonggiOpenCVStitchPanoramaImpl(
                 }
                 errAfter += ang;
             }
-            errBefore = 0; // prior is baseline
+            errBefore = 0;
             if (corrN > 0) {
                 metrics.averageVisualCorrectionDeg = sumCorr / corrN;
             }
@@ -677,22 +722,32 @@ static bool GonggiOpenCVStitchPanoramaImpl(
             metrics.bundleAdjustmentBeforeError = errBefore;
             metrics.bundleAdjustmentAfterError = errAfter / std::max(n, 1);
         } catch (const cv::Exception &ex) {
-            cameras = camsBefore;
+            camerasProxy = camsBefore;
             metrics.errorMessage = std::string("BA exception: ") + ex.what();
             baOK = false;
         }
     } else {
-        // No visual edges — keep ARKit priors (still can warp a collage for debug).
         metrics.optimizedCameraCount = n;
         baOK = true;
         metrics.errorMessage = "no confident visual pairs; using ARKit prior only";
     }
+    // Propagate optimized rotations to full-res cameras (intrinsics stay full-res).
+    for (int i = 0; i < n; ++i) {
+        camerasProxy[i].R.copyTo(cameras[i].R);
+    }
     metrics.bundleAdjustmentTimeMs = nowMs() - tBA0;
     metrics.bundleAdjustmentConverged = baOK;
     noteMemory(metrics, metrics.memoryAfterBAMB);
+    trace.checkpoint("BA", -1, 0, 0);
 
-    // First-forward anchor: camera 0 fixed to panorama center.
+    // Features no longer needed after BA.
+    features.clear();
+    features.shrink_to_fit();
+    pairwise.clear();
+    baMatches.clear();
+
     anchorFirstForward(cameras);
+    anchorFirstForward(camerasProxy);
 
     if (!config.debugDirectory.empty()) {
         writeText(config.debugDirectory + "/camera_after.json", cameraParamsJSON(cameras));
@@ -703,83 +758,80 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         writeText(config.debugDirectory + "/camera_graph.json", g.str());
     }
 
-    // ---- Warp (full-res) → exposure (low-res Gain) → seam (downscaled) → blend ----
-    const double tWarp0 = nowMs();
-    std::vector<Point> corners(n);
-    std::vector<Size> sizes(n);
-    std::vector<Mat> warped(n), warpedMask(n);
-
-    // Focal for warper scale: median focal
-    std::vector<double> focals;
-    for (int i = 0; i < n; ++i) focals.push_back(cameras[i].focal);
-    std::nth_element(focals.begin(), focals.begin() + focals.size() / 2, focals.end());
-    double warpedImageScale = focals[focals.size() / 2];
-
-    Ptr<WarperCreator> warperCreator = makePtr<cv::SphericalWarper>();
-    Ptr<RotationWarper> warper = warperCreator->create(static_cast<float>(warpedImageScale));
-
-    for (int i = 0; i < n; ++i) {
-        Mat K = Mat::eye(3, 3, CV_32F);
-        K.at<float>(0, 0) = static_cast<float>(cameras[i].focal);
-        K.at<float>(0, 2) = static_cast<float>(cameras[i].ppx);
-        K.at<float>(1, 1) = static_cast<float>(cameras[i].focal * cameras[i].aspect);
-        K.at<float>(1, 2) = static_cast<float>(cameras[i].ppy);
-
-        Mat R;
-        cameras[i].R.convertTo(R, CV_32F);
-
-        corners[i] = warper->warp(fullImages[i], K, R, INTER_LINEAR, BORDER_REFLECT, warped[i]);
-        Mat mask = Mat::ones(fullImages[i].size(), CV_8U) * 255;
-        if (frames[i].translationM > 0.35f) {
-            erode(mask, mask, getStructuringElement(MORPH_ELLIPSE, Size(31, 31)));
-        }
-        corners[i] = warper->warp(mask, K, R, INTER_NEAREST, BORDER_CONSTANT, warpedMask[i]);
-        sizes[i] = warped[i].size();
-
-        // Release source JPEG buffers immediately after this frame's warp.
-        fullImages[i].release();
-    }
-    fullImages.clear();
-    metrics.warpTimeMs = nowMs() - tWarp0;
-    noteMemory(metrics, metrics.memoryAfterWarpMB);
-
-    // Soft memory budget → analysis resolution / blend bands (iPhone 14 Plus).
+    // Soft memory budget → analysis resolution / blend bands
     float exposureLE = config.exposureAnalysisLongEdge;
     float seamLE = config.seamAnalysisLongEdge;
-    int blendBands = 5;
+    int blendBands = std::max(2, config.blendBands);
     if (metrics.peakMemoryMB >= config.memoryCriticalMB) {
         exposureLE = std::min(exposureLE, 384.f);
-        seamLE = std::min(seamLE, 512.f);
-        blendBands = 3;
+        seamLE = std::min(seamLE, 384.f);
+        blendBands = 2;
     } else if (metrics.peakMemoryMB >= config.memoryWarnMB) {
         exposureLE = std::min(exposureLE, 512.f);
-        seamLE = std::min(seamLE, 640.f);
-        blendBands = 4;
+        seamLE = std::min(seamLE, 512.f);
+        blendBands = std::min(blendBands, 3);
     }
     metrics.exposureAnalysisLongEdgeUsed = exposureLE;
     metrics.seamAnalysisLongEdgeUsed = seamLE;
     metrics.blendBandsUsed = blendBands;
 
-    // Exposure: estimate gains on downscaled copies — never duplicate full-res into UMat arrays.
+    // ---- Proxy warp (matching-scale only) ----
+    const double tWarp0 = nowMs();
+    std::vector<double> focalsProxy;
+    for (int i = 0; i < n; ++i) focalsProxy.push_back(camerasProxy[i].focal);
+    std::nth_element(focalsProxy.begin(), focalsProxy.begin() + focalsProxy.size() / 2, focalsProxy.end());
+    double proxyWarperScale = focalsProxy[focalsProxy.size() / 2];
+
+    Ptr<WarperCreator> warperCreator = makePtr<cv::SphericalWarper>();
+    Ptr<RotationWarper> proxyWarper = warperCreator->create(static_cast<float>(proxyWarperScale));
+
+    std::vector<Point> proxyCorners(n);
+    std::vector<Mat> proxyWarped(n), proxyMask(n);
+    for (int i = 0; i < n; ++i) {
+        Mat K = cameraK(camerasProxy[i]);
+        Mat R;
+        camerasProxy[i].R.convertTo(R, CV_32F);
+        proxyCorners[i] = proxyWarper->warp(
+            matchImages[i], K, R, INTER_LINEAR, BORDER_REFLECT, proxyWarped[i]
+        );
+        Mat mask = Mat::ones(matchImages[i].size(), CV_8U) * 255;
+        if (frames[i].translationM > 0.35f) {
+            // Scale erode kernel with proxy size
+            int k = std::max(3, static_cast<int>(31 * matchScale[i]) | 1);
+            erode(mask, mask, getStructuringElement(MORPH_ELLIPSE, Size(k, k)));
+        }
+        proxyCorners[i] = proxyWarper->warp(
+            mask, K, R, INTER_NEAREST, BORDER_CONSTANT, proxyMask[i]
+        );
+        matchImages[i].release();
+    }
+    matchImages.clear();
+    metrics.warpTimeMs = nowMs() - tWarp0;
+    noteMemory(metrics, metrics.memoryAfterWarpMB);
+    // maxWarpedResidentCount tracks full-res only (proxy N is analysis-only).
+    trace.checkpoint("proxyWarp", -1, 0, 0);
+
+    // ---- Exposure on (further) downscaled proxy — store scalar gains only ----
     metrics.memoryBeforeExposureMB = peakMemoryMB();
     metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, metrics.memoryBeforeExposureMB);
     const double tExp0 = nowMs();
+    std::vector<double> exposureGains(n, 1.0);
     {
-        const float expScale = uniformAnalysisScale(warped, exposureLE);
+        const float expScale = uniformAnalysisScale(proxyWarped, exposureLE);
         std::vector<Point> cornersLo(n);
         std::vector<UMat> imgsLo(n), masksLo(n);
         for (int i = 0; i < n; ++i) {
             Mat imgLo, maskLo;
             if (expScale < 0.999f) {
-                resize(warped[i], imgLo, Size(), expScale, expScale, INTER_AREA);
-                resize(warpedMask[i], maskLo, Size(), expScale, expScale, INTER_NEAREST);
+                resize(proxyWarped[i], imgLo, Size(), expScale, expScale, INTER_AREA);
+                resize(proxyMask[i], maskLo, Size(), expScale, expScale, INTER_NEAREST);
             } else {
-                imgLo = warped[i];
-                maskLo = warpedMask[i];
+                imgLo = proxyWarped[i];
+                maskLo = proxyMask[i];
             }
             cornersLo[i] = Point(
-                cvRound(corners[i].x * expScale),
-                cvRound(corners[i].y * expScale)
+                cvRound(proxyCorners[i].x * expScale),
+                cvRound(proxyCorners[i].y * expScale)
             );
             imgLo.copyTo(imgsLo[i]);
             maskLo.copyTo(masksLo[i]);
@@ -788,51 +840,53 @@ static bool GonggiOpenCVStitchPanoramaImpl(
                 maskLo.release();
             }
         }
-        // GainCompensator: per-image scalar; BlocksGain avoided (Build 22 SIGABRT in singleFeed).
         Ptr<ExposureCompensator> compensator =
             ExposureCompensator::createDefault(ExposureCompensator::GAIN);
         metrics.exposureMode = "Gain";
         compensator->feed(cornersLo, imgsLo, masksLo);
+        if (auto *gc = dynamic_cast<GainCompensator *>(compensator.get())) {
+            exposureGains = gc->gains();
+        }
         imgsLo.clear();
         masksLo.clear();
-        for (int i = 0; i < n; ++i) {
-            compensator->apply(i, corners[i], warped[i], warpedMask[i]);
-        }
     }
     metrics.exposureTimeMs = nowMs() - tExp0;
     noteMemory(metrics, metrics.memoryAfterExposureMB);
+    trace.checkpoint("exposureAnalysis", -1, 0, 0);
 
-    // Seam: real downscale for GraphCut, then upscale mask back to full-res.
+    // ---- Seam on downscaled proxy — keep low-res seam masks only ----
     metrics.memoryBeforeSeamMB = peakMemoryMB();
     metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, metrics.memoryBeforeSeamMB);
     const double tSeam0 = nowMs();
+    std::vector<Mat> seamMasksLo(n);
+    std::vector<Size> seamSizes(n);
     {
-        const float seamScale = uniformAnalysisScale(warped, seamLE);
+        const float seamScale = uniformAnalysisScale(proxyWarped, seamLE);
         std::vector<UMat> warpedF(n), masksF(n);
         std::vector<Point> cornersF(n);
-        std::vector<Mat> coverageFull(n);
         for (int i = 0; i < n; ++i) {
-            coverageFull[i] = warpedMask[i].clone();
             Mat w8, w32, mLo;
             if (seamScale < 0.999f) {
-                resize(warped[i], w8, Size(), seamScale, seamScale, INTER_AREA);
-                resize(warpedMask[i], mLo, Size(), seamScale, seamScale, INTER_NEAREST);
+                resize(proxyWarped[i], w8, Size(), seamScale, seamScale, INTER_AREA);
+                resize(proxyMask[i], mLo, Size(), seamScale, seamScale, INTER_NEAREST);
             } else {
-                w8 = warped[i];
-                mLo = warpedMask[i];
+                w8 = proxyWarped[i];
+                mLo = proxyMask[i];
             }
             w8.convertTo(w32, CV_32F);
             w32.copyTo(warpedF[i]);
             mLo.copyTo(masksF[i]);
             cornersF[i] = Point(
-                cvRound(corners[i].x * seamScale),
-                cvRound(corners[i].y * seamScale)
+                cvRound(proxyCorners[i].x * seamScale),
+                cvRound(proxyCorners[i].y * seamScale)
             );
             if (seamScale < 0.999f) {
                 w8.release();
                 w32.release();
                 mLo.release();
             }
+            // Free proxy warped as soon as copied into seam buffers.
+            proxyWarped[i].release();
         }
         Ptr<SeamFinder> seamFinder;
         try {
@@ -844,58 +898,121 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         }
         seamFinder->find(warpedF, cornersF, masksF);
         for (int i = 0; i < n; ++i) {
-            Mat seamLo;
-            masksF[i].copyTo(seamLo);
-            Mat seamFull;
-            if (seamScale < 0.999f) {
-                resize(seamLo, seamFull, warpedMask[i].size(), 0, 0, INTER_NEAREST);
-            } else {
-                seamFull = seamLo;
-            }
-            bitwise_and(seamFull, coverageFull[i], warpedMask[i]);
+            masksF[i].copyTo(seamMasksLo[i]);
+            seamSizes[i] = seamMasksLo[i].size();
             warpedF[i].release();
             masksF[i].release();
-            coverageFull[i].release();
+            proxyMask[i].release();
         }
     }
+    proxyWarped.clear();
+    proxyMask.clear();
     metrics.seamTimeMs = nowMs() - tSeam0;
     noteMemory(metrics, metrics.memoryAfterSeamMB);
+    trace.checkpoint("seamAnalysis", -1, 0, 0);
 
-    // Blend into fixed equirect canvas.
+    // =====================================================================
+    // PASS B — streaming full-res: load → warp → gain → seam upscale → feed → release
+    // =====================================================================
     metrics.memoryBeforeBlendMB = peakMemoryMB();
     metrics.peakMemoryMB = std::max(metrics.peakMemoryMB, metrics.memoryBeforeBlendMB);
     const double tBlend0 = nowMs();
     const int outW = config.outputWidth;
     const int outH = config.outputHeight;
 
-    std::vector<Size> sizesW = sizes;
-    Rect dstRoi = resultRoi(corners, sizesW);
+    std::vector<double> focalsFull;
+    for (int i = 0; i < n; ++i) focalsFull.push_back(cameras[i].focal);
+    std::nth_element(focalsFull.begin(), focalsFull.begin() + focalsFull.size() / 2, focalsFull.end());
+    double fullWarperScale = focalsFull[focalsFull.size() / 2];
+    Ptr<RotationWarper> fullWarper = warperCreator->create(static_cast<float>(fullWarperScale));
+
+    std::vector<Point> fullCorners(n);
+    std::vector<Size> fullSizes(n);
+    for (int i = 0; i < n; ++i) {
+        Mat K = cameraK(cameras[i]);
+        Mat R;
+        cameras[i].R.convertTo(R, CV_32F);
+        Rect roi = fullWarper->warpRoi(nativeSizes[i], K, R);
+        fullCorners[i] = roi.tl();
+        fullSizes[i] = roi.size();
+    }
+    Rect dstRoi = resultRoi(fullCorners, fullSizes);
     if (dstRoi.width < 10 || dstRoi.height < 10) {
         return fail("degenerate warp ROI");
     }
 
     Ptr<Blender> blender = Blender::createDefault(Blender::MULTI_BAND, false);
-    MultiBandBlender *mb = dynamic_cast<MultiBandBlender *>(blender.get());
-    if (mb) {
+    if (MultiBandBlender *mb = dynamic_cast<MultiBandBlender *>(blender.get())) {
         mb->setNumBands(blendBands);
     }
     blender->prepare(dstRoi);
 
+    int residentWarped = 0;
     for (int i = 0; i < n; ++i) {
+        Mat full = imread(frames[i].jpegPath, IMREAD_COLOR);
+        if (full.empty()) {
+            return fail("failed to reload keyframe for render: " + frames[i].jpegPath);
+        }
+        metrics.maxLoadedFullResCount = std::max(metrics.maxLoadedFullResCount, 1);
+
+        Mat K = cameraK(cameras[i]);
+        Mat R;
+        cameras[i].R.convertTo(R, CV_32F);
+
+        Mat warped, warpedMask;
+        Point corner = fullWarper->warp(full, K, R, INTER_LINEAR, BORDER_REFLECT, warped);
+        full.release();
+
+        Mat srcMask = Mat::ones(nativeSizes[i], CV_8U) * 255;
+        if (frames[i].translationM > 0.35f) {
+            erode(srcMask, srcMask, getStructuringElement(MORPH_ELLIPSE, Size(31, 31)));
+        }
+        corner = fullWarper->warp(srcMask, K, R, INTER_NEAREST, BORDER_CONSTANT, warpedMask);
+        srcMask.release();
+        fullCorners[i] = corner;
+        fullSizes[i] = warped.size();
+        residentWarped = 1;
+        metrics.maxWarpedResidentCount = std::max(metrics.maxWarpedResidentCount, residentWarped);
+
+        // Apply scalar gain from analysis pass.
+        double g = (i < static_cast<int>(exposureGains.size())) ? exposureGains[i] : 1.0;
+        if (std::abs(g - 1.0) > 1e-6) {
+            multiply(warped, g, warped);
+        }
+
+        // Upscale seam mask + intersect coverage.
+        Mat seamFull;
+        if (!seamMasksLo[i].empty()) {
+            resize(seamMasksLo[i], seamFull, warped.size(), 0, 0, INTER_NEAREST);
+        } else {
+            seamFull = Mat::ones(warped.size(), CV_8U) * 255;
+        }
+        bitwise_and(seamFull, warpedMask, warpedMask);
+        seamFull.release();
+        seamMasksLo[i].release();
+
         Mat warped16;
-        warped[i].convertTo(warped16, CV_16S);
-        blender->feed(warped16, warpedMask[i], corners[i]);
-        warped[i].release();
-        warpedMask[i].release();
+        warped.convertTo(warped16, CV_16S);
+        warped.release();
+        blender->feed(warped16, warpedMask, corner);
         warped16.release();
+        warpedMask.release();
+        residentWarped = 0;
+
+        std::ostringstream stage;
+        stage << "renderFrame_" << i;
+        trace.checkpoint(stage.str().c_str(), i, 0, 0);
     }
+
     Mat result16, resultMask;
     blender->blend(result16, resultMask);
+    blender.release();
     Mat result8;
     result16.convertTo(result8, CV_8U);
     result16.release();
     metrics.blendTimeMs = nowMs() - tBlend0;
     noteMemory(metrics, metrics.memoryAfterBlendMB);
+    trace.checkpoint("blend", -1, 0, 0);
 
     if (!config.debugDirectory.empty()) {
         imwrite(config.debugDirectory + "/preblend_preview.jpg", result8);
@@ -950,6 +1067,7 @@ static bool GonggiOpenCVStitchPanoramaImpl(
     }
     metrics.encodeTimeMs = nowMs() - tEnc0;
     noteMemory(metrics, metrics.memoryAfterEncodeMB);
+    trace.checkpoint("encode", -1, 0, 0);
 
     struct stat st {};
     if (::stat(config.outputPath.c_str(), &st) == 0) {

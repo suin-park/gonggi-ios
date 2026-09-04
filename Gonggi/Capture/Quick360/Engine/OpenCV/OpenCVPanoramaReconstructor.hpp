@@ -3,6 +3,10 @@
 //  Phase 2B/2C: feature match + ARKit prior + BA + spherical stitch.
 //  Does NOT use cv::Stitcher high-level API as the default path.
 //
+//  Build 24: two-pass memory-bounded architecture
+//    A) analysis on proxy images only
+//    B) streaming full-res warp → feed → release (≤1 resident warped frame)
+//
 
 #pragma once
 
@@ -27,18 +31,21 @@ struct GonggiOpenCVStitchConfig {
     float firstForwardYawDeg = 0;
     float firstForwardPitchDeg = 0;
     std::string debugDirectory; // optional …/ab/opencv/
+    /// Analysis / matching proxy long-edge (Build 24: 1200–1600; never keep full-res N).
     float matchLongEdge = 1400.f;
     float maxVisualCorrectionDeg = 12.f;
     float minInlierRatio = 0.25f;
     int minInliers = 16;
-    /// Exposure gain estimation long-edge (Build 23: never full-res feed).
-    float exposureAnalysisLongEdge = 768.f;
-    /// Seam finder analysis long-edge (Build 23: real downscale).
-    float seamAnalysisLongEdge = 800.f;
-    /// Soft phys_footprint budgets (MB) for iPhone 14 Plus (~6GB).
-    /// Warn: reduce analysis resolution. Critical: more aggressive + fewer blend bands.
-    double memoryWarnMB = 1800.0;
-    double memoryCriticalMB = 2200.0;
+    /// Exposure gain estimation long-edge (proxy-only).
+    float exposureAnalysisLongEdge = 640.f;
+    /// Seam finder analysis long-edge (proxy-only).
+    float seamAnalysisLongEdge = 640.f;
+    /// Soft phys_footprint budgets (MB). Build 23 jetsam ≈ 3072MB — stay far below.
+    /// preferred <1000; warn ~1200; hard degradation ≤1500.
+    double memoryWarnMB = 1200.0;
+    double memoryCriticalMB = 1500.0;
+    /// MultiBand bands — stability default 3 (was 5).
+    int blendBands = 3;
 };
 
 struct GonggiOpenCVStitchMetrics {
@@ -78,10 +85,13 @@ struct GonggiOpenCVStitchMetrics {
     double outputFileSizeMB = 0;
     std::string featureDetector = "AKAZE";
     std::string featureMatcher = "BF_HAMMING_KNN";
-    /// Build 23 default: Gain (not BlocksGain) for iPhone memory safety.
     std::string exposureMode = "Gain";
     std::string seamFinder = "GraphCutColorGrad";
     std::string blender = "MultiBand";
+    /// Build 24 architecture tag.
+    std::string memoryArchitecture = "two_pass_streaming";
+    int maxLoadedFullResCount = 0;
+    int maxWarpedResidentCount = 0;
     // Memory telemetry (phys_footprint MB)
     double memoryStartMB = 0;
     double memoryAfterLoadMB = 0;
@@ -98,7 +108,7 @@ struct GonggiOpenCVStitchMetrics {
     double memoryAfterEncodeMB = 0;
     float exposureAnalysisLongEdgeUsed = 0;
     float seamAnalysisLongEdgeUsed = 0;
-    int blendBandsUsed = 5;
+    int blendBandsUsed = 3;
 };
 
 /// Returns true on success and writes JPEG to config.outputPath.

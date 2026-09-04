@@ -99,12 +99,17 @@ enum Quick360Reconstruction {
         let reportURL = try CaptureSessionStore.quick360ReportURL(sessionId: sessionId)
 
         // Production path may already have JPEG from Legacy engine; rewrite is byte-identical.
-        try PanoramaExporter.writeJPEG(
-            rgba: stitchOutput.rgba,
-            width: stitchOutput.width,
-            height: stitchOutput.height,
-            to: panoramaURL
-        )
+        // Build 24 A/B may return after disk reload — if rgba empty but JPEG exists, keep file.
+        if !stitchOutput.rgba.isEmpty {
+            try PanoramaExporter.writeJPEG(
+                rgba: stitchOutput.rgba,
+                width: stitchOutput.width,
+                height: stitchOutput.height,
+                to: panoramaURL
+            )
+        } else if !FileManager.default.fileExists(atPath: panoramaURL.path) {
+            throw PanoramaEngineError.encodeFailed
+        }
 
         if Quick360Config.writeStitchDebugArtifacts {
             _ = try? PanoramaOrientationDebug.writeEquirectArtifacts(
@@ -266,15 +271,29 @@ enum Quick360Reconstruction {
         case .abCompare:
             let legacyEngine = GonggiLegacyPanoramaEngine()
             let legacyOut = try await legacyEngine.stitch(input: input)
-            guard let stitch = legacyOut.stitchOutput else {
+            guard let stitchHeavy = legacyOut.stitchOutput else {
                 throw PanoramaEngineError.encodeFailed
             }
-            let openCVOut = try await OpenCVPanoramaEngine().stitch(input: input)
+
+            // Persist A/B legacy JPEG from disk (Legacy already wrote outputPanoramaURL).
+            // Release Legacy RGBA + keyframe pixel buffers before OpenCV (Build 24 jetsam).
+            let lightLegacy = legacyOut.releasingHeavyPixelBuffers()
+            let lightInput = input.releasingKeyframePixelBuffers()
+            let openCVOut = try await OpenCVPanoramaEngine().stitch(input: lightInput)
             try? PanoramaABTestWriter.write(
                 sessionId: input.sessionId,
-                legacy: legacyOut,
+                legacy: lightLegacy,
                 openCV: openCVOut
             )
+
+            // Lazy-reload Legacy equirect from disk for downstream mask / rewrite.
+            var stitch = stitchHeavy.releasingHeavyPixelBuffers()
+            if let data = try? Data(contentsOf: input.outputPanoramaURL),
+               let reloaded = Quick360FrameEncoder.loadRGBA(fromJPEG: data),
+               reloaded.width == stitch.width,
+               reloaded.height == stitch.height {
+                stitch = stitch.replacingRGBA(reloaded.rgba)
+            }
             return stitch
         }
     }

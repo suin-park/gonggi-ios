@@ -80,6 +80,39 @@ struct PanoramaEngineInput {
     /// First-forward reference (gravity capture basis): yaw=0, pitch=0 → U=0.5.
     var firstForwardYawRad: Float { 0 }
     var firstForwardPitchRad: Float { 0 }
+
+    /// Build 24: drop in-memory keyframe RGBA before OpenCV (disk JPEG paths remain).
+    func releasingKeyframePixelBuffers() -> PanoramaEngineInput {
+        let stripped = keyframes.map { kf in
+            PanoramaStitcher.InputKeyframe(
+                index: kf.index,
+                rgba: [],
+                width: kf.width,
+                height: kf.height,
+                cameraTransform: kf.cameraTransform,
+                intrinsics: kf.intrinsics,
+                dynamicRatio: kf.dynamicRatio,
+                sharpness: kf.sharpness,
+                exposure: kf.exposure,
+                translationM: kf.translationM,
+                fileName: kf.fileName,
+                yawRad: kf.yawRad,
+                pitchRad: kf.pitchRad
+            )
+        }
+        return PanoramaEngineInput(
+            sessionId: sessionId,
+            keyframes: stripped,
+            originTransform: originTransform,
+            captureBasis: captureBasis,
+            selectedKeyframeMeta: selectedKeyframeMeta,
+            targets: targets,
+            coverageReport: coverageReport,
+            outputWidth: outputWidth,
+            outputHeight: outputHeight,
+            outputPanoramaURL: outputPanoramaURL
+        )
+    }
 }
 
 struct PanoramaEngineOutput {
@@ -94,6 +127,23 @@ struct PanoramaEngineOutput {
     let stitchOutput: PanoramaStitcher.Output?
     let failureReason: String?
     let report: PanoramaEngineRunReport
+
+    /// Drop large RGBA after artifacts are on disk (A/B → OpenCV).
+    func releasingHeavyPixelBuffers() -> PanoramaEngineOutput {
+        PanoramaEngineOutput(
+            engineIdentifier: engineIdentifier,
+            success: success,
+            panoramaURL: panoramaURL,
+            width: width,
+            height: height,
+            rgba: nil,
+            coverageFlags: coverageFlags,
+            processingTimeSec: processingTimeSec,
+            stitchOutput: stitchOutput?.releasingHeavyPixelBuffers(),
+            failureReason: failureReason,
+            report: report
+        )
+    }
 
     static func failure(
         engine: String,

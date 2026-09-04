@@ -70,6 +70,57 @@ enum PanoramaStitcher {
         let keyframePlacements: [PanoramaKeyframePlacementReport]
         let seamPreferredFrame: [Int16]
         let refinementMatchDebug: [PanoramaAlignmentRefiner.PairMatchDebug]
+
+        /// Drop large pixel buffers after JPEG is on disk (A/B → OpenCV).
+        func releasingHeavyPixelBuffers() -> Output {
+            Output(
+                rgba: [],
+                width: width,
+                height: height,
+                coverageFlags: coverageFlags,
+                coveragePercent: coveragePercent,
+                uncoveredPercent: uncoveredPercent,
+                alignmentApplied: alignmentApplied,
+                stitchTimeSec: stitchTimeSec,
+                acceptedKeyframeCount: acceptedKeyframeCount,
+                rejectedKeyframeCount: rejectedKeyframeCount,
+                averageAngularSpacingDeg: averageAngularSpacingDeg,
+                visualRefinementAttempts: visualRefinementAttempts,
+                successfulRefinements: successfulRefinements,
+                averageMatchCount: averageMatchCount,
+                averageInlierRatio: averageInlierRatio,
+                averageReprojectionError: averageReprojectionError,
+                highParallaxFrameCount: highParallaxFrameCount,
+                keyframePlacements: keyframePlacements,
+                seamPreferredFrame: [],
+                refinementMatchDebug: []
+            )
+        }
+
+        func replacingRGBA(_ rgba: [UInt8]) -> Output {
+            Output(
+                rgba: rgba,
+                width: width,
+                height: height,
+                coverageFlags: coverageFlags,
+                coveragePercent: coveragePercent,
+                uncoveredPercent: uncoveredPercent,
+                alignmentApplied: alignmentApplied,
+                stitchTimeSec: stitchTimeSec,
+                acceptedKeyframeCount: acceptedKeyframeCount,
+                rejectedKeyframeCount: rejectedKeyframeCount,
+                averageAngularSpacingDeg: averageAngularSpacingDeg,
+                visualRefinementAttempts: visualRefinementAttempts,
+                successfulRefinements: successfulRefinements,
+                averageMatchCount: averageMatchCount,
+                averageInlierRatio: averageInlierRatio,
+                averageReprojectionError: averageReprojectionError,
+                highParallaxFrameCount: highParallaxFrameCount,
+                keyframePlacements: keyframePlacements,
+                seamPreferredFrame: seamPreferredFrame,
+                refinementMatchDebug: refinementMatchDebug
+            )
+        }
     }
 
     static func stitch(
