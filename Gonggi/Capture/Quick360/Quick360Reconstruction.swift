@@ -279,7 +279,16 @@ enum Quick360Reconstruction {
             // Release Legacy RGBA + keyframe pixel buffers before OpenCV (Build 24 jetsam).
             let lightLegacy = legacyOut.releasingHeavyPixelBuffers()
             let lightInput = input.releasingKeyframePixelBuffers()
-            let openCVOut = try await OpenCVPanoramaEngine().stitch(input: lightInput)
+            let openCVOut: PanoramaEngineOutput
+            do {
+                openCVOut = try await OpenCVPanoramaEngine().stitch(input: lightInput)
+            } catch {
+                // OpenCV must never abort the A/B session; Legacy remains the user output.
+                openCVOut = .failure(
+                    engine: PanoramaEngineID.openCV,
+                    reason: error.localizedDescription
+                )
+            }
             try? PanoramaABTestWriter.write(
                 sessionId: input.sessionId,
                 legacy: lightLegacy,
