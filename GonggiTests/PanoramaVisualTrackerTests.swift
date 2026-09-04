@@ -37,19 +37,24 @@ final class PanoramaVisualTrackerTests: XCTestCase {
     }
 
     func testVerticalShakeRecoversDy() {
-        let w = 120
-        let h = 180
-        let base = makeGridGray(width: w, height: h)
-        for dy in [Float(8), -6, 10] {
-            let curr = shiftGrayWrapped(base, width: w, height: h, dx: 20, dy: Int(dy))
+        let w = 96
+        let h = 160
+        // Horizontal bands → vertical displacement is unambiguous.
+        var base = [Float](repeating: 40, count: w * h)
+        for y in 0..<h {
+            let v: Float = (y % 20 < 10) ? 220 : 40
+            for x in 0..<w { base[y * w + x] = v }
+        }
+        for dy in [8, -6, 10] {
+            let curr = shiftGrayWrapped(base, width: w, height: h, dx: 0, dy: dy)
             let match = PanoramaVisualTracker.match(
                 prev: base, prevW: w, prevH: h,
                 curr: curr, currW: w, currH: h,
-                expectedDx: 20
+                expectedDx: 0
             )
             XCTAssertTrue(match.usedVisual, "dy=\(dy) should use visual")
-            XCTAssertEqual(match.visualDx, 20, accuracy: 3)
-            XCTAssertEqual(match.visualDy, dy, accuracy: 3)
+            XCTAssertEqual(match.visualDx, 0, accuracy: 2)
+            XCTAssertEqual(match.visualDy, Float(dy), accuracy: 2)
         }
     }
 
