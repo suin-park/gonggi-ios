@@ -1446,8 +1446,8 @@ ImageFeatures makeSyntheticFeatures(int idx, int kpCount) {
     for (int k = 0; k < kpCount; ++k) {
         f.keypoints.emplace_back(KeyPoint(40.f + float(k) * 3.f, 50.f + float(k) * 2.f, 3.f));
     }
-    // Dummy descriptors (unused by BundleAdjusterRay once matches exist).
-    f.descriptors = Mat::zeros(kpCount, 61, CV_8U);
+    // BundleAdjusterRay uses keypoints + matches only; leave descriptors empty.
+    f.descriptors.release();
     return f;
 }
 
