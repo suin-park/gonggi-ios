@@ -1,8 +1,9 @@
 import Foundation
 
 /// Pure helpers for continuous rotation + target-crossing capture.
+/// Device right-turn decreases unwrapped yaw (0 → -45 → -90 …).
 enum DirectionCaptureGuide {
-    /// Normalize any yaw into [0, 360).
+    /// Normalize any yaw into [0, 360) for display (matches device UI measurements).
     static func normalizeYaw0to360(_ yawDeg: Float) -> Float {
         var x = yawDeg.truncatingRemainder(dividingBy: 360)
         if x < 0 { x += 360 }
@@ -18,19 +19,17 @@ enum DirectionCaptureGuide {
         abs(shortestDeltaDeg(from: a, to: b))
     }
 
-    /// Clockwise (increasing unwrapped yaw) crossing: previous < target ≤ current.
-    /// Also true when the step jumps past the target (e.g. 43 → 47 crosses 45).
+    /// Decreasing (right-turn) crossing: previous > target ≥ current.
+    /// Example: -42 → -48 crosses -45 (front_right).
     static func crossesTarget(
         previousYaw: Float,
         currentYaw: Float,
         targetYaw: Float
     ) -> Bool {
-        guard currentYaw >= previousYaw else {
-            // Unwrapped yaw should not decrease on clockwise scan; still allow
-            // rare tracker glitches via absolute span check.
+        guard currentYaw <= previousYaw else {
             return false
         }
-        return previousYaw < targetYaw && currentYaw >= targetYaw
+        return previousYaw > targetYaw && currentYaw <= targetYaw
     }
 
     /// Pick buffer frame closest to target yaw; tie-break: higher sharpness, lower rotation.
@@ -62,13 +61,32 @@ enum DirectionCaptureGuide {
         rate > DirectionCaptureConfig.rotationWarnRate
     }
 
-    static func classifyVertical(
-        pitchDeg: Float,
-        upMin: Float = DirectionCaptureConfig.upPitchMinDeg,
-        downMax: Float = DirectionCaptureConfig.downPitchMaxDeg
+    /// Elevation of camera forward vs horizon from gravity (degrees).
+    /// Positive = looking up, negative = looking down. Independent of relative pitch.
+    static func elevationDeg(gravityX: Double, gravityY: Double, gravityZ: Double) -> Float {
+        // Rear camera optical axis ≈ device -Z.
+        let fx: Float = 0
+        let fy: Float = 0
+        let fz: Float = -1
+        // World-up in device frame is opposite gravity.
+        var ux = Float(-gravityX)
+        var uy = Float(-gravityY)
+        var uz = Float(-gravityZ)
+        let len = sqrt(ux * ux + uy * uy + uz * uz)
+        guard len > 1e-5 else { return 0 }
+        ux /= len; uy /= len; uz /= len
+        let dot = max(-1, min(1, fx * ux + fy * uy + fz * uz))
+        return asin(dot) * 180 / .pi
+    }
+
+    /// Up / down from gravity elevation (not relative pitch — both can read ~-75° on device).
+    static func classifyElevation(
+        elevationDeg: Float,
+        upMin: Float = DirectionCaptureConfig.upElevationMinDeg,
+        downMax: Float = DirectionCaptureConfig.downElevationMaxDeg
     ) -> DirectionName? {
-        if pitchDeg >= upMin { return .up }
-        if pitchDeg <= downMax { return .down }
+        if elevationDeg >= upMin { return .up }
+        if elevationDeg <= downMax { return .down }
         return nil
     }
 

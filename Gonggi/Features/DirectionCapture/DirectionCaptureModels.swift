@@ -25,17 +25,18 @@ enum DirectionName: String, CaseIterable, Codable, Identifiable, Equatable {
         }
     }
 
-    /// Target relative yaw on first clockwise lap (unwrapped degrees from front=0).
+    /// Target unwrapped yaw for right-turn decreasing path (front = 0).
+    /// Device measurement: right → 270° display = -90° unwrapped.
     var targetYawDeg: Float? {
         switch self {
         case .front: return 0
-        case .frontRight: return 45
-        case .right: return 90
-        case .backRight: return 135
-        case .back: return 180
-        case .backLeft: return 225
-        case .left: return 270
-        case .frontLeft: return 315
+        case .frontRight: return -45
+        case .right: return -90
+        case .backRight: return -135
+        case .back: return -180
+        case .backLeft: return -225
+        case .left: return -270
+        case .frontLeft: return -315
         case .up, .down: return nil
         }
     }
@@ -60,11 +61,11 @@ enum DirectionCapturePhase: Equatable {
 }
 
 struct DirectionCaptureConfig {
-    /// Pitch threshold for up (degrees, relative to start).
-    static var upPitchMinDeg: Float = 70
-    /// Pitch threshold for down (degrees, relative to start).
-    static var downPitchMaxDeg: Float = -70
-    /// Extreme pitch hard-reject for horizontal frames only.
+    /// Gravity elevation (deg): looking up threshold.
+    static var upElevationMinDeg: Float = 55
+    /// Gravity elevation (deg): looking down threshold.
+    static var downElevationMaxDeg: Float = -55
+    /// Extreme pitch hard-reject for horizontal frames only (relative pitch).
     static var extremePitchRejectDeg: Float = 60
     /// Extreme roll hard-reject.
     static var extremeRollRejectDeg: Float = 50
@@ -104,13 +105,15 @@ struct DirectionCaptureResult {
 
 struct DirectionMotionReading: Equatable {
     var timestamp: TimeInterval
-    /// Relative yaw unwrapped from capture start (degrees).
+    /// Relative yaw unwrapped from capture start (degrees). Decreases on right turn.
     var relativeYawDeg: Float
     /// Yaw normalized to [0, 360) for display.
     var yaw0to360: Float
     var pitchDeg: Float
     var rollDeg: Float
     var rotationRate: Float
+    /// Camera elevation vs horizon from gravity (+up / −down). Not relative pitch.
+    var elevationDeg: Float
 }
 
 /// Owned frame sample for crossing selection (never holds live CVPixelBuffer).
@@ -119,6 +122,7 @@ struct DirectionBufferedFrame {
     var unwrappedYaw: Float
     var pitchDeg: Float
     var rollDeg: Float
+    var elevationDeg: Float
     var timestamp: TimeInterval
     var sharpness: Float
     var rotationRate: Float

@@ -20,7 +20,7 @@ final class DirectionCaptureEngine: NSObject {
     private(set) var progressText: String = "0 / 10"
     private(set) var lastMotion = DirectionMotionReading(
         timestamp: 0, relativeYawDeg: 0, yaw0to360: 0,
-        pitchDeg: 0, rollDeg: 0, rotationRate: 0
+        pitchDeg: 0, rollDeg: 0, rotationRate: 0, elevationDeg: 0
     )
     private(set) var sessionId: String = ""
 
@@ -29,7 +29,7 @@ final class DirectionCaptureEngine: NSObject {
     private var useMock = false
     private var frameBuffer: [DirectionBufferedFrame] = []
     private var previousUnwrappedYaw: Float?
-    private var previousPitch: Float?
+    private var previousElevation: Float?
     private var horizontalTargetIndex: Int = 0
     private var captureStartedAt: TimeInterval = 0
     private var frontCaptured = false
@@ -106,7 +106,7 @@ final class DirectionCaptureEngine: NSObject {
         images.removeAll()
         frameBuffer.removeAll(keepingCapacity: true)
         previousUnwrappedYaw = nil
-        previousPitch = nil
+        previousElevation = nil
         horizontalTargetIndex = 0
         frontCaptured = false
         warnFast = false
@@ -150,6 +150,7 @@ final class DirectionCaptureEngine: NSObject {
         pitchDeg: Float,
         rollDeg: Float = 0,
         rotationRate: Float = 0.2,
+        elevationDeg: Float = 0,
         timestamp: TimeInterval,
         sharpness: Float = 100
     ) {
@@ -160,6 +161,7 @@ final class DirectionCaptureEngine: NSObject {
             unwrappedYaw: unwrappedYaw,
             pitchDeg: pitchDeg,
             rollDeg: rollDeg,
+            elevationDeg: elevationDeg,
             timestamp: timestamp,
             sharpness: sharpness,
             rotationRate: rotationRate
@@ -170,6 +172,7 @@ final class DirectionCaptureEngine: NSObject {
             pitchDeg: pitchDeg,
             rollDeg: rollDeg,
             rotationRate: rotationRate,
+            elevationDeg: elevationDeg,
             timestamp: timestamp
         )
     }
@@ -191,7 +194,8 @@ final class DirectionCaptureEngine: NSObject {
             yaw0to360: DirectionCaptureGuide.normalizeYaw0to360(unwrapped),
             pitchDeg: m.pitchDeg,
             rollDeg: m.rollDeg,
-            rotationRate: m.rotationRate
+            rotationRate: m.rotationRate,
+            elevationDeg: m.elevationDeg
         )
         warnFast = DirectionCaptureGuide.shouldWarnRotation(m.rotationRate)
 
@@ -205,6 +209,7 @@ final class DirectionCaptureEngine: NSObject {
                         unwrappedYaw: unwrapped,
                         pitchDeg: m.pitchDeg,
                         rollDeg: m.rollDeg,
+                        elevationDeg: m.elevationDeg,
                         timestamp: m.timestamp,
                         sharpness: Self.estimateSharpness(image),
                         rotationRate: m.rotationRate
@@ -213,7 +218,7 @@ final class DirectionCaptureEngine: NSObject {
             }
         }
 
-        // 3) Capture algorithm (Build 33 crossing) — uses motion values above
+        // 3) Capture algorithm — uses motion values above
         switch phase {
         case .capturingHorizontal:
             processHorizontal(
@@ -224,7 +229,7 @@ final class DirectionCaptureEngine: NSObject {
             )
         case .capturingUp, .capturingDown:
             processVertical(
-                pitchDeg: m.pitchDeg,
+                elevationDeg: m.elevationDeg,
                 rollDeg: m.rollDeg,
                 rotationRate: m.rotationRate
             )
@@ -240,6 +245,7 @@ final class DirectionCaptureEngine: NSObject {
         pitchDeg: Float,
         rollDeg: Float,
         rotationRate: Float,
+        elevationDeg: Float,
         timestamp: TimeInterval
     ) {
         lastMotion = DirectionMotionReading(
@@ -248,7 +254,8 @@ final class DirectionCaptureEngine: NSObject {
             yaw0to360: DirectionCaptureGuide.normalizeYaw0to360(unwrappedYaw),
             pitchDeg: pitchDeg,
             rollDeg: rollDeg,
-            rotationRate: rotationRate
+            rotationRate: rotationRate,
+            elevationDeg: elevationDeg
         )
         warnFast = DirectionCaptureGuide.shouldWarnRotation(rotationRate)
 
@@ -256,7 +263,7 @@ final class DirectionCaptureEngine: NSObject {
         case .capturingHorizontal:
             processHorizontal(unwrappedYaw: unwrappedYaw, pitchDeg: pitchDeg, rollDeg: rollDeg, rotationRate: rotationRate)
         case .capturingUp, .capturingDown:
-            processVertical(pitchDeg: pitchDeg, rollDeg: rollDeg, rotationRate: rotationRate)
+            processVertical(elevationDeg: elevationDeg, rollDeg: rollDeg, rotationRate: rotationRate)
         default:
             break
         }
@@ -276,6 +283,7 @@ final class DirectionCaptureEngine: NSObject {
             unwrappedYaw: lastMotion.relativeYawDeg,
             pitchDeg: lastMotion.pitchDeg,
             rollDeg: lastMotion.rollDeg,
+            elevationDeg: lastMotion.elevationDeg,
             timestamp: lastMotion.timestamp,
             sharpness: Self.estimateSharpness(image),
             rotationRate: lastMotion.rotationRate
@@ -283,10 +291,10 @@ final class DirectionCaptureEngine: NSObject {
     }
 
     private func frameForVerticalCommit(preferUp: Bool) -> DirectionBufferedFrame? {
-        if preferUp, let best = frameBuffer.max(by: { $0.pitchDeg < $1.pitchDeg }) {
+        if preferUp, let best = frameBuffer.max(by: { $0.elevationDeg < $1.elevationDeg }) {
             return best
         }
-        if !preferUp, let best = frameBuffer.min(by: { $0.pitchDeg < $1.pitchDeg }) {
+        if !preferUp, let best = frameBuffer.min(by: { $0.elevationDeg < $1.elevationDeg }) {
             return best
         }
         if let last = frameBuffer.last { return last }
@@ -297,6 +305,7 @@ final class DirectionCaptureEngine: NSObject {
             unwrappedYaw: lastMotion.relativeYawDeg,
             pitchDeg: lastMotion.pitchDeg,
             rollDeg: lastMotion.rollDeg,
+            elevationDeg: lastMotion.elevationDeg,
             timestamp: lastMotion.timestamp,
             sharpness: Self.estimateSharpness(image),
             rotationRate: lastMotion.rotationRate
@@ -356,38 +365,41 @@ final class DirectionCaptureEngine: NSObject {
             if let best = frameForCommit(targetYaw: targetYaw) {
                 commitCapture(targetDir, frame: best)
                 horizontalTargetIndex += 1
+                previousUnwrappedYaw = unwrappedYaw
                 if horizontalTargetIndex >= DirectionName.horizontalOrder.count {
                     advancePhaseIfNeeded()
                 }
             }
+            // Commit failed: keep previousYaw so the same target can still be crossed on retry.
+            return
         }
         previousUnwrappedYaw = unwrappedYaw
     }
 
-    private func processVertical(pitchDeg: Float, rollDeg: Float, rotationRate: Float) {
+    private func processVertical(elevationDeg: Float, rollDeg: Float, rotationRate: Float) {
         if DirectionCaptureGuide.isExtremeRotation(rotationRate) {
-            previousPitch = pitchDeg
+            previousElevation = elevationDeg
             return
         }
         if abs(rollDeg) > DirectionCaptureConfig.extremeRollRejectDeg {
-            previousPitch = pitchDeg
+            previousElevation = elevationDeg
             return
         }
 
-        let prev = previousPitch
-        previousPitch = pitchDeg
+        let prev = previousElevation
+        previousElevation = elevationDeg
 
         switch phase {
         case .capturingUp:
             guard captured[.up] == nil else { return }
             let crossed: Bool
             if let prev {
-                crossed = prev < DirectionCaptureConfig.upPitchMinDeg
-                    && pitchDeg >= DirectionCaptureConfig.upPitchMinDeg
+                crossed = prev < DirectionCaptureConfig.upElevationMinDeg
+                    && elevationDeg >= DirectionCaptureConfig.upElevationMinDeg
             } else {
-                crossed = pitchDeg >= DirectionCaptureConfig.upPitchMinDeg
+                crossed = elevationDeg >= DirectionCaptureConfig.upElevationMinDeg
             }
-            if crossed || DirectionCaptureGuide.classifyVertical(pitchDeg: pitchDeg) == .up {
+            if crossed || DirectionCaptureGuide.classifyElevation(elevationDeg: elevationDeg) == .up {
                 if let best = frameForVerticalCommit(preferUp: true) {
                     commitCapture(.up, frame: best)
                     advancePhaseIfNeeded()
@@ -397,12 +409,12 @@ final class DirectionCaptureEngine: NSObject {
             guard captured[.down] == nil else { return }
             let crossed: Bool
             if let prev {
-                crossed = prev > DirectionCaptureConfig.downPitchMaxDeg
-                    && pitchDeg <= DirectionCaptureConfig.downPitchMaxDeg
+                crossed = prev > DirectionCaptureConfig.downElevationMaxDeg
+                    && elevationDeg <= DirectionCaptureConfig.downElevationMaxDeg
             } else {
-                crossed = pitchDeg <= DirectionCaptureConfig.downPitchMaxDeg
+                crossed = elevationDeg <= DirectionCaptureConfig.downElevationMaxDeg
             }
-            if crossed || DirectionCaptureGuide.classifyVertical(pitchDeg: pitchDeg) == .down {
+            if crossed || DirectionCaptureGuide.classifyElevation(elevationDeg: elevationDeg) == .down {
                 if let best = frameForVerticalCommit(preferUp: false) {
                     commitCapture(.down, frame: best)
                     advancePhaseIfNeeded()
@@ -454,11 +466,11 @@ final class DirectionCaptureEngine: NSObject {
         switch phase {
         case .capturingHorizontal where horizontalDone:
             phase = .capturingUp
-            previousPitch = lastMotion.pitchDeg
+            previousElevation = lastMotion.elevationDeg
             frameBuffer.removeAll(keepingCapacity: true)
         case .capturingUp where captured[.up] != nil:
             phase = .capturingDown
-            previousPitch = lastMotion.pitchDeg
+            previousElevation = lastMotion.elevationDeg
             frameBuffer.removeAll(keepingCapacity: true)
         case .capturingDown where captured[.down] != nil:
             phase = .completed
@@ -533,30 +545,27 @@ final class DirectionCaptureEngine: NSObject {
     private func startMockContinuousSweep() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            // Dense yaw steps that do not land exactly on 45° multiples.
+            // Decreasing yaw (device right-turn): 0 → -360 with near-misses at -45 multiples.
             var yaws: [Float] = []
             var y: Float = 0
-            while y <= 360 {
+            while y >= -360 {
                 yaws.append(y)
-                y += 4.3
+                y -= 4.3
             }
-            // Ensure crossings: inject near-miss pairs around each target after front.
-            for t in stride(from: 45, through: 315, by: 45) {
-                yaws.append(Float(t) - 2)
+            for t in stride(from: -45, through: -315, by: -45) {
                 yaws.append(Float(t) + 2)
+                yaws.append(Float(t) - 2)
             }
-            yaws.sort()
+            yaws.sort(by: >)
 
             var t: TimeInterval = 0
-            // Front auto-capture delay
             for i in 0..<6 {
                 guard self.isCapturing else { return }
-                let yaw: Float = Float(i) * 0.4
-                let img = Self.makeMockImage(direction: .front)
+                let yaw: Float = -Float(i) * 0.4
                 DispatchQueue.main.sync {
-                    // Force front delay clock: first call sets start; sleep outside
                     self.ingestSyntheticFrame(
-                        image: img, unwrappedYaw: yaw, pitchDeg: -5,
+                        image: Self.makeMockImage(direction: .front),
+                        unwrappedYaw: yaw, pitchDeg: -5,
                         timestamp: t, sharpness: 80 + Float(i)
                     )
                 }
@@ -568,10 +577,10 @@ final class DirectionCaptureEngine: NSObject {
             for yaw in yaws {
                 guard self.isCapturing else { return }
                 if self.capturedCount >= 8 { break }
-                let img = Self.makeMockImage(direction: .frontRight)
                 DispatchQueue.main.sync {
                     self.ingestSyntheticFrame(
-                        image: img, unwrappedYaw: yaw, pitchDeg: -12,
+                        image: Self.makeMockImage(direction: .frontRight),
+                        unwrappedYaw: yaw, pitchDeg: -12,
                         rotationRate: 0.3, timestamp: t, sharpness: 90
                     )
                 }
@@ -579,26 +588,25 @@ final class DirectionCaptureEngine: NSObject {
                 Thread.sleep(forTimeInterval: 0.01)
             }
 
-            // Up / down
-            for pitch in stride(from: 0, through: 85, by: 8) {
+            for elev in stride(from: 0, through: 75, by: 8) {
                 guard self.isCapturing else { return }
                 DispatchQueue.main.sync {
                     self.ingestSyntheticFrame(
                         image: Self.makeMockImage(direction: .up),
-                        unwrappedYaw: 360, pitchDeg: Float(pitch),
-                        timestamp: t, sharpness: 95
+                        unwrappedYaw: -320, pitchDeg: -40,
+                        elevationDeg: Float(elev), timestamp: t, sharpness: 95
                     )
                 }
                 t += 0.03
                 Thread.sleep(forTimeInterval: 0.01)
             }
-            for pitch in stride(from: 40, through: -85, by: -10) {
+            for elev in stride(from: 20, through: -75, by: -10) {
                 guard self.isCapturing else { return }
                 DispatchQueue.main.sync {
                     self.ingestSyntheticFrame(
                         image: Self.makeMockImage(direction: .down),
-                        unwrappedYaw: 360, pitchDeg: Float(pitch),
-                        timestamp: t, sharpness: 95
+                        unwrappedYaw: -320, pitchDeg: -40,
+                        elevationDeg: Float(elev), timestamp: t, sharpness: 95
                     )
                 }
                 t += 0.03

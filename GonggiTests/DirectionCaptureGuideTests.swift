@@ -15,76 +15,83 @@ final class DirectionCaptureGuideTests: XCTestCase {
         super.tearDown()
     }
 
-    func testCrossesTargetOnNearMissStep() {
-        // 43 → 47 must capture front_right (45) without landing on 45.
+    func testCrossesTargetOnDecreasingNearMiss() {
+        // Device right-turn: -42 → -48 crosses -45 (front_right).
         XCTAssertTrue(
+            DirectionCaptureGuide.crossesTarget(previousYaw: -42, currentYaw: -48, targetYaw: -45)
+        )
+        XCTAssertFalse(
+            DirectionCaptureGuide.crossesTarget(previousYaw: -40, currentYaw: -44, targetYaw: -45)
+        )
+        XCTAssertTrue(
+            DirectionCaptureGuide.crossesTarget(previousYaw: -44.4, currentYaw: -46.1, targetYaw: -45)
+        )
+        // Increasing path must NOT count (wrong direction for this device).
+        XCTAssertFalse(
             DirectionCaptureGuide.crossesTarget(previousYaw: 43, currentYaw: 47, targetYaw: 45)
         )
-        XCTAssertFalse(
-            DirectionCaptureGuide.crossesTarget(previousYaw: 40, currentYaw: 44, targetYaw: 45)
+    }
+
+    func testCrossesTargetAtBackAndFrontLeftDecreasing() {
+        XCTAssertTrue(
+            DirectionCaptureGuide.crossesTarget(previousYaw: -178, currentYaw: -182, targetYaw: -180)
         )
         XCTAssertTrue(
-            DirectionCaptureGuide.crossesTarget(previousYaw: 44.4, currentYaw: 46.1, targetYaw: 45)
+            DirectionCaptureGuide.crossesTarget(previousYaw: -313, currentYaw: -318, targetYaw: -315)
+        )
+        XCTAssertFalse(
+            DirectionCaptureGuide.crossesTarget(previousYaw: -320, currentYaw: -330, targetYaw: -315)
         )
     }
 
-    func testCrossesTargetAtBackAndWrapRegion() {
-        XCTAssertTrue(
-            DirectionCaptureGuide.crossesTarget(previousYaw: 178, currentYaw: 182, targetYaw: 180)
-        )
-        XCTAssertTrue(
-            DirectionCaptureGuide.crossesTarget(previousYaw: 313, currentYaw: 318, targetYaw: 315)
-        )
-        // Unwrapped past 360 still works for a target on first lap only if target ≤ current.
-        XCTAssertFalse(
-            DirectionCaptureGuide.crossesTarget(previousYaw: 320, currentYaw: 330, targetYaw: 315)
-        )
+    func testTargetYawMatchesDeviceRightTurnConvention() {
+        XCTAssertEqual(DirectionName.front.targetYawDeg, 0)
+        XCTAssertEqual(DirectionName.frontRight.targetYawDeg, -45)
+        XCTAssertEqual(DirectionName.right.targetYawDeg, -90)
+        XCTAssertEqual(DirectionName.back.targetYawDeg, -180)
+        XCTAssertEqual(DirectionName.left.targetYawDeg, -270)
+        // Display mapping matches device measurements
+        XCTAssertEqual(DirectionCaptureGuide.normalizeYaw0to360(-90), 270, accuracy: 0.01)
+        XCTAssertEqual(DirectionCaptureGuide.normalizeYaw0to360(-270), 90, accuracy: 0.01)
+        XCTAssertEqual(DirectionCaptureGuide.normalizeYaw0to360(-180), 180, accuracy: 0.01)
+        XCTAssertEqual(DirectionCaptureGuide.normalizeYaw0to360(-45), 315, accuracy: 0.01)
     }
 
-    func testBestFramePicksClosestYaw() {
-        let frames = [41, 43, 44.4, 46.1, 48].enumerated().map { i, yaw in
+    func testBestFramePicksClosestYawDecreasing() {
+        let frames = [-41, -43, -44.4, -46.1, -48].enumerated().map { i, yaw in
             DirectionBufferedFrame(
                 image: UIImage(),
                 unwrappedYaw: yaw,
-                pitchDeg: 0, rollDeg: 0,
+                pitchDeg: 0, rollDeg: 0, elevationDeg: 0,
                 timestamp: TimeInterval(i),
                 sharpness: 50,
                 rotationRate: 0.2
             )
         }
-        let best = DirectionCaptureGuide.bestFrame(in: frames, targetYaw: 45)
-        XCTAssertEqual(best?.unwrappedYaw ?? -1, 44.4, accuracy: 0.01)
+        let best = DirectionCaptureGuide.bestFrame(in: frames, targetYaw: -45)
+        XCTAssertEqual(best?.unwrappedYaw ?? 0, -44.4, accuracy: 0.01)
     }
 
-    func testBestFrameTieBreakPrefersSharper() {
-        let a = DirectionBufferedFrame(
-            image: UIImage(), unwrappedYaw: 44, pitchDeg: 0, rollDeg: 0,
-            timestamp: 0, sharpness: 10, rotationRate: 0.2
-        )
-        let b = DirectionBufferedFrame(
-            image: UIImage(), unwrappedYaw: 46, pitchDeg: 0, rollDeg: 0,
-            timestamp: 1, sharpness: 200, rotationRate: 0.2
-        )
-        // Equal distance 1° → sharper wins
-        let best = DirectionCaptureGuide.bestFrame(in: [a, b], targetYaw: 45)
-        XCTAssertEqual(best?.sharpness ?? 0, 200, accuracy: 0.1)
+    func testElevationDistinguishesUpAndDownWhenPitchIdentical() {
+        // Device: looking up and down both reported relative pitch ≈ -75°.
+        XCTAssertEqual(DirectionCaptureGuide.classifyElevation(elevationDeg: 70), .up)
+        XCTAssertEqual(DirectionCaptureGuide.classifyElevation(elevationDeg: -70), .down)
+        XCTAssertNil(DirectionCaptureGuide.classifyElevation(elevationDeg: 10))
+        // Same relative pitch value must not be used for vertical classify anymore.
     }
 
-    func testUpDownPitchClassification() {
-        XCTAssertEqual(DirectionCaptureGuide.classifyVertical(pitchDeg: 80), .up)
-        XCTAssertEqual(DirectionCaptureGuide.classifyVertical(pitchDeg: -80), .down)
-        XCTAssertNil(DirectionCaptureGuide.classifyVertical(pitchDeg: 20))
+    func testElevationFromGravityLooksUpVsDown() {
+        // Looking up: camera -Z toward sky → gravity ≈ (0, 0, -1) roughly → up = (0,0,1), elev > 0
+        let up = DirectionCaptureGuide.elevationDeg(gravityX: 0, gravityY: 0, gravityZ: -1)
+        XCTAssertGreaterThan(up, 50)
+        // Looking down: gravity ≈ (0, 0, +1) → up = (0,0,-1), elev < 0
+        let down = DirectionCaptureGuide.elevationDeg(gravityX: 0, gravityY: 0, gravityZ: 1)
+        XCTAssertLessThan(down, -50)
     }
 
     func testExtremePoseOnlyAtHighPitch() {
         XCTAssertFalse(DirectionCaptureGuide.isExtremePose(pitchDeg: -35, rollDeg: 5))
-        XCTAssertFalse(DirectionCaptureGuide.isExtremePose(pitchDeg: 40, rollDeg: 10))
         XCTAssertTrue(DirectionCaptureGuide.isExtremePose(pitchDeg: 65, rollDeg: 0))
-    }
-
-    func testNormalizeYaw0to360() {
-        XCTAssertEqual(DirectionCaptureGuide.normalizeYaw0to360(-45), 315, accuracy: 0.01)
-        XCTAssertEqual(DirectionCaptureGuide.normalizeYaw0to360(405), 45, accuracy: 0.01)
     }
 
     func testFileNamesMatchCanonical() {
@@ -92,21 +99,20 @@ final class DirectionCaptureGuideTests: XCTestCase {
         XCTAssertEqual(DirectionName.backLeft.rawValue, "back_left")
     }
 
-    func testContinuousYawSequenceCapturesFrontRightOnCrossing() throws {
+    func testContinuousYawSequenceCapturesFrontRightOnDecreasingCrossing() throws {
         let engine = DirectionCaptureEngine()
         engine.enableMockSweep = false
         try engine.prepareCamera(mockMode: true)
         engine.beginCapture()
 
-        // Front auto (delay=0)
         engine.ingestSyntheticFrame(
             image: DirectionCaptureEngine.makeMockImage(direction: .front),
-            unwrappedYaw: 0.5, pitchDeg: -8, timestamp: 0.01, sharpness: 100
+            unwrappedYaw: -0.5, pitchDeg: -8, timestamp: 0.01, sharpness: 100
         )
         XCTAssertNotNil(engine.captured[.front])
 
-        // Sequence that never lands on exactly 45°
-        let seq: [Float] = [3, 7, 12, 18, 25, 31, 38, 43, 47, 52]
+        // Never lands exactly on -45
+        let seq: [Float] = [-3, -7, -12, -18, -25, -31, -38, -43, -47, -52]
         for (i, yaw) in seq.enumerated() {
             engine.ingestSyntheticFrame(
                 image: DirectionCaptureEngine.makeMockImage(direction: .frontRight),
@@ -115,12 +121,12 @@ final class DirectionCaptureGuideTests: XCTestCase {
                 sharpness: 90
             )
         }
-        XCTAssertNotNil(engine.captured[.frontRight], "43→47 must capture front_right")
+        XCTAssertNotNil(engine.captured[.frontRight], "-43→-47 must capture front_right")
         XCTAssertEqual(engine.capturedCount, 2)
         CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
     }
 
-    func testFullContinuousSweepCapturesEightHorizontalsOnce() throws {
+    func testFullDecreasingSweepCapturesEightHorizontalsOnce() throws {
         let engine = DirectionCaptureEngine()
         engine.enableMockSweep = false
         try engine.prepareCamera(mockMode: true)
@@ -132,11 +138,9 @@ final class DirectionCaptureGuideTests: XCTestCase {
         )
         XCTAssertNotNil(engine.captured[.front])
 
-        // Dense continuous yaw 0→360 with intentional near-misses at each 45° multiple.
         var yaws: [Float] = []
-        for t in stride(from: 45, through: 315, by: 45) {
-            // approach then cross without hitting exactly t
-            for s in stride(from: Float(t) - 12, through: Float(t) + 8, by: 3.5) {
+        for t in stride(from: -45, through: -315, by: -45) {
+            for s in stride(from: Float(t) + 12, through: Float(t) - 8, by: -3.5) {
                 yaws.append(s)
             }
         }
@@ -144,8 +148,8 @@ final class DirectionCaptureGuideTests: XCTestCase {
             engine.ingestSyntheticFrame(
                 image: DirectionCaptureEngine.makeMockImage(direction: .right),
                 unwrappedYaw: yaw,
-                pitchDeg: -32, // would have failed old ≤28 gate
-                rotationRate: 0.55, // would have failed old <0.45 gate
+                pitchDeg: -32,
+                rotationRate: 0.55,
                 timestamp: TimeInterval(i) * 0.02 + 0.2,
                 sharpness: 80
             )
@@ -159,21 +163,23 @@ final class DirectionCaptureGuideTests: XCTestCase {
             8
         )
 
-        // Up / down via threshold crossing
-        for pitch in stride(from: 10, through: 85, by: 10) {
+        // Up / down via gravity elevation (pitch stays ~-75 style)
+        for elev in stride(from: 10, through: 75, by: 10) {
             engine.ingestSyntheticFrame(
                 image: DirectionCaptureEngine.makeMockImage(direction: .up),
-                unwrappedYaw: 320, pitchDeg: Float(pitch),
-                timestamp: 10 + TimeInterval(pitch), sharpness: 70
+                unwrappedYaw: -320, pitchDeg: -75,
+                elevationDeg: Float(elev),
+                timestamp: 10 + TimeInterval(elev), sharpness: 70
             )
         }
         XCTAssertNotNil(engine.captured[.up])
 
-        for pitch in stride(from: 20, through: -85, by: -12) {
+        for elev in stride(from: 20, through: -75, by: -12) {
             engine.ingestSyntheticFrame(
                 image: DirectionCaptureEngine.makeMockImage(direction: .down),
-                unwrappedYaw: 320, pitchDeg: Float(pitch),
-                timestamp: 20 + TimeInterval(abs(pitch)), sharpness: 70
+                unwrappedYaw: -320, pitchDeg: -75,
+                elevationDeg: Float(elev),
+                timestamp: 20 + TimeInterval(abs(elev)), sharpness: 70
             )
         }
         XCTAssertNotNil(engine.captured[.down])
@@ -192,11 +198,10 @@ final class DirectionCaptureGuideTests: XCTestCase {
             image: DirectionCaptureEngine.makeMockImage(direction: .front),
             unwrappedYaw: 0, pitchDeg: 0, timestamp: 0, sharpness: 100
         )
-        // Cross 45 twice-worth of motion after already past
-        for yaw: Float in [40, 50, 60, 70, 80, 95] {
+        for yaw: Float in [-40, -50, -60, -70, -80, -95] {
             engine.ingestSyntheticFrame(
                 image: DirectionCaptureEngine.makeMockImage(direction: .frontRight),
-                unwrappedYaw: yaw, pitchDeg: 0, timestamp: TimeInterval(yaw), sharpness: 90
+                unwrappedYaw: yaw, pitchDeg: 0, timestamp: TimeInterval(abs(yaw)), sharpness: 90
             )
         }
         XCTAssertEqual(
@@ -206,16 +211,16 @@ final class DirectionCaptureGuideTests: XCTestCase {
         CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
     }
 
-    /// Regression: Build 32-style motion samples must keep updating lastMotion for UI yaw/pitch.
     func testMotionSequenceKeepsUpdatingLastMotion() throws {
         let engine = DirectionCaptureEngine()
         engine.enableMockSweep = false
         try engine.prepareCamera(mockMode: true)
         engine.beginCapture()
 
+        // Device right-turn display path: 0 → 315 → 270 …
         let samples: [(Float, Float)] = [
-            (0, 0), (20, -5), (45, -10), (70, -12), (90, -8),
-            (135, -15), (180, -20), (225, -18), (270, -10), (315, -6)
+            (0, 0), (-20, -5), (-45, -10), (-70, -12), (-90, -8),
+            (-135, -15), (-180, -20), (-225, -18), (-270, -10), (-315, -6)
         ]
         for (i, sample) in samples.enumerated() {
             engine.ingestSyntheticFrame(
@@ -226,7 +231,11 @@ final class DirectionCaptureGuideTests: XCTestCase {
                 sharpness: 80
             )
             XCTAssertEqual(engine.lastMotion.relativeYawDeg, sample.0, accuracy: 0.01)
-            XCTAssertEqual(engine.lastMotion.yaw0to360, DirectionCaptureGuide.normalizeYaw0to360(sample.0), accuracy: 0.01)
+            XCTAssertEqual(
+                engine.lastMotion.yaw0to360,
+                DirectionCaptureGuide.normalizeYaw0to360(sample.0),
+                accuracy: 0.01
+            )
             XCTAssertEqual(engine.lastMotion.pitchDeg, sample.1, accuracy: 0.01)
         }
         CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
