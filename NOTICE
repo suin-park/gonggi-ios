@@ -36,5 +36,18 @@ PoC). Capture, ARKit pose, gravity basis, coverage, and viewer remain
 Gonggi-owned.
 
 ---------------------------------------------------------------------------
+Depth Anything V2 (optional Core ML — Build 27 PoC)
+---------------------------------------------------------------------------
+
+Name:        Depth Anything V2 Small (Core ML F16 package, when vendored)
+License:     Apache License 2.0
+Upstream:    https://github.com/DepthAnything/Depth-Anything-V2
+Apple pack:  https://huggingface.co/apple/coreml-depth-anything-v2-small
+
+Not required for Build 27 CI. Primary monocularProxy path is geometric
+(on-device, no ML weights). If an mlpackage is later bundled under
+Vendor/DepthAnything/, attribute it here and in the app bundle NOTICE.
+
+---------------------------------------------------------------------------
 End of notices
 ---------------------------------------------------------------------------

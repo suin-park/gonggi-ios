@@ -69,6 +69,9 @@ enum Quick360Config {
     /// Does **not** change `productionDefault` (.legacy). Set `false` before App Store promote.
     static let testFlightABCompareEnabled = true
 
+    /// Build 27: also run depth-reprojection PoC during A/B (artifacts only; Legacy remains user output).
+    static let depthReprojectPoCInABCompare = true
+
     // Live sphere brush proxy (separate from final panorama)
     /// Live equirect atlas (UX preview — not final stitch resolution).
     static let livePreviewWidth = 1024

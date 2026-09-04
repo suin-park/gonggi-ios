@@ -6,6 +6,8 @@ enum PanoramaEngineSelection: String, CaseIterable, Equatable, Sendable {
     case openCV
     /// Legacy user-facing output + OpenCV A/B artifacts (same keyframes).
     case abCompare
+    /// Build 27 PoC — depth-assisted reprojection (DEBUG / explicit selection only).
+    case depthReproject
 
     static var productionDefault: PanoramaEngineSelection { .legacy }
 
@@ -33,6 +35,8 @@ enum PanoramaEngineSelection: String, CaseIterable, Equatable, Sendable {
             return GonggiLegacyPanoramaEngine()
         case .openCV:
             return OpenCVPanoramaEngine()
+        case .depthReproject:
+            return DepthReprojectionPanoramaEngine()
         }
     }
 }
@@ -42,7 +46,8 @@ enum PanoramaABTestWriter {
     static func write(
         sessionId: String,
         legacy: PanoramaEngineOutput,
-        openCV: PanoramaEngineOutput
+        openCV: PanoramaEngineOutput,
+        depthReproject: PanoramaEngineOutput? = nil
     ) throws {
         let dir = try PanoramaABPaths.directory(sessionId: sessionId)
 
@@ -77,6 +82,38 @@ enum PanoramaABTestWriter {
             try? FileManager.default.copyItem(at: url, to: dest)
         }
 
+        // Build 27 naming alias for rotation-only OpenCV result.
+        let openCVPath = dir.appendingPathComponent(PanoramaABPaths.openCVPanorama)
+        let rotationAlias = dir.appendingPathComponent(PanoramaABPaths.openCVRotationPanorama)
+        if FileManager.default.fileExists(atPath: openCVPath.path) {
+            try? FileManager.default.removeItem(at: rotationAlias)
+            try? FileManager.default.copyItem(at: openCVPath, to: rotationAlias)
+        }
+
+        if let depth = depthReproject {
+            if let rgba = depth.rgba, depth.width > 0, depth.height > 0, depth.success {
+                try PanoramaExporter.writeJPEG(
+                    rgba: rgba,
+                    width: depth.width,
+                    height: depth.height,
+                    to: dir.appendingPathComponent(PanoramaABPaths.depthReprojectPanorama)
+                )
+            } else if depth.success, let url = depth.panoramaURL,
+                      FileManager.default.fileExists(atPath: url.path) {
+                let dest = dir.appendingPathComponent(PanoramaABPaths.depthReprojectPanorama)
+                try? FileManager.default.removeItem(at: dest)
+                try? FileManager.default.copyItem(at: url, to: dest)
+            }
+            var depthReport = depth.report
+            depthReport.outputFilePath = depth.success
+                ? dir.appendingPathComponent(PanoramaABPaths.depthReprojectPanorama).path
+                : nil
+            try PanoramaExporter.writeJSON(
+                depthReport,
+                to: dir.appendingPathComponent(PanoramaABPaths.depthReprojectReport)
+            )
+        }
+
         var legacyReport = legacy.report
         if legacyReport.outputFilePath == nil {
             legacyReport.outputFilePath = dir
@@ -102,8 +139,11 @@ enum PanoramaABTestWriter {
             createdAt: iso,
             legacy: legacyReport,
             openCV: openCVReport,
+            depthReproject: depthReproject?.report,
             notes: openCV.success
-                ? nil
+                ? (depthReproject?.success == false
+                    ? (depthReproject?.failureReason ?? "depth reprojection failed; OpenCV kept")
+                    : nil)
                 : (openCV.failureReason ?? "OpenCV unavailable; schema reserved for A/B")
         )
         try PanoramaExporter.writeJSON(

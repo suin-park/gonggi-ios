@@ -39,6 +39,7 @@ protocol PanoramaEngineProtocol {
 enum PanoramaEngineID {
     static let legacy = "gonggi.legacy"
     static let openCV = "gonggi.opencv"
+    static let depthReproject = "gonggi.depthReproject"
 }
 
 enum PanoramaEngineError: Error, Equatable, LocalizedError {
@@ -210,6 +211,7 @@ struct PanoramaABComparisonReport: Codable, Equatable, Sendable {
     var createdAt: String
     var legacy: PanoramaEngineRunReport
     var openCV: PanoramaEngineRunReport
+    var depthReproject: PanoramaEngineRunReport?
     var notes: String?
 }
 
@@ -217,8 +219,12 @@ enum PanoramaABPaths {
     static let folderName = "ab"
     static let legacyPanorama = "legacy_panorama.jpg"
     static let openCVPanorama = "opencv_panorama.jpg"
+    /// Build 26 rotation-graph OpenCV alias for side-by-side naming.
+    static let openCVRotationPanorama = "opencv_rotation.jpg"
+    static let depthReprojectPanorama = "depth_reproject_4096x2048.jpg"
     static let legacyReport = "legacy_report.json"
     static let openCVReport = "opencv_report.json"
+    static let depthReprojectReport = "depth_reproject_report.json"
     static let abReport = "ab_report.json"
 
     static func directory(sessionId: String) throws -> URL {

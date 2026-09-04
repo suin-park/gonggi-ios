@@ -289,10 +289,42 @@ enum Quick360Reconstruction {
                     reason: error.localizedDescription
                 )
             }
+
+            // Build 27 depth PoC — failure must not abort A/B (OpenCV / Legacy remain).
+            var depthOut: PanoramaEngineOutput?
+            if Quick360Config.depthReprojectPoCInABCompare {
+                do {
+                    let depthURL = try PanoramaABPaths.directory(sessionId: input.sessionId)
+                        .appendingPathComponent("depth_reproject_work.jpg")
+                    let depthInput = PanoramaEngineInput(
+                        sessionId: input.sessionId,
+                        keyframes: lightInput.keyframes,
+                        originTransform: lightInput.originTransform,
+                        captureBasis: lightInput.captureBasis,
+                        selectedKeyframeMeta: lightInput.selectedKeyframeMeta,
+                        targets: lightInput.targets,
+                        coverageReport: lightInput.coverageReport,
+                        outputWidth: lightInput.outputWidth,
+                        outputHeight: lightInput.outputHeight,
+                        outputPanoramaURL: depthURL
+                    )
+                    var depthEngine = DepthReprojectionPanoramaEngine()
+                    depthEngine.sourceStride = 3
+                    depthEngine.centerModesToRun = [.firstCamera, .medianCameras]
+                    depthOut = try await depthEngine.stitch(input: depthInput)
+                } catch {
+                    depthOut = .failure(
+                        engine: PanoramaEngineID.depthReproject,
+                        reason: error.localizedDescription
+                    )
+                }
+            }
+
             try? PanoramaABTestWriter.write(
                 sessionId: input.sessionId,
                 legacy: lightLegacy,
-                openCV: openCVOut
+                openCV: openCVOut,
+                depthReproject: depthOut
             )
 
             // Lazy-reload Legacy equirect from disk for downstream mask / rewrite.
@@ -302,6 +334,18 @@ enum Quick360Reconstruction {
                reloaded.width == stitch.width,
                reloaded.height == stitch.height {
                 stitch = stitch.replacingRGBA(reloaded.rgba)
+            }
+            return stitch
+
+        case .depthReproject:
+            let out = try await DepthReprojectionPanoramaEngine().stitch(input: input)
+            if out.success, let stitch = out.stitchOutput {
+                return stitch
+            }
+            // Fallback: Legacy keeps session usable.
+            let legacy = try await GonggiLegacyPanoramaEngine().stitch(input: input)
+            guard let stitch = legacy.stitchOutput else {
+                throw PanoramaEngineError.encodeFailed
             }
             return stitch
         }
