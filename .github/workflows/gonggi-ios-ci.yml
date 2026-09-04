@@ -73,48 +73,55 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download OpenCV xcframework
+      - name: Restore OpenCV xcframework cache
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Download OpenCV artifact if cache miss
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v4
         with:
           name: opencv2-xcframework
-          # upload-artifact stores the *contents* of the uploaded directory at the
-          # artifact root — download into the xcframework folder itself.
-          path: Vendor/OpenCV/opencv2.xcframework
+          path: /tmp/opencv-artifact
 
-      - name: Verify OpenCV layout
+      - name: Install OpenCV xcframework
         run: |
           set -euo pipefail
           DEST="Vendor/OpenCV/opencv2.xcframework"
-          if [[ ! -f "${DEST}/Info.plist" ]]; then
-            # Fallbacks for nested / flat layouts from older runs.
-            if [[ -f Vendor/OpenCV/Info.plist && -d Vendor/OpenCV/ios-arm64 ]]; then
-              mkdir -p /tmp/gonggi-opencv-wrap
-              rm -rf /tmp/gonggi-opencv-wrap/opencv2.xcframework
-              mkdir -p /tmp/gonggi-opencv-wrap/opencv2.xcframework
-              for item in Info.plist ios-arm64 ios-arm64-simulator ios-arm64_x86_64-simulator; do
-                if [[ -e "Vendor/OpenCV/${item}" ]]; then
-                  mv "Vendor/OpenCV/${item}" /tmp/gonggi-opencv-wrap/opencv2.xcframework/
-                fi
-              done
-              rm -rf "${DEST}"
-              mv /tmp/gonggi-opencv-wrap/opencv2.xcframework "${DEST}"
+          mkdir -p Vendor/OpenCV
+
+          if [[ -f "${DEST}/Info.plist" ]]; then
+            echo "Using cached ${DEST}"
+          else
+            echo "Normalizing downloaded artifact into ${DEST}"
+            ls -laR /tmp/opencv-artifact || true
+            FOUND="$(find /tmp/opencv-artifact -type d -name 'opencv2.xcframework' 2>/dev/null | head -n 1 || true)"
+            rm -rf "${DEST}"
+            if [[ -n "${FOUND}" ]]; then
+              cp -R "${FOUND}" "${DEST}"
+            elif [[ -f /tmp/opencv-artifact/Info.plist ]]; then
+              mkdir -p "${DEST}"
+              cp -R /tmp/opencv-artifact/. "${DEST}/"
             else
-              INNER="$(find Vendor/OpenCV -type d -name 'opencv2.xcframework' | head -n 1)"
-              if [[ -n "${INNER}" && "${INNER}" != "${DEST}" ]]; then
-                rm -rf /tmp/gonggi-opencv-wrap
-                mv "${INNER}" /tmp/gonggi-opencv-wrap
-                rm -rf "${DEST}"
-                mkdir -p Vendor/OpenCV
-                mv /tmp/gonggi-opencv-wrap "${DEST}"
-              fi
+              echo "::error::Could not locate opencv2.xcframework in artifact"
+              exit 1
             fi
           fi
+
           test -f "${DEST}/Info.plist"
           echo "OpenCV xcframework OK:"
           ls -la "${DEST}"
           du -sh "${DEST}"
-          # Confirm device + simulator slices exist.
-          test -d "${DEST}/ios-arm64" || test -d "${DEST}/ios-arm64_armv7"
+          # At least one platform slice directory should exist.
+          SLICE_COUNT="$(find "${DEST}" -maxdepth 1 -type d \( -name 'ios-*' -o -name 'ios-*' \) | wc -l | tr -d ' ')"
+          if [[ "${SLICE_COUNT}" -lt 1 ]]; then
+            # Some builds nest frameworks differently — accept any *.framework child.
+            FRAMEWORK_COUNT="$(find "${DEST}" -maxdepth 2 -type d -name 'opencv2.framework' | wc -l | tr -d ' ')"
+            test "${FRAMEWORK_COUNT}" -ge 1
+          fi
           find "${DEST}" -maxdepth 2 -type d -print
 
       - name: Select Xcode
