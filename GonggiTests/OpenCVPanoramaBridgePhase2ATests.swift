@@ -1,4 +1,5 @@
 import Foundation
+import simd
 import XCTest
 @testable import Gonggi
 
