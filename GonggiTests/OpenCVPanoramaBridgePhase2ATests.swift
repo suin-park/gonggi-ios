@@ -14,7 +14,7 @@ final class OpenCVPanoramaBridgePhase2ATests: XCTestCase {
     func testOpenCVVersionPinnedMajorMinor() {
         let version = OpenCVPanoramaBridge.openCVVersionString()
         XCTAssertFalse(version.isEmpty)
-        // Pinned Vendor/OpenCV/VERSION = 4.10.0
+        // Pinned Vendor/OpenCV/VERSION = 4.10.0 (custom builds may append suffix).
         XCTAssertTrue(
             version.hasPrefix("4.10"),
             "Expected OpenCV 4.10.x, got \(version)"
