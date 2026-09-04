@@ -77,24 +77,45 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: opencv2-xcframework
-          path: Vendor/OpenCV
+          # upload-artifact stores the *contents* of the uploaded directory at the
+          # artifact root — download into the xcframework folder itself.
+          path: Vendor/OpenCV/opencv2.xcframework
 
       - name: Verify OpenCV layout
         run: |
           set -euo pipefail
-          # Normalize nested download layouts from upload-artifact.
-          if [[ ! -f Vendor/OpenCV/opencv2.xcframework/Info.plist ]]; then
-            INNER="$(find Vendor/OpenCV -type d -name 'opencv2.xcframework' | head -n 1)"
-            if [[ -n "${INNER}" && "${INNER}" != "Vendor/OpenCV/opencv2.xcframework" ]]; then
-              rm -rf /tmp/opencv2.xcframework
-              mv "${INNER}" /tmp/opencv2.xcframework
-              rm -rf Vendor/OpenCV/opencv2.xcframework
-              mkdir -p Vendor/OpenCV
-              mv /tmp/opencv2.xcframework Vendor/OpenCV/opencv2.xcframework
+          DEST="Vendor/OpenCV/opencv2.xcframework"
+          if [[ ! -f "${DEST}/Info.plist" ]]; then
+            # Fallbacks for nested / flat layouts from older runs.
+            if [[ -f Vendor/OpenCV/Info.plist && -d Vendor/OpenCV/ios-arm64 ]]; then
+              mkdir -p /tmp/gonggi-opencv-wrap
+              rm -rf /tmp/gonggi-opencv-wrap/opencv2.xcframework
+              mkdir -p /tmp/gonggi-opencv-wrap/opencv2.xcframework
+              for item in Info.plist ios-arm64 ios-arm64-simulator ios-arm64_x86_64-simulator; do
+                if [[ -e "Vendor/OpenCV/${item}" ]]; then
+                  mv "Vendor/OpenCV/${item}" /tmp/gonggi-opencv-wrap/opencv2.xcframework/
+                fi
+              done
+              rm -rf "${DEST}"
+              mv /tmp/gonggi-opencv-wrap/opencv2.xcframework "${DEST}"
+            else
+              INNER="$(find Vendor/OpenCV -type d -name 'opencv2.xcframework' | head -n 1)"
+              if [[ -n "${INNER}" && "${INNER}" != "${DEST}" ]]; then
+                rm -rf /tmp/gonggi-opencv-wrap
+                mv "${INNER}" /tmp/gonggi-opencv-wrap
+                rm -rf "${DEST}"
+                mkdir -p Vendor/OpenCV
+                mv /tmp/gonggi-opencv-wrap "${DEST}"
+              fi
             fi
           fi
-          test -f Vendor/OpenCV/opencv2.xcframework/Info.plist
-          ls -la Vendor/OpenCV/opencv2.xcframework
+          test -f "${DEST}/Info.plist"
+          echo "OpenCV xcframework OK:"
+          ls -la "${DEST}"
+          du -sh "${DEST}"
+          # Confirm device + simulator slices exist.
+          test -d "${DEST}/ios-arm64" || test -d "${DEST}/ios-arm64_armv7"
+          find "${DEST}" -maxdepth 2 -type d -print
 
       - name: Select Xcode
         run: |
@@ -192,6 +213,38 @@ jobs:
           echo "Release app: ${APP_PATH}"
           du -sh "${APP_PATH}" || true
           du -sh Vendor/OpenCV/opencv2.xcframework || true
+          if [[ -d Vendor/OpenCV/opencv2.xcframework ]]; then
+            find Vendor/OpenCV/opencv2.xcframework -type f \( -name 'opencv2' -o -name '*.a' \) -exec ls -lh {} \; || true
+          fi
+
+      - name: Device SDK link (iphoneos arm64, unsigned)
+        run: |
+          set -euo pipefail
+          # Verifies opencv2.xcframework device slice links without signing / archive upload.
+          xcodebuild build \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Device SDK Release link (iphoneos arm64, unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO
 
       - name: Preflight validate Release app bundle
         run: |

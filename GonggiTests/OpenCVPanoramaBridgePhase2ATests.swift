@@ -26,9 +26,23 @@ final class OpenCVPanoramaBridgePhase2ATests: XCTestCase {
         XCTAssertEqual(OpenCVPanoramaEngine.smokeTestAdd(-3, 10), 7)
     }
 
-    func testStitchNotYetImplementedReturnsStructuredFailure() async throws {
-        // Replaced in Phase 2B/2C — keep smoke + version tests; stitch covered elsewhere.
-        XCTAssertTrue(OpenCVPanoramaBridge.isAvailable())
+    func testBridgeEmptyRequestReturnsStructuredFailure() {
+        // Phase 2A smoke: bridge must not crash; empty input → structured failure.
+        let request = OpenCVPanoramaStitchRequest()
+        request.keyframeJPEGPaths = []
+        request.rotationsRowMajor9 = []
+        request.fx = []
+        request.fy = []
+        request.cx = []
+        request.cy = []
+        request.imageWidths = []
+        request.imageHeights = []
+        request.outputPath = NSTemporaryDirectory() + "opencv-empty.jpg"
+        request.outputWidth = 4096
+        request.outputHeight = 2048
+        let result = OpenCVPanoramaBridge.stitch(with: request)
+        XCTAssertFalse(result.success)
+        XCTAssertNotNil(result.errorMessage)
     }
 
     func testLegacyUnaffectedWhenOpenCVFails() async throws {
