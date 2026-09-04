@@ -163,7 +163,18 @@ final class PanoramaStripComposer {
         let cropW = max(1, right - left)
         let rect = CGRect(x: left, y: 0, width: cropW, height: canvasHeight)
         guard let cg = full.cgImage?.cropping(to: rect) else { return full }
+        // Pixel buffer itself is upright landscape panorama — no EXIF orientation hack.
         return UIImage(cgImage: cg, scale: 1, orientation: .up)
+    }
+
+    /// True when cropped content is a wide landscape panorama.
+    var isLandscapePanorama: Bool {
+        guard canvasHeight > 0, !placements.isEmpty else { return false }
+        let pad = PanoramaCaptureConfig.stripWidthPx
+        let left = max(0, Int(floor(minX)) - pad)
+        let right = min(canvasWidth, Int(ceil(maxX)) + pad)
+        let w = max(1, right - left)
+        return w > canvasHeight
     }
 
     // MARK: - Private

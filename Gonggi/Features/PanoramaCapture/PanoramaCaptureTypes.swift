@@ -29,6 +29,9 @@ enum PanoramaCaptureConfig {
     /// Auto-finish suggestion (degrees).
     static var autoEnoughYawSpanDeg: Float = 90
     static let folderName = "panorama_scan"
+    /// DEBUG-only: draw the compositor strip bounds on the live preview.
+    /// Always false in Release / TestFlight user UI.
+    static var showDebugStripOverlay: Bool = false
 }
 
 // MARK: - Phase / guidance

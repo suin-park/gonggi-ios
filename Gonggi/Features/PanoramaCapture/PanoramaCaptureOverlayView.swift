@@ -5,17 +5,41 @@ struct PanoramaCaptureOverlayView: View {
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            Spacer()
-            guideCluster
-            Spacer()
-            bottomChrome
+        ZStack {
+            VStack(spacing: 0) {
+                topBar
+                Spacer()
+                guideCluster
+                Spacer()
+                bottomChrome
+            }
+            .padding(.horizontal, GonggiSpacing.md)
+            .padding(.top, GonggiSpacing.sm)
+            .padding(.bottom, GonggiSpacing.lg)
+
+            #if DEBUG
+            if PanoramaCaptureConfig.showDebugStripOverlay {
+                debugStripBounds
+                    .allowsHitTesting(false)
+            }
+            #endif
         }
-        .padding(.horizontal, GonggiSpacing.md)
-        .padding(.top, GonggiSpacing.sm)
-        .padding(.bottom, GonggiSpacing.lg)
     }
+
+    #if DEBUG
+    /// Internal compositor strip region — DEBUG only, never shown in Release/TestFlight.
+    private var debugStripBounds: some View {
+        GeometryReader { geo in
+            let stripW = max(2, geo.size.width * 0.04)
+            Rectangle()
+                .strokeBorder(Color.yellow.opacity(0.55), lineWidth: 1)
+                .frame(width: stripW)
+                .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                .frame(height: geo.size.height * 0.7)
+        }
+    }
+    #endif
+
 
     private var topBar: some View {
         HStack {
@@ -108,7 +132,7 @@ struct PanoramaCaptureOverlayView: View {
                 HStack {
                     Text(String(format: "회전 %.0f°", viewModel.yawSpanDeg))
                     Spacer()
-                    Text("스트립 \(viewModel.acceptedStripCount)")
+                    Text(viewModel.phase == .capturing ? "기록 중" : "준비")
                 }
                 .font(GonggiTypography.caption(11))
                 .foregroundStyle(GonggiColors.textSecondary)

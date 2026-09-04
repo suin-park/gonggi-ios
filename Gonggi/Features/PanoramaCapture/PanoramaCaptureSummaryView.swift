@@ -47,6 +47,7 @@ struct PanoramaCaptureSummaryView: View {
                 Image(uiImage: img)
                     .resizable()
                     .scaledToFit()
+                    .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md))
                     .overlay(
                         RoundedRectangle(cornerRadius: GonggiRadius.md)

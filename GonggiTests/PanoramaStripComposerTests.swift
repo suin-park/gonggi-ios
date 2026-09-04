@@ -5,13 +5,13 @@ import UIKit
 final class PanoramaStripComposerTests: XCTestCase {
     override func setUp() {
         super.setUp()
-        // Isolate mutable config from other tests.
         PanoramaCaptureConfig.stripWidthPx = 24
         PanoramaCaptureConfig.seamFeatherPx = 4
         PanoramaCaptureConfig.verticalAlignSearchPx = 8
         PanoramaCaptureConfig.approxHFovDeg = 53
         PanoramaCaptureConfig.minYawDeltaDeg = 0.35
         PanoramaCaptureConfig.maxYawDeltaDeg = 2.8
+        PanoramaCaptureConfig.showDebugStripOverlay = false
     }
 
     func testPxPerDegreeFromFrameWidth() {
@@ -20,27 +20,74 @@ final class PanoramaStripComposerTests: XCTestCase {
         XCTAssertEqual(composer.pxPerDegree, 10, accuracy: 0.01)
     }
 
-    func testAcceptFramesProduceWidePanorama() {
+    func testLandscapeSensorNeedsPortraitRotate() {
+        XCTAssertTrue(PanoramaFrameOrientation.needsLandscapeToPortraitRotate(width: 1280, height: 720))
+        XCTAssertFalse(PanoramaFrameOrientation.needsLandscapeToPortraitRotate(width: 720, height: 1280))
+    }
+
+    func testRotate90CWMapsSensorColumnToUprightRow() {
+        // 4×2 landscape with unique pixels; after 90° CW → 2×4 portrait.
+        var rgba = [UInt8](repeating: 0, count: 4 * 2 * 4)
+        for y in 0..<2 {
+            for x in 0..<4 {
+                let o = (y * 4 + x) * 4
+                rgba[o] = UInt8(x)
+                rgba[o + 1] = UInt8(y)
+                rgba[o + 2] = 100
+                rgba[o + 3] = 255
+            }
+        }
+        let rotated = PanoramaFrameOrientation.rotateRGBA90Clockwise(rgba: rgba, width: 4, height: 2)
+        XCTAssertEqual(rotated.width, 2)
+        XCTAssertEqual(rotated.height, 4)
+        // sensor (x=3,y=0) → upright (ux=1, uy=3) because ux=H-1-y=1, uy=x=3
+        let di = (3 * 2 + 1) * 4
+        XCTAssertEqual(rotated.rgba[di], 3)
+        XCTAssertEqual(rotated.rgba[di + 1], 0)
+    }
+
+    func testAcceptFramesProduceWideLandscapePanorama() {
         let composer = PanoramaStripComposer()
-        let w = 160
-        let h = 200
-        for i in 0..<60 {
-            let yaw = Float(i) * 1.5
+        // Upright portrait frame (after sensor normalize): width < height.
+        let w = 180
+        let h = 320
+        // ~200° yaw → canvas width ≈ 200 * (180/53) ≈ 679 > 2 * 320.
+        for i in 0..<140 {
+            let yaw = Float(i) * 1.45
             let rgba = makeFeatureFrame(width: w, height: h, featureOffset: i * 2)
             XCTAssertTrue(
                 composer.acceptFrame(rgba: rgba, width: w, height: h, yawDeg: yaw),
                 "strip \(i) should accept"
             )
         }
-        XCTAssertEqual(composer.placements.count, 60)
-        XCTAssertGreaterThan(composer.yawSpanDeg(), 80)
+        XCTAssertGreaterThan(composer.yawSpanDeg(), 180)
         let image = composer.composeUIImage(cropToContent: true)
         XCTAssertNotNil(image)
         guard let image else { return }
-        // ~88° sweep should produce a clearly wider-than-tall crop.
-        XCTAssertGreaterThan(image.size.width, image.size.height)
+        XCTAssertEqual(image.imageOrientation, .up)
         XCTAssertEqual(Int(image.size.height.rounded()), h)
-        XCTAssertGreaterThan(composer.canvasWidth, 500)
+        XCTAssertGreaterThan(image.size.width, image.size.height * 2)
+        XCTAssertTrue(composer.isLandscapePanorama)
+    }
+
+    func testYawAccumulatesOnCanvasXNotY() {
+        let composer = PanoramaStripComposer()
+        let w = 120
+        let h = 200
+        _ = composer.acceptFrame(
+            rgba: makeFeatureFrame(width: w, height: h, featureOffset: 0),
+            width: w, height: h, yawDeg: 0
+        )
+        _ = composer.acceptFrame(
+            rgba: makeFeatureFrame(width: w, height: h, featureOffset: 4),
+            width: w, height: h, yawDeg: 10
+        )
+        XCTAssertEqual(composer.canvasHeight, h)
+        XCTAssertEqual(composer.placements.count, 2)
+        let dx = abs(composer.placements[1].xOnCanvas - composer.placements[0].xOnCanvas)
+        XCTAssertGreaterThan(dx, 5)
+        // Vertical offsets are small alignment, not yaw placement.
+        XCTAssertLessThan(abs(composer.placements[1].verticalOffsetPx), 20)
     }
 
     func testVerticalOffsetFindsShiftedStrip() {
@@ -104,17 +151,18 @@ final class PanoramaStripComposerTests: XCTestCase {
         XCTAssertEqual(decoded.outputWidth, 2048)
     }
 
-    func testMockEngineComposeWritesFiles() async throws {
+    func testMockEngineComposeWritesLandscapeFiles() async throws {
         let engine = PanoramaCaptureEngine()
         engine.beginMockCapture()
+        // Portrait upright frames; wide yaw sweep.
         let w = 160
         let h = 240
-        for i in 0..<40 {
-            let yaw = Float(i) * 1.2
+        for i in 0..<120 {
+            let yaw = Float(i) * 1.5
             let rgba = makeFeatureFrame(width: w, height: h, featureOffset: i)
             engine.ingestMockFrame(rgba: rgba, width: w, height: h, yawDeg: yaw)
         }
-        XCTAssertGreaterThanOrEqual(engine.acceptedStripCount, 20)
+        XCTAssertGreaterThanOrEqual(engine.acceptedStripCount, 40)
         let sessionId = "pano-test-\(UUID().uuidString)"
         let result = try await engine.finishCapture(
             sessionId: sessionId,
@@ -122,8 +170,8 @@ final class PanoramaStripComposerTests: XCTestCase {
         )
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.finalJPEGURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.previewJPEGURL.path))
-        XCTAssertGreaterThan(result.report.acceptedStripCount, 0)
-        XCTAssertGreaterThan(result.report.yawSpanDeg, 30)
+        XCTAssertGreaterThan(result.report.outputWidth, result.report.outputHeight)
+        XCTAssertEqual(result.finalImage?.imageOrientation, .up)
         CaptureSessionStore.deleteSession(sessionId: sessionId)
     }
 
@@ -137,7 +185,6 @@ final class PanoramaStripComposerTests: XCTestCase {
                 let o = (y * width + x) * 4
                 let near = abs(x - fx) < 2
                 let band: UInt8 = near ? 230 : UInt8(40 + (x + y) % 50)
-                // Add horizontal edges so sharpness score stays above blur reject.
                 let edge: UInt8 = (y % 17 == 0) ? 180 : band
                 rgba[o] = edge
                 rgba[o + 1] = UInt8(min(255, Int(edge) + 10))

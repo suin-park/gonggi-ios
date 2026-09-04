@@ -48,9 +48,7 @@ final class PanoramaCaptureEngine: NSObject {
         guard session.canAddOutput(videoOutput) else { throw PanoramaCaptureError.cameraUnavailable }
         session.addOutput(videoOutput)
         if let conn = videoOutput.connection(with: .video) {
-            if conn.isVideoOrientationSupported {
-                conn.videoOrientation = .portrait
-            }
+            PanoramaFrameOrientation.applyPortraitRotation(to: conn)
             if conn.isVideoMirroringSupported {
                 conn.isVideoMirrored = false
             }
@@ -322,31 +320,22 @@ extension PanoramaCaptureEngine: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
-        let w = CVPixelBufferGetWidth(pb)
-        let h = CVPixelBufferGetHeight(pb)
-        guard let base = CVPixelBufferGetBaseAddress(pb) else { return }
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pb)
 
-        // Center strip only (BGRA → RGBA) — full-frame convert is too heavy for realtime.
-        let stripW = min(PanoramaCaptureConfig.stripWidthPx, w)
-        let sx0 = max(0, (w - stripW) / 2)
-        var rgba = [UInt8](repeating: 0, count: stripW * h * 4)
-        for y in 0..<h {
-            let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
-            for x in 0..<stripW {
-                let si = (sx0 + x) * 4
-                let di = (y * stripW + x) * 4
-                rgba[di] = row[si + 2]
-                rgba[di + 1] = row[si + 1]
-                rgba[di + 2] = row[si]
-                rgba[di + 3] = 255
-            }
-        }
+        // Upright portrait normalize, then center *vertical* strip only.
+        // Strip is compositor-internal — never shown as the live preview.
+        guard let extracted = PanoramaFrameOrientation.extractUprightCenterStripBGRA(
+            pixelBuffer: pb,
+            stripWidth: PanoramaCaptureConfig.stripWidthPx
+        ) else { return }
 
         _ = tryAccept(
-            rgba: rgba, width: stripW, height: h,
-            yawDeg: m.yawDeg, pitch: m.pitchDeg, roll: m.rollDeg,
-            frameWidthForFov: w
+            rgba: extracted.rgba,
+            width: extracted.stripWidth,
+            height: extracted.stripHeight,
+            yawDeg: m.yawDeg,
+            pitch: m.pitchDeg,
+            roll: m.rollDeg,
+            frameWidthForFov: extracted.uprightFrameWidth
         )
         notify()
     }
