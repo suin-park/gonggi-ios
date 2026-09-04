@@ -237,8 +237,8 @@ enum Quick360Reconstruction {
     }
 
     /// Runs the selected engine. Production / default: Legacy only.
-    /// DEBUG `.abCompare`: Legacy user output + OpenCV stub A/B artifacts.
-    /// DEBUG `.openCV` (Phase 1): OpenCV fails → fall back to Legacy for session usability.
+    /// `.abCompare` (DEBUG override or TestFlight flag): Legacy user output + OpenCV A/B artifacts.
+    /// `.openCV`: OpenCV first; on failure fall back to Legacy so the session stays usable.
     static func runSelectedEngine(
         input: PanoramaEngineInput,
         selection: PanoramaEngineSelection

@@ -7,6 +7,17 @@ struct Quick360SummaryView: View {
     @State private var showPanoramaViewer = false
     @State private var viewerURL: URL?
     @State private var previewError: String?
+    @State private var showABShare = false
+    @State private var abShareItems: [URL] = []
+    @State private var abShareError: String?
+
+    private var hasOpenCVPanorama: Bool {
+        PanoramaABPaths.openCVPanoramaURL(sessionId: summary.sessionId) != nil
+    }
+
+    private var hasABArtifacts: Bool {
+        !PanoramaABPaths.shareableArtifactURLs(sessionId: summary.sessionId).isEmpty
+    }
 
     var body: some View {
         NavigationStack {
@@ -32,9 +43,27 @@ struct Quick360SummaryView: View {
                         .font(GonggiTypography.caption(12))
                         .foregroundStyle(GonggiColors.textTertiary)
 
+                    if Quick360Config.testFlightABCompareEnabled || hasABArtifacts {
+                        Text("이 빌드는 Legacy 결과를 표시하고, 동일 세션 OpenCV A/B 산출물을 함께 저장합니다.")
+                            .font(GonggiTypography.caption(12))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                    }
+
                     VStack(spacing: GonggiSpacing.sm) {
-                        PrimaryButton(title: "360° 공간 미리보기", icon: "globe") {
-                            openPanoramaPreview()
+                        PrimaryButton(title: "360° 공간 미리보기 (Legacy)", icon: "globe") {
+                            openPanoramaPreview(url: summary.panoramaURL)
+                        }
+                        if hasOpenCVPanorama {
+                            SecondaryButton(title: "OpenCV 파노라마 미리보기", icon: "eye") {
+                                openPanoramaPreview(
+                                    url: PanoramaABPaths.openCVPanoramaURL(sessionId: summary.sessionId)
+                                )
+                            }
+                        }
+                        if hasABArtifacts {
+                            SecondaryButton(title: "A/B 결과 공유", icon: "square.and.arrow.up") {
+                                shareABArtifacts()
+                            }
                         }
                         SecondaryButton(title: "다시 촬영", icon: "arrow.counterclockwise") {
                             onRetry()
@@ -51,6 +80,11 @@ struct Quick360SummaryView: View {
                     Panorama360ViewerView(imageURL: viewerURL)
                 }
             }
+            .sheet(isPresented: $showABShare) {
+                CaptureExportShareSheet(items: abShareItems) {
+                    showABShare = false
+                }
+            }
             .alert("미리보기를 열 수 없어요", isPresented: Binding(
                 get: { previewError != nil },
                 set: { if !$0 { previewError = nil } }
@@ -59,12 +93,20 @@ struct Quick360SummaryView: View {
             } message: {
                 Text(previewError ?? "")
             }
+            .alert("A/B 공유", isPresented: Binding(
+                get: { abShareError != nil },
+                set: { if !$0 { abShareError = nil } }
+            )) {
+                Button("확인", role: .cancel) { abShareError = nil }
+            } message: {
+                Text(abShareError ?? "")
+            }
         }
     }
 
-    private func openPanoramaPreview() {
+    private func openPanoramaPreview(url: URL?) {
         GonggiHaptics.light()
-        guard let url = summary.panoramaURL else {
+        guard let url else {
             previewError = "파노라마 파일이 없어요. 다시 촬영해 주세요."
             return
         }
@@ -77,8 +119,18 @@ struct Quick360SummaryView: View {
             return
         }
         viewerURL = url
-        // Present from Summary itself (Method B) — avoids sheet + parent fullScreenCover conflict.
         showPanoramaViewer = true
+    }
+
+    private func shareABArtifacts() {
+        GonggiHaptics.light()
+        let urls = PanoramaABPaths.shareableArtifactURLs(sessionId: summary.sessionId)
+        guard !urls.isEmpty else {
+            abShareError = "A/B 산출물이 아직 없어요. 촬영을 완료한 뒤 다시 시도해 주세요."
+            return
+        }
+        abShareItems = urls
+        showABShare = true
     }
 
     private var qualityLabel: String {

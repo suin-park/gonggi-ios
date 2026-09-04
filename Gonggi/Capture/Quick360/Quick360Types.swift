@@ -65,6 +65,10 @@ enum Quick360Config {
     static let refinementMaxCorners = 120
     static let writeStitchDebugArtifacts = true
 
+    /// TestFlight / Release validation only: run Legacy (user output) + OpenCV A/B artifacts.
+    /// Does **not** change `productionDefault` (.legacy). Set `false` before App Store promote.
+    static let testFlightABCompareEnabled = true
+
     // Live sphere brush proxy (separate from final panorama)
     /// Live equirect atlas (UX preview — not final stitch resolution).
     static let livePreviewWidth = 1024

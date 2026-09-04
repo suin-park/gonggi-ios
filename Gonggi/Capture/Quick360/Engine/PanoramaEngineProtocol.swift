@@ -178,4 +178,29 @@ enum PanoramaABPaths {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
+
+    /// Top-level A/B files + nested `opencv/` debug tree for AirDrop / Files.
+    static func shareableArtifactURLs(sessionId: String) -> [URL] {
+        guard let dir = try? directory(sessionId: sessionId),
+              let enumerator = FileManager.default.enumerator(
+                at: dir,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+              ) else {
+            return []
+        }
+        var urls: [URL] = []
+        for case let item as URL in enumerator {
+            if (try? item.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                urls.append(item)
+            }
+        }
+        return urls.sorted { $0.path < $1.path }
+    }
+
+    static func openCVPanoramaURL(sessionId: String) -> URL? {
+        guard let dir = try? directory(sessionId: sessionId) else { return nil }
+        let url = dir.appendingPathComponent(openCVPanorama)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
 }

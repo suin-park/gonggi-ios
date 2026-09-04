@@ -4,22 +4,26 @@ import Foundation
 enum PanoramaEngineSelection: String, CaseIterable, Equatable, Sendable {
     case legacy
     case openCV
-    /// Run Legacy for user output + also invoke OpenCV (stub in Phase 1) for A/B artifacts.
+    /// Legacy user-facing output + OpenCV A/B artifacts (same keyframes).
     case abCompare
 
     static var productionDefault: PanoramaEngineSelection { .legacy }
 
-    /// Release: always legacy. DEBUG: may override via `debugOverride`.
+    /// Release: Legacy unless `Quick360Config.testFlightABCompareEnabled` (TestFlight A/B).
+    /// DEBUG: optional `debugOverride`.
     static func resolved() -> PanoramaEngineSelection {
         #if DEBUG
         return debugOverride ?? .legacy
         #else
+        if Quick360Config.testFlightABCompareEnabled {
+            return .abCompare
+        }
         return .legacy
         #endif
     }
 
     #if DEBUG
-    /// DEBUG-only override (no UI in Phase 1 — set from tests / future debug panel).
+    /// DEBUG-only override (tests / future debug panel).
     static var debugOverride: PanoramaEngineSelection?
     #endif
 
