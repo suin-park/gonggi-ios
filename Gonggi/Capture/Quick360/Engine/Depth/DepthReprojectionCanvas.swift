@@ -33,7 +33,7 @@ final class DepthReprojectionCanvas {
         sumW = [Float](repeating: 0, count: n)
         zNear = [Float](repeating: .greatestFiniteMagnitude, count: n)
         sourceCount = [UInt16](repeating: 0, count: n)
-        holeFlags = [UInt8](repeating: holeCapture, count: n)
+        holeFlags = [UInt8](repeating: Self.holeCapture, count: n)
     }
 
     func splat(

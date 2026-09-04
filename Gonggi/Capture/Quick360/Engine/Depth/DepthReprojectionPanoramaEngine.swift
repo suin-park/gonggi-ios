@@ -284,12 +284,12 @@ struct DepthReprojectionPanoramaEngine: PanoramaEngineProtocol {
         canvas: DepthReprojectionCanvas,
         exposure: Float
     ) {
-        let stride = max(1, sourceStride)
+        let step = max(1, sourceStride)
         let longEdge = Float(max(width, height))
         let camFwd = SphericalMath.forwardVector(from: cameraToWorld)
 
-        for y in stride(from: 0, to: height, by: stride) {
-            for x in stride(from: 0, to: width, by: stride) {
+        for y in stride(from: 0, to: height, by: step) {
+            for x in stride(from: 0, to: width, by: step) {
                 let dx = min(depthMap.width - 1, x * depthMap.width / max(width, 1))
                 let dy = min(depthMap.height - 1, y * depthMap.height / max(height, 1))
                 let didx = dy * depthMap.width + dx

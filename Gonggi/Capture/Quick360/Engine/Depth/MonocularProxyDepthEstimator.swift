@@ -209,7 +209,7 @@ struct MonocularProxyDepthEstimator: DepthMapProviding {
 
     static func median(_ vals: [Float]) -> Float? {
         guard !vals.isEmpty else { return nil }
-        var v = vals.sorted()
+        let v = vals.sorted()
         return v[v.count / 2]
     }
 
