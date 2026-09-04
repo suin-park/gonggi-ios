@@ -75,6 +75,7 @@ final class PanoramaMotionGuide {
     func feedback(
         isCapturing: Bool,
         lastAcceptedYaw: Float?,
+        currentYaw: Float? = nil,
         yawSpanDeg: Float
     ) -> PanoramaGuideFeedback {
         guard isCapturing else { return .idle }
@@ -87,7 +88,8 @@ final class PanoramaMotionGuide {
             return .shaky
         }
         if let last = lastAcceptedYaw {
-            let dy = abs(m.yawDeg - last)
+            let cur = currentYaw ?? m.yawDeg
+            let dy = abs(cur - last)
             if dy > PanoramaCaptureConfig.maxYawDeltaDeg {
                 return .tooFast
             }

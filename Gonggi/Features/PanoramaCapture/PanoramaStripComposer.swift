@@ -2,11 +2,14 @@ import CoreGraphics
 import Foundation
 import UIKit
 
-/// Strip-based horizontal panorama compositor (iPhone-style lightweight path).
+/// Strip-based horizontal panorama compositor.
+/// Contract: upright portrait frames (W < H); vertical strips; yaw → canvas X (monotone).
 final class PanoramaStripComposer {
     private(set) var placements: [PanoramaStripPlacement] = []
     private(set) var canvasWidth: Int = 0
     private(set) var canvasHeight: Int = 0
+    private(set) var uprightFrameWidth: Int = 0
+    private(set) var uprightFrameHeight: Int = 0
     private var canvasRGBA: [UInt8] = []
     private var canvasWeight: [Float] = []
     private var lastGrayStrip: [Float]?
@@ -15,12 +18,30 @@ final class PanoramaStripComposer {
     private(set) var meanVerticalAlignPx: Double = 0
     private var alignSamples: Int = 0
 
-    private var _pxPerDegree: Float = 12
-    private var originYawDeg: Float?
+    private var _pxPerDegree: Float = 0
+    private var originX: Float = 0
     private var minX: Float = 0
     private var maxX: Float = 0
 
     var pxPerDegree: Float { max(1, _pxPerDegree) }
+
+    var firstPlacementX: Float { placements.first?.xOnCanvas ?? 0 }
+    var lastPlacementX: Float { placements.last?.xOnCanvas ?? 0 }
+
+    var cropLeft: Float {
+        guard !placements.isEmpty else { return 0 }
+        let half = Float(PanoramaCaptureConfig.stripWidthPx) / 2
+        return placements.map { $0.xOnCanvas - half }.min() ?? 0
+    }
+
+    var cropRight: Float {
+        guard !placements.isEmpty else { return 0 }
+        let half = Float(PanoramaCaptureConfig.stripWidthPx) / 2
+        return placements.map { $0.xOnCanvas + half }.max() ?? 0
+    }
+
+    var finalCropWidth: Int { max(1, Int(ceil(cropRight - cropLeft))) }
+    var finalCropHeight: Int { canvasHeight }
 
     func reset() {
         placements.removeAll()
@@ -28,72 +49,87 @@ final class PanoramaStripComposer {
         canvasWeight.removeAll(keepingCapacity: false)
         canvasWidth = 0
         canvasHeight = 0
+        uprightFrameWidth = 0
+        uprightFrameHeight = 0
         lastGrayStrip = nil
         lastStripHeight = 0
-        originYawDeg = nil
         meanVerticalAlignPx = 0
         alignSamples = 0
         minX = 0
         maxX = 0
-        _pxPerDegree = 12
+        originX = 0
+        _pxPerDegree = 0
     }
 
-    func configurePxPerDegree(frameWidth: Int) {
-        _pxPerDegree = Float(frameWidth) / max(1, PanoramaCaptureConfig.approxHFovDeg)
+    /// Configure geometry from upright portrait frame size. Never pass strip width here.
+    func configureGeometry(uprightFrameWidth width: Int, uprightFrameHeight height: Int) {
+        precondition(width >= 16, "uprightFrameWidth must be full frame width, not strip width")
+        uprightFrameWidth = width
+        uprightFrameHeight = height
+        _pxPerDegree = PanoramaCaptureConfig.pixelsPerDegree(uprightFrameWidth: width)
     }
 
-    /// Extract center strip + accept into canvas.
+    /// Place a vertical strip using **unwrapped relative yaw** (degrees from capture start).
     /// - Parameters:
-    ///   - frameWidthForFov: Full sensor/frame width used for px/deg (when `rgba` is already a strip).
+    ///   - rgba: strip pixels OR full upright frame (center strip extracted if wider than stripWidth)
+    ///   - width/height: rgba dimensions
+    ///   - uprightFrameWidth: full upright portrait width for FOV (required, must be >> strip)
+    ///   - relativeYawDeg: unwrapped relative yaw (0 at start; increases as user turns right)
     @discardableResult
-    func acceptFrame(
+    func acceptStrip(
         rgba: [UInt8],
         width: Int,
         height: Int,
-        yawDeg: Float,
-        frameWidthForFov: Int? = nil
+        uprightFrameWidth: Int,
+        rawYawDeg: Float,
+        relativeYawDeg: Float
     ) -> Bool {
-        let stripW = min(PanoramaCaptureConfig.stripWidthPx, width)
+        let stripW = PanoramaCaptureConfig.stripWidthPx
         guard stripW >= 8, height > 16 else { return false }
+        guard uprightFrameWidth >= stripW * 2 else {
+            // Never treat strip width as FOV width.
+            return false
+        }
+
         if canvasHeight == 0 {
-            configurePxPerDegree(frameWidth: frameWidthForFov ?? width)
+            configureGeometry(uprightFrameWidth: uprightFrameWidth, uprightFrameHeight: height)
             canvasHeight = height
-            // Allocate generous canvas for ~120°; grow if needed.
-            let estimate = Int(ceil(120 * _pxPerDegree)) + stripW * 4
-            canvasWidth = max(estimate, 1024)
+            let estimate = Int(ceil(200 * _pxPerDegree)) + stripW * 4
+            canvasWidth = max(estimate, 2048)
             let n = canvasWidth * canvasHeight
             canvasRGBA = [UInt8](repeating: 0, count: n * 4)
             canvasWeight = [Float](repeating: 0, count: n)
-            originYawDeg = yawDeg
-            minX = Float(canvasWidth) * 0.5
-            maxX = minX
+            originX = Float(canvasWidth) * 0.5
+            minX = originX
+            maxX = originX
         }
 
-        let origin = originYawDeg ?? yawDeg
-        let xCenter = Float(canvasWidth) * 0.5 + (yawDeg - origin) * _pxPerDegree
+        // yaw → canvas X (monotone for increasing yaw)
+        let xCenter = originX + relativeYawDeg * _pxPerDegree
         ensureCapacity(forX: xCenter)
 
-        let sx0 = max(0, (width - stripW) / 2)
-        var gray = [Float](repeating: 0, count: stripW * height)
-        var color = [UInt8](repeating: 0, count: stripW * height * 4)
+        let srcStripW = min(stripW, width)
+        let sx0 = max(0, (width - srcStripW) / 2)
+        var gray = [Float](repeating: 0, count: srcStripW * height)
+        var color = [UInt8](repeating: 0, count: srcStripW * height * 4)
         var sumLuma: Float = 0
         for y in 0..<height {
-            for x in 0..<stripW {
+            for x in 0..<srcStripW {
                 let si = (y * width + (sx0 + x)) * 4
-                let di = (y * stripW + x) * 4
+                let di = (y * srcStripW + x) * 4
                 let r = rgba[si], g = rgba[si + 1], b = rgba[si + 2]
                 color[di] = r; color[di + 1] = g; color[di + 2] = b; color[di + 3] = 255
                 let luma = 0.299 * Float(r) + 0.587 * Float(g) + 0.114 * Float(b)
-                gray[y * stripW + x] = luma
+                gray[y * srcStripW + x] = luma
                 sumLuma += luma
             }
         }
-        let meanLuma = sumLuma / Float(max(1, stripW * height))
+        let meanLuma = sumLuma / Float(max(1, srcStripW * height))
 
         var vOffset = 0
         if let prev = lastGrayStrip, lastStripHeight == height {
             vOffset = Self.bestVerticalOffset(
-                prev: prev, prevW: stripW, curr: gray, currW: stripW, height: height,
+                prev: prev, prevW: srcStripW, curr: gray, currW: srcStripW, height: height,
                 search: PanoramaCaptureConfig.verticalAlignSearchPx
             )
             meanVerticalAlignPx =
@@ -102,20 +138,20 @@ final class PanoramaStripComposer {
             alignSamples += 1
         }
 
-        // Exposure normalize toward previous mean.
         var exposureScale: Float = 1
         if !placements.isEmpty, lastMeanLuma > 8 {
             exposureScale = min(1.35, max(0.7, lastMeanLuma / max(8, meanLuma)))
         }
 
         blitStrip(
-            color: color, stripW: stripW, height: height,
+            color: color, stripW: srcStripW, height: height,
             xCenter: xCenter, vOffset: vOffset, exposureScale: exposureScale
         )
 
         placements.append(PanoramaStripPlacement(
             index: placements.count,
-            yawDeg: yawDeg,
+            rawYawDeg: rawYawDeg,
+            relativeYawDeg: relativeYawDeg,
             xOnCanvas: xCenter,
             verticalOffsetPx: vOffset,
             meanLuma: meanLuma
@@ -123,20 +159,40 @@ final class PanoramaStripComposer {
         lastGrayStrip = gray
         lastStripHeight = height
         lastMeanLuma = meanLuma * exposureScale
-        minX = min(minX, xCenter - Float(stripW) / 2)
-        maxX = max(maxX, xCenter + Float(stripW) / 2)
+        minX = min(minX, xCenter - Float(srcStripW) / 2)
+        maxX = max(maxX, xCenter + Float(srcStripW) / 2)
         return true
+    }
+
+    /// Convenience for tests: relative yaw == absolute when starting at 0.
+    @discardableResult
+    func acceptFrame(
+        rgba: [UInt8],
+        width: Int,
+        height: Int,
+        yawDeg: Float,
+        frameWidthForFov: Int? = nil
+    ) -> Bool {
+        let fovW = frameWidthForFov ?? (width > PanoramaCaptureConfig.stripWidthPx * 2 ? width : 0)
+        guard fovW > 0 else { return false }
+        return acceptStrip(
+            rgba: rgba,
+            width: width,
+            height: height,
+            uprightFrameWidth: fovW,
+            rawYawDeg: yawDeg,
+            relativeYawDeg: yawDeg
+        )
     }
 
     func yawSpanDeg() -> Float {
         guard let first = placements.first, let last = placements.last else { return 0 }
-        return abs(last.yawDeg - first.yawDeg)
+        return abs(last.relativeYawDeg - first.relativeYawDeg)
     }
 
     func composeUIImage(cropToContent: Bool = true) -> UIImage? {
         guard canvasWidth > 0, canvasHeight > 0, !placements.isEmpty else { return nil }
         var rgba = canvasRGBA
-        // Normalize by weight.
         for i in 0..<canvasWidth * canvasHeight {
             let w = canvasWeight[i]
             if w > 1e-3 {
@@ -157,24 +213,17 @@ final class PanoramaStripComposer {
         }
         guard cropToContent else { return full }
 
-        let pad = PanoramaCaptureConfig.stripWidthPx
-        let left = max(0, Int(floor(minX)) - pad)
-        let right = min(canvasWidth, Int(ceil(maxX)) + pad)
+        // Crop to placement span only (no extra strip-width pad).
+        let left = max(0, Int(floor(cropLeft)))
+        let right = min(canvasWidth, Int(ceil(cropRight)))
         let cropW = max(1, right - left)
         let rect = CGRect(x: left, y: 0, width: cropW, height: canvasHeight)
         guard let cg = full.cgImage?.cropping(to: rect) else { return full }
-        // Pixel buffer itself is upright landscape panorama — no EXIF orientation hack.
         return UIImage(cgImage: cg, scale: 1, orientation: .up)
     }
 
-    /// True when cropped content is a wide landscape panorama.
     var isLandscapePanorama: Bool {
-        guard canvasHeight > 0, !placements.isEmpty else { return false }
-        let pad = PanoramaCaptureConfig.stripWidthPx
-        let left = max(0, Int(floor(minX)) - pad)
-        let right = min(canvasWidth, Int(ceil(maxX)) + pad)
-        let w = max(1, right - left)
-        return w > canvasHeight
+        finalCropWidth > finalCropHeight
     }
 
     // MARK: - Private
@@ -185,9 +234,9 @@ final class PanoramaStripComposer {
         let needRight = xCenter + stripW
         if needLeft >= 0, needRight < Float(canvasWidth) { return }
 
-        let expandLeft = needLeft < 0 ? Int(ceil(-needLeft)) + 64 : 0
+        let expandLeft = needLeft < 0 ? Int(ceil(-needLeft)) + 128 : 0
         let expandRight = needRight >= Float(canvasWidth)
-            ? Int(ceil(needRight - Float(canvasWidth))) + 64 : 0
+            ? Int(ceil(needRight - Float(canvasWidth))) + 128 : 0
         guard expandLeft > 0 || expandRight > 0 else { return }
 
         let newW = canvasWidth + expandLeft + expandRight
@@ -208,6 +257,7 @@ final class PanoramaStripComposer {
         canvasRGBA = newRGBA
         canvasWeight = newWgt
         canvasWidth = newW
+        originX += Float(expandLeft)
         minX += Float(expandLeft)
         maxX += Float(expandLeft)
         for i in placements.indices {
@@ -241,7 +291,6 @@ final class PanoramaStripComposer {
                 let r = Float(color[src]) * exposureScale
                 let g = Float(color[src + 1]) * exposureScale
                 let b = Float(color[src + 2]) * exposureScale
-                // Accumulate premultiplied by weight into byte buffer approx:
                 let ow = canvasWeight[dst]
                 let nw = ow + w
                 if nw > 1e-4 {
@@ -249,13 +298,11 @@ final class PanoramaStripComposer {
                     let or = Float(canvasRGBA[o]) * ow
                     let og = Float(canvasRGBA[o + 1]) * ow
                     let ob = Float(canvasRGBA[o + 2]) * ow
-                    // Store weighted sum in bytes temporarily (scaled); finalize in compose.
-                    // Better: store as float — but keep memory lighter with re-weight trick:
                     canvasRGBA[o] = UInt8(clamping: Int((or + r * w) / nw))
                     canvasRGBA[o + 1] = UInt8(clamping: Int((og + g * w) / nw))
                     canvasRGBA[o + 2] = UInt8(clamping: Int((ob + b * w) / nw))
                     canvasRGBA[o + 3] = 255
-                    canvasWeight[dst] = 1 // already normalized blend
+                    canvasWeight[dst] = 1
                 }
             }
         }
@@ -332,10 +379,9 @@ final class PanoramaStripComposer {
         }
     }
 
-    /// Laplacian-variance blur proxy on center region.
     static func sharpnessScore(rgba: [UInt8], width: Int, height: Int) -> Float {
-        let x0 = width / 4
-        let x1 = width * 3 / 4
+        let x0 = max(0, width / 4)
+        let x1 = max(x0 + 1, width * 3 / 4)
         let y0 = height / 4
         let y1 = height * 3 / 4
         var sum: Float = 0

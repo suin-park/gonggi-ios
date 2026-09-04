@@ -162,7 +162,10 @@ final class PanoramaCaptureViewModel: ObservableObject {
                     rgba[o + 3] = 255
                 }
             }
-            engine.ingestMockFrame(rgba: rgba, width: w, height: h, yawDeg: yaw)
+            engine.ingestMockFrame(
+                rgba: rgba, width: w, height: h, yawDeg: yaw,
+                uprightFrameWidth: w
+            )
             try? await Task.sleep(nanoseconds: 25_000_000)
         }
     }

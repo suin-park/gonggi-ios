@@ -5,16 +5,16 @@ import UIKit
 // MARK: - Config
 
 enum PanoramaCaptureConfig {
-    /// Vertical strip width extracted from each accepted frame (portrait).
-    static var stripWidthPx: Int = 64
-    /// Minimum absolute yaw change between accepted strips (degrees).
-    static var minYawDeltaDeg: Float = 0.35
-    /// Above this yaw step → “too fast”.
-    static var maxYawDeltaDeg: Float = 2.8
+    /// Vertical strip width extracted from each accepted upright frame.
+    static var stripWidthPx: Int = 48
+    /// Accept a new strip once |Δyaw| from last accepted reaches this (degrees).
+    static var targetYawStepDeg: Float = 2.0
+    /// Soft UI hint only — do not hard-reject frames above this.
+    static var maxYawDeltaDeg: Float = 6.0
     /// |roll| / |pitch| soft limits (degrees).
-    static var maxRollDeg: Float = 12
-    static var maxPitchDeg: Float = 14
-    /// Approximate portrait HFOV for px/deg (iPhone wide, portrait).
+    static var maxRollDeg: Float = 18
+    static var maxPitchDeg: Float = 20
+    /// Approximate portrait HFOV for px/deg (iPhone wide, upright portrait).
     static var approxHFovDeg: Float = 53
     /// Final export long-edge target.
     static var finalLongEdgePx: Int = 4096
@@ -30,8 +30,12 @@ enum PanoramaCaptureConfig {
     static var autoEnoughYawSpanDeg: Float = 90
     static let folderName = "panorama_scan"
     /// DEBUG-only: draw the compositor strip bounds on the live preview.
-    /// Always false in Release / TestFlight user UI.
     static var showDebugStripOverlay: Bool = false
+
+    /// px/deg from upright portrait frame width — never strip width.
+    static func pixelsPerDegree(uprightFrameWidth: Int) -> Float {
+        Float(max(1, uprightFrameWidth)) / max(1, approxHFovDeg)
+    }
 }
 
 // MARK: - Phase / guidance
@@ -96,7 +100,7 @@ enum PanoramaScanDirection: Equatable {
     }
 }
 
-// MARK: - Motion sample
+// MARK: - Motion / yaw unwrap
 
 struct PanoramaMotionSample: Equatable {
     var timestamp: TimeInterval
@@ -106,12 +110,53 @@ struct PanoramaMotionSample: Equatable {
     var rotationRate: Float
 }
 
-struct PanoramaRejectReason: Equatable {
-    var code: String
-    var count: Int
+/// Continuous relative yaw with ±180° wrap handling.
+struct PanoramaYawTracker {
+    private(set) var startYawDeg: Float?
+    private(set) var lastRawYawDeg: Float?
+    private(set) var unwrappedRelativeYawDeg: Float = 0
+
+    mutating func reset() {
+        startYawDeg = nil
+        lastRawYawDeg = nil
+        unwrappedRelativeYawDeg = 0
+    }
+
+    /// Feed raw (or already-relative) yaw in degrees; returns unwrapped relative yaw from start.
+    @discardableResult
+    mutating func update(rawYawDeg: Float) -> Float {
+        if startYawDeg == nil {
+            startYawDeg = rawYawDeg
+            lastRawYawDeg = rawYawDeg
+            unwrappedRelativeYawDeg = 0
+            return 0
+        }
+        let last = lastRawYawDeg ?? rawYawDeg
+        var step = rawYawDeg - last
+        step = Self.wrapDeltaDeg(step)
+        unwrappedRelativeYawDeg += step
+        lastRawYawDeg = rawYawDeg
+        return unwrappedRelativeYawDeg
+    }
+
+    static func wrapDeltaDeg(_ delta: Float) -> Float {
+        var x = delta
+        while x > 180 { x -= 360 }
+        while x < -180 { x += 360 }
+        return x
+    }
 }
 
-// MARK: - Report / result
+// MARK: - Strip event / report
+
+struct PanoramaStripEvent: Codable, Equatable {
+    var index: Int
+    var rawYaw: Float
+    var unwrappedRelativeYaw: Float
+    var xCenter: Float
+    var accepted: Bool
+    var rejectReason: String?
+}
 
 struct PanoramaCaptureReport: Codable, Equatable {
     var sessionId: String
@@ -120,21 +165,37 @@ struct PanoramaCaptureReport: Codable, Equatable {
     var captureDurationSec: Double
     var processingTimeSec: Double
     var acceptedStripCount: Int
-    var rejectedFrameCount: Int
-    var rejectReasons: [String: Int]
-    var yawSpanDeg: Float
+    var rejectedStripCount: Int
+    var rejectReasonCounts: [String: Int]
+    var uprightFrameWidth: Int
+    var uprightFrameHeight: Int
+    var stripWidth: Int
+    var approxHFovDeg: Float
+    var pxPerDegree: Float
+    var startYawDeg: Float
+    var endYawDeg: Float
+    var unwrappedYawSpanDeg: Float
+    var firstPlacementX: Float
+    var lastPlacementX: Float
+    var finalCropWidth: Int
+    var finalCropHeight: Int
     var avgRotationSpeedDegPerSec: Float
     var outputWidth: Int
     var outputHeight: Int
     var previewWidth: Int
     var previewHeight: Int
-    var stripWidthPx: Int
-    var pxPerDegree: Float
     var memoryEstimateMB: Double
     var meanVerticalAlignPx: Double
     var seamFeatherPx: Int
+    var stripEvents: [PanoramaStripEvent]
     var finalPanoramaPath: String?
     var previewPath: String?
+
+    // Backward-compatible aliases used by older UI/tests.
+    var rejectedFrameCount: Int { rejectedStripCount }
+    var rejectReasons: [String: Int] { rejectReasonCounts }
+    var yawSpanDeg: Float { unwrappedYawSpanDeg }
+    var stripWidthPx: Int { stripWidth }
 }
 
 struct PanoramaCaptureResult: Equatable {
@@ -149,7 +210,8 @@ struct PanoramaCaptureResult: Equatable {
 
 struct PanoramaStripPlacement: Equatable {
     var index: Int
-    var yawDeg: Float
+    var rawYawDeg: Float
+    var relativeYawDeg: Float
     var xOnCanvas: Float
     var verticalOffsetPx: Int
     var meanLuma: Float

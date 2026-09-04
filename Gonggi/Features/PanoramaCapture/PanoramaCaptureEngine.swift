@@ -14,17 +14,21 @@ final class PanoramaCaptureEngine: NSObject {
     private(set) var phase: PanoramaCapturePhase = .idle
     private(set) var feedback: PanoramaGuideFeedback = .idle
     private(set) var direction: PanoramaScanDirection = .right
-    private(set) var lastAcceptedYaw: Float?
+    private(set) var lastAcceptedRelativeYaw: Float?
     private(set) var rejectCounts: [String: Int] = [:]
     private(set) var processedFrameCount: Int = 0
+    private(set) var stripEvents: [PanoramaStripEvent] = []
+    private(set) var lastUprightFrameWidth: Int = 0
+    private(set) var lastUprightFrameHeight: Int = 0
 
+    private var yawTracker = PanoramaYawTracker()
     private var isCapturing = false
     private var captureStartedAt: TimeInterval = 0
     private var lastFrameTime: TimeInterval = 0
     var onUIUpdate: (() -> Void)?
 
     var acceptedStripCount: Int { composer.placements.count }
-    var yawSpanDeg: Float { composer.yawSpanDeg() }
+    var yawSpanDeg: Float { abs(yawTracker.unwrappedRelativeYawDeg) }
     var pxPerDegree: Float { composer.pxPerDegree }
 
     func prepareCamera() throws {
@@ -77,9 +81,13 @@ final class PanoramaCaptureEngine: NSObject {
     func beginCapture() {
         composer.reset()
         motion.resetReference()
+        yawTracker.reset()
         rejectCounts.removeAll()
+        stripEvents.removeAll(keepingCapacity: true)
         processedFrameCount = 0
-        lastAcceptedYaw = nil
+        lastAcceptedRelativeYaw = nil
+        lastUprightFrameWidth = 0
+        lastUprightFrameHeight = 0
         isCapturing = true
         captureStartedAt = ProcessInfo.processInfo.systemUptime
         phase = .capturing
@@ -122,12 +130,10 @@ final class PanoramaCaptureEngine: NSObject {
         try previewData.write(to: previewURL, options: .atomic)
 
         let processSec = ProcessInfo.processInfo.systemUptime - t0
-        let avgSpeed: Float
-        if duration > 0.2, composer.placements.count > 1 {
-            avgSpeed = yawSpanDeg / Float(duration)
-        } else {
-            avgSpeed = 0
-        }
+        let span = abs(yawTracker.unwrappedRelativeYawDeg)
+        let avgSpeed: Float = duration > 0.2 ? span / Float(duration) : 0
+        let startYaw = yawTracker.startYawDeg ?? 0
+        let endYaw = yawTracker.lastRawYawDeg ?? startYaw
 
         let report = PanoramaCaptureReport(
             sessionId: sessionId,
@@ -136,20 +142,30 @@ final class PanoramaCaptureEngine: NSObject {
             captureDurationSec: duration,
             processingTimeSec: processSec,
             acceptedStripCount: composer.placements.count,
-            rejectedFrameCount: rejectCounts.values.reduce(0, +),
-            rejectReasons: rejectCounts,
-            yawSpanDeg: yawSpanDeg,
+            rejectedStripCount: rejectCounts.values.reduce(0, +),
+            rejectReasonCounts: rejectCounts,
+            uprightFrameWidth: composer.uprightFrameWidth,
+            uprightFrameHeight: composer.uprightFrameHeight,
+            stripWidth: PanoramaCaptureConfig.stripWidthPx,
+            approxHFovDeg: PanoramaCaptureConfig.approxHFovDeg,
+            pxPerDegree: composer.pxPerDegree,
+            startYawDeg: startYaw,
+            endYawDeg: endYaw,
+            unwrappedYawSpanDeg: span,
+            firstPlacementX: composer.firstPlacementX,
+            lastPlacementX: composer.lastPlacementX,
+            finalCropWidth: composer.finalCropWidth,
+            finalCropHeight: composer.finalCropHeight,
             avgRotationSpeedDegPerSec: avgSpeed,
             outputWidth: Int(finalImg.size.width.rounded()),
             outputHeight: Int(finalImg.size.height.rounded()),
             previewWidth: Int(previewImg.size.width.rounded()),
             previewHeight: Int(previewImg.size.height.rounded()),
-            stripWidthPx: PanoramaCaptureConfig.stripWidthPx,
-            pxPerDegree: composer.pxPerDegree,
             memoryEstimateMB: Double(composer.canvasWidth * composer.canvasHeight * 5)
                 / (1024 * 1024),
             meanVerticalAlignPx: composer.meanVerticalAlignPx,
             seamFeatherPx: PanoramaCaptureConfig.seamFeatherPx,
+            stripEvents: stripEvents,
             finalPanoramaPath: finalURL.path,
             previewPath: previewURL.path
         )
@@ -158,12 +174,12 @@ final class PanoramaCaptureEngine: NSObject {
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try enc.encode(report).write(to: reportURL, options: .atomic)
 
-        // Debug traces (lightweight).
         let debugDir = try CaptureSessionStore.createPanoramaScanDebugDirectory(sessionId: sessionId)
         let layout: [[String: Any]] = composer.placements.map {
             [
                 "index": $0.index,
-                "yawDeg": $0.yawDeg,
+                "rawYaw": $0.rawYawDeg,
+                "relativeYaw": $0.relativeYawDeg,
                 "x": $0.xOnCanvas,
                 "vOffset": $0.verticalOffsetPx
             ]
@@ -171,6 +187,10 @@ final class PanoramaCaptureEngine: NSObject {
         if let data = try? JSONSerialization.data(withJSONObject: [
             "placements": layout,
             "pxPerDegree": composer.pxPerDegree,
+            "uprightFrameWidth": composer.uprightFrameWidth,
+            "uprightFrameHeight": composer.uprightFrameHeight,
+            "finalCropWidth": composer.finalCropWidth,
+            "finalCropHeight": composer.finalCropHeight,
             "canvasWidth": composer.canvasWidth,
             "canvasHeight": composer.canvasHeight
         ], options: [.prettyPrinted]) {
@@ -200,19 +220,37 @@ final class PanoramaCaptureEngine: NSObject {
     func cancelCapture() {
         isCapturing = false
         composer.reset()
+        yawTracker.reset()
         phase = .ready
         feedback = .idle
         notify()
     }
 
-    // MARK: - Mock path (simulator / tests)
+    // MARK: - Mock / synthetic
 
-    func ingestMockFrame(rgba: [UInt8], width: Int, height: Int, yawDeg: Float) {
+    func ingestMockFrame(
+        rgba: [UInt8],
+        width: Int,
+        height: Int,
+        yawDeg: Float,
+        uprightFrameWidth: Int? = nil
+    ) {
         guard isCapturing else { return }
-        _ = tryAccept(rgba: rgba, width: width, height: height, yawDeg: yawDeg, pitch: 0, roll: 0)
+        let fovW = uprightFrameWidth ?? width
+        _ = tryAccept(
+            rgba: rgba,
+            width: width,
+            height: height,
+            rawYawDeg: yawDeg,
+            pitch: 0,
+            roll: 0,
+            uprightFrameWidth: fovW,
+            uprightFrameHeight: height
+        )
         feedback = motion.feedback(
             isCapturing: true,
-            lastAcceptedYaw: lastAcceptedYaw,
+            lastAcceptedYaw: lastAcceptedRelativeYaw,
+            currentYaw: yawTracker.unwrappedRelativeYawDeg,
             yawSpanDeg: yawSpanDeg
         )
         notify()
@@ -234,50 +272,98 @@ final class PanoramaCaptureEngine: NSObject {
         rejectCounts[code, default: 0] += 1
     }
 
+    private func recordEvent(
+        rawYaw: Float,
+        relativeYaw: Float,
+        xCenter: Float,
+        accepted: Bool,
+        reason: String?
+    ) {
+        let event = PanoramaStripEvent(
+            index: stripEvents.count,
+            rawYaw: rawYaw,
+            unwrappedRelativeYaw: relativeYaw,
+            xCenter: xCenter,
+            accepted: accepted,
+            rejectReason: reason
+        )
+        if stripEvents.count < 5_000 {
+            stripEvents.append(event)
+        }
+    }
+
+    @discardableResult
     private func tryAccept(
         rgba: [UInt8],
         width: Int,
         height: Int,
-        yawDeg: Float,
+        rawYawDeg: Float,
         pitch: Float,
         roll: Float,
-        frameWidthForFov: Int? = nil
+        uprightFrameWidth: Int,
+        uprightFrameHeight: Int
     ) -> Bool {
         processedFrameCount += 1
+        lastUprightFrameWidth = uprightFrameWidth
+        lastUprightFrameHeight = uprightFrameHeight
+
+        let relativeYaw = yawTracker.update(rawYawDeg: rawYawDeg)
+
         if abs(pitch) > PanoramaCaptureConfig.maxPitchDeg
             || abs(roll) > PanoramaCaptureConfig.maxRollDeg {
             reject("level")
+            recordEvent(rawYaw: rawYawDeg, relativeYaw: relativeYaw, xCenter: 0, accepted: false, reason: "level")
             return false
         }
-        if let last = lastAcceptedYaw {
-            let dy = abs(yawDeg - last)
-            if dy < PanoramaCaptureConfig.minYawDeltaDeg {
-                reject("yaw_small")
+
+        // Spacing-based acceptance: take a strip every ~targetYawStepDeg.
+        // Do NOT hard-reject large Δyaw (fast turns) — that caused ~4 strips on device.
+        if let last = lastAcceptedRelativeYaw {
+            let dy = abs(relativeYaw - last)
+            if dy < PanoramaCaptureConfig.targetYawStepDeg {
+                reject("yaw_spacing")
+                recordEvent(
+                    rawYaw: rawYawDeg, relativeYaw: relativeYaw, xCenter: 0,
+                    accepted: false, reason: "yaw_spacing"
+                )
                 return false
             }
-            if dy > PanoramaCaptureConfig.maxYawDeltaDeg {
-                reject("yaw_fast")
-                return false
-            }
-            if yawDeg >= last { direction = .right } else { direction = .left }
+            if relativeYaw >= last { direction = .right } else { direction = .left }
         }
+
         let sharp = PanoramaStripComposer.sharpnessScore(rgba: rgba, width: width, height: height)
-        // Strip-only frames have less spatial context; use a softer blur gate.
-        if sharp < 2.5 {
+        if sharp < 1.0 {
             reject("blur")
+            recordEvent(
+                rawYaw: rawYawDeg, relativeYaw: relativeYaw, xCenter: 0,
+                accepted: false, reason: "blur"
+            )
             return false
         }
-        let ok = composer.acceptFrame(
+
+        let ok = composer.acceptStrip(
             rgba: rgba,
             width: width,
             height: height,
-            yawDeg: yawDeg,
-            frameWidthForFov: frameWidthForFov
+            uprightFrameWidth: uprightFrameWidth,
+            rawYawDeg: rawYawDeg,
+            relativeYawDeg: relativeYaw
         )
-        if ok {
-            lastAcceptedYaw = yawDeg
+        if ok, let placed = composer.placements.last {
+            lastAcceptedRelativeYaw = relativeYaw
+            recordEvent(
+                rawYaw: rawYawDeg,
+                relativeYaw: relativeYaw,
+                xCenter: placed.xOnCanvas,
+                accepted: true,
+                reason: nil
+            )
         } else {
             reject("compose")
+            recordEvent(
+                rawYaw: rawYawDeg, relativeYaw: relativeYaw, xCenter: 0,
+                accepted: false, reason: "compose"
+            )
         }
         return ok
     }
@@ -307,35 +393,40 @@ extension PanoramaCaptureEngine: AVCaptureVideoDataOutputSampleBufferDelegate {
     ) {
         guard isCapturing else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        if now - lastFrameTime < 0.045 { return } // ~22 fps cap
+        if now - lastFrameTime < 0.033 { return } // ~30 fps cap
         lastFrameTime = now
 
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let m = motion.latest
         feedback = motion.feedback(
             isCapturing: true,
-            lastAcceptedYaw: lastAcceptedYaw,
+            lastAcceptedYaw: lastAcceptedRelativeYaw,
+            currentYaw: yawTracker.unwrappedRelativeYawDeg,
             yawSpanDeg: yawSpanDeg
         )
 
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
 
-        // Upright portrait normalize, then center *vertical* strip only.
-        // Strip is compositor-internal — never shown as the live preview.
         guard let extracted = PanoramaFrameOrientation.extractUprightCenterStripBGRA(
             pixelBuffer: pb,
             stripWidth: PanoramaCaptureConfig.stripWidthPx
         ) else { return }
 
+        // Critical: FOV width is upright frame width, never strip width.
+        let uprightW = extracted.uprightFrameWidth
+        let uprightH = extracted.stripHeight
+        guard uprightW > PanoramaCaptureConfig.stripWidthPx * 2 else { return }
+
         _ = tryAccept(
             rgba: extracted.rgba,
             width: extracted.stripWidth,
             height: extracted.stripHeight,
-            yawDeg: m.yawDeg,
+            rawYawDeg: m.yawDeg,
             pitch: m.pitchDeg,
             roll: m.rollDeg,
-            frameWidthForFov: extracted.uprightFrameWidth
+            uprightFrameWidth: uprightW,
+            uprightFrameHeight: uprightH
         )
         notify()
     }
