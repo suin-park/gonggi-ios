@@ -488,7 +488,7 @@ bool GonggiOpenCVStitchPanorama(
             }
             if (best >= 0 && bestAng <= config.maxVisualCorrectionDeg * 2.5) {
                 mi.H = H;
-                mi.confidence = std::max(mi.confidence, 0.55f);
+                mi.confidence = std::max(mi.confidence, 0.55);
                 // Fill inlier mask into MatchesInfo
                 mi.inliers_mask.assign(good.size(), 0);
                 if (!inlierMask.empty()) {
@@ -672,8 +672,7 @@ bool GonggiOpenCVStitchPanorama(
     Ptr<RotationWarper> warper = warperCreator->create(static_cast<float>(warpedImageScale));
 
     for (int i = 0; i < n; ++i) {
-        Mat K;
-        Mat::eye(3, 3, CV_32F).copyTo(K);
+        Mat K = Mat::eye(3, 3, CV_32F);
         K.at<float>(0, 0) = static_cast<float>(cameras[i].focal);
         K.at<float>(0, 2) = static_cast<float>(cameras[i].ppx);
         K.at<float>(1, 1) = static_cast<float>(cameras[i].focal * cameras[i].aspect);
@@ -703,7 +702,12 @@ bool GonggiOpenCVStitchPanorama(
     // Exposure
     const double tExp0 = nowMs();
     Ptr<ExposureCompensator> compensator = ExposureCompensator::createDefault(ExposureCompensator::GAIN_BLOCKS);
-    compensator->feed(corners, warped, warpedMask);
+    std::vector<UMat> warpedU(n), warpedMaskU(n);
+    for (int i = 0; i < n; ++i) {
+        warped[i].copyTo(warpedU[i]);
+        warpedMask[i].copyTo(warpedMaskU[i]);
+    }
+    compensator->feed(corners, warpedU, warpedMaskU);
     for (int i = 0; i < n; ++i) {
         compensator->apply(i, corners[i], warped[i], warpedMask[i]);
     }
