@@ -25,7 +25,8 @@ on:
 
 concurrency:
   group: gonggi-ios-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # OpenCV xcframework build can take 30–90+ minutes; do not cancel in-flight prepares.
+  cancel-in-progress: false
 
 env:
   SCHEME: Gonggi
