@@ -81,12 +81,12 @@ final class DirectionCaptureGuideTests: XCTestCase {
     }
 
     func testElevationFromGravityLooksUpVsDown() {
-        // Looking up: camera -Z toward sky → gravity ≈ (0, 0, -1) roughly → up = (0,0,1), elev > 0
-        let up = DirectionCaptureGuide.elevationDeg(gravityX: 0, gravityY: 0, gravityZ: -1)
-        XCTAssertGreaterThan(up, 50)
-        // Looking down: gravity ≈ (0, 0, +1) → up = (0,0,-1), elev < 0
-        let down = DirectionCaptureGuide.elevationDeg(gravityX: 0, gravityY: 0, gravityZ: 1)
+        // Camera ≈ device −Z. Face-up (gravity −Z) → camera toward ground → down.
+        let down = DirectionCaptureGuide.elevationDeg(gravityX: 0, gravityY: 0, gravityZ: -1)
         XCTAssertLessThan(down, -50)
+        // Face-down (gravity +Z) → camera toward sky → up.
+        let up = DirectionCaptureGuide.elevationDeg(gravityX: 0, gravityY: 0, gravityZ: 1)
+        XCTAssertGreaterThan(up, 50)
     }
 
     func testExtremePoseOnlyAtHighPitch() {
