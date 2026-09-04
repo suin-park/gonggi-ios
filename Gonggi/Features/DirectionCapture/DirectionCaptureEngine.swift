@@ -34,6 +34,8 @@ final class DirectionCaptureEngine: NSObject {
     private var captureStartedAt: TimeInterval = 0
     private var frontCaptured = false
     private var warnFast = false
+    /// When false, beginCapture will not spawn the demo mock yaw sweep (unit tests).
+    var enableMockSweep = true
 
     var onUIUpdate: (() -> Void)?
     var onCaptured: ((DirectionName) -> Void)?

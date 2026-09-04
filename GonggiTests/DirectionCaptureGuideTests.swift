@@ -94,6 +94,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
 
     func testContinuousYawSequenceCapturesFrontRightOnCrossing() throws {
         let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
         try engine.prepareCamera(mockMode: true)
         engine.beginCapture()
 
