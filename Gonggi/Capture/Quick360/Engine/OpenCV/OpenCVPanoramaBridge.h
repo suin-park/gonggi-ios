@@ -57,6 +57,10 @@ NS_ASSUME_NONNULL_BEGIN
 /// Phase 2B–2C reconstruction. Phase 2A returns structured failure if not ready.
 + (OpenCVPanoramaStitchResult *)stitchWithRequest:(OpenCVPanoramaStitchRequest *)request;
 
+/// Build 25: synthetic BundleAdjusterRay contract scenarios (valid3/sparse/invalidIdx/…).
+/// Returns JSON detail; `success` means scenario behaved safely (no invalid BA input path).
++ (OpenCVPanoramaStitchResult *)runBAContractTestScenario:(NSString *)scenario;
+
 @end
 
 NS_ASSUME_NONNULL_END

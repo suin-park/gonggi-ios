@@ -92,6 +92,13 @@ struct GonggiOpenCVStitchMetrics {
     std::string memoryArchitecture = "two_pass_streaming";
     int maxLoadedFullResCount = 0;
     int maxWarpedResidentCount = 0;
+    /// Build 25 BA diagnostics
+    std::string baRepresentationType = "nxn_flat";
+    std::string baSkipReason;
+    int baPairwiseContainerSize = 0;
+    int baConfidentEdgeCount = 0;
+    int baInvalidMatchCount = 0;
+    int baInvalidIndexCount = 0;
     // Memory telemetry (phys_footprint MB)
     double memoryStartMB = 0;
     double memoryAfterLoadMB = 0;
@@ -118,3 +125,8 @@ bool GonggiOpenCVStitchPanorama(
     const GonggiOpenCVStitchConfig &config,
     GonggiOpenCVStitchMetrics &metrics
 );
+
+/// Build 25: synthetic BundleAdjusterRay contract tests (OpenCV 4.10 N×N pairwise).
+/// scenario: valid3 | sparse | invalidIdx | disconnected | zeroEdges | large40
+/// Returns true if the scenario behaved as expected (no process-killing SIGSEGV path).
+bool GonggiOpenCVTestBAContract(const char *scenario, std::string &detailJSON);

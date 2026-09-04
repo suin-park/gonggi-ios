@@ -226,6 +226,12 @@ std::string metricsToJSON(const GonggiOpenCVStitchMetrics &m) {
       << "\"cameraGraphEdges\":" << m.cameraGraphEdges << ","
       << "\"connectedComponents\":" << m.connectedComponents << ","
       << "\"bundleAdjustmentConverged\":" << (m.bundleAdjustmentConverged ? "true" : "false") << ","
+      << "\"baRepresentationType\":\"" << m.baRepresentationType << "\","
+      << "\"baSkipReason\":\"" << m.baSkipReason << "\","
+      << "\"baPairwiseContainerSize\":" << m.baPairwiseContainerSize << ","
+      << "\"baConfidentEdgeCount\":" << m.baConfidentEdgeCount << ","
+      << "\"baInvalidMatchCount\":" << m.baInvalidMatchCount << ","
+      << "\"baInvalidIndexCount\":" << m.baInvalidIndexCount << ","
       << "\"bundleAdjustmentBeforeError\":" << m.bundleAdjustmentBeforeError << ","
       << "\"bundleAdjustmentAfterError\":" << m.bundleAdjustmentAfterError << ","
       << "\"optimizedCameraCount\":" << m.optimizedCameraCount << ","
@@ -327,6 +333,216 @@ void anchorFirstForward(std::vector<CameraParams> &cameras) {
         Mat Rn = R * R0inv;
         Rn.convertTo(cam.R, cam.R.type());
     }
+}
+
+
+// ---------------------------------------------------------------------------
+// Build 25 — OpenCV 4.10.0 BundleAdjusterRay pairwise contract
+// Source: modules/stitching/src/motion_estimators.cpp
+//   BundleAdjusterBase::estimate / BundleAdjusterRay::calcError index as:
+//     pairwise_matches_[i * num_images_ + j]
+// FeaturesMatcher also fills dual slot j*N+i with swapped matches + H.inv().
+// Sparse push_back vectors are NOT valid and cause SIGSEGV (Build 24).
+// ---------------------------------------------------------------------------
+
+MatchesInfo makeEmptyPair(int src, int dst) {
+    MatchesInfo mi;
+    mi.src_img_idx = src;
+    mi.dst_img_idx = dst;
+    mi.confidence = 0;
+    mi.num_inliers = 0;
+    return mi;
+}
+
+MatchesInfo makeDualPair(const MatchesInfo &fwd) {
+    MatchesInfo dual = fwd;
+    dual.src_img_idx = fwd.dst_img_idx;
+    dual.dst_img_idx = fwd.src_img_idx;
+    if (!fwd.H.empty()) {
+        try {
+            dual.H = fwd.H.inv();
+        } catch (...) {
+            dual.H = Mat();
+        }
+    }
+    for (auto &m : dual.matches) {
+        std::swap(m.queryIdx, m.trainIdx);
+    }
+    return dual;
+}
+
+/// Build N×N flat pairwise container required by BundleAdjusterRay (OpenCV 4.10).
+std::vector<MatchesInfo> buildNxNPairwise(
+    int n,
+    const std::vector<MatchesInfo> &confidentPairs
+) {
+    std::vector<MatchesInfo> out(static_cast<size_t>(n) * static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            out[static_cast<size_t>(i) * n + j] = makeEmptyPair(i, j);
+        }
+    }
+    for (const auto &mi : confidentPairs) {
+        int i = mi.src_img_idx;
+        int j = mi.dst_img_idx;
+        if (i < 0 || j < 0 || i >= n || j >= n || i == j) continue;
+        MatchesInfo fwd = mi;
+        fwd.src_img_idx = i;
+        fwd.dst_img_idx = j;
+        out[static_cast<size_t>(i) * n + j] = fwd;
+        out[static_cast<size_t>(j) * n + i] = makeDualPair(fwd);
+    }
+    return out;
+}
+
+bool isFiniteMat33(const Mat &M) {
+    if (M.empty() || M.rows != 3 || M.cols != 3) return false;
+    Mat f;
+    M.convertTo(f, CV_64F);
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            if (!std::isfinite(f.at<double>(r, c))) return false;
+        }
+    }
+    return true;
+}
+
+struct BAValidationReport {
+    bool ok = false;
+    std::string reason;
+    int invalidMatchCount = 0;
+    int invalidIndexCount = 0;
+    int confidentEdgeCount = 0;
+    int pairwiseContainerSize = 0;
+    int connectedComponents = 0;
+};
+
+BAValidationReport validateBAInput(
+    const std::vector<ImageFeatures> &features,
+    const std::vector<MatchesInfo> &pairwiseNxN,
+    const std::vector<CameraParams> &cameras,
+    double confThresh,
+    int minInliers
+) {
+    BAValidationReport rep;
+    const int n = static_cast<int>(features.size());
+    rep.pairwiseContainerSize = static_cast<int>(pairwiseNxN.size());
+    if (n <= 0) {
+        rep.reason = "empty features";
+        return rep;
+    }
+    if (static_cast<int>(cameras.size()) != n) {
+        rep.reason = "features/cameras size mismatch";
+        return rep;
+    }
+    if (rep.pairwiseContainerSize != n * n) {
+        rep.reason = "pairwise must be N*N flat (OpenCV 4.10 BundleAdjusterRay)";
+        return rep;
+    }
+
+    for (int i = 0; i < n; ++i) {
+        if (!std::isfinite(cameras[i].focal) || cameras[i].focal <= 0) {
+            rep.reason = "invalid focal";
+            return rep;
+        }
+        if (!std::isfinite(cameras[i].ppx) || !std::isfinite(cameras[i].ppy)) {
+            rep.reason = "invalid principal point";
+            return rep;
+        }
+        if (!isFiniteMat33(cameras[i].R)) {
+            rep.reason = "invalid camera R";
+            return rep;
+        }
+    }
+
+    std::vector<int> parent(n);
+    std::iota(parent.begin(), parent.end(), 0);
+    std::function<int(int)> find = [&](int x) {
+        return parent[x] == x ? x : parent[x] = find(parent[x]);
+    };
+    auto unite = [&](int a, int b) {
+        a = find(a); b = find(b);
+        if (a != b) parent[b] = a;
+    };
+
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            const MatchesInfo &mi = pairwiseNxN[static_cast<size_t>(i) * n + j];
+            if (mi.src_img_idx != i || mi.dst_img_idx != j) {
+                rep.invalidIndexCount++;
+                rep.reason = "src/dst idx mismatch for N*N slot";
+                return rep;
+            }
+            if (!std::isfinite(mi.confidence)) {
+                rep.reason = "non-finite confidence";
+                return rep;
+            }
+            if (!mi.H.empty() && !isFiniteMat33(mi.H)) {
+                rep.reason = "invalid H";
+                return rep;
+            }
+            if (mi.inliers_mask.size() != mi.matches.size()) {
+                // Empty both is OK for zero-confidence slots.
+                if (!(mi.matches.empty() && mi.inliers_mask.empty())) {
+                    rep.invalidMatchCount++;
+                    rep.reason = "inliers_mask size != matches size";
+                    return rep;
+                }
+            }
+            const int kpSrc = static_cast<int>(features[i].keypoints.size());
+            const int kpDst = static_cast<int>(features[j].keypoints.size());
+            for (size_t k = 0; k < mi.matches.size(); ++k) {
+                const DMatch &m = mi.matches[k];
+                if (m.queryIdx < 0 || m.queryIdx >= kpSrc || m.trainIdx < 0 || m.trainIdx >= kpDst) {
+                    rep.invalidMatchCount++;
+                    rep.reason = "match queryIdx/trainIdx out of range";
+                    return rep;
+                }
+            }
+            // Upper triangle confident edges for graph / BA gate.
+            if (i < j && mi.confidence > confThresh && mi.num_inliers >= minInliers) {
+                rep.confidentEdgeCount++;
+                unite(i, j);
+            }
+        }
+    }
+
+    std::vector<int> roots;
+    for (int i = 0; i < n; ++i) roots.push_back(find(i));
+    std::sort(roots.begin(), roots.end());
+    roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
+    rep.connectedComponents = static_cast<int>(roots.size());
+    rep.ok = true;
+    return rep;
+}
+
+bool baSafetyGate(
+    int n,
+    const BAValidationReport &rep,
+    std::string &skipReason
+) {
+    if (n <= 1) {
+        skipReason = "single_image";
+        return false;
+    }
+    if (!rep.ok) {
+        skipReason = rep.reason.empty() ? "validation_failed" : rep.reason;
+        return false;
+    }
+    if (rep.confidentEdgeCount <= 0) {
+        skipReason = "zero_confident_edges";
+        return false;
+    }
+    if (rep.connectedComponents != 1) {
+        skipReason = "disconnected_camera_graph";
+        return false;
+    }
+    // Spanning-tree minimum support.
+    if (rep.confidentEdgeCount < n - 1) {
+        skipReason = "insufficient_confident_edges_for_connected_ba";
+        return false;
+    }
+    return true;
 }
 
 /// Jetsam-safe stage checkpoint — flush every major stage immediately.
@@ -674,26 +890,81 @@ static bool GonggiOpenCVStitchPanoramaImpl(
         writeText(config.debugDirectory + "/camera_before.json", cameraParamsJSON(cameras));
     }
 
-    std::vector<MatchesInfo> baMatches;
+    // Build 25: OpenCV 4.10 BundleAdjusterRay requires N*N pairwise container
+    // indexed as pairwise[i * N + j] (see motion_estimators.cpp). Sparse
+    // push_back vectors cause SIGSEGV in calcError/calcJacobian.
+    std::vector<MatchesInfo> confidentPairs;
     for (const auto &mi : pairwise) {
         if (mi.confidence > 0 && mi.num_inliers >= config.minInliers) {
-            baMatches.push_back(mi);
+            confidentPairs.push_back(mi);
         }
     }
+    std::vector<MatchesInfo> baMatchesNxN = buildNxNPairwise(n, confidentPairs);
+    metrics.baRepresentationType = "nxn_flat";
+    metrics.baPairwiseContainerSize = static_cast<int>(baMatchesNxN.size());
+
+    const double baConfThresh = 0.15;
+    BAValidationReport baVal = validateBAInput(
+        features, baMatchesNxN, camerasProxy, baConfThresh, config.minInliers
+    );
+    metrics.baConfidentEdgeCount = baVal.confidentEdgeCount;
+    metrics.baInvalidMatchCount = baVal.invalidMatchCount;
+    metrics.baInvalidIndexCount = baVal.invalidIndexCount;
+    // Prefer validation-derived component count for BA gate.
+    if (baVal.ok) {
+        metrics.connectedComponents = baVal.connectedComponents;
+    }
+
+    if (!config.debugDirectory.empty()) {
+        std::ostringstream featCounts;
+        featCounts << "[";
+        for (int i = 0; i < n; ++i) {
+            if (i) featCounts << ",";
+            featCounts << features[i].keypoints.size();
+        }
+        featCounts << "]";
+        std::ostringstream bi;
+        bi << "{"
+           << "\"imageCount\":" << n << ","
+           << "\"featureCountPerImage\":" << featCounts.str() << ","
+           << "\"pairwiseContainerSize\":" << metrics.baPairwiseContainerSize << ","
+           << "\"confidentEdgeCount\":" << metrics.baConfidentEdgeCount << ","
+           << "\"connectedComponents\":" << metrics.connectedComponents << ","
+           << "\"cameraCount\":" << camerasProxy.size() << ","
+           << "\"invalidMatchCount\":" << metrics.baInvalidMatchCount << ","
+           << "\"invalidIndexCount\":" << metrics.baInvalidIndexCount << ","
+           << "\"representationType\":\"" << metrics.baRepresentationType << "\","
+           << "\"validationOk\":" << (baVal.ok ? "true" : "false") << ","
+           << "\"validationReason\":\"" << baVal.reason << "\""
+           << "}\n";
+        writeText(config.debugDirectory + "/ba_input.json", bi.str());
+    }
+    trace.checkpoint("baBegin", -1, 0, 0);
 
     const double tBA0 = nowMs();
     double errBefore = 0, errAfter = 0;
     bool baOK = false;
+    std::string baSkip;
+    const bool gateOK = baSafetyGate(n, baVal, baSkip);
 
     if (n == 1) {
         baOK = true;
         metrics.optimizedCameraCount = 1;
-    } else if (!baMatches.empty()) {
+        metrics.baSkipReason = "single_image";
+        trace.checkpoint("baSkipped", -1, 0, 0);
+    } else if (!gateOK) {
+        // ARKit prior fallback — BA is optional refinement only.
+        metrics.optimizedCameraCount = n;
+        metrics.baSkipReason = baSkip;
+        metrics.errorMessage = std::string("BA skipped: ") + baSkip + "; using ARKit prior";
+        baOK = false;
+        trace.checkpoint("baSkipped", -1, 0, 0);
+    } else {
         Ptr<BundleAdjusterBase> adjuster = makePtr<BundleAdjusterRay>();
-        adjuster->setConfThresh(0.15);
+        adjuster->setConfThresh(baConfThresh);
         std::vector<CameraParams> camsBefore = camerasProxy;
         try {
-            bool ran = (*adjuster)(features, baMatches, camerasProxy);
+            bool ran = (*adjuster)(features, baMatchesNxN, camerasProxy);
             baOK = ran;
             double sumCorr = 0, maxCorr = 0;
             int corrN = 0;
@@ -721,30 +992,39 @@ static bool GonggiOpenCVStitchPanoramaImpl(
             metrics.maxVisualCorrectionDeg = maxCorr;
             metrics.bundleAdjustmentBeforeError = errBefore;
             metrics.bundleAdjustmentAfterError = errAfter / std::max(n, 1);
+            if (!baOK) {
+                camerasProxy = camsBefore;
+                metrics.baSkipReason = "bundle_adjuster_returned_false";
+                metrics.errorMessage = "BA returned false; using ARKit prior";
+                metrics.optimizedCameraCount = n;
+            }
+            trace.checkpoint("baDone", -1, 0, 0);
         } catch (const cv::Exception &ex) {
             camerasProxy = camsBefore;
             metrics.errorMessage = std::string("BA exception: ") + ex.what();
+            metrics.baSkipReason = "cv_exception";
+            metrics.optimizedCameraCount = n;
             baOK = false;
+            trace.checkpoint("baSkipped", -1, 0, 0);
         }
-    } else {
-        metrics.optimizedCameraCount = n;
-        baOK = true;
-        metrics.errorMessage = "no confident visual pairs; using ARKit prior only";
     }
-    // Propagate optimized rotations to full-res cameras (intrinsics stay full-res).
+    // Propagate optimized (or prior) rotations to full-res cameras (intrinsics stay full-res).
     for (int i = 0; i < n; ++i) {
         camerasProxy[i].R.copyTo(cameras[i].R);
     }
     metrics.bundleAdjustmentTimeMs = nowMs() - tBA0;
     metrics.bundleAdjustmentConverged = baOK;
     noteMemory(metrics, metrics.memoryAfterBAMB);
-    trace.checkpoint("BA", -1, 0, 0);
+    if (metrics.baSkipReason.empty() && baOK) {
+        // keep baDone already traced
+    }
 
     // Features no longer needed after BA.
     features.clear();
     features.shrink_to_fit();
     pairwise.clear();
-    baMatches.clear();
+    confidentPairs.clear();
+    baMatchesNxN.clear();
 
     anchorFirstForward(cameras);
     anchorFirstForward(camerasProxy);
@@ -1133,6 +1413,226 @@ bool GonggiOpenCVStitchPanorama(
             ensureDir(config.debugDirectory);
             writeText(config.debugDirectory + "/metrics.json", metricsToJSON(metrics));
         }
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Build 25 — synthetic BA contract tests (callable from XCTest via bridge)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void fillSyntheticCamera(CameraParams &cam, float yawDeg) {
+    cam.focal = 500.0;
+    cam.ppx = 320.0;
+    cam.ppy = 240.0;
+    cam.aspect = 1.0;
+    // Simple yaw about Y for prior diversity.
+    const float y = yawDeg * 3.14159265f / 180.f;
+    Mat R = (Mat_<float>(3, 3) <<
+             std::cos(y), 0, std::sin(y),
+             0, 1, 0,
+             -std::sin(y), 0, std::cos(y));
+    cam.R = R;
+    cam.t = Mat::zeros(3, 1, CV_32F);
+}
+
+ImageFeatures makeSyntheticFeatures(int idx, int kpCount) {
+    ImageFeatures f;
+    f.img_idx = idx;
+    f.img_size = Size(640, 480);
+    f.keypoints.clear();
+    for (int k = 0; k < kpCount; ++k) {
+        f.keypoints.emplace_back(KeyPoint(40.f + float(k) * 3.f, 50.f + float(k) * 2.f, 3.f));
+    }
+    // Dummy descriptors (unused by BundleAdjusterRay once matches exist).
+    f.descriptors = Mat::zeros(kpCount, 61, CV_8U);
+    return f;
+}
+
+MatchesInfo makeSyntheticEdge(int src, int dst, int nMatches, bool validIndices) {
+    MatchesInfo mi;
+    mi.src_img_idx = src;
+    mi.dst_img_idx = dst;
+    mi.confidence = 0.8;
+    mi.num_inliers = nMatches;
+    mi.matches.clear();
+    mi.inliers_mask.clear();
+    for (int k = 0; k < nMatches; ++k) {
+        DMatch m;
+        if (validIndices) {
+            m.queryIdx = k;
+            m.trainIdx = k;
+        } else {
+            m.queryIdx = 99999;
+            m.trainIdx = 99999;
+        }
+        m.distance = 0.1f;
+        mi.matches.push_back(m);
+        mi.inliers_mask.push_back(1);
+    }
+    mi.H = Mat::eye(3, 3, CV_64F);
+    return mi;
+}
+
+bool runBAOrSkip(
+    std::vector<ImageFeatures> &features,
+    const std::vector<MatchesInfo> &confident,
+    std::vector<CameraParams> &cameras,
+    std::ostringstream &detail,
+    const char *expected
+) {
+    const int n = static_cast<int>(features.size());
+    auto nxn = buildNxNPairwise(n, confident);
+    auto val = validateBAInput(features, nxn, cameras, 0.15, 8);
+    std::string skip;
+    bool gate = baSafetyGate(n, val, skip);
+    detail << "{\"n\":" << n
+           << ",\"pairwiseSize\":" << nxn.size()
+           << ",\"confidentEdges\":" << val.confidentEdgeCount
+           << ",\"components\":" << val.connectedComponents
+           << ",\"validationOk\":" << (val.ok ? "true" : "false")
+           << ",\"gate\":" << (gate ? "true" : "false")
+           << ",\"skip\":\"" << skip << "\""
+           << ",\"expected\":\"" << expected << "\"";
+
+    if (!gate) {
+        detail << ",\"baCalled\":false,\"ok\":true}";
+        // Expected skip scenarios succeed when we correctly skip.
+        return std::string(expected) == "skip" || std::string(expected) == "skip_or_run";
+    }
+
+    Ptr<BundleAdjusterBase> adjuster = makePtr<BundleAdjusterRay>();
+    adjuster->setConfThresh(0.15);
+    bool ran = false;
+    try {
+        ran = (*adjuster)(features, nxn, cameras);
+        detail << ",\"baCalled\":true,\"ran\":" << (ran ? "true" : "false") << ",\"ok\":true}";
+        return true; // no crash is success for run scenarios
+    } catch (const cv::Exception &ex) {
+        detail << ",\"baCalled\":true,\"exception\":\"" << ex.what() << "\",\"ok\":false}";
+        return false;
+    }
+}
+
+} // namespace
+
+bool GonggiOpenCVTestBAContract(const char *scenario, std::string &detailJSON) {
+    detailJSON.clear();
+    std::ostringstream detail;
+    if (scenario == nullptr) {
+        detailJSON = "{\"ok\":false,\"reason\":\"null scenario\"}";
+        return false;
+    }
+    const std::string s(scenario);
+
+    try {
+        if (s == "valid3") {
+            const int n = 3;
+            std::vector<ImageFeatures> feats;
+            std::vector<CameraParams> cams(n);
+            std::vector<MatchesInfo> edges;
+            for (int i = 0; i < n; ++i) {
+                feats.push_back(makeSyntheticFeatures(i, 24));
+                fillSyntheticCamera(cams[i], float(i) * 20.f);
+            }
+            edges.push_back(makeSyntheticEdge(0, 1, 20, true));
+            edges.push_back(makeSyntheticEdge(1, 2, 20, true));
+            edges.push_back(makeSyntheticEdge(0, 2, 16, true));
+            bool ok = runBAOrSkip(feats, edges, cams, detail, "run");
+            detailJSON = detail.str();
+            return ok;
+        }
+        if (s == "sparse") {
+            // Only two edges for 4 cameras (not a spanning tree) → skip, but N×N built safely.
+            const int n = 4;
+            std::vector<ImageFeatures> feats;
+            std::vector<CameraParams> cams(n);
+            std::vector<MatchesInfo> edges;
+            for (int i = 0; i < n; ++i) {
+                feats.push_back(makeSyntheticFeatures(i, 20));
+                fillSyntheticCamera(cams[i], float(i) * 15.f);
+            }
+            edges.push_back(makeSyntheticEdge(0, 1, 18, true));
+            edges.push_back(makeSyntheticEdge(2, 3, 18, true)); // disconnected
+            bool ok = runBAOrSkip(feats, edges, cams, detail, "skip");
+            detailJSON = detail.str();
+            return ok;
+        }
+        if (s == "invalidIdx") {
+            const int n = 3;
+            std::vector<ImageFeatures> feats;
+            std::vector<CameraParams> cams(n);
+            std::vector<MatchesInfo> edges;
+            for (int i = 0; i < n; ++i) {
+                feats.push_back(makeSyntheticFeatures(i, 10));
+                fillSyntheticCamera(cams[i], float(i) * 10.f);
+            }
+            edges.push_back(makeSyntheticEdge(0, 1, 8, false)); // bad indices
+            edges.push_back(makeSyntheticEdge(1, 2, 8, true));
+            auto nxn = buildNxNPairwise(n, edges);
+            auto val = validateBAInput(feats, nxn, cams, 0.15, 8);
+            detail << "{\"validationOk\":" << (val.ok ? "true" : "false")
+                   << ",\"reason\":\"" << val.reason << "\""
+                   << ",\"baCalled\":false,\"ok\":" << (!val.ok ? "true" : "false") << "}";
+            detailJSON = detail.str();
+            return !val.ok; // must catch invalid indices
+        }
+        if (s == "disconnected") {
+            const int n = 4;
+            std::vector<ImageFeatures> feats;
+            std::vector<CameraParams> cams(n);
+            std::vector<MatchesInfo> edges;
+            for (int i = 0; i < n; ++i) {
+                feats.push_back(makeSyntheticFeatures(i, 20));
+                fillSyntheticCamera(cams[i], float(i) * 12.f);
+            }
+            edges.push_back(makeSyntheticEdge(0, 1, 16, true));
+            edges.push_back(makeSyntheticEdge(2, 3, 16, true));
+            bool ok = runBAOrSkip(feats, edges, cams, detail, "skip");
+            detailJSON = detail.str();
+            return ok;
+        }
+        if (s == "zeroEdges") {
+            const int n = 5;
+            std::vector<ImageFeatures> feats;
+            std::vector<CameraParams> cams(n);
+            for (int i = 0; i < n; ++i) {
+                feats.push_back(makeSyntheticFeatures(i, 12));
+                fillSyntheticCamera(cams[i], float(i) * 8.f);
+            }
+            std::vector<MatchesInfo> edges; // empty
+            bool ok = runBAOrSkip(feats, edges, cams, detail, "skip");
+            detailJSON = detail.str();
+            return ok;
+        }
+        if (s == "large40") {
+            const int n = 40;
+            std::vector<ImageFeatures> feats;
+            std::vector<CameraParams> cams(n);
+            std::vector<MatchesInfo> edges;
+            for (int i = 0; i < n; ++i) {
+                feats.push_back(makeSyntheticFeatures(i, 16));
+                fillSyntheticCamera(cams[i], float(i) * 3.f);
+            }
+            for (int i = 0; i < n - 1; ++i) {
+                edges.push_back(makeSyntheticEdge(i, i + 1, 12, true));
+            }
+            bool ok = runBAOrSkip(feats, edges, cams, detail, "run");
+            detailJSON = detail.str();
+            return ok;
+        }
+        detailJSON = std::string("{\"ok\":false,\"reason\":\"unknown scenario\",\"scenario\":\"") + s + "\"}";
+        return false;
+    } catch (const cv::Exception &ex) {
+        detailJSON = std::string("{\"ok\":false,\"cvException\":\"") + ex.what() + "\"}";
+        return false;
+    } catch (const std::exception &ex) {
+        detailJSON = std::string("{\"ok\":false,\"stdException\":\"") + ex.what() + "\"}";
+        return false;
+    } catch (...) {
+        detailJSON = "{\"ok\":false,\"reason\":\"unknown exception\"}";
         return false;
     }
 }

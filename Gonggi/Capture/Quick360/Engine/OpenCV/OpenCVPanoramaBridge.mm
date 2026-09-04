@@ -181,6 +181,12 @@ double gonggi_peak_memory_mb() {
             @"memoryArchitecture": [NSString stringWithUTF8String:metrics.memoryArchitecture.c_str()],
             @"maxLoadedFullResCount": @(metrics.maxLoadedFullResCount),
             @"maxWarpedResidentCount": @(metrics.maxWarpedResidentCount),
+            @"baRepresentationType": [NSString stringWithUTF8String:metrics.baRepresentationType.c_str()],
+            @"baSkipReason": [NSString stringWithUTF8String:metrics.baSkipReason.c_str()],
+            @"baPairwiseContainerSize": @(metrics.baPairwiseContainerSize),
+            @"baConfidentEdgeCount": @(metrics.baConfidentEdgeCount),
+            @"baInvalidMatchCount": @(metrics.baInvalidMatchCount),
+            @"baInvalidIndexCount": @(metrics.baInvalidIndexCount),
             @"memoryStartMB": @(metrics.memoryStartMB),
             @"memoryAfterLoadMB": @(metrics.memoryAfterLoadMB),
             @"memoryAfterFeatureMB": @(metrics.memoryAfterFeatureMB),
@@ -220,6 +226,20 @@ double gonggi_peak_memory_mb() {
         result.peakMemoryMB = std::max(peak, gonggi_peak_memory_mb());
         return result;
     }
+}
+
++ (OpenCVPanoramaStitchResult *)runBAContractTestScenario:(NSString *)scenario {
+    OpenCVPanoramaStitchResult *result = [OpenCVPanoramaStitchResult new];
+    CFAbsoluteTime t0 = CFAbsoluteTimeGetCurrent();
+    std::string detail;
+    const char *sc = scenario != nil ? scenario.UTF8String : "";
+    bool ok = GonggiOpenCVTestBAContract(sc, detail);
+    result.success = ok ? YES : NO;
+    result.metricsJSON = [NSString stringWithUTF8String:detail.c_str()];
+    result.errorMessage = ok ? nil : [NSString stringWithUTF8String:detail.c_str()];
+    result.processingTimeMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0;
+    result.peakMemoryMB = gonggi_peak_memory_mb();
+    return result;
 }
 
 @end
