@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// OpenCV reconstruction engine — Swift façade over `OpenCVPanoramaBridge`.
 ///

@@ -9,7 +9,7 @@ Stitch algorithm work lives in later phases; production default remains **Legacy
 |------|--------|
 | OpenCV | **4.10.0** |
 | License | Apache 2.0 (`third_party/opencv/LICENSE`, app `NOTICE`) |
-| Arch | iphoneos `arm64`, iphonesimulator `arm64` |
+| Arch | iphoneos `arm64`, iphonesimulator `arm64` (CI macos-15; x86_64 sim excluded) |
 | Modules | core, imgproc, imgcodecs, flann, features2d, calib3d, stitching |
 | Excluded | dnn, video, videoio, highgui, ml, gapi, objc, java, python, js, ts, world, photo, objdetect (+ no FFmpeg) |
 
