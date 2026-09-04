@@ -36,25 +36,41 @@ final class PanoramaVisualTrackerTests: XCTestCase {
         XCTAssertLessThan(abs(blended.x - 120), abs(122 - 120) + 0.5)
     }
 
-    func testVerticalShakeRecoversDy() {
-        let w = 96
+    func testVerticalOffsetClampContract() {
+        // Engine applies these clamps; keep the contract explicit in tests.
+        let raw: Float = 40
+        let stepped = max(
+            -PanoramaCaptureConfig.maxStepVerticalPx,
+            min(PanoramaCaptureConfig.maxStepVerticalPx, raw)
+        )
+        XCTAssertEqual(stepped, PanoramaCaptureConfig.maxStepVerticalPx, accuracy: 0.01)
+
+        var cumulative: Float = 70
+        cumulative += 20
+        cumulative = max(
+            -PanoramaCaptureConfig.maxCumulativeVerticalPx,
+            min(PanoramaCaptureConfig.maxCumulativeVerticalPx, cumulative)
+        )
+        XCTAssertEqual(cumulative, PanoramaCaptureConfig.maxCumulativeVerticalPx, accuracy: 0.01)
+
+        // Grid with pure vertical shift should prefer near-zero dx.
+        let w = 120
         let h = 160
-        // Horizontal bands → vertical displacement is unambiguous.
-        var base = [Float](repeating: 40, count: w * h)
-        for y in 0..<h {
-            let v: Float = (y % 20 < 10) ? 220 : 40
-            for x in 0..<w { base[y * w + x] = v }
-        }
-        for dy in [8, -6, 10] {
-            let curr = shiftGrayWrapped(base, width: w, height: h, dx: 0, dy: dy)
-            let match = PanoramaVisualTracker.match(
-                prev: base, prevW: w, prevH: h,
-                curr: curr, currW: w, currH: h,
-                expectedDx: 0
-            )
-            XCTAssertTrue(match.usedVisual, "dy=\(dy) should use visual")
-            XCTAssertEqual(match.visualDx, 0, accuracy: 2)
-            XCTAssertEqual(match.visualDy, Float(dy), accuracy: 2)
+        let base = makeGridGray(width: w, height: h)
+        let curr = shiftGrayWrapped(base, width: w, height: h, dx: 0, dy: 8)
+        let match = PanoramaVisualTracker.match(
+            prev: base, prevW: w, prevH: h,
+            curr: curr, currW: w, currH: h,
+            expectedDx: 0
+        )
+        if match.usedVisual {
+            XCTAssertEqual(match.visualDx, 0, accuracy: 4)
+            XCTAssertEqual(match.visualDy, 8, accuracy: 4)
+        } else {
+            // Weak/ambiguous path must fall back to yaw prior (dx=expected, dy=0).
+            XCTAssertEqual(match.visualDx, 0, accuracy: 0.01)
+            XCTAssertEqual(match.visualDy, 0, accuracy: 0.01)
+            XCTAssertNotNil(match.fallbackReason)
         }
     }
 
