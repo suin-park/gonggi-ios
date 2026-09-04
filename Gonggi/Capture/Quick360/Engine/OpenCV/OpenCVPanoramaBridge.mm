@@ -7,9 +7,17 @@
 #import "OpenCVPanoramaReconstructor.hpp"
 
 #import <CoreFoundation/CoreFoundation.h>
-#import <opencv2/core.hpp>
-
 #import <mach/mach.h>
+
+// OpenCV after ObjC headers: clear YES/NO so CV_VERSION include is safe.
+#pragma push_macro("NO")
+#pragma push_macro("YES")
+#undef NO
+#undef YES
+#import <opencv2/core.hpp>
+#pragma pop_macro("YES")
+#pragma pop_macro("NO")
+
 #import <cmath>
 #import <string>
 #import <vector>

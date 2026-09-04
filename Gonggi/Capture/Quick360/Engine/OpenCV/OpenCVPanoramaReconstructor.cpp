@@ -1,33 +1,35 @@
 //
-//  OpenCVPanoramaReconstructor.mm
+//  OpenCVPanoramaReconstructor.cpp
 //  Phase 2B/2C reconstruction (detail::* — not cv::Stitcher high-level).
+//  Pure C++ (no ObjC) so OpenCV headers are not poisoned by YES/NO macros.
 //
 
-#import "OpenCVPanoramaReconstructor.hpp"
+#include "OpenCVPanoramaReconstructor.hpp"
 
-#import <Foundation/Foundation.h>
-#import <CoreFoundation/CoreFoundation.h>
-#import <opencv2/core.hpp>
-#import <opencv2/imgproc.hpp>
-#import <opencv2/imgcodecs.hpp>
-#import <opencv2/features2d.hpp>
-#import <opencv2/calib3d.hpp>
-#import <opencv2/stitching/detail/matchers.hpp>
-#import <opencv2/stitching/detail/camera.hpp>
-#import <opencv2/stitching/detail/motion_estimators.hpp>
-#import <opencv2/stitching/detail/warpers.hpp>
-#import <opencv2/stitching/detail/exposure_compensate.hpp>
-#import <opencv2/stitching/detail/seam_finders.hpp>
-#import <opencv2/stitching/detail/blenders.hpp>
-#import <opencv2/stitching/warpers.hpp>
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/stitching/detail/matchers.hpp>
+#include <opencv2/stitching/detail/camera.hpp>
+#include <opencv2/stitching/detail/motion_estimators.hpp>
+#include <opencv2/stitching/detail/warpers.hpp>
+#include <opencv2/stitching/detail/exposure_compensate.hpp>
+#include <opencv2/stitching/detail/seam_finders.hpp>
+#include <opencv2/stitching/detail/blenders.hpp>
+#include <opencv2/stitching/warpers.hpp>
 
-#import <mach/mach.h>
-#import <algorithm>
-#import <cmath>
-#import <fstream>
-#import <functional>
-#import <numeric>
-#import <sstream>
+#include <mach/mach.h>
+#include <sys/stat.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <fstream>
+#include <functional>
+#include <numeric>
+#include <sstream>
 
 using namespace cv;
 using namespace cv::detail;
@@ -46,7 +48,8 @@ double peakMemoryMB() {
 }
 
 double nowMs() {
-    return CFAbsoluteTimeGetCurrent() * 1000.0;
+    using clock = std::chrono::steady_clock;
+    return std::chrono::duration<double, std::milli>(clock::now().time_since_epoch()).count();
 }
 
 Matx33f gonggiToOpenCVCamera() {
@@ -186,11 +189,18 @@ std::vector<PairCandidate> selectPairs(const std::vector<GonggiOpenCVFrameInput>
 
 void ensureDir(const std::string &path) {
     if (path.empty()) return;
-    NSString *p = [NSString stringWithUTF8String:path.c_str()];
-    [[NSFileManager defaultManager] createDirectoryAtPath:p
-                              withIntermediateDirectories:YES
-                                               attributes:nil
-                                                    error:nil];
+    std::string cur;
+    for (size_t i = 0; i < path.size(); ++i) {
+        char ch = path[i];
+        cur.push_back(ch);
+        if (ch == '/' || i + 1 == path.size()) {
+            if (cur == "/" || cur.empty()) continue;
+            // Trim trailing slash for mkdir except root.
+            std::string dir = cur;
+            while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+            ::mkdir(dir.c_str(), 0755);
+        }
+    }
 }
 
 void writeText(const std::string &path, const std::string &text) {
@@ -813,11 +823,9 @@ bool GonggiOpenCVStitchPanorama(
     metrics.encodeTimeMs = nowMs() - tEnc0;
 
     // File size
-    NSDictionary *attrs = [[NSFileManager defaultManager]
-        attributesOfItemAtPath:[NSString stringWithUTF8String:config.outputPath.c_str()]
-                         error:nil];
-    if (attrs) {
-        metrics.outputFileSizeMB = [attrs.fileSize doubleValue] / (1024.0 * 1024.0);
+    struct stat st {};
+    if (::stat(config.outputPath.c_str(), &st) == 0) {
+        metrics.outputFileSizeMB = static_cast<double>(st.st_size) / (1024.0 * 1024.0);
     }
 
     metrics.outputResolution = std::to_string(outW) + "x" + std::to_string(outH);
