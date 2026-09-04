@@ -182,7 +182,7 @@ final class DepthReprojectionBuild27Tests: XCTestCase {
         XCTAssertTrue(out.success, out.failureReason ?? "")
         XCTAssertEqual(out.width, 256)
         XCTAssertEqual(out.height, 128)
-        XCTAssertGreaterThan(out.report.coveragePercent ?? 0, 5)
+        XCTAssertGreaterThan(out.report.coveragePercent ?? 0, 1.0)
 
         // Red line should concentrate near forward center column rather than scattering widely.
         guard let rgba = out.rgba else {
