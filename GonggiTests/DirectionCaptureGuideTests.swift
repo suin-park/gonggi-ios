@@ -18,13 +18,16 @@ final class DirectionCaptureGuideTests: XCTestCase {
     // MARK: - Guide helpers
 
     func testWithinYawToleranceRadius() {
-        // User example for ±10 around -45: -36 out, -39 in
-        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -36, targetYaw: -45, toleranceDeg: 10))
+        // ±10 around -45: distance 11 out, 9 in (user's ±8 example: -36 out / -39 in)
+        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -34, targetYaw: -45, toleranceDeg: 10))
+        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -36, targetYaw: -45, toleranceDeg: 10))
         XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -37, targetYaw: -45, toleranceDeg: 10))
         XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -39, targetYaw: -45, toleranceDeg: 10))
         XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -43, targetYaw: -45, toleranceDeg: 10))
         XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -48, targetYaw: -45, toleranceDeg: 10))
         XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -56, targetYaw: -45, toleranceDeg: 10))
+        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -36, targetYaw: -45, toleranceDeg: 8))
+        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -39, targetYaw: -45, toleranceDeg: 8))
     }
 
     func testWithinElevationTolerance() {
