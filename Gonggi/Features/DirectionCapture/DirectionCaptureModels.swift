@@ -63,12 +63,12 @@ enum DirectionCapturePhase: Equatable {
 struct DirectionCaptureConfig {
     /// Horizontal angle radius around each yaw target (degrees).
     static var captureToleranceDeg: Float = 9
-    /// Elevation target for up (gravity elevation deg).
-    static var upElevationTargetDeg: Float = 70
-    /// Elevation target for down.
-    static var downElevationTargetDeg: Float = -70
-    /// Elevation radius around up/down targets (±10° → up 60…80, down −80…−60).
-    static var elevationToleranceDeg: Float = 10
+    /// Elevation target for up (gravity elevation deg). Aim ceiling-dominant.
+    static var upElevationTargetDeg: Float = 80
+    /// Elevation target for down. Aim floor-dominant.
+    static var downElevationTargetDeg: Float = -80
+    /// Elevation radius around up/down (±8° → up 72…88, down −88…−72).
+    static var elevationToleranceDeg: Float = 8
     /// Extreme pitch hard-reject for horizontal frames only (relative pitch).
     static var extremePitchRejectDeg: Float = 60
     /// Extreme roll hard-reject.
@@ -88,6 +88,12 @@ struct DirectionCaptureRecord: Codable, Equatable, Identifiable {
     var pitchDeg: Float
     var rollDeg: Float
     var timestamp: TimeInterval
+    /// Gravity elevation at shutter (degrees). Optional for older reports.
+    var elevationDeg: Float? = nil
+    var photoOrientation: Int? = nil
+    var pixelRotationApplied: Bool? = nil
+    var finalPixelWidth: Int? = nil
+    var finalPixelHeight: Int? = nil
 
     var id: String { direction.rawValue }
 }
@@ -96,6 +102,16 @@ struct DirectionCaptureReport: Codable, Equatable {
     var sessionId: String
     var createdAt: String
     var captures: [DirectionCaptureRecord]
+    var upCaptureElevation: Float? = nil
+    var downCaptureElevation: Float? = nil
+    var upPhotoOrientation: Int? = nil
+    var downPhotoOrientation: Int? = nil
+    var upPixelRotationApplied: Bool? = nil
+    var downPixelRotationApplied: Bool? = nil
+    var upFinalPixelWidth: Int? = nil
+    var upFinalPixelHeight: Int? = nil
+    var downFinalPixelWidth: Int? = nil
+    var downFinalPixelHeight: Int? = nil
 }
 
 struct DirectionCaptureResult {

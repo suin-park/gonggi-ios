@@ -67,8 +67,8 @@ enum DirectionCaptureGuide {
 
     static func verticalGuideMessage(for target: DirectionName?) -> String {
         switch target {
-        case .up: return "휴대폰을 위로 향해주세요"
-        case .down: return "휴대폰을 아래로 향해주세요"
+        case .up: return "휴대폰 카메라를 천장 쪽으로 향해주세요"
+        case .down: return "휴대폰 카메라를 바닥 쪽으로 향해주세요"
         case .none: return "촬영 완료"
         default: return "준비"
         }

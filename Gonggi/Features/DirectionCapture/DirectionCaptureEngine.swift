@@ -334,7 +334,8 @@ final class DirectionCaptureEngine: NSObject {
         }
 
         let fileURL = dirURL.appendingPathComponent(direction.fileName)
-        guard let data = image.jpegData(compressionQuality: 0.92) else {
+        let normalized = DirectionCaptureImageNormalizer.normalizeForUpload(image)
+        guard let data = normalized.image.jpegData(compressionQuality: 0.92) else {
             pendingDirection = nil
             notify()
             return
@@ -349,16 +350,30 @@ final class DirectionCaptureEngine: NSObject {
         }
 
         let m = motionAtPhotoRequest ?? lastMotion
+        #if DEBUG
+        print(
+            "[DirectionCapture] save \(direction.rawValue)"
+                + " elev=\(String(format: "%.1f", m.elevationDeg))"
+                + " photoOrientation=\(normalized.sourceOrientationRaw)"
+                + " pixelRotationApplied=\(normalized.pixelRotationApplied)"
+                + " final=\(normalized.finalPixelWidth)x\(normalized.finalPixelHeight)"
+        )
+        #endif
         let record = DirectionCaptureRecord(
             direction: direction,
             filePath: "direction_capture/\(direction.fileName)",
             yawDeg: DirectionCaptureGuide.normalizeYaw0to360(m.relativeYawDeg),
             pitchDeg: m.pitchDeg,
             rollDeg: m.rollDeg,
-            timestamp: m.timestamp
+            timestamp: m.timestamp,
+            elevationDeg: m.elevationDeg,
+            photoOrientation: normalized.sourceOrientationRaw,
+            pixelRotationApplied: normalized.pixelRotationApplied,
+            finalPixelWidth: normalized.finalPixelWidth,
+            finalPixelHeight: normalized.finalPixelHeight
         )
         captured[direction] = record
-        images[direction] = image
+        images[direction] = normalized.image
         pendingDirection = nil
         motionAtPhotoRequest = nil
         progressText = "\(captured.count) / 10"
@@ -420,10 +435,22 @@ final class DirectionCaptureEngine: NSObject {
     private func finishAndEmitResult() {
         let createdAt = ISO8601DateFormatter().string(from: Date())
         let ordered = DirectionName.captureOrder.compactMap { captured[$0] }
+        let up = captured[.up]
+        let down = captured[.down]
         let report = DirectionCaptureReport(
             sessionId: sessionId,
             createdAt: createdAt,
-            captures: ordered
+            captures: ordered,
+            upCaptureElevation: up?.elevationDeg,
+            downCaptureElevation: down?.elevationDeg,
+            upPhotoOrientation: up?.photoOrientation,
+            downPhotoOrientation: down?.photoOrientation,
+            upPixelRotationApplied: up?.pixelRotationApplied,
+            downPixelRotationApplied: down?.pixelRotationApplied,
+            upFinalPixelWidth: up?.finalPixelWidth,
+            upFinalPixelHeight: up?.finalPixelHeight,
+            downFinalPixelWidth: down?.finalPixelWidth,
+            downFinalPixelHeight: down?.finalPixelHeight
         )
         if let dirURL = outputDirectory {
             let reportURL = dirURL.appendingPathComponent("capture_report.json")
@@ -470,7 +497,8 @@ final class DirectionCaptureEngine: NSObject {
                 t += 0.05
                 Thread.sleep(forTimeInterval: 0.04)
             }
-            for elev: Float in [50, 62, 70, 80] {
+            // up zone +80±8 → 72…88; down −80±8 → −88…−72
+            for elev: Float in [60, 72, 80, 85] {
                 guard self.isCapturing else { return }
                 while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
                 DispatchQueue.main.sync {
@@ -479,7 +507,7 @@ final class DirectionCaptureEngine: NSObject {
                 t += 0.05
                 Thread.sleep(forTimeInterval: 0.04)
             }
-            for elev: Float in [-50, -63, -70, -80] {
+            for elev: Float in [-60, -72, -80, -85] {
                 guard self.isCapturing else { return }
                 while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
                 DispatchQueue.main.sync {
@@ -548,13 +576,7 @@ extension DirectionCaptureEngine: AVCapturePhotoCaptureDelegate {
             notify()
             return
         }
-        // Prefer .up orientation for display/save.
-        let upright: UIImage
-        if let cg = image.cgImage {
-            upright = UIImage(cgImage: cg, scale: image.scale, orientation: .up)
-        } else {
-            upright = image
-        }
-        finishPhotoSuccess(direction: direction, image: upright)
+        // Keep source orientation; `finishPhotoSuccess` bakes upright pixels (not tag-only).
+        finishPhotoSuccess(direction: direction, image: image)
     }
 }

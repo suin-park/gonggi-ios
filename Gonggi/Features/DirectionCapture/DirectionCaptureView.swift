@@ -120,10 +120,12 @@ struct DirectionCaptureView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
 
+            #if DEBUG
             Text("\(viewModel.yawDisplay) · \(viewModel.pitchDisplay)")
                 .font(GonggiTypography.caption(11))
                 .foregroundStyle(.white.opacity(0.65))
                 .padding(.top, 6)
+            #endif
 
             Spacer()
 
