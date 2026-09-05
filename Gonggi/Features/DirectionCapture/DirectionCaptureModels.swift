@@ -67,8 +67,8 @@ struct DirectionCaptureConfig {
     static var upElevationTargetDeg: Float = 70
     /// Elevation target for down.
     static var downElevationTargetDeg: Float = -70
-    /// Elevation radius around up/down targets.
-    static var elevationToleranceDeg: Float = 18
+    /// Elevation radius around up/down targets (±10° → up 60…80, down −80…−60).
+    static var elevationToleranceDeg: Float = 10
     /// Extreme pitch hard-reject for horizontal frames only (relative pitch).
     static var extremePitchRejectDeg: Float = 60
     /// Extreme roll hard-reject.

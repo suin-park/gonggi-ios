@@ -69,6 +69,7 @@ enum DirectionCaptureGuide {
         switch target {
         case .up: return "휴대폰을 위로 향해주세요"
         case .down: return "휴대폰을 아래로 향해주세요"
+        case .none: return "촬영 완료"
         default: return "준비"
         }
     }

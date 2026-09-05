@@ -226,7 +226,7 @@ final class DirectionCaptureEngine: NSObject {
             case .capturingHorizontal:
                 evaluateHorizontal(unwrappedYaw: unwrappedYaw, pitchDeg: pitchDeg, rollDeg: rollDeg, rotationRate: rotationRate)
             case .capturingUp, .capturingDown:
-                evaluateVertical(elevationDeg: elevationDeg, rollDeg: rollDeg, rotationRate: rotationRate)
+                evaluateVertical(elevationDeg: elevationDeg)
             default:
                 break
             }
@@ -269,10 +269,8 @@ final class DirectionCaptureEngine: NSObject {
         requestPhoto(for: target)
     }
 
-    private func evaluateVertical(elevationDeg: Float, rollDeg: Float, rotationRate: Float) {
-        if DirectionCaptureGuide.isExtremeRotation(rotationRate) { return }
-        if abs(rollDeg) > DirectionCaptureConfig.extremeRollRejectDeg { return }
-
+    /// Up/down: elevation angle-radius only (no pitch, no crossing).
+    private func evaluateVertical(elevationDeg: Float) {
         switch phase {
         case .capturingUp:
             guard captured[.up] == nil else { return }
@@ -412,7 +410,7 @@ final class DirectionCaptureEngine: NSObject {
             guideText = DirectionCaptureGuide.verticalGuideMessage(for: .down)
         case .completed:
             currentTarget = nil
-            guideText = "완료"
+            guideText = "촬영 완료"
         default:
             break
         }
@@ -472,7 +470,7 @@ final class DirectionCaptureEngine: NSObject {
                 t += 0.05
                 Thread.sleep(forTimeInterval: 0.04)
             }
-            for elev: Float in [40, 55, 70, 80] {
+            for elev: Float in [50, 62, 70, 80] {
                 guard self.isCapturing else { return }
                 while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
                 DispatchQueue.main.sync {
@@ -481,7 +479,7 @@ final class DirectionCaptureEngine: NSObject {
                 t += 0.05
                 Thread.sleep(forTimeInterval: 0.04)
             }
-            for elev: Float in [-40, -55, -70, -80] {
+            for elev: Float in [-50, -63, -70, -80] {
                 guard self.isCapturing else { return }
                 while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
                 DispatchQueue.main.sync {
