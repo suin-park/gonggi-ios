@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Full-screen 10-direction auto capture (portrait, one start tap).
+/// Full-screen 10-direction auto capture → space generation → VR (no result grid).
 struct DirectionCaptureView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel = DirectionCaptureViewModel()
-    @State private var showResult = false
+    @StateObject private var generationCoordinator = SpaceGenerationCoordinator()
+    @State private var showSpaceFlow = false
     let onClose: () -> Void
 
     var body: some View {
@@ -44,27 +45,29 @@ struct DirectionCaptureView: View {
         }
         .onAppear {
             viewModel.configure(mockMode: appState.isMockMode)
+            // Simulator/mock: local fake LatLong. Device: 3D Locker backend.
+            generationCoordinator.configure(useMock: appState.isMockMode)
         }
         .onChange(of: viewModel.didComplete) { _, done in
-            if done, viewModel.result != nil {
-                showResult = true
-            }
+            guard done, let result = viewModel.result else { return }
+            // Skip DirectionCaptureResultView — go straight to generation.
+            generationCoordinator.start(from: result)
+            showSpaceFlow = true
         }
-        .fullScreenCover(isPresented: $showResult) {
-            if let result = viewModel.result {
-                DirectionCaptureResultView(
-                    result: result,
-                    onRetake: {
-                        showResult = false
-                        viewModel.retake()
-                    },
-                    onDone: {
-                        showResult = false
-                        viewModel.close()
-                        onClose()
-                    }
-                )
-            }
+        .fullScreenCover(isPresented: $showSpaceFlow) {
+            SpaceRecordFlowView(
+                coordinator: generationCoordinator,
+                onRecapture: {
+                    showSpaceFlow = false
+                    generationCoordinator.resetForRecapture()
+                    viewModel.retake()
+                },
+                onClose: {
+                    showSpaceFlow = false
+                    viewModel.close()
+                    onClose()
+                }
+            )
         }
         .statusBarHidden(true)
     }
@@ -191,7 +194,6 @@ struct DirectionCaptureView: View {
         }
     }
 
-    /// Captured = teal check. Current target = orange ring (not success cyan). Pending = spinner.
     private func statusIcon(captured: Bool, isCurrent: Bool, isPending: Bool) -> String {
         if captured { return "checkmark.circle.fill" }
         if isPending { return "camera.circle.fill" }
