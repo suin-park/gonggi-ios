@@ -61,22 +61,24 @@ enum DirectionCapturePhase: Equatable {
 }
 
 struct DirectionCaptureConfig {
-    /// Gravity elevation (deg): looking up threshold.
-    static var upElevationMinDeg: Float = 55
-    /// Gravity elevation (deg): looking down threshold.
-    static var downElevationMaxDeg: Float = -55
+    /// Horizontal angle radius around each yaw target (degrees).
+    static var captureToleranceDeg: Float = 9
+    /// Elevation target for up (gravity elevation deg).
+    static var upElevationTargetDeg: Float = 70
+    /// Elevation target for down.
+    static var downElevationTargetDeg: Float = -70
+    /// Elevation radius around up/down targets.
+    static var elevationToleranceDeg: Float = 18
     /// Extreme pitch hard-reject for horizontal frames only (relative pitch).
     static var extremePitchRejectDeg: Float = 60
     /// Extreme roll hard-reject.
     static var extremeRollRejectDeg: Float = 50
     /// Soft UX warning threshold (rotationRate rad/s).
     static var rotationWarnRate: Float = 1.6
-    /// Extreme rotation — briefly hold capture (still not dwell-based).
+    /// Extreme rotation — briefly hold capture.
     static var rotationExtremeHoldRate: Float = 3.5
-    /// Owned frame ring capacity (~0.5–0.7s at 30fps).
-    static var frameBufferCapacity: Int = 18
-    /// Auto-capture front after this many seconds once frames exist.
-    static var frontAutoCaptureDelaySec: TimeInterval = 0.18
+    /// Front auto-capture delay after begin (seconds).
+    static var frontAutoCaptureDelaySec: TimeInterval = 0.2
 }
 
 struct DirectionCaptureRecord: Codable, Equatable, Identifiable {
@@ -112,18 +114,6 @@ struct DirectionMotionReading: Equatable {
     var pitchDeg: Float
     var rollDeg: Float
     var rotationRate: Float
-    /// Camera elevation vs horizon from gravity (+up / −down). Not relative pitch.
+    /// Camera elevation vs horizon from gravity (+up / −down).
     var elevationDeg: Float
-}
-
-/// Owned frame sample for crossing selection (never holds live CVPixelBuffer).
-struct DirectionBufferedFrame {
-    var image: UIImage
-    var unwrappedYaw: Float
-    var pitchDeg: Float
-    var rollDeg: Float
-    var elevationDeg: Float
-    var timestamp: TimeInterval
-    var sharpness: Float
-    var rotationRate: Float
 }

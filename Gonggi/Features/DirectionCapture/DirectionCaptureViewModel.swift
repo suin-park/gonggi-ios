@@ -16,6 +16,8 @@ final class DirectionCaptureViewModel: ObservableObject {
     @Published var useMockCamera = false
     @Published var yawDisplay: String = "yaw 0°"
     @Published var pitchDisplay: String = "pitch 0°"
+    @Published var isPhotoPending = false
+    @Published var pendingDirection: DirectionName?
 
     private var configured = false
 
@@ -72,8 +74,10 @@ final class DirectionCaptureViewModel: ObservableObject {
         guideText = engine.guideText
         currentTarget = engine.currentTarget
         completed = Set(engine.captured.keys)
+        isPhotoPending = engine.isPhotoPending
+        pendingDirection = engine.pendingDirection
         let m = engine.lastMotion
         yawDisplay = String(format: "yaw %.0f°", m.yaw0to360)
-        pitchDisplay = String(format: "pitch %.0f°", m.pitchDeg)
+        pitchDisplay = String(format: "elev %.0f°", m.elevationDeg)
     }
 }

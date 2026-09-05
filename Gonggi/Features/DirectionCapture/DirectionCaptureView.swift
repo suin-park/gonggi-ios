@@ -96,8 +96,14 @@ struct DirectionCaptureView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
 
-            if let target = viewModel.currentTarget {
-                Text("다음 촬영: \(target.displayLabel)")
+            if viewModel.isPhotoPending {
+                Text("촬영 중…")
+                    .font(GonggiTypography.title(20))
+                    .foregroundStyle(.white)
+                    .shadow(radius: 4)
+                    .padding(.top, 18)
+            } else if let target = viewModel.currentTarget {
+                Text("다음 목표: \(target.displayLabel)")
                     .font(GonggiTypography.title(22))
                     .foregroundStyle(.white)
                     .shadow(radius: 4)
@@ -130,10 +136,13 @@ struct DirectionCaptureView: View {
     private var directionChecklist: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
             ForEach(DirectionName.captureOrder) { dir in
+                let captured = viewModel.completed.contains(dir)
+                let isCurrent = !captured && viewModel.currentTarget == dir
+                let isPending = viewModel.isPhotoPending && viewModel.pendingDirection == dir
                 HStack(spacing: 6) {
-                    Image(systemName: statusIcon(for: dir))
+                    Image(systemName: statusIcon(captured: captured, isCurrent: isCurrent, isPending: isPending))
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(statusColor(for: dir))
+                        .foregroundStyle(statusColor(captured: captured, isCurrent: isCurrent, isPending: isPending))
                     Text(dir.rawValue)
                         .font(GonggiTypography.caption(11))
                         .foregroundStyle(.white.opacity(0.92))
@@ -141,8 +150,19 @@ struct DirectionCaptureView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .background(Color.black.opacity(0.4))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.black.opacity(0.4))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(
+                                    isCurrent || isPending
+                                        ? Color.orange.opacity(0.85)
+                                        : Color.clear,
+                                    lineWidth: 1.5
+                                )
+                        )
+                )
             }
         }
     }
@@ -171,15 +191,18 @@ struct DirectionCaptureView: View {
         }
     }
 
-    private func statusIcon(for dir: DirectionName) -> String {
-        if viewModel.completed.contains(dir) { return "checkmark.circle.fill" }
-        if viewModel.currentTarget == dir { return "arrow.right.circle.fill" }
+    /// Captured = teal check. Current target = orange ring (not success cyan). Pending = spinner.
+    private func statusIcon(captured: Bool, isCurrent: Bool, isPending: Bool) -> String {
+        if captured { return "checkmark.circle.fill" }
+        if isPending { return "camera.circle.fill" }
+        if isCurrent { return "scope" }
         return "circle"
     }
 
-    private func statusColor(for dir: DirectionName) -> Color {
-        if viewModel.completed.contains(dir) { return GonggiColors.accentTeal }
-        if viewModel.currentTarget == dir { return GonggiColors.accentCyan }
+    private func statusColor(captured: Bool, isCurrent: Bool, isPending: Bool) -> Color {
+        if captured { return GonggiColors.accentTeal }
+        if isPending { return .orange }
+        if isCurrent { return .orange }
         return .white.opacity(0.35)
     }
 }
