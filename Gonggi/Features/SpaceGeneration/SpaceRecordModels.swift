@@ -11,7 +11,7 @@ enum SpaceRecordState: Equatable {
     case failed(SpaceRecordFailure)
 }
 
-enum SpaceRecordFailure: Equatable {
+enum SpaceRecordFailure: Error, Equatable {
     case captureIncomplete
     case network
     case generationFailed
