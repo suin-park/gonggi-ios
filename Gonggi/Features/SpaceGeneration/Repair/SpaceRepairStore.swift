@@ -1,6 +1,10 @@
 import Foundation
 
-/// Persists in-flight / completed selective-repair jobs (Application Support via UserDefaults mirror).
+extension Notification.Name {
+    static let gonggiSpaceRepairStoreDidChange = Notification.Name("gonggi.spaceRepairStore.didChange")
+}
+
+/// Persists in-flight / completed selective-repair jobs (UserDefaults durable mirror).
 final class SpaceRepairStore {
     static let shared = SpaceRepairStore()
     private let defaultsKey = "gonggi.spaceRepairs.v1"
@@ -13,6 +17,10 @@ final class SpaceRepairStore {
 
     func all() -> [SpaceRepairJobRecord] {
         queue.sync { jobs }
+    }
+
+    func job(repairJobId: String) -> SpaceRepairJobRecord? {
+        queue.sync { jobs.first(where: { $0.repairJobId == repairJobId }) }
     }
 
     func active(for sessionId: String) -> SpaceRepairJobRecord? {
@@ -42,6 +50,7 @@ final class SpaceRepairStore {
             }
             persistLocked()
         }
+        notify()
     }
 
     func update(repairJobId: String, mutate: (inout SpaceRepairJobRecord) -> Void) {
@@ -50,6 +59,13 @@ final class SpaceRepairStore {
             mutate(&jobs[idx])
             jobs[idx].updatedAt = Date()
             persistLocked()
+        }
+        notify()
+    }
+
+    private func notify() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .gonggiSpaceRepairStoreDidChange, object: nil)
         }
     }
 

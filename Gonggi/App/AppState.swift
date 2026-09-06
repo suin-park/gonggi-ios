@@ -117,7 +117,7 @@ final class AppState: ObservableObject {
         if phase == .active {
             Task {
                 await jobRuntime.syncActiveJobsOnce()
-                await SpaceRepairRuntime().syncActiveRepairs()
+                await SpaceRepairRuntime.shared.syncActiveRepairs()
             }
         }
     }

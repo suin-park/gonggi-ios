@@ -3,30 +3,46 @@ import SwiftUI
 import AVFoundation
 import SceneKit
 
-/// Full-screen VR with long-press → selective repair flow.
+/// Full-screen VR with long-press → selective repair flow (async after HTTP 202).
 struct VRSphereSpaceView: View {
     let imageURL: URL
     let sessionId: String
     var baseRevisionId: String = "rev-0-base"
     var onClose: () -> Void
+    /// Optional: notify parent of new local texture path (do not recreate viewer — orientation preserved in-place).
     var onRepairCompleted: ((URL) -> Void)? = nil
 
+    @StateObject private var repairController: RepairSessionController
     @State private var pendingTarget: RepairTarget?
     @State private var showConfirmSheet = false
-    /// Item-based cover avoids sheet/fullScreenCover race that broke Cancel.
     @State private var captureTarget: RepairTarget?
     @State private var markerYawDeg: Float?
     @State private var markerPitchDeg: Float?
-    @State private var repairStatusText: String?
-    @State private var repairError: String?
-    @State private var toastText: String?
+    @State private var textureURL: URL
+    @State private var textureGeneration: Int = 0
+    @State private var uploadError: String?
 
-    private let repairRuntime = SpaceRepairRuntime()
+    init(
+        imageURL: URL,
+        sessionId: String,
+        baseRevisionId: String = "rev-0-base",
+        onClose: @escaping () -> Void,
+        onRepairCompleted: ((URL) -> Void)? = nil
+    ) {
+        self.imageURL = imageURL
+        self.sessionId = sessionId
+        self.baseRevisionId = baseRevisionId
+        self.onClose = onClose
+        self.onRepairCompleted = onRepairCompleted
+        _textureURL = State(initialValue: imageURL)
+        _repairController = StateObject(wrappedValue: RepairSessionController(sessionId: sessionId))
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             Panorama360SceneOnlyView(
-                imageURL: imageURL,
+                imageURL: textureURL,
+                textureGeneration: textureGeneration,
                 markerYawDeg: markerYawDeg,
                 markerPitchDeg: markerPitchDeg,
                 onLongPress: { yaw, pitch in
@@ -44,6 +60,7 @@ struct VRSphereSpaceView: View {
                 }
             )
             .ignoresSafeArea()
+            .allowsHitTesting(true)
 
             Button {
                 GonggiHaptics.light()
@@ -59,33 +76,23 @@ struct VRSphereSpaceView: View {
             .padding(.leading, 16)
             .padding(.top, 12)
 
-            if let repairStatusText {
-                Text(repairStatusText)
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.55))
-                    .clipShape(Capsule())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 28)
-            }
-
-            if let toastText {
-                Text(toastText)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(Color.black.opacity(0.7))
-                    .clipShape(Capsule())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .padding(.top, 64)
-            }
+            repairBanner
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, 28)
+                .allowsHitTesting(true)
         }
         .statusBarHidden(true)
+        .onChange(of: repairController.completedTextureURL) { _, newURL in
+            guard let newURL else { return }
+            applyCompletedTexture(newURL)
+        }
+        .onAppear {
+            repairController.refreshFromStore()
+            if let url = repairController.completedTextureURL {
+                applyCompletedTexture(url)
+            }
+        }
         .sheet(isPresented: $showConfirmSheet, onDismiss: {
-            // If user dismissed sheet without starting camera, clear marker.
             if captureTarget == nil {
                 clearRepairSelection()
             }
@@ -94,7 +101,6 @@ struct VRSphereSpaceView: View {
                 onRecapture: {
                     guard let target = pendingTarget else { return }
                     showConfirmSheet = false
-                    // Present after sheet fully dismisses — fixes Cancel / cover race.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                         captureTarget = target
                     }
@@ -106,33 +112,83 @@ struct VRSphereSpaceView: View {
             )
             .presentationDetents([.height(220)])
         }
-        .fullScreenCover(item: $captureTarget, onDismiss: {
-            // Returning to VR without submitting repair — keep marker optional clear.
-            // Marker cleared only on explicit cancel from camera.
-        }) { target in
+        .fullScreenCover(item: $captureTarget) { target in
             RepairManualCaptureView(
                 target: target,
                 onCancel: {
                     captureTarget = nil
                     clearRepairSelection()
                 },
-                onConfirmRepair: { image, yaw, elev in
-                    let t = target
+                onSubmitted: {
+                    // HTTP 202 already persisted + polling started — return to interactive VR.
                     captureTarget = nil
                     markerYawDeg = nil
                     markerPitchDeg = nil
                     pendingTarget = nil
-                    Task { await runRepair(target: t, image: image, yaw: yaw, elev: elev) }
+                    repairController.refreshFromStore()
                 }
             )
         }
         .alert("부분 수정에 실패했어요", isPresented: Binding(
-            get: { repairError != nil },
-            set: { if !$0 { repairError = nil } }
+            get: { uploadError != nil },
+            set: { if !$0 { uploadError = nil } }
         )) {
-            Button("확인", role: .cancel) { repairError = nil }
+            Button("확인", role: .cancel) { uploadError = nil }
         } message: {
-            Text(repairError ?? "")
+            Text(uploadError ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var repairBanner: some View {
+        switch repairController.banner {
+        case .none:
+            EmptyView()
+        case .repairing:
+            HStack(spacing: 10) {
+                ProgressView()
+                    .tint(.white)
+                Text("선택한 부분을 수정하고 있어요")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.55))
+            .clipShape(Capsule())
+        case .completed:
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text("선택한 부분을 수정했어요.")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.7))
+            .clipShape(Capsule())
+            .onTapGesture { repairController.dismissCompletedBanner() }
+        case .failed(let retryTarget):
+            HStack(spacing: 12) {
+                Text("부분 수정에 실패했어요.")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.white)
+                if let retryTarget {
+                    Button("다시 시도") {
+                        repairController.clearFailedBanner()
+                        pendingTarget = retryTarget
+                        captureTarget = retryTarget
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.65))
+            .clipShape(Capsule())
         }
     }
 
@@ -142,28 +198,15 @@ struct VRSphereSpaceView: View {
         pendingTarget = nil
     }
 
-    private func runRepair(target: RepairTarget, image: UIImage, yaw: Float, elev: Float) async {
-        repairStatusText = "선택한 부분을 수정하고 있어요"
-        defer { repairStatusText = nil }
-        do {
-            let job = try await repairRuntime.submitRepair(
-                target: target,
-                image: image,
-                capturedYawDeg: yaw,
-                capturedElevationDeg: elev,
-                repairMode: "ai_local_repair"
-            )
-            let done = try await repairRuntime.pollUntilComplete(
-                repairJobId: job.repairJobId,
-                sessionId: target.sessionId
-            )
-            toastText = "수정 완료"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { toastText = nil }
-            if let path = done.localLatLongPath {
-                onRepairCompleted?(URL(fileURLWithPath: path))
-            }
-        } catch {
-            repairError = "부분 수정에 실패했어요"
+    private func applyCompletedTexture(_ url: URL) {
+        guard SpaceLatLongStore.isValidLocalFile(at: url.path) else { return }
+        // In-place reload — SCNHostView keeps yaw/pitch.
+        if textureURL != url {
+            textureURL = url
+            textureGeneration += 1
+            onRepairCompleted?(url)
+        } else {
+            textureGeneration += 1
         }
     }
 }
@@ -191,17 +234,19 @@ private struct RepairConfirmSheet: View {
     }
 }
 
-// MARK: - Manual repair camera + preview
+// MARK: - Manual repair camera + preview + upload-to-202
 
 private enum RepairCameraPhase: Equatable {
     case camera
     case preview
+    case uploading
 }
 
 struct RepairManualCaptureView: View {
     let target: RepairTarget
     var onCancel: () -> Void
-    var onConfirmRepair: (UIImage, Float, Float) -> Void
+    /// Called only after HTTP 202 + job persisted (dismiss to VR).
+    var onSubmitted: () -> Void
 
     @StateObject private var model = RepairManualCaptureModel()
     @State private var phase: RepairCameraPhase = .camera
@@ -209,16 +254,25 @@ struct RepairManualCaptureView: View {
     @State private var previewYaw: Float = 0
     @State private var previewElev: Float = 0
     @State private var showSoftWarning = false
+    @State private var submitError: String?
 
     var body: some View {
         ZStack {
-            if phase == .preview, let previewImage {
+            if phase == .preview || phase == .uploading, let previewImage {
                 previewLayer(image: previewImage)
             } else {
                 cameraLayer
             }
         }
         .background(Color.black.ignoresSafeArea())
+        .alert("업로드에 실패했어요", isPresented: Binding(
+            get: { submitError != nil },
+            set: { if !$0 { submitError = nil } }
+        )) {
+            Button("확인", role: .cancel) { submitError = nil }
+        } message: {
+            Text(submitError ?? "")
+        }
         .onAppear {
             model.configure(target: target)
             model.start()
@@ -231,7 +285,12 @@ struct RepairManualCaptureView: View {
             }
         }
         .onDisappear {
-            model.cancelAndStop()
+            // Only cancel camera hardware — do not cancel server job after submit.
+            if phase != .uploading {
+                model.cancelAndStop()
+            } else {
+                model.stop()
+            }
         }
     }
 
@@ -240,7 +299,6 @@ struct RepairManualCaptureView: View {
             RepairCameraPreview(session: model.engine.session)
                 .ignoresSafeArea()
 
-            // Subtle center guide — not an alignment reticle.
             Circle()
                 .stroke(Color.white.opacity(0.22), lineWidth: 1)
                 .frame(width: 28, height: 28)
@@ -310,38 +368,75 @@ struct RepairManualCaptureView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
 
-            if showSoftWarning {
+            if showSoftWarning, phase == .preview {
                 Text("선택한 부분이 화면에 잘 보이는지 확인해주세요.")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.yellow)
                     .padding(.top, 8)
             }
 
+            if phase == .uploading {
+                HStack(spacing: 10) {
+                    ProgressView().tint(.white)
+                    Text("사진을 올리고 있어요…")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.white)
+                }
+                .padding(.vertical, 12)
+            }
+
             HStack(spacing: 12) {
                 Button("취소") {
                     GonggiHaptics.light()
+                    guard phase != .uploading else { return }
                     model.cancelAndStop()
                     onCancel()
                 }
                 .buttonStyle(.bordered)
+                .disabled(phase == .uploading)
 
                 Button("다시 촬영") {
                     GonggiHaptics.light()
+                    guard phase != .uploading else { return }
                     previewImage = nil
                     phase = .camera
                     model.retake()
                 }
                 .buttonStyle(.bordered)
+                .disabled(phase == .uploading)
 
                 Button("이 사진으로 수정") {
                     GonggiHaptics.medium()
-                    model.stop()
-                    onConfirmRepair(image, previewYaw, previewElev)
+                    Task { await submit(image: image) }
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(phase == .uploading)
             }
             .padding(16)
             .padding(.bottom, 20)
+        }
+    }
+
+    private func submit(image: UIImage) async {
+        phase = .uploading
+        model.stop()
+        do {
+            let job = try await SpaceRepairRuntime.shared.submitRepair(
+                target: target,
+                image: image,
+                capturedYawDeg: previewYaw,
+                capturedElevationDeg: previewElev,
+                repairMode: "ai_local_repair"
+            )
+            await SpaceRepairRuntime.shared.ensurePolling(
+                repairJobId: job.repairJobId,
+                sessionId: job.sessionId
+            )
+            onSubmitted()
+        } catch {
+            phase = .preview
+            model.start()
+            submitError = "사진을 올리지 못했어요. 다시 시도해주세요."
         }
     }
 }
@@ -378,9 +473,7 @@ final class RepairManualCaptureModel: ObservableObject {
     }
 
     func capture() { engine.captureNow() }
-
     func retake() { engine.resetForRetake() }
-
     func stop() { engine.stop() }
 
     func cancelAndStop() {
@@ -413,6 +506,7 @@ private struct RepairCameraPreview: UIViewRepresentable {
 
 private struct Panorama360SceneOnlyView: UIViewRepresentable {
     let imageURL: URL
+    var textureGeneration: Int
     var markerYawDeg: Float?
     var markerPitchDeg: Float?
     var onLongPress: (Float, Float) -> Void
@@ -422,18 +516,34 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.onLongPressEquirect = onLongPress
         host.configure(imageURL: imageURL)
         host.updateMarker(yawDeg: markerYawDeg, pitchDeg: markerPitchDeg)
+        context.coordinator.lastGeneration = textureGeneration
+        context.coordinator.lastURL = imageURL
         return host
     }
 
     func updateUIView(_ uiView: SCNHostView, context: Context) {
         uiView.onLongPressEquirect = onLongPress
+        if textureGeneration != context.coordinator.lastGeneration
+            || imageURL != context.coordinator.lastURL {
+            uiView.reloadTexture(from: imageURL)
+            context.coordinator.lastGeneration = textureGeneration
+            context.coordinator.lastURL = imageURL
+        }
         uiView.updateMarker(yawDeg: markerYawDeg, pitchDeg: markerPitchDeg)
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var lastGeneration: Int = -1
+        var lastURL: URL?
     }
 }
 
 final class SCNHostView: UIView {
     private let scnView = SCNView()
     private var cameraNode: SCNNode?
+    private var sphereNode: SCNNode?
     private var markerNode: SCNNode?
     private var yaw: Float = 0
     private var pitch: Float = 0
@@ -466,18 +576,7 @@ final class SCNHostView: UIView {
 
         let material = SCNMaterial()
         material.isDoubleSided = true
-        let raw = UIImage(contentsOfFile: imageURL.path)
-        if let raw,
-           let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
-            material.diffuse.contents = prepared
-        } else if let raw, raw.cgImage != nil {
-            material.diffuse.contents = raw
-        } else {
-            material.diffuse.contents = UIColor(white: 0.12, alpha: 1)
-            #if DEBUG
-            assertionFailure("VRSphere opened without readable latlong at \(imageURL.path)")
-            #endif
-        }
+        applyTexture(to: material, imageURL: imageURL)
         material.diffuse.wrapS = .repeat
         material.diffuse.wrapT = .clamp
         sphere.firstMaterial = material
@@ -488,6 +587,7 @@ final class SCNHostView: UIView {
         sphereNode.scale = SCNVector3(s.x, s.y, s.z)
         sphereNode.name = "sphere"
         scene.rootNode.addChildNode(sphereNode)
+        self.sphereNode = sphereNode
 
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
@@ -495,12 +595,35 @@ final class SCNHostView: UIView {
         cameraNode.camera?.zNear = 0.1
         cameraNode.camera?.zFar = 100
         cameraNode.position = SCNVector3(0, 0, 0)
-        cameraNode.eulerAngles = SCNVector3(0, 0, 0)
+        cameraNode.eulerAngles = SCNVector3(pitch, yaw, 0)
         scene.rootNode.addChildNode(cameraNode)
 
         scnView.scene = scene
         scnView.pointOfView = cameraNode
         self.cameraNode = cameraNode
+    }
+
+    /// Reload equirect texture without resetting camera yaw/pitch.
+    func reloadTexture(from imageURL: URL) {
+        guard let material = sphereNode?.geometry?.firstMaterial else {
+            configure(imageURL: imageURL)
+            cameraNode?.eulerAngles = SCNVector3(pitch, yaw, 0)
+            return
+        }
+        applyTexture(to: material, imageURL: imageURL)
+        cameraNode?.eulerAngles = SCNVector3(pitch, yaw, 0)
+    }
+
+    private func applyTexture(to material: SCNMaterial, imageURL: URL) {
+        let raw = UIImage(contentsOfFile: imageURL.path)
+        if let raw,
+           let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
+            material.diffuse.contents = prepared
+        } else if let raw, raw.cgImage != nil {
+            material.diffuse.contents = raw
+        } else {
+            material.diffuse.contents = UIColor(white: 0.12, alpha: 1)
+        }
     }
 
     func updateMarker(yawDeg: Float?, pitchDeg: Float?) {

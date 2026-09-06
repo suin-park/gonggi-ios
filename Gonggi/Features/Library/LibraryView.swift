@@ -34,10 +34,7 @@ struct LibraryView: View {
                 VRSphereSpaceView(
                     imageURL: session.fileURL,
                     sessionId: session.id,
-                    onClose: { viewerSession = nil },
-                    onRepairCompleted: { url in
-                        viewerSession = SpaceViewerSession(id: session.id, fileURL: url)
-                    }
+                    onClose: { viewerSession = nil }
                 )
             }
             .overlay {

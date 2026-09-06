@@ -1,16 +1,22 @@
 import Foundation
 import UIKit
 
-/// Uploads selective repair + polls status without overwriting base latlong.jpg.
+/// Uploads selective repair (→ 202), then polls asynchronously without blocking VR.
+/// Never re-POSTs create for an existing repairJobId (no duplicate OpenAI).
 actor SpaceRepairRuntime {
+    static let shared = SpaceRepairRuntime()
+
     private let api: LockerSpaceRecordAPIClient
     private let store: SpaceRepairStore
+    /// In-flight poll loops — one per repairJobId.
+    private var pollTasks: [String: Task<Void, Never>] = [:]
 
     init(api: LockerSpaceRecordAPIClient = LockerSpaceRecordAPIClient(), store: SpaceRepairStore = .shared) {
         self.api = api
         self.store = store
     }
 
+    /// Upload + POST create only. Returns after HTTP 202 persistence. Does not wait for generation.
     func submitRepair(
         target: RepairTarget,
         image: UIImage,
@@ -71,7 +77,7 @@ actor SpaceRepairRuntime {
             baseRevisionId: target.baseRevisionId,
             revisionId: created.revisionId,
             target: target,
-            status: created.status,
+            status: created.status.isEmpty ? "uploaded" : created.status,
             repairMode: repairMode,
             resultImageURL: nil,
             localLatLongPath: nil,
@@ -83,51 +89,95 @@ actor SpaceRepairRuntime {
         return job
     }
 
-    /// Poll until terminal; on completed download revision latlong (base latlong.jpg preserved).
-    @discardableResult
-    func pollUntilComplete(repairJobId: String, sessionId: String) async throws -> SpaceRepairJobRecord {
-        for _ in 0..<120 {
-            let status = try await api.fetchRepairStatus(sessionId: sessionId, repairJobId: repairJobId)
-            store.update(repairJobId: repairJobId) { job in
-                job.status = status.status
-                job.revisionId = status.revisionId ?? job.revisionId
-                job.resultImageURL = status.imageUrl
-                job.errorCode = status.errorCode
-            }
-            if status.status == "completed" {
-                guard let urlStr = status.imageUrl, let url = URL(string: urlStr) else {
-                    throw SpaceViewerError.missingResultURL
-                }
-                let dest = try SpaceLatLongStore.directory(sessionId: sessionId)
-                    .appendingPathComponent("latlong-repair-\(repairJobId).jpg")
-                try await api.downloadImage(from: url, to: dest)
-                store.update(repairJobId: repairJobId) { job in
-                    job.localLatLongPath = dest.path
-                    job.status = "completed"
-                }
-                let latest = try SpaceLatLongStore.directory(sessionId: sessionId)
-                    .appendingPathComponent("latlong-latest.jpg")
-                try? FileManager.default.removeItem(at: latest)
-                try FileManager.default.copyItem(at: dest, to: latest)
-                if let job = store.latest(for: sessionId) {
-                    return job
-                }
-            }
-            if status.status == "failed" {
-                throw SpaceRecordClientError.server(status.errorCode ?? "repair_failed")
-            }
-            try await Task.sleep(nanoseconds: 2_000_000_000)
+    /// Start (or resume) background poll for a job. Safe to call multiple times — deduped.
+    func ensurePolling(repairJobId: String, sessionId: String) {
+        if let existing = pollTasks[repairJobId], !existing.isCancelled {
+            return
         }
-        throw SpaceRecordClientError.server("repair_timeout")
+        pollTasks[repairJobId] = Task { [weak self] in
+            guard let self else { return }
+            await self.pollLoop(repairJobId: repairJobId, sessionId: sessionId)
+            await self.clearPollTask(repairJobId: repairJobId)
+        }
     }
 
+    private func clearPollTask(repairJobId: String) {
+        pollTasks[repairJobId] = nil
+    }
+
+    private func pollLoop(repairJobId: String, sessionId: String) async {
+        for _ in 0..<180 {
+            if Task.isCancelled { return }
+            do {
+                let status = try await api.fetchRepairStatus(sessionId: sessionId, repairJobId: repairJobId)
+                store.update(repairJobId: repairJobId) { job in
+                    job.status = status.status
+                    job.revisionId = status.revisionId ?? job.revisionId
+                    job.resultImageURL = status.imageUrl
+                    job.errorCode = status.errorCode
+                }
+
+                if status.status == "completed" {
+                    guard let urlStr = status.imageUrl, let url = URL(string: urlStr) else {
+                        store.update(repairJobId: repairJobId) { job in
+                            job.status = "failed"
+                            job.errorCode = "missing_result_url"
+                        }
+                        return
+                    }
+                    do {
+                        let dest = try SpaceLatLongStore.directory(sessionId: sessionId)
+                            .appendingPathComponent("latlong-repair-\(repairJobId).jpg")
+                        try await api.downloadImage(from: url, to: dest)
+                        guard SpaceLatLongStore.validateImage(at: dest) != nil else {
+                            try? FileManager.default.removeItem(at: dest)
+                            store.update(repairJobId: repairJobId) { job in
+                                job.status = "failed"
+                                job.errorCode = "invalid_image"
+                            }
+                            return
+                        }
+                        let latest = try SpaceLatLongStore.latestLatLongURL(sessionId: sessionId)
+                        try? FileManager.default.removeItem(at: latest)
+                        try FileManager.default.copyItem(at: dest, to: latest)
+                        store.update(repairJobId: repairJobId) { job in
+                            job.localLatLongPath = dest.path
+                            job.status = "completed"
+                            job.resultImageURL = urlStr
+                        }
+                    } catch {
+                        store.update(repairJobId: repairJobId) { job in
+                            job.status = "failed"
+                            job.errorCode = "download_failed"
+                        }
+                    }
+                    return
+                }
+
+                if status.status == "failed" {
+                    store.update(repairJobId: repairJobId) { job in
+                        job.status = "failed"
+                        job.errorCode = status.errorCode ?? job.errorCode ?? "repair_failed"
+                    }
+                    return
+                }
+            } catch {
+                // Transient network — keep polling; do not mark failed / do not re-create.
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+        store.update(repairJobId: repairJobId) { job in
+            if job.isActive {
+                job.status = "failed"
+                job.errorCode = "repair_timeout"
+            }
+        }
+    }
+
+    /// Resume all active repairs after foreground (status sync only — never re-create).
     func syncActiveRepairs() async {
         for job in store.all() where job.isActive {
-            do {
-                _ = try await pollUntilComplete(repairJobId: job.repairJobId, sessionId: job.sessionId)
-            } catch {
-                // leave status; user can reopen
-            }
+            ensurePolling(repairJobId: job.repairJobId, sessionId: job.sessionId)
         }
     }
 }
