@@ -1,6 +1,11 @@
 import Foundation
 
-/// One-time VR discoverability for selective repair long-press.
+/// One-time **user-global** discoverability for selective repair long-press.
+///
+/// Canonical rule: show on **any** `VRSphereSpaceView` entry while
+/// `gonggi.selectiveRepairHintSeen.v1 == false` — including newly completed
+/// spaces, library/home existing spaces, detail entry, and latest repair revision.
+/// Scope is **not** per-space / per-session.
 enum SelectiveRepairHintPreferences {
     static let storageKey = "gonggi.selectiveRepairHintSeen.v1"
     static let copy = "이상한 부분을 길게 눌러 수정할 수 있어요"
