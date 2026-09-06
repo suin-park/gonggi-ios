@@ -9,6 +9,7 @@ struct SpaceDetailView: View {
     @State private var viewerSession: SpaceViewerSession?
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
+    @State private var showAddObjectSheet = false
 
     var body: some View {
         ScrollView {
@@ -59,6 +60,11 @@ struct SpaceDetailView: View {
             Button("취소", role: .cancel) {}
         } message: {
             Text("삭제된 공간은 복구할 수 없습니다.")
+        }
+        .sheet(isPresented: $showAddObjectSheet) {
+            AddObjectToSpaceSheet(onClose: { showAddObjectSheet = false })
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -136,9 +142,13 @@ struct SpaceDetailView: View {
         VStack(spacing: GonggiSpacing.sm) {
             switch space.status {
             case .ready:
-                PrimaryButton(title: "공간 보기", icon: "cube.transparent") {
+                PrimaryButton(title: "다시 들어가기", icon: "cube.transparent") {
                     GonggiHaptics.light()
                     Task { await openViewer() }
+                }
+                SecondaryButton(title: "3D 오브젝트 추가", icon: "square.stack.3d.up") {
+                    GonggiHaptics.light()
+                    showAddObjectSheet = true
                 }
             case .failed:
                 PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
@@ -195,6 +205,87 @@ struct SpaceDetailView: View {
         .padding(.vertical, GonggiSpacing.xs)
         .background(GonggiColors.backgroundPrimary.opacity(0.65))
         .clipShape(Capsule())
+    }
+}
+
+/// Space → place 3D object navigation shell (picker / create wired in later phases).
+struct AddObjectToSpaceSheet: View {
+    var onClose: () -> Void
+    @State private var showCreate = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+                Text("3D 오브젝트 추가")
+                    .font(GonggiTypography.title(22))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                Text("이 공간에 배치할 어셋을 고르거나 새로 만들 수 있어요.")
+                    .font(GonggiTypography.caption(14))
+                    .foregroundStyle(GonggiColors.textSecondary)
+
+                optionRow(
+                    title: "내 3D 어셋",
+                    subtitle: "3D Locker에 있는 어셋에서 선택",
+                    icon: "square.grid.2x2"
+                ) {
+                    // Phase D: asset picker linked to Locker library.
+                }
+                optionRow(
+                    title: "새로 만들기",
+                    subtitle: "사진으로 3D 어셋 생성 후 배치",
+                    icon: "plus.circle"
+                ) {
+                    showCreate = true
+                }
+                Spacer()
+            }
+            .padding(GonggiSpacing.lg)
+            .background(GonggiAmbientBackground(showGlow: false))
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("닫기") { onClose() }
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+            }
+            .sheet(isPresented: $showCreate) {
+                CreateAssetFlowView(onClose: { showCreate = false })
+                    .presentationDetents([.medium, .large])
+            }
+        }
+    }
+
+    private func optionRow(
+        title: String,
+        subtitle: String,
+        icon: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            GonggiHaptics.medium()
+            action()
+        } label: {
+            HStack(spacing: GonggiSpacing.md) {
+                Image(systemName: icon)
+                    .font(.system(size: 22, weight: .light))
+                    .foregroundStyle(GonggiColors.accentTeal)
+                    .frame(width: 40)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(GonggiTypography.body(16))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                    Text(subtitle)
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(GonggiColors.textTertiary)
+            }
+            .padding(GonggiSpacing.md)
+            .background(GonggiColors.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
 

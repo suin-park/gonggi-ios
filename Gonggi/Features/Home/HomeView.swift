@@ -181,8 +181,8 @@ struct HomeView: View {
 
     private var actions: some View {
         VStack(spacing: GonggiSpacing.sm) {
-            PrimaryButton(title: "공간 기록 시작", icon: "camera.aperture") {
-                appState.selectTab(.scan)
+            PrimaryButton(title: "새 공간 기록하기", icon: "camera.aperture") {
+                appState.selectTab(.record)
             }
             SecondaryButton(title: "보관함 보기", icon: "archivebox") {
                 appState.selectTab(.library)

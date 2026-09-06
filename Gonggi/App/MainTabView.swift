@@ -10,8 +10,8 @@ struct MainTabView: View {
                 .tag(AppTab.home)
 
             CaptureContainerView()
-                .tabItem { Label(AppTab.scan.title, systemImage: AppTab.scan.icon) }
-                .tag(AppTab.scan)
+                .tabItem { Label(AppTab.record.title, systemImage: AppTab.record.icon) }
+                .tag(AppTab.record)
 
             LibraryView()
                 .tabItem { Label(AppTab.library.title, systemImage: AppTab.library.icon) }

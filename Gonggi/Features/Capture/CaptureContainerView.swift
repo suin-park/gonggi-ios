@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Capture mode selection — 20-direction capture is the primary guided path.
-/// Panorama / Quick360 remain available as alternate / experimental entries.
+/// Capture mode selection.
+/// Production UI exposes only 360 space record + 3D space scan (BETA).
+/// Other modes remain for DEBUG / internal access only.
 enum CaptureMode: String, Identifiable {
     case directionCapture
     case panoramaCapture
@@ -10,11 +11,16 @@ enum CaptureMode: String, Identifiable {
 
     var id: String { rawValue }
 
+    /// Modes shown on the Record tab for end users.
+    static var productionModes: [CaptureMode] {
+        [.directionCapture, .spaceScan3DGS]
+    }
+
     var title: String {
         switch self {
-        case .directionCapture: return "10방향 공간 기록"
+        case .directionCapture: return "360 공간 기록"
         case .panoramaCapture: return "파노라마 기록"
-        case .spaceScan3DGS: return "공간 스캔 (3DGS)"
+        case .spaceScan3DGS: return "3D 공간 스캔"
         case .quick360Experimental: return "실험 · 360 공간 기록"
         }
     }
@@ -22,13 +28,20 @@ enum CaptureMode: String, Identifiable {
     var subtitle: String {
         switch self {
         case .directionCapture:
-            return "한 번 시작하면 8방향 + 위/아래를 자동으로 저장해요"
+            return "여러 방향을 촬영해 공간을 360°로 기록해요."
         case .panoramaCapture:
             return "제자리에서 천천히 회전하며 수평 파노라마를 만들어요"
         case .spaceScan3DGS:
-            return "이동하며 multi-view 촬영"
+            return "공간을 입체적으로 스캔해 자유롭게 둘러볼 수 있어요."
         case .quick360Experimental:
             return "실험용 full-sphere / OpenCV A/B (기본 경로 아님)"
+        }
+    }
+
+    var secondaryCaption: String? {
+        switch self {
+        case .spaceScan3DGS: return "Gaussian Splatting 기반"
+        default: return nil
         }
     }
 
@@ -41,16 +54,23 @@ enum CaptureMode: String, Identifiable {
         }
     }
 
+    var showsBetaBadge: Bool {
+        self == .spaceScan3DGS
+    }
+
     var isExperimental: Bool {
-        self == .quick360Experimental
+        self == .quick360Experimental || self == .panoramaCapture
     }
 }
 
-/// Entry for Scan tab — presents mode selection then full-screen capture flow.
+/// Entry for Record tab — presents mode selection then full-screen capture flow.
 struct CaptureContainerView: View {
     @EnvironmentObject private var appState: AppState
     @State private var selectedMode: CaptureMode?
     @State private var isCapturing = false
+    #if DEBUG
+    @State private var showDebugModes = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -95,7 +115,6 @@ struct CaptureContainerView: View {
             })
             .environmentObject(appState)
         }
-        // Quick360 kept as experimental full-screen path (not default).
         .fullScreenCover(isPresented: Binding(
             get: { isCapturing && selectedMode == .quick360Experimental },
             set: { presented in
@@ -126,23 +145,25 @@ struct CaptureContainerView: View {
     private var startPrompt: some View {
         VStack(spacing: GonggiSpacing.xl) {
             Spacer()
-            Text("공간 기록")
+            Text("어떤 방식으로\n공간을 기록할까요?")
                 .font(GonggiTypography.title(26))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("원하는 기록 방식을 선택하세요")
-                .font(GonggiTypography.caption(13))
-                .foregroundStyle(GonggiColors.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
 
             VStack(spacing: GonggiSpacing.md) {
-                modeCard(.directionCapture)
-                modeCard(.panoramaCapture)
-                modeCard(.spaceScan3DGS)
-                modeCard(.quick360Experimental)
+                ForEach(CaptureMode.productionModes) { mode in
+                    modeCard(mode)
+                }
             }
             .padding(.horizontal, GonggiSpacing.lg)
 
+            #if DEBUG
+            debugModesSection
+            #endif
+
             if appState.isMockMode {
-                Text("Mock 모드 · 파노라마는 합성 회전으로 생성됩니다")
+                Text("Mock 모드 · 미리보기용")
                     .font(GonggiTypography.caption(11))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
@@ -150,6 +171,25 @@ struct CaptureContainerView: View {
         }
         .padding()
     }
+
+    #if DEBUG
+    private var debugModesSection: some View {
+        VStack(spacing: GonggiSpacing.sm) {
+            Button {
+                showDebugModes.toggle()
+            } label: {
+                Text(showDebugModes ? "개발자 모드 숨기기" : "개발자 모드")
+                    .font(GonggiTypography.caption(12))
+                    .foregroundStyle(GonggiColors.textTertiary)
+            }
+            if showDebugModes {
+                modeCard(.panoramaCapture)
+                modeCard(.quick360Experimental)
+            }
+        }
+        .padding(.horizontal, GonggiSpacing.lg)
+    }
+    #endif
 
     private func modeCard(_ mode: CaptureMode) -> some View {
         Button {
@@ -160,23 +200,27 @@ struct CaptureContainerView: View {
             HStack(spacing: GonggiSpacing.md) {
                 ZStack {
                     Circle()
-                        .fill(
-                            mode.isExperimental
-                                ? GonggiColors.warning.opacity(0.12)
-                                : GonggiColors.accentTeal.opacity(0.12)
-                        )
+                        .fill(GonggiColors.accentTeal.opacity(0.12))
                         .frame(width: 52, height: 52)
                     Image(systemName: mode.icon)
                         .font(.system(size: 24, weight: .light))
-                        .foregroundStyle(
-                            mode.isExperimental ? GonggiColors.warning : GonggiColors.accentTeal
-                        )
+                        .foregroundStyle(GonggiColors.accentTeal)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(mode.title)
                             .font(GonggiTypography.body(17))
                             .foregroundStyle(GonggiColors.textPrimary)
+                        if mode.showsBetaBadge {
+                            Text("BETA")
+                                .font(GonggiTypography.caption(10))
+                                .fontWeight(.semibold)
+                                .foregroundStyle(GonggiColors.accentCyan)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(GonggiColors.accentCyan.opacity(0.15))
+                                .clipShape(Capsule())
+                        }
                         if mode.isExperimental {
                             Text("실험")
                                 .font(GonggiTypography.caption(10))
@@ -191,6 +235,11 @@ struct CaptureContainerView: View {
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if let secondary = mode.secondaryCaption {
+                        Text(secondary)
+                            .font(GonggiTypography.caption(11))
+                            .foregroundStyle(GonggiColors.textTertiary)
+                    }
                 }
                 Spacer()
                 Image(systemName: "chevron.right")

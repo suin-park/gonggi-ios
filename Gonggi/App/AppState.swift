@@ -168,7 +168,7 @@ final class AppState: ObservableObject {
 
 enum AppTab: Int, CaseIterable, Identifiable {
     case home = 0
-    case scan
+    case record
     case library
     case profile
 
@@ -177,7 +177,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .home: return "홈"
-        case .scan: return "스캔"
+        case .record: return "기록"
         case .library: return "보관함"
         case .profile: return "내 정보"
         }
@@ -186,7 +186,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .home: return "house.fill"
-        case .scan: return "viewfinder"
+        case .record: return "viewfinder"
         case .library: return "archivebox.fill"
         case .profile: return "person.fill"
         }

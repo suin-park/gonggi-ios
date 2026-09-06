@@ -5,11 +5,13 @@ struct GonggiApp: App {
     @UIApplicationDelegateAdaptor(GonggiAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var appState = AppState()
+    @ObservedObject private var authSession = AuthSessionController.shared
 
     var body: some Scene {
         WindowGroup {
             rootContent
                 .environmentObject(appState)
+                .environmentObject(authSession)
                 .preferredColorScheme(.dark)
                 .onChange(of: scenePhase) { _, phase in
                     appState.handleScenePhase(phase)
@@ -35,10 +37,20 @@ struct GonggiApp: App {
         if let screen = ScreenshotLaunchConfig.screen {
             ScreenshotRootView(screen: screen)
         } else {
-            MainTabView()
+            authenticatedRoot
         }
         #else
-        MainTabView()
+        authenticatedRoot
         #endif
+    }
+
+    @ViewBuilder
+    private var authenticatedRoot: some View {
+        switch authSession.phase {
+        case .signedIn:
+            MainTabView()
+        case .signedOut:
+            AuthShellView(session: authSession)
+        }
     }
 }
