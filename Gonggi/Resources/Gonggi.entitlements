@@ -4,5 +4,9 @@
 <dict>
 	<!-- Build 44: aps-environment deferred until App Store profile includes Push Notifications.
 	     Push registration/deep-link code remains; send is server-side fail-safe. -->
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
 </dict>
 </plist>

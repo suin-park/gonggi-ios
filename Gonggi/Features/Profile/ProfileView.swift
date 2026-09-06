@@ -17,7 +17,7 @@ struct ProfileView: View {
                     sectionCard(title: "계정 및 보안") {
                         navRow("프로필 수정", icon: "person.crop.circle")
                         navRow("이메일", icon: "envelope", trailing: user.email)
-                        navRow("연결된 로그인", icon: "link", trailing: "Google · Apple")
+                        navRow("연결된 로그인", icon: "link", trailing: user.provider ?? "—")
                         navRow("비밀번호 변경", icon: "key")
                     }
                     sectionCard(title: "서비스") {
@@ -33,7 +33,7 @@ struct ProfileView: View {
                     }
                     sectionCard(title: "이용 정보") {
                         navRow("요금제", icon: "creditcard", trailing: "준비 중")
-                        navRow("3D Locker 크레딧", icon: "sparkles", trailing: "—")
+                        navRow("3D Locker 크레딧", icon: "sparkles", trailing: user.creditsLabel ?? "—")
                         navRow("저장 공간", icon: "internaldrive", trailing: "—")
                     }
                     sectionCard(title: "설정") {

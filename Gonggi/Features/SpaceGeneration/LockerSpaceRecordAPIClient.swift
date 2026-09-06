@@ -50,6 +50,9 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 30
+        if let token = MobileAuthTokenStore.shared.getAccessToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw SpaceRecordClientError.network }
@@ -115,6 +118,9 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 120
+        if let token = MobileAuthTokenStore.shared.getAccessToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
         var body = Data()
         func appendField(name: String, value: String) {
@@ -174,6 +180,9 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let token = MobileAuthTokenStore.shared.getAccessToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -216,6 +225,9 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 180
+        if let token = MobileAuthTokenStore.shared.getAccessToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
         var body = Data()
         func appendField(name: String, value: String) {

@@ -67,6 +67,12 @@ targets:
         UILaunchScreen: {}
         NSCameraUsageDescription: 파노라마·공간 기록을 위해 카메라가 필요합니다.
         NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
+        # Set real iOS OAuth client ID in Xcode / CI secrets before Google Sign-In production use.
+        GoogleClientID: ""
+        CFBundleURLTypes:
+          - CFBundleURLName: google-oauth
+            CFBundleURLSchemes:
+              - com.whik.gonggi
 
   GonggiTests:
     type: bundle.unit-test

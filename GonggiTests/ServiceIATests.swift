@@ -22,16 +22,24 @@ final class ServiceIATests: XCTestCase {
         XCTAssertEqual(LibraryCategory.allCases.map(\.title), ["공간", "3D 어셋"])
     }
 
-    func testAuthShellPersistenceKeyIsLocalOnly() {
-        let key = "gonggi.auth.shellSignedOut.v1"
-        UserDefaults.standard.removeObject(forKey: key)
+    func testAuthShellStartsRestoringThenSignedOutWithoutKeychain() async {
         let controller = AuthSessionController()
-        XCTAssertTrue(controller.isSignedIn)
-        controller.signOutShell()
+        // Fresh controller without bootstrap may be restoring; force restore without refresh → signedOut
+        await controller.restoreSession()
         XCTAssertFalse(controller.isSignedIn)
-        XCTAssertTrue(UserDefaults.standard.bool(forKey: key))
-        controller.signInShell(providerLabel: "test")
-        XCTAssertTrue(controller.isSignedIn)
-        UserDefaults.standard.removeObject(forKey: key)
+        if case .signedOut = controller.phase {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("expected signedOut without Keychain refresh")
+        }
+    }
+
+    func testKeychainRoundTrip() throws {
+        let service = "com.whik.gonggi.auth.test"
+        let account = "unit"
+        defer { GonggiKeychain.delete(service: service, account: account) }
+        try GonggiKeychain.set("refresh-token-value", service: service, account: account)
+        let read = try GonggiKeychain.get(service: service, account: account)
+        XCTAssertEqual(read, "refresh-token-value")
     }
 }

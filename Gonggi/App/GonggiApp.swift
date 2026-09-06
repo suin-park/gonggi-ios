@@ -47,6 +47,13 @@ struct GonggiApp: App {
     @ViewBuilder
     private var authenticatedRoot: some View {
         switch authSession.phase {
+        case .restoring:
+            ZStack {
+                GonggiAmbientBackground()
+                ProgressView()
+                    .tint(GonggiColors.textSecondary)
+            }
+            .onAppear { authSession.bootstrap() }
         case .signedIn:
             MainTabView()
         case .signedOut:
