@@ -22,7 +22,7 @@ actor SpaceRepairRuntime {
         image: UIImage,
         capturedYawDeg: Float,
         capturedElevationDeg: Float,
-        repairMode: String = "ai_local_repair"
+        repairMode: String = "marked_region_direct_edit"
     ) async throws -> SpaceRepairJobRecord {
         let jpeg = image.jpegData(compressionQuality: 0.9) ?? Data()
         guard !jpeg.isEmpty else { throw SpaceRecordClientError.captureIncomplete }

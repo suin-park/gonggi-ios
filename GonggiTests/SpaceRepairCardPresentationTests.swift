@@ -1,4 +1,4 @@
-import XCTest
+﻿import XCTest
 @testable import Gonggi
 
 final class SpaceRepairCardPresentationTests: XCTestCase {
@@ -18,14 +18,14 @@ final class SpaceRepairCardPresentationTests: XCTestCase {
             revisionId: "rev-1",
             target: target,
             status: "completed",
-            repairMode: "ai_local_repair",
+            repairMode: "marked_region_direct_edit",
             resultImageURL: nil,
             localLatLongPath: "/tmp/fake-success.jpg",
             createdAt: Date().addingTimeInterval(-100),
             updatedAt: Date().addingTimeInterval(-100),
             errorCode: nil
         )
-        // Path validity will fail for /tmp — badge still repairing from active.
+        // Path validity will fail for /tmp ??badge still repairing from active.
         let active = SpaceRepairJobRecord(
             repairJobId: "rep-active-\(UUID().uuidString)",
             sessionId: session,
@@ -33,7 +33,7 @@ final class SpaceRepairCardPresentationTests: XCTestCase {
             revisionId: "rev-2",
             target: target,
             status: "editing",
-            repairMode: "ai_local_repair",
+            repairMode: "marked_region_direct_edit",
             resultImageURL: nil,
             localLatLongPath: nil,
             createdAt: Date(),
@@ -44,7 +44,7 @@ final class SpaceRepairCardPresentationTests: XCTestCase {
         store.upsert(active)
         let overlay = SpaceRepairCardPresentation.overlay(sessionId: session, store: store)
         XCTAssertEqual(overlay.badge, .repairing)
-        XCTAssertEqual(overlay.note, "수정 중")
+        XCTAssertEqual(overlay.note, "?섏젙 以?)
     }
 
     func testFailedDoesNotClearWhenNoSuccess() {
@@ -64,7 +64,7 @@ final class SpaceRepairCardPresentationTests: XCTestCase {
                 revisionId: "rev-x",
                 target: target,
                 status: "failed",
-                repairMode: "ai_local_repair",
+                repairMode: "marked_region_direct_edit",
                 resultImageURL: nil,
                 localLatLongPath: nil,
                 createdAt: Date(),

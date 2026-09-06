@@ -154,12 +154,14 @@ struct VRSphereSpaceView: View {
                     clearRepairSelection()
                 },
                 onSubmitted: {
-                    // HTTP 202 already persisted + polling started — return to interactive VR.
+                    // 202 + persist + success feedback already shown in capture.
+                    // Dismiss capture + VR; SpaceRepairRuntime polling keeps running.
                     captureTarget = nil
                     markerYawDeg = nil
                     markerPitchDeg = nil
                     pendingTarget = nil
-                    repairController.refreshFromStore()
+                    // Do not set repairing banner — user leaves VR; card shows “수정 중”.
+                    onClose()
                 }
             )
         }
@@ -274,12 +276,20 @@ private enum RepairCameraPhase: Equatable {
     case camera
     case preview
     case uploading
+    /// HTTP 202 + SpaceRepairStore persist succeeded — show feedback then leave VR.
+    case accepted
+}
+
+/// Auto-return delay after repair 202 acceptance (seconds).
+enum RepairAcceptedNavigation {
+    static let autoDismissDelayNanoseconds: UInt64 = 1_200_000_000
 }
 
 struct RepairManualCaptureView: View {
     let target: RepairTarget
     var onCancel: () -> Void
-    /// Called only after HTTP 202 + job persisted (dismiss to VR).
+    /// Called only after HTTP 202 + job persisted + success feedback delay.
+    /// Parent must dismiss capture + VR; must NOT cancel the repair job.
     var onSubmitted: () -> Void
 
     @StateObject private var model = RepairManualCaptureModel()
@@ -289,10 +299,13 @@ struct RepairManualCaptureView: View {
     @State private var previewElev: Float = 0
     @State private var showSoftWarning = false
     @State private var submitError: String?
+    @State private var acceptNavigateTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
-            if phase == .preview || phase == .uploading, let previewImage {
+            if phase == .accepted {
+                acceptedLayer
+            } else if phase == .preview || phase == .uploading, let previewImage {
                 previewLayer(image: previewImage)
             } else {
                 cameraLayer
@@ -319,13 +332,42 @@ struct RepairManualCaptureView: View {
             }
         }
         .onDisappear {
-            // Only cancel camera hardware — do not cancel server job after submit.
-            if phase != .uploading {
-                model.cancelAndStop()
-            } else {
+            acceptNavigateTask?.cancel()
+            // Never cancel the server job — only release camera hardware.
+            if phase == .uploading || phase == .accepted {
                 model.stop()
+            } else {
+                model.cancelAndStop()
             }
         }
+    }
+
+    private var acceptedLayer: some View {
+        ZStack {
+            if let previewImage {
+                Image(uiImage: previewImage)
+                    .resizable()
+                    .scaledToFill()
+                    .ignoresSafeArea()
+                    .opacity(0.35)
+            }
+            Color.black.opacity(0.55).ignoresSafeArea()
+            VStack(spacing: 12) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 44))
+                    .foregroundStyle(Color.green.opacity(0.95))
+                Text("수정을 시작했어요")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                Text("완료되면 보관함에서 확인할 수 있어요.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.88))
+                    .multilineTextAlignment(.center)
+            }
+            .padding(28)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("수정을 시작했어요. 완료되면 보관함에서 확인할 수 있어요.")
     }
 
     private var cameraLayer: some View {
@@ -422,29 +464,29 @@ struct RepairManualCaptureView: View {
             HStack(spacing: 12) {
                 Button("취소") {
                     GonggiHaptics.light()
-                    guard phase != .uploading else { return }
+                    guard phase == .preview || phase == .camera else { return }
                     model.cancelAndStop()
                     onCancel()
                 }
                 .buttonStyle(.bordered)
-                .disabled(phase == .uploading)
+                .disabled(phase == .uploading || phase == .accepted)
 
                 Button("다시 촬영") {
                     GonggiHaptics.light()
-                    guard phase != .uploading else { return }
+                    guard phase == .preview else { return }
                     previewImage = nil
                     phase = .camera
                     model.retake()
                 }
                 .buttonStyle(.bordered)
-                .disabled(phase == .uploading)
+                .disabled(phase == .uploading || phase == .accepted)
 
                 Button("이 사진으로 수정") {
                     GonggiHaptics.medium()
                     Task { await submit(image: image) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(phase == .uploading)
+                .disabled(phase == .uploading || phase == .accepted)
             }
             .padding(16)
             .padding(.bottom, 20)
@@ -460,14 +502,30 @@ struct RepairManualCaptureView: View {
                 image: image,
                 capturedYawDeg: previewYaw,
                 capturedElevationDeg: previewElev,
-                repairMode: "ai_local_repair"
+                repairMode: "marked_region_direct_edit"
             )
+            // Gate: 202 create + durable store upsert already done inside submitRepair.
+            guard SpaceRepairStore.shared.job(repairJobId: job.repairJobId) != nil else {
+                phase = .preview
+                model.start()
+                submitError = "수정 요청을 저장하지 못했어요. 다시 시도해주세요."
+                return
+            }
             await SpaceRepairRuntime.shared.ensurePolling(
                 repairJobId: job.repairJobId,
                 sessionId: job.sessionId
             )
-            onSubmitted()
+            GonggiHaptics.success()
+            phase = .accepted
+            acceptNavigateTask?.cancel()
+            acceptNavigateTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: RepairAcceptedNavigation.autoDismissDelayNanoseconds)
+                guard !Task.isCancelled else { return }
+                // Leave capture + VR; polling continues in SpaceRepairRuntime (not cancelled).
+                onSubmitted()
+            }
         } catch {
+            // POST failed — stay on preview; do not auto-dismiss.
             phase = .preview
             model.start()
             submitError = "사진을 올리지 못했어요. 다시 시도해주세요."

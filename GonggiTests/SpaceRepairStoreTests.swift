@@ -1,4 +1,4 @@
-import XCTest
+﻿import XCTest
 @testable import Gonggi
 
 final class SpaceRepairStoreTests: XCTestCase {
@@ -17,7 +17,7 @@ final class SpaceRepairStoreTests: XCTestCase {
             revisionId: "rev-1-test",
             target: target,
             status: "uploaded",
-            repairMode: "ai_local_repair",
+            repairMode: "marked_region_direct_edit",
             resultImageURL: nil,
             localLatLongPath: nil,
             createdAt: Date(),

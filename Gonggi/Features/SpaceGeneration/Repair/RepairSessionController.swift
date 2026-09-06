@@ -45,9 +45,22 @@ final class RepairSessionController: ObservableObject {
     }
 
     func refreshFromStore() {
+        // Active repair: keep polling, but do NOT pin a blocking “수정하고 있어요” banner on VR.
+        // Status lives on the library card (“수정 중”); user may reopen the existing successful VR.
         if let active = store.active(for: sessionId) {
-            banner = .repairing
             Task { await SpaceRepairRuntime.shared.ensurePolling(repairJobId: active.repairJobId, sessionId: sessionId) }
+            if case .repairing = banner {
+                banner = .none
+            }
+            // Prefer applying latest successful texture if available while a new repair runs.
+            if let success = store.all()
+                .filter({ $0.sessionId == sessionId && $0.status == "completed" })
+                .sorted(by: { $0.updatedAt > $1.updatedAt })
+                .first,
+               let path = success.localLatLongPath,
+               SpaceLatLongStore.isValidLocalFile(at: path) {
+                completedTextureURL = URL(fileURLWithPath: path)
+            }
             return
         }
         if let latest = store.latest(for: sessionId) {
@@ -87,9 +100,10 @@ final class RepairSessionController: ObservableObject {
             image: image,
             capturedYawDeg: capturedYawDeg,
             capturedElevationDeg: capturedElevationDeg,
-            repairMode: "ai_local_repair"
+            repairMode: "marked_region_direct_edit"
         )
-        banner = .repairing
+        // Banner stays off — navigation returns to library; card shows repairing.
+        banner = .none
         await SpaceRepairRuntime.shared.ensurePolling(
             repairJobId: job.repairJobId,
             sessionId: job.sessionId
