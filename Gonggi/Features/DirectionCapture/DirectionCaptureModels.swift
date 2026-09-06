@@ -136,26 +136,33 @@ enum DirectionCapturePhase: Equatable {
 struct DirectionCaptureConfig {
     /// Horizontal angle radius around each yaw target (degrees).
     static var captureToleranceDeg: Float = 8
-    /// Relative orbit yaw radius for upper/lower 90° steps (degrees).
-    static var obliqueRelativeYawToleranceDeg: Float = 12
     /// Upper oblique elevation band (inclusive).
-    static var upperObliqueElevationMinDeg: Float = 45
-    static var upperObliqueElevationMaxDeg: Float = 65
+    static var upperObliqueElevationMinDeg: Float = 35
+    static var upperObliqueElevationMaxDeg: Float = 70
     /// Lower oblique elevation band (inclusive).
-    static var lowerObliqueElevationMinDeg: Float = -65
-    static var lowerObliqueElevationMaxDeg: Float = -45
+    static var lowerObliqueElevationMinDeg: Float = -70
+    static var lowerObliqueElevationMaxDeg: Float = -35
     /// Nominal mid-band elevation (report / metadata only).
-    static var upperObliqueElevationTargetDeg: Float = 55
-    static var lowerObliqueElevationTargetDeg: Float = -55
-    /// Relative yaw offsets from phase-start (right turn decreases yaw).
-    static var obliqueRelativeYawOffsetsDeg: [Float] = [0, -90, -180, -270]
+    static var upperObliqueElevationTargetDeg: Float = 52
+    static var lowerObliqueElevationTargetDeg: Float = -52
+    /// Min accumulated right-turn yaw between oblique shots (shot 1…4).
+    /// Index 0 = first shot (immediate after band entry).
+    static var obliqueMinAccumulatedYawDeg: [Float] = [0, 70, 70, 55]
+    /// Last-shot fail-safe: lower yaw threshold after waiting.
+    static var obliqueLastShotFailSafeYawDeg: Float = 45
+    /// Last-shot fail-safe wait after previous shot (seconds).
+    static var obliqueLastShotFailSafeWaitSec: TimeInterval = 4.0
+    /// Show “조금만 더…” after waiting this long on 3/4.
+    static var obliqueStuckHintWaitSec: TimeInterval = 3.0
+    /// Brief settle after band entry / prior shot before firing (seconds). Soft — never blocks last-shot fail-safe.
+    static var obliqueShotSettleSec: TimeInterval = 0.12
     /// Extreme pitch hard-reject for horizontal frames only (relative pitch).
     static var extremePitchRejectDeg: Float = 60
     /// Extreme roll hard-reject.
     static var extremeRollRejectDeg: Float = 50
     /// Soft UX warning threshold (rotationRate rad/s).
     static var rotationWarnRate: Float = 1.6
-    /// Extreme rotation — briefly hold capture.
+    /// Extreme rotation — briefly hold capture (non-last oblique shots).
     static var rotationExtremeHoldRate: Float = 3.5
     /// Front auto-capture delay after begin (seconds).
     static var frontAutoCaptureDelaySec: TimeInterval = 0.2

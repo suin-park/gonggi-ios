@@ -64,16 +64,26 @@ enum DirectionCaptureGuide {
         return "휴대폰을 세운 채 천천히 오른쪽으로 돌아주세요."
     }
 
-    static func upperObliqueGuideMessage(warnFast: Bool, waitingForElevation: Bool) -> String {
+    static func upperObliqueGuideMessage(
+        warnFast: Bool,
+        waitingForElevation: Bool,
+        stuckAtLastShot: Bool = false
+    ) -> String {
         if warnFast { return "조금 천천히 움직여주세요" }
+        if stuckAtLastShot { return "조금만 더 돌아주세요." }
         if waitingForElevation {
             return "휴대폰을 약간 위로 들어 천장과 벽이 함께 보이게 한 뒤,\n천천히 한 바퀴 돌아주세요."
         }
         return "휴대폰을 약간 위로 들고 천천히 한 바퀴 돌아주세요."
     }
 
-    static func lowerObliqueGuideMessage(warnFast: Bool, waitingForElevation: Bool) -> String {
+    static func lowerObliqueGuideMessage(
+        warnFast: Bool,
+        waitingForElevation: Bool,
+        stuckAtLastShot: Bool = false
+    ) -> String {
         if warnFast { return "조금 천천히 움직여주세요" }
+        if stuckAtLastShot { return "조금만 더 돌아주세요." }
         if waitingForElevation {
             return "휴대폰을 약간 아래로 내려 바닥과 벽이 함께 보이게 한 뒤,\n천천히 한 바퀴 돌아주세요."
         }
