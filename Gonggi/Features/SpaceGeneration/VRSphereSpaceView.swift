@@ -23,8 +23,11 @@ struct VRSphereSpaceView: View {
     @State private var textureURL: URL
     @State private var textureGeneration: Int = 0
     @State private var uploadError: String?
+    @State private var panoramaReady = false
     @State private var showSelectiveRepairHint = false
     @State private var selectiveRepairHintOpacity: Double = 0
+    /// True only after fade-in has started and markSeen ran for this presentation.
+    @State private var selectiveRepairHintBecameVisible = false
     @State private var selectiveRepairHintTask: Task<Void, Never>?
 
     init(
@@ -54,6 +57,10 @@ struct VRSphereSpaceView: View {
                     ?? Double(VRSphereEquirectBridge.defaultYawRadiusDeg)),
                 maskRadiusPitchDeg: Float(pendingTarget?.radiusPitchDeg
                     ?? Double(VRSphereEquirectBridge.defaultPitchRadiusDeg)),
+                onViewerReady: {
+                    panoramaReady = true
+                    scheduleSelectiveRepairHintIfNeeded()
+                },
                 onLongPress: { yaw, pitch in
                     GonggiHaptics.medium()
                     markSelectiveRepairHintSeenAndHide()
@@ -103,6 +110,7 @@ struct VRSphereSpaceView: View {
                     .zIndex(1)
             }
 
+            #if DEBUG
             if VRSphereEquirectBridge.debugOverlayEnabled,
                let my = markerYawDeg,
                let mp = markerPitchDeg {
@@ -125,6 +133,7 @@ struct VRSphereSpaceView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .allowsHitTesting(false)
             }
+            #endif
 
             repairBanner
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -141,11 +150,12 @@ struct VRSphereSpaceView: View {
             if let url = repairController.completedTextureURL {
                 applyCompletedTexture(url)
             }
-            presentSelectiveRepairHintIfNeeded()
+            if panoramaReady {
+                scheduleSelectiveRepairHintIfNeeded()
+            }
         }
         .onDisappear {
-            selectiveRepairHintTask?.cancel()
-            selectiveRepairHintTask = nil
+            cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
         }
         .sheet(isPresented: $showConfirmSheet, onDismiss: {
             if captureTarget == nil {
@@ -249,19 +259,36 @@ struct VRSphereSpaceView: View {
         }
     }
 
-    private func presentSelectiveRepairHintIfNeeded() {
+    /// Gate: panorama ready → 0.5s delay → fade in → markSeen → 4.5s hold → fade out.
+    /// markSeen only after the hint has actually started becoming visible.
+    private func scheduleSelectiveRepairHintIfNeeded() {
+        guard panoramaReady else { return }
         guard !SelectiveRepairHintPreferences.hasSeen else { return }
-        SelectiveRepairHintPreferences.markSeen()
-        showSelectiveRepairHint = true
+        guard selectiveRepairHintTask == nil else { return }
+
+        selectiveRepairHintBecameVisible = false
+        showSelectiveRepairHint = false
         selectiveRepairHintOpacity = 0
-        selectiveRepairHintTask?.cancel()
+
         selectiveRepairHintTask = Task { @MainActor in
+            let delayNs = UInt64(SelectiveRepairHintPreferences.postReadyDelaySeconds * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: delayNs)
+            guard !Task.isCancelled else { return }
+            guard !SelectiveRepairHintPreferences.hasSeen else { return }
+
+            showSelectiveRepairHint = true
+            selectiveRepairHintOpacity = 0
             withAnimation(.easeIn(duration: SelectiveRepairHintPreferences.fadeInDurationSeconds)) {
                 selectiveRepairHintOpacity = 1
             }
+            // Persist only once the fade-in has begun (hint is on-screen).
+            SelectiveRepairHintPreferences.markSeen()
+            selectiveRepairHintBecameVisible = true
+
             let holdNs = UInt64(SelectiveRepairHintPreferences.displayDurationSeconds * 1_000_000_000)
             try? await Task.sleep(nanoseconds: holdNs)
             guard !Task.isCancelled else { return }
+
             withAnimation(.easeOut(duration: SelectiveRepairHintPreferences.fadeOutDurationSeconds)) {
                 selectiveRepairHintOpacity = 0
             }
@@ -269,11 +296,23 @@ struct VRSphereSpaceView: View {
             try? await Task.sleep(nanoseconds: fadeNs)
             guard !Task.isCancelled else { return }
             showSelectiveRepairHint = false
+            selectiveRepairHintTask = nil
+        }
+    }
+
+    private func cancelSelectiveRepairHintTask(resetIfNotYetVisible: Bool) {
+        selectiveRepairHintTask?.cancel()
+        selectiveRepairHintTask = nil
+        if resetIfNotYetVisible, !selectiveRepairHintBecameVisible {
+            // Dismissed before visible → keep seen=false; allow reschedule on next entry.
+            showSelectiveRepairHint = false
+            selectiveRepairHintOpacity = 0
         }
     }
 
     private func markSelectiveRepairHintSeenAndHide() {
         SelectiveRepairHintPreferences.markSeen()
+        selectiveRepairHintBecameVisible = true
         selectiveRepairHintTask?.cancel()
         selectiveRepairHintTask = nil
         if showSelectiveRepairHint {
@@ -659,6 +698,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var markerPitchDeg: Float?
     var maskRadiusYawDeg: Float
     var maskRadiusPitchDeg: Float
+    var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
 
     func makeUIView(context: Context) -> SCNHostView {
@@ -673,6 +713,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         )
         context.coordinator.lastGeneration = textureGeneration
         context.coordinator.lastURL = imageURL
+        // Defer one runloop so the SCNView is in the hierarchy / first frame can paint.
+        DispatchQueue.main.async {
+            context.coordinator.didNotifyReady = true
+            onViewerReady?()
+        }
         return host
     }
 
@@ -690,6 +735,12 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             radiusYawDeg: maskRadiusYawDeg,
             radiusPitchDeg: maskRadiusPitchDeg
         )
+        if !context.coordinator.didNotifyReady {
+            context.coordinator.didNotifyReady = true
+            DispatchQueue.main.async {
+                onViewerReady?()
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -697,6 +748,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     final class Coordinator {
         var lastGeneration: Int = -1
         var lastURL: URL?
+        var didNotifyReady = false
     }
 }
 

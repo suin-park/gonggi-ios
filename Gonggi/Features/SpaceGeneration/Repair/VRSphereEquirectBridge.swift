@@ -171,9 +171,13 @@ enum VRSphereEquirectBridge {
         abs(yawDeltaDeg) > softWarnYawDeltaDeg || abs(pitchDeltaDeg) > softWarnPitchDeltaDeg
     }
 
-    /// Numeric yaw/pitch HUD after long-press (kept on for bridge device validation / TestFlight).
-    /// Marker + pink mask outline are always drawn when a target is selected.
-    static var debugOverlayEnabled: Bool { true }
+    /// Numeric yaw/pitch HUD after long-press — **DEBUG opt-in only**.
+    /// Release / TestFlight must never show this overlay.
+    #if DEBUG
+    static var debugOverlayEnabled: Bool = false
+    #else
+    static var debugOverlayEnabled: Bool { false }
+    #endif
 }
 
 // MARK: - Forensic / regression fixtures (no secrets)

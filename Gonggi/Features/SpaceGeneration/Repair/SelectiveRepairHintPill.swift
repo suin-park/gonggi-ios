@@ -16,10 +16,8 @@ struct SelectiveRepairHintPill: View {
         .padding(.vertical, 9)
         .background {
             Capsule()
-                .fill(.ultraThinMaterial)
-                .overlay {
-                    Capsule().fill(Color.black.opacity(0.42))
-                }
+                .fill(Color.black.opacity(0.55))
+                .background(.ultraThinMaterial, in: Capsule())
         }
         .clipShape(Capsule())
         .shadow(color: .black.opacity(0.25), radius: 6, y: 2)

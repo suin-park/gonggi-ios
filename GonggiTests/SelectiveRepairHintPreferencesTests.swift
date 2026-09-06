@@ -34,6 +34,10 @@ final class SelectiveRepairHintPreferencesTests: XCTestCase {
         XCTAssertLessThanOrEqual(d, 5)
     }
 
+    func testPostReadyDelayIsHalfSecond() {
+        XCTAssertEqual(SelectiveRepairHintPreferences.postReadyDelaySeconds, 0.5, accuracy: 0.001)
+    }
+
     func testMarkSeenPersists() {
         XCTAssertFalse(SelectiveRepairHintPreferences.hasSeen(in: suite))
         SelectiveRepairHintPreferences.markSeen(defaults: suite)
