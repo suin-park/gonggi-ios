@@ -279,7 +279,7 @@ final class SpaceGenerationCoordinator: ObservableObject {
     }
 
     /// Equirectangular latlong: width == 2×height, within production size bounds.
-    static func isValidLatLongSize(width: Int, height: Int) -> Bool {
+    nonisolated static func isValidLatLongSize(width: Int, height: Int) -> Bool {
         guard width > 0, height > 0, width == height * 2 else { return false }
         return width >= 1024 && width <= 8192
     }
