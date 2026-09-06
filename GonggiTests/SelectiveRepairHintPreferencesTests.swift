@@ -34,6 +34,16 @@ final class SelectiveRepairHintPreferencesTests: XCTestCase {
         XCTAssertLessThanOrEqual(d, 5)
     }
 
+    func testStorageKeyIsUserGlobalNotPerSpace() {
+        // Key must stay a single app-wide flag (no sessionId / spaceId suffix).
+        XCTAssertEqual(SelectiveRepairHintPreferences.storageKey, "gonggi.selectiveRepairHintSeen.v1")
+        XCTAssertFalse(SelectiveRepairHintPreferences.storageKey.contains("session"))
+        XCTAssertFalse(SelectiveRepairHintPreferences.storageKey.contains("space"))
+        SelectiveRepairHintPreferences.markSeen(defaults: suite)
+        // Same defaults key applies regardless of which VR session opened.
+        XCTAssertTrue(SelectiveRepairHintPreferences.hasSeen(in: suite))
+    }
+
     func testPostReadyDelayIsHalfSecond() {
         XCTAssertEqual(SelectiveRepairHintPreferences.postReadyDelaySeconds, 0.5, accuracy: 0.001)
     }

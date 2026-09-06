@@ -259,8 +259,9 @@ struct VRSphereSpaceView: View {
         }
     }
 
-    /// Gate: panorama ready → 0.5s delay → fade in → markSeen → 4.5s hold → fade out.
-    /// markSeen only after the hint has actually started becoming visible.
+    /// Gate (user-global, any VR entry via this view):
+    /// panorama ready → 0.5s delay → fade in → markSeen → 4.5s hold → fade out.
+    /// Does not check whether the space is new; only `hintSeen`.
     private func scheduleSelectiveRepairHintIfNeeded() {
         guard panoramaReady else { return }
         guard !SelectiveRepairHintPreferences.hasSeen else { return }
