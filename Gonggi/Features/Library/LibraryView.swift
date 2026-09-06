@@ -31,7 +31,14 @@ struct LibraryView: View {
                 SpaceDetailView(space: space)
             }
             .fullScreenCover(item: $viewerSession) { session in
-                VRSphereSpaceView(imageURL: session.fileURL, onClose: { viewerSession = nil })
+                VRSphereSpaceView(
+                    imageURL: session.fileURL,
+                    sessionId: session.id,
+                    onClose: { viewerSession = nil },
+                    onRepairCompleted: { url in
+                        viewerSession = SpaceViewerSession(id: session.id, fileURL: url)
+                    }
+                )
             }
             .overlay {
                 if isPreparingViewer {

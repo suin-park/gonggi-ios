@@ -11,7 +11,11 @@ struct SpaceRecordFlowView: View {
             switch coordinator.state {
             case .viewing:
                 if let url = coordinator.localLatLongURL {
-                    VRSphereSpaceView(imageURL: url, onClose: onClose)
+                    VRSphereSpaceView(
+                        imageURL: url,
+                        sessionId: "legacy-flow",
+                        onClose: onClose
+                    )
                 } else {
                     generatingChrome
                 }

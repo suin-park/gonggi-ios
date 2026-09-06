@@ -115,7 +115,10 @@ final class AppState: ObservableObject {
     func handleScenePhase(_ phase: ScenePhase) {
         jobRuntime.handleScenePhase(phase)
         if phase == .active {
-            Task { await jobRuntime.syncActiveJobsOnce() }
+            Task {
+                await jobRuntime.syncActiveJobsOnce()
+                await SpaceRepairRuntime().syncActiveRepairs()
+            }
         }
     }
 

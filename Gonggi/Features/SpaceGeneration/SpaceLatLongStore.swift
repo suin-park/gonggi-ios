@@ -22,6 +22,11 @@ enum SpaceLatLongStore {
         try directory(sessionId: sessionId).appendingPathComponent("latlong.jpg")
     }
 
+    /// Latest selective-repair revision texture (base `latlong.jpg` is never overwritten).
+    static func latestLatLongURL(sessionId: String) throws -> URL {
+        try directory(sessionId: sessionId).appendingPathComponent("latlong-latest.jpg")
+    }
+
     /// True when a readable JPEG exists with positive 2:1 dimensions.
     static func isValidLocalFile(at path: String?) -> Bool {
         guard let path, !path.isEmpty else { return false }

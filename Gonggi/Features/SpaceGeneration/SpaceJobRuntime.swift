@@ -126,9 +126,15 @@ final class SpaceJobRuntime: ObservableObject {
     }
 
     /// Resolve a durable local latlong file before opening VR. Never opens without a valid texture.
+    /// Prefer selective-repair latest revision when present; base `latlong.jpg` remains intact.
     @discardableResult
     func prepareViewer(jobId: String) async -> Result<URL, SpaceViewerError> {
         guard var job = store.job(id: jobId) else { return .failure(.jobNotFound) }
+
+        if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
+           SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+            return .success(latest)
+        }
 
         if SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath),
            let path = job.localLatLongPath {
@@ -139,6 +145,11 @@ final class SpaceJobRuntime: ObservableObject {
         await refreshStatus(jobId: jobId)
         guard let refreshed = store.job(id: jobId) else { return .failure(.jobNotFound) }
         job = refreshed
+
+        if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
+           SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+            return .success(latest)
+        }
 
         if SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath),
            let path = job.localLatLongPath {
