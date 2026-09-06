@@ -2,6 +2,8 @@ import Combine
 import SwiftUI
 import AVFoundation
 import SceneKit
+import simd
+import UIKit
 
 /// Full-screen VR with long-press → selective repair flow (async after HTTP 202).
 struct VRSphereSpaceView: View {
@@ -45,6 +47,10 @@ struct VRSphereSpaceView: View {
                 textureGeneration: textureGeneration,
                 markerYawDeg: markerYawDeg,
                 markerPitchDeg: markerPitchDeg,
+                maskRadiusYawDeg: Float(pendingTarget?.radiusYawDeg
+                    ?? Double(VRSphereEquirectBridge.defaultYawRadiusDeg)),
+                maskRadiusPitchDeg: Float(pendingTarget?.radiusPitchDeg
+                    ?? Double(VRSphereEquirectBridge.defaultPitchRadiusDeg)),
                 onLongPress: { yaw, pitch in
                     GonggiHaptics.medium()
                     let target = RepairTarget.make(
@@ -56,6 +62,11 @@ struct VRSphereSpaceView: View {
                     pendingTarget = target
                     markerYawDeg = yaw
                     markerPitchDeg = pitch
+                    #if DEBUG
+                    print(
+                        "[repair-bridge] long-press equirect yaw=\(yaw) pitch=\(pitch) session=\(sessionId)"
+                    )
+                    #endif
                     showConfirmSheet = true
                 }
             )
@@ -75,6 +86,27 @@ struct VRSphereSpaceView: View {
             }
             .padding(.leading, 16)
             .padding(.top, 12)
+
+            if VRSphereEquirectBridge.debugOverlayEnabled,
+               let my = markerYawDeg,
+               let mp = markerPitchDeg {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("repair target")
+                        .font(.caption2.weight(.semibold))
+                    Text(String(format: "yaw %+.1f°  pitch %+.1f°", my, mp))
+                        .font(.caption.monospacedDigit())
+                    Text("mask ±\(Int(VRSphereEquirectBridge.defaultYawRadiusDeg))° / ±\(Int(VRSphereEquirectBridge.defaultPitchRadiusDeg))°")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.white)
+                .padding(10)
+                .background(Color.black.opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(.trailing, 16)
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .allowsHitTesting(false)
+            }
 
             repairBanner
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -509,13 +541,20 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var textureGeneration: Int
     var markerYawDeg: Float?
     var markerPitchDeg: Float?
+    var maskRadiusYawDeg: Float
+    var maskRadiusPitchDeg: Float
     var onLongPress: (Float, Float) -> Void
 
     func makeUIView(context: Context) -> SCNHostView {
         let host = SCNHostView()
         host.onLongPressEquirect = onLongPress
         host.configure(imageURL: imageURL)
-        host.updateMarker(yawDeg: markerYawDeg, pitchDeg: markerPitchDeg)
+        host.updateSelection(
+            yawDeg: markerYawDeg,
+            pitchDeg: markerPitchDeg,
+            radiusYawDeg: maskRadiusYawDeg,
+            radiusPitchDeg: maskRadiusPitchDeg
+        )
         context.coordinator.lastGeneration = textureGeneration
         context.coordinator.lastURL = imageURL
         return host
@@ -529,7 +568,12 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             context.coordinator.lastGeneration = textureGeneration
             context.coordinator.lastURL = imageURL
         }
-        uiView.updateMarker(yawDeg: markerYawDeg, pitchDeg: markerPitchDeg)
+        uiView.updateSelection(
+            yawDeg: markerYawDeg,
+            pitchDeg: markerPitchDeg,
+            radiusYawDeg: maskRadiusYawDeg,
+            radiusPitchDeg: maskRadiusPitchDeg
+        )
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -545,6 +589,7 @@ final class SCNHostView: UIView {
     private var cameraNode: SCNNode?
     private var sphereNode: SCNNode?
     private var markerNode: SCNNode?
+    private var maskOutlineNode: SCNNode?
     private var yaw: Float = 0
     private var pitch: Float = 0
 
@@ -626,24 +671,72 @@ final class SCNHostView: UIView {
         }
     }
 
-    func updateMarker(yawDeg: Float?, pitchDeg: Float?) {
+    /// Target marker + elliptical mask outline on the inside-out sphere (debug / selection preview).
+    func updateSelection(
+        yawDeg: Float?,
+        pitchDeg: Float?,
+        radiusYawDeg: Float,
+        radiusPitchDeg: Float
+    ) {
         markerNode?.removeFromParentNode()
         markerNode = nil
+        maskOutlineNode?.removeFromParentNode()
+        maskOutlineNode = nil
         guard let yawDeg, let pitchDeg, let scene = scnView.scene else { return }
 
-        let camYaw = -yawDeg * .pi / 180
-        let camPitch = -pitchDeg * .pi / 180
         let r: Float = 9.2
-        let x = sin(camYaw) * cos(camPitch) * r
-        let y = sin(camPitch) * r
-        let z = -cos(camYaw) * cos(camPitch) * r
-
+        let p = VRSphereEquirectBridge.insideOutSpherePoint(
+            yawDeg: yawDeg,
+            pitchDeg: pitchDeg,
+            radius: r
+        )
         let marker = SCNNode(geometry: SCNSphere(radius: 0.12))
         marker.geometry?.firstMaterial?.diffuse.contents = UIColor.systemYellow
         marker.geometry?.firstMaterial?.emission.contents = UIColor.systemYellow
-        marker.position = SCNVector3(x, y, z)
+        marker.position = SCNVector3(p.x, p.y, p.z)
         scene.rootNode.addChildNode(marker)
         markerNode = marker
+
+        let outline = SCNNode()
+        outline.name = "repairMaskOutline"
+        let rim = VRSphereEquirectBridge.maskOutlineEquirectPoints(
+            centerYawDeg: yawDeg,
+            centerPitchDeg: pitchDeg,
+            radiusYawDeg: radiusYawDeg,
+            radiusPitchDeg: radiusPitchDeg,
+            samples: 56
+        )
+        for (i, pt) in rim.enumerated() {
+            let wp = VRSphereEquirectBridge.insideOutSpherePoint(
+                yawDeg: pt.yawDeg,
+                pitchDeg: pt.pitchDeg,
+                radius: r
+            )
+            let bead = SCNNode(geometry: SCNSphere(radius: 0.045))
+            bead.geometry?.firstMaterial?.diffuse.contents = UIColor.systemPink.withAlphaComponent(0.9)
+            bead.geometry?.firstMaterial?.emission.contents = UIColor.systemPink.withAlphaComponent(0.55)
+            bead.position = SCNVector3(wp.x, wp.y, wp.z)
+            outline.addChildNode(bead)
+
+            let next = rim[(i + 1) % rim.count]
+            let np = VRSphereEquirectBridge.insideOutSpherePoint(
+                yawDeg: next.yawDeg,
+                pitchDeg: next.pitchDeg,
+                radius: r
+            )
+            let mid = SIMD3((wp.x + np.x) * 0.5, (wp.y + np.y) * 0.5, (wp.z + np.z) * 0.5)
+            let dist = simd_length(SIMD3(np.x - wp.x, np.y - wp.y, np.z - wp.z))
+            guard dist > 1e-4 else { continue }
+            let cyl = SCNCylinder(radius: 0.018, height: CGFloat(dist))
+            cyl.firstMaterial?.diffuse.contents = UIColor.systemPink.withAlphaComponent(0.75)
+            cyl.firstMaterial?.emission.contents = UIColor.systemPink.withAlphaComponent(0.35)
+            let seg = SCNNode(geometry: cyl)
+            seg.position = SCNVector3(mid.x, mid.y, mid.z)
+            seg.look(at: SCNVector3(np.x, np.y, np.z), up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 1, 0))
+            outline.addChildNode(seg)
+        }
+        scene.rootNode.addChildNode(outline)
+        maskOutlineNode = outline
     }
 
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
@@ -658,13 +751,60 @@ final class SCNHostView: UIView {
     @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
         guard g.state == .began else { return }
         let point = g.location(in: scnView)
-        let (yawDeg, pitchDeg) = VRSphereEquirectBridge.equirectDegreesFromScreenPoint(
-            point: point,
-            viewSize: scnView.bounds.size,
-            cameraYawRad: yaw,
-            cameraPitchRad: pitch,
-            fieldOfViewDeg: 70
-        )
+
+        // Preferred: texture UV under finger (ground truth for displayed latlong).
+        let hits = scnView.hitTest(point, options: [
+            .searchMode: SCNHitTestSearchMode.closest.rawValue,
+            .boundingBoxOnly: false
+        ])
+        let sphereHit = hits.first { $0.node.name == "sphere" || $0.node == sphereNode }
+
+        let yawDeg: Float
+        let pitchDeg: Float
+        let source: String
+        if let hit = sphereHit {
+            let uv = hit.textureCoordinates(withMappingChannel: 0)
+            let eq = VRSphereEquirectBridge.equirectDegreesFromTextureUV(
+                u: Float(uv.x),
+                v: Float(uv.y)
+            )
+            yawDeg = eq.yawDeg
+            pitchDeg = eq.pitchDeg
+            source = "hitTestUV"
+            #if DEBUG
+            let local = hit.localCoordinates
+            let rawLon = atan2(Float(local.x), Float(local.z)) * 180 / .pi
+            print(
+                """
+                [repair-bridge] source=\(source) \
+                camYawDeg=\(yaw * 180 / .pi) camPitchDeg=\(pitch * 180 / .pi) \
+                hitLocal=(\(local.x),\(local.y),\(local.z)) rawAtan2XZ=\(rawLon) \
+                uv=(\(uv.x),\(uv.y)) bridgedYaw=\(yawDeg) bridgedPitch=\(pitchDeg)
+                """
+            )
+            #endif
+        } else {
+            let eq = VRSphereEquirectBridge.equirectDegreesFromScreenPoint(
+                point: point,
+                viewSize: scnView.bounds.size,
+                cameraYawRad: yaw,
+                cameraPitchRad: pitch,
+                fieldOfViewDeg: 70
+            )
+            yawDeg = eq.yawDeg
+            pitchDeg = eq.pitchDeg
+            source = "cameraFallback"
+            #if DEBUG
+            print(
+                """
+                [repair-bridge] source=\(source) \
+                camYawDeg=\(yaw * 180 / .pi) camPitchDeg=\(pitch * 180 / .pi) \
+                bridgedYaw=\(yawDeg) bridgedPitch=\(pitchDeg)
+                """
+            )
+            #endif
+        }
+        _ = source
         onLongPressEquirect?(yawDeg, pitchDeg)
     }
 }
