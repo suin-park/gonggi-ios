@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Capture mode selection — 10-direction capture is the primary guided path.
+/// Capture mode selection — 20-direction capture is the primary guided path.
 /// Panorama / Quick360 remain available as alternate / experimental entries.
 enum CaptureMode: String, Identifiable {
     case directionCapture

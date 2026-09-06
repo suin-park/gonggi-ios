@@ -9,7 +9,7 @@ actor MockSpaceRecordAPIClient: SpaceRecordAPIClienting {
         sessionId: String,
         imageFiles: [(direction: String, fileURL: URL)]
     ) async throws -> SpaceRecordCreateResponse {
-        guard imageFiles.count == 10 else {
+        guard imageFiles.count == DirectionName.requiredCount else {
             throw SpaceRecordClientError.captureIncomplete
         }
         try await Task.sleep(nanoseconds: 300_000_000)

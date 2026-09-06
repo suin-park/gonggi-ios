@@ -7,7 +7,7 @@ final class DirectionCaptureViewModel: ObservableObject {
     let engine = DirectionCaptureEngine()
 
     @Published var phase: DirectionCapturePhase = .idle
-    @Published var progressText: String = "0 / 10"
+    @Published var progressText: String = "0 / \(DirectionName.requiredCount)"
     @Published var guideText: String = ""
     @Published var currentTarget: DirectionName?
     @Published var completed: Set<DirectionName> = []

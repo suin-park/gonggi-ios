@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Full-screen 10-direction auto capture → enqueue async generation → home.
+/// Full-screen 20-direction auto capture → enqueue async generation → home.
 struct DirectionCaptureView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel = DirectionCaptureViewModel()
@@ -130,9 +130,10 @@ struct DirectionCaptureView: View {
                     Image(systemName: statusIcon(captured: captured, isCurrent: isCurrent, isPending: isPending))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(statusColor(captured: captured, isCurrent: isCurrent, isPending: isPending))
-                    Text(dir.rawValue)
+                    Text(dir.userFacingHint)
                         .font(GonggiTypography.caption(11))
                         .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 8)

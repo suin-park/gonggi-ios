@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 import UIKit
 
-/// Portrait 10-direction auto capture via angle-radius + AVCapturePhotoOutput.
+/// Portrait 20-direction auto capture via angle-radius + AVCapturePhotoOutput.
 /// Motion pipeline unchanged: video ticks update yaw/pitch; photos come from PhotoOutput.
 final class DirectionCaptureEngine: NSObject {
     let session = AVCaptureSession()
@@ -17,7 +17,7 @@ final class DirectionCaptureEngine: NSObject {
     private(set) var images: [DirectionName: UIImage] = [:]
     private(set) var currentTarget: DirectionName?
     private(set) var guideText: String = "공간 기록 시작을 눌러주세요"
-    private(set) var progressText: String = "0 / 10"
+    private(set) var progressText: String = "0 / \(DirectionName.requiredCount)"
     private(set) var lastMotion = DirectionMotionReading(
         timestamp: 0, relativeYawDeg: 0, yaw0to360: 0,
         pitchDeg: 0, rollDeg: 0, rotationRate: 0, elevationDeg: 0
@@ -32,6 +32,8 @@ final class DirectionCaptureEngine: NSObject {
     private var outputDirectory: URL?
     private var useMock = false
     private var horizontalTargetIndex: Int = 0
+    private var upperObliqueTargetIndex: Int = 0
+    private var lowerObliqueTargetIndex: Int = 0
     private var captureStartedAt: TimeInterval = 0
     private var warnFast = false
     private var motionAtPhotoRequest: DirectionMotionReading?
@@ -118,6 +120,8 @@ final class DirectionCaptureEngine: NSObject {
         pendingDirection = nil
         motionAtPhotoRequest = nil
         horizontalTargetIndex = 0
+        upperObliqueTargetIndex = 0
+        lowerObliqueTargetIndex = 0
         warnFast = false
         yawTracker.reset()
         motion.resetReference()
@@ -225,8 +229,22 @@ final class DirectionCaptureEngine: NSObject {
             switch phase {
             case .capturingHorizontal:
                 evaluateHorizontal(unwrappedYaw: unwrappedYaw, pitchDeg: pitchDeg, rollDeg: rollDeg, rotationRate: rotationRate)
-            case .capturingUp, .capturingDown:
-                evaluateVertical(elevationDeg: elevationDeg)
+            case .capturingUpperOblique:
+                evaluateOblique(
+                    order: DirectionName.upperObliqueOrder,
+                    index: &upperObliqueTargetIndex,
+                    unwrappedYaw: unwrappedYaw,
+                    elevationDeg: elevationDeg,
+                    rotationRate: rotationRate
+                )
+            case .capturingLowerOblique:
+                evaluateOblique(
+                    order: DirectionName.lowerObliqueOrder,
+                    index: &lowerObliqueTargetIndex,
+                    unwrappedYaw: unwrappedYaw,
+                    elevationDeg: elevationDeg,
+                    rotationRate: rotationRate
+                )
             default:
                 break
             }
@@ -269,26 +287,39 @@ final class DirectionCaptureEngine: NSObject {
         requestPhoto(for: target)
     }
 
-    /// Up/down: elevation angle-radius only (no pitch, no crossing).
-    private func evaluateVertical(elevationDeg: Float) {
-        switch phase {
-        case .capturingUp:
-            guard captured[.up] == nil else { return }
-            guard DirectionCaptureGuide.withinElevationTolerance(
-                elevationDeg: elevationDeg,
-                targetElevation: DirectionCaptureConfig.upElevationTargetDeg
-            ) else { return }
-            requestPhoto(for: .up)
-        case .capturingDown:
-            guard captured[.down] == nil else { return }
-            guard DirectionCaptureGuide.withinElevationTolerance(
-                elevationDeg: elevationDeg,
-                targetElevation: DirectionCaptureConfig.downElevationTargetDeg
-            ) else { return }
-            requestPhoto(for: .down)
-        default:
-            break
+    /// Upper/lower oblique: yaw quadrant ±15° + elevation band ±8°.
+    private func evaluateOblique(
+        order: [DirectionName],
+        index: inout Int,
+        unwrappedYaw: Float,
+        elevationDeg: Float,
+        rotationRate: Float
+    ) {
+        guard index < order.count else {
+            advancePhaseIfNeeded()
+            return
         }
+        let target = order[index]
+        guard let targetYaw = target.targetYawDeg else { return }
+        guard captured[target] == nil else {
+            index += 1
+            return
+        }
+
+        if DirectionCaptureGuide.isExtremeRotation(rotationRate) { return }
+
+        guard DirectionCaptureGuide.withinYawTolerance(
+            currentYaw: unwrappedYaw,
+            targetYaw: targetYaw,
+            toleranceDeg: DirectionCaptureConfig.obliqueYawToleranceDeg
+        ) else { return }
+
+        guard DirectionCaptureGuide.withinElevationTolerance(
+            elevationDeg: elevationDeg,
+            targetElevation: target.targetElevationDeg
+        ) else { return }
+
+        requestPhoto(for: target)
     }
 
     // MARK: - Photo capture
@@ -370,18 +401,30 @@ final class DirectionCaptureEngine: NSObject {
             photoOrientation: normalized.sourceOrientationRaw,
             pixelRotationApplied: normalized.pixelRotationApplied,
             finalPixelWidth: normalized.finalPixelWidth,
-            finalPixelHeight: normalized.finalPixelHeight
+            finalPixelHeight: normalized.finalPixelHeight,
+            phase: direction.phaseKind,
+            nominalYaw: direction.targetYawDeg,
+            nominalElevation: direction.targetElevationDeg
         )
         captured[direction] = record
         images[direction] = normalized.image
         pendingDirection = nil
         motionAtPhotoRequest = nil
-        progressText = "\(captured.count) / 10"
+        progressText = "\(captured.count) / \(DirectionName.requiredCount)"
         onCaptured?(direction)
 
-        if direction.isHorizontal {
+        switch direction.phaseKind {
+        case .horizontal:
             if let idx = DirectionName.horizontalOrder.firstIndex(of: direction) {
                 horizontalTargetIndex = idx + 1
+            }
+        case .upOblique:
+            if let idx = DirectionName.upperObliqueOrder.firstIndex(of: direction) {
+                upperObliqueTargetIndex = idx + 1
+            }
+        case .downOblique:
+            if let idx = DirectionName.lowerObliqueOrder.firstIndex(of: direction) {
+                lowerObliqueTargetIndex = idx + 1
             }
         }
         advancePhaseIfNeeded()
@@ -391,12 +434,16 @@ final class DirectionCaptureEngine: NSObject {
 
     private func advancePhaseIfNeeded() {
         let horizontalDone = DirectionName.horizontalOrder.allSatisfy { captured[$0] != nil }
+        let upperDone = DirectionName.upperObliqueOrder.allSatisfy { captured[$0] != nil }
+        let lowerDone = DirectionName.lowerObliqueOrder.allSatisfy { captured[$0] != nil }
         switch phase {
         case .capturingHorizontal where horizontalDone:
-            phase = .capturingUp
-        case .capturingUp where captured[.up] != nil:
-            phase = .capturingDown
-        case .capturingDown where captured[.down] != nil:
+            phase = .capturingUpperOblique
+            upperObliqueTargetIndex = 0
+        case .capturingUpperOblique where upperDone:
+            phase = .capturingLowerOblique
+            lowerObliqueTargetIndex = 0
+        case .capturingLowerOblique where lowerDone:
             phase = .completed
             isCapturing = false
             finishAndEmitResult()
@@ -417,40 +464,38 @@ final class DirectionCaptureEngine: NSObject {
                 target: currentTarget,
                 warnFast: warnFast
             )
-        case .capturingUp:
-            currentTarget = captured[.up] == nil ? .up : nil
-            guideText = DirectionCaptureGuide.verticalGuideMessage(for: .up)
-        case .capturingDown:
-            currentTarget = captured[.down] == nil ? .down : nil
-            guideText = DirectionCaptureGuide.verticalGuideMessage(for: .down)
+        case .capturingUpperOblique:
+            if upperObliqueTargetIndex < DirectionName.upperObliqueOrder.count {
+                currentTarget = DirectionName.upperObliqueOrder[upperObliqueTargetIndex]
+            } else {
+                currentTarget = nil
+            }
+            guideText = DirectionCaptureGuide.upperObliqueGuideMessage(target: currentTarget)
+        case .capturingLowerOblique:
+            if lowerObliqueTargetIndex < DirectionName.lowerObliqueOrder.count {
+                currentTarget = DirectionName.lowerObliqueOrder[lowerObliqueTargetIndex]
+            } else {
+                currentTarget = nil
+            }
+            guideText = DirectionCaptureGuide.lowerObliqueGuideMessage(target: currentTarget)
         case .completed:
             currentTarget = nil
             guideText = "촬영 완료"
         default:
             break
         }
-        progressText = "\(captured.count) / 10"
+        progressText = "\(captured.count) / \(DirectionName.requiredCount)"
     }
 
     private func finishAndEmitResult() {
         let createdAt = ISO8601DateFormatter().string(from: Date())
         let ordered = DirectionName.captureOrder.compactMap { captured[$0] }
-        let up = captured[.up]
-        let down = captured[.down]
         let report = DirectionCaptureReport(
             sessionId: sessionId,
             createdAt: createdAt,
             captures: ordered,
-            upCaptureElevation: up?.elevationDeg,
-            downCaptureElevation: down?.elevationDeg,
-            upPhotoOrientation: up?.photoOrientation,
-            downPhotoOrientation: down?.photoOrientation,
-            upPixelRotationApplied: up?.pixelRotationApplied,
-            downPixelRotationApplied: down?.pixelRotationApplied,
-            upFinalPixelWidth: up?.finalPixelWidth,
-            upFinalPixelHeight: up?.finalPixelHeight,
-            downFinalPixelWidth: down?.finalPixelWidth,
-            downFinalPixelHeight: down?.finalPixelHeight
+            captureMode: "20shot_v1",
+            requiredCount: DirectionName.requiredCount
         )
         if let dirURL = outputDirectory {
             let reportURL = dirURL.appendingPathComponent("capture_report.json")
@@ -483,35 +528,35 @@ final class DirectionCaptureEngine: NSObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             Thread.sleep(forTimeInterval: DirectionCaptureConfig.frontAutoCaptureDelaySec)
-            let yaws: [Float] = [0, -10, -20, -40, -45, -50, -80, -90, -100,
-                                 -130, -135, -140, -175, -180, -185,
-                                 -220, -225, -230, -265, -270, -275,
-                                 -310, -315, -320]
+            // Hit each horizontal target (±8°), then upper/lower oblique quadrants.
+            let horizontalYaws: [Float] = [
+                0, -30, -60, -90, -120, -150, -180, -210, -240, -270, -300, -330,
+            ]
             var t: TimeInterval = 0
-            for yaw in yaws {
+            for yaw in horizontalYaws {
                 guard self.isCapturing else { return }
                 while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
                 DispatchQueue.main.sync {
-                    self.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -8, timestamp: t)
+                    self.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -5, elevationDeg: 0, timestamp: t)
                 }
                 t += 0.05
                 Thread.sleep(forTimeInterval: 0.04)
             }
-            // up zone +80±8 → 72…88; down −80±8 → −88…−72
-            for elev: Float in [60, 72, 80, 85] {
+            let obliqueYaws: [Float] = [-45, -135, -225, -315]
+            for yaw in obliqueYaws {
                 guard self.isCapturing else { return }
                 while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
                 DispatchQueue.main.sync {
-                    self.ingestMotionSample(unwrappedYaw: -320, elevationDeg: elev, timestamp: t)
+                    self.ingestMotionSample(unwrappedYaw: yaw, elevationDeg: 60, timestamp: t)
                 }
                 t += 0.05
                 Thread.sleep(forTimeInterval: 0.04)
             }
-            for elev: Float in [-60, -72, -80, -85] {
+            for yaw in obliqueYaws {
                 guard self.isCapturing else { return }
                 while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
                 DispatchQueue.main.sync {
-                    self.ingestMotionSample(unwrappedYaw: -320, elevationDeg: elev, timestamp: t)
+                    self.ingestMotionSample(unwrappedYaw: yaw, elevationDeg: -60, timestamp: t)
                 }
                 t += 0.05
                 Thread.sleep(forTimeInterval: 0.04)

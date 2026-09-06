@@ -17,7 +17,7 @@ enum DirectionCaptureGuide {
         abs(shortestDeltaDeg(from: a, to: b))
     }
 
-    /// Absolute distance on unwrapped yaw line (targets are on decreasing path 0…-315).
+    /// Absolute distance on unwrapped yaw line (targets on decreasing path 0…−330).
     static func withinYawTolerance(
         currentYaw: Float,
         targetYaw: Float,
@@ -59,18 +59,17 @@ enum DirectionCaptureGuide {
 
     static func horizontalGuideMessage(target: DirectionName?, warnFast: Bool) -> String {
         if warnFast { return "조금 천천히 움직여주세요" }
-        if let target, target != .front {
-            return "오른쪽으로 천천히 회전하세요\n다음 촬영: \(target.rawValue)"
-        }
-        return "오른쪽으로 천천히 회전하세요"
+        let next = target.map { "\n다음: \($0.userFacingHint)" } ?? ""
+        return "휴대폰을 들고 천천히 오른쪽으로 회전해주세요.\(next)"
     }
 
-    static func verticalGuideMessage(for target: DirectionName?) -> String {
-        switch target {
-        case .up: return "휴대폰 카메라를 천장 쪽으로 향해주세요"
-        case .down: return "휴대폰 카메라를 바닥 쪽으로 향해주세요"
-        case .none: return "촬영 완료"
-        default: return "준비"
-        }
+    static func upperObliqueGuideMessage(target: DirectionName?) -> String {
+        let hint = target?.userFacingHint ?? "천장과 벽"
+        return "휴대폰을 위로 조금 들어 천장과 벽이 함께 보이게 해주세요.\n\(hint)"
+    }
+
+    static func lowerObliqueGuideMessage(target: DirectionName?) -> String {
+        let hint = target?.userFacingHint ?? "바닥과 벽"
+        return "휴대폰을 아래로 조금 내려 바닥과 벽이 함께 보이게 해주세요.\n\(hint)"
     }
 }

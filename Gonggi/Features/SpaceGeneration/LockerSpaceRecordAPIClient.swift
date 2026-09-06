@@ -100,7 +100,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        // Upload of 10 photos can be slow; generation itself is polled via /status.
+        // Upload of 20 photos can be slow; generation itself is polled via /status.
         request.timeoutInterval = 180
 
         var body = Data()

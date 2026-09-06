@@ -3,11 +3,15 @@ import UIKit
 import os
 
 /// Shrink capture JPEGs before multipart create so the request stays under Vercel's ~4.5MB body limit.
+/// Tuned for 20-shot uploads (more images → slightly tighter long-edge / quality).
 enum SpaceRecordUploadPreparer {
-    /// Matches server `GONGGI_NORMALIZE_LONG_EDGE`.
-    static let maxLongEdge: CGFloat = 1536
-    /// Matches server `GONGGI_NORMALIZE_JPEG_QUALITY`.
-    static let jpegQuality: CGFloat = 0.85
+    /// Client upload long-edge cap (20-shot safety for ~4.5MB body).
+    static let maxLongEdge: CGFloat = 1280
+    /// Default JPEG quality for first-pass compress.
+    static let jpegQuality: CGFloat = 0.82
+    /// Fallback when first pass exceeds soft budget.
+    static let tightLongEdge: CGFloat = 1120
+    static let tightJpegQuality: CGFloat = 0.74
 
     /// Soft budget for Vercel ~4.5MB body limit (leave headroom).
     static let preferredMultipartBudgetBytes = 4_000_000
@@ -46,22 +50,58 @@ enum SpaceRecordUploadPreparer {
             )
         }
 
-        let report = SpaceRecordUploadPayloadReport.make(
+        var report = SpaceRecordUploadPayloadReport.make(
             sessionId: sessionId,
             images: stats,
             estimatedMultipartOverheadBytes: multipartOverheadEstimate(imageCount: stats.count)
         )
+
+        // Second pass: if 20-shot multipart still over soft budget, tighten further.
+        if report.estimatedMultipartBytes > preferredMultipartBudgetBytes {
+            out = []
+            stats = []
+            for item in files {
+                let data = try Data(contentsOf: item.fileURL)
+                let prepared = try compressForUpload(
+                    data,
+                    maxLongEdge: tightLongEdge,
+                    quality: tightJpegQuality
+                )
+                let dest = dir.appendingPathComponent("\(item.direction).jpg")
+                try prepared.write(to: dest, options: .atomic)
+                out.append((direction: item.direction, fileURL: dest))
+                let dims = pixelDimensions(of: prepared)
+                stats.append(
+                    SpaceRecordUploadPayloadReport.ImageStat(
+                        direction: item.direction,
+                        byteCount: prepared.count,
+                        width: dims.width,
+                        height: dims.height
+                    )
+                )
+            }
+            report = SpaceRecordUploadPayloadReport.make(
+                sessionId: sessionId,
+                images: stats,
+                estimatedMultipartOverheadBytes: multipartOverheadEstimate(imageCount: stats.count)
+            )
+        }
+
         SpaceRecordUploadLog.payload(report)
         return (out, report)
     }
 
-    static func compressForUpload(_ data: Data) throws -> Data {
+    static func compressForUpload(
+        _ data: Data,
+        maxLongEdge: CGFloat = maxLongEdge,
+        quality: CGFloat = jpegQuality
+    ) throws -> Data {
         guard let image = UIImage(data: data) else {
             throw SpaceRecordClientError.invalidResponse
         }
         let pixelLongEdge = max(image.size.width * image.scale, image.size.height * image.scale)
         let resized = resizeIfNeeded(image, maxLongEdge: maxLongEdge)
-        guard let out = resized.jpegData(compressionQuality: jpegQuality), !out.isEmpty else {
+        guard let out = resized.jpegData(compressionQuality: quality), !out.isEmpty else {
             throw SpaceRecordClientError.invalidResponse
         }
         // Always use resized output when we downscaled; otherwise keep the smaller of the two.

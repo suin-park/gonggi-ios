@@ -1,405 +1,219 @@
 import XCTest
-import UIKit
 @testable import Gonggi
 
 final class DirectionCaptureGuideTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        DirectionCaptureConfig.frontAutoCaptureDelaySec = 0
-        DirectionCaptureConfig.captureToleranceDeg = 10
-    }
-
     override func tearDown() {
-        DirectionCaptureConfig.frontAutoCaptureDelaySec = 0.2
-        DirectionCaptureConfig.captureToleranceDeg = 9
+        DirectionCaptureConfig.captureToleranceDeg = 8
+        DirectionCaptureConfig.obliqueYawToleranceDeg = 15
+        DirectionCaptureConfig.elevationToleranceDeg = 8
         super.tearDown()
     }
 
-    // MARK: - Guide helpers
-
-    func testWithinYawToleranceRadius() {
-        // ±10 around -45: distance 11 out, 9 in (user's ±8 example: -36 out / -39 in)
-        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -34, targetYaw: -45, toleranceDeg: 10))
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -36, targetYaw: -45, toleranceDeg: 10))
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -37, targetYaw: -45, toleranceDeg: 10))
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -39, targetYaw: -45, toleranceDeg: 10))
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -43, targetYaw: -45, toleranceDeg: 10))
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -48, targetYaw: -45, toleranceDeg: 10))
-        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -56, targetYaw: -45, toleranceDeg: 10))
-        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -36, targetYaw: -45, toleranceDeg: 8))
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -39, targetYaw: -45, toleranceDeg: 8))
+    func testRequiredCountIs20AndOrderIsCanonical() {
+        XCTAssertEqual(DirectionName.requiredCount, 20)
+        XCTAssertEqual(DirectionName.captureOrder.count, 20)
+        XCTAssertEqual(DirectionName.horizontalOrder.count, 12)
+        XCTAssertEqual(DirectionName.upperObliqueOrder.count, 4)
+        XCTAssertEqual(DirectionName.lowerObliqueOrder.count, 4)
+        XCTAssertEqual(Set(DirectionName.captureOrder.map(\.rawValue)).count, 20)
+        XCTAssertEqual(DirectionName.captureOrder.map(\.rawValue), [
+            "front", "front_right_30", "front_right_60", "right",
+            "back_right_120", "back_right_150", "back",
+            "back_left_210", "back_left_240", "left",
+            "front_left_300", "front_left_330",
+            "up_front_right", "up_back_right", "up_back_left", "up_front_left",
+            "down_front_right", "down_back_right", "down_back_left", "down_front_left",
+        ])
     }
 
-    func testWithinElevationTolerance() {
-        // Production targets: +80±8 → 72…88, −80±8 → −88…−72
-        let up = DirectionCaptureConfig.upElevationTargetDeg
-        let down = DirectionCaptureConfig.downElevationTargetDeg
-        let tol = DirectionCaptureConfig.elevationToleranceDeg
-        XCTAssertEqual(up, 80, accuracy: 0.01)
-        XCTAssertEqual(down, -80, accuracy: 0.01)
-        XCTAssertEqual(tol, 8, accuracy: 0.01)
-
-        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 70, targetElevation: up, toleranceDeg: tol))
-        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 71, targetElevation: up, toleranceDeg: tol))
-        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 72, targetElevation: up, toleranceDeg: tol))
-        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 80, targetElevation: up, toleranceDeg: tol))
-        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 88, targetElevation: up, toleranceDeg: tol))
-        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 89, targetElevation: up, toleranceDeg: tol))
-
-        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -70, targetElevation: down, toleranceDeg: tol))
-        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -72, targetElevation: down, toleranceDeg: tol))
-        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -80, targetElevation: down, toleranceDeg: tol))
-        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -88, targetElevation: down, toleranceDeg: tol))
-        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -89, targetElevation: down, toleranceDeg: tol))
-    }
-
-    func testTargetYawMatchesDeviceRightTurnConvention() {
+    func testHorizontalYawTargetsAt30DegreeSteps() {
         XCTAssertEqual(DirectionName.front.targetYawDeg, 0)
-        XCTAssertEqual(DirectionName.frontRight.targetYawDeg, -45)
+        XCTAssertEqual(DirectionName.frontRight30.targetYawDeg, -30)
+        XCTAssertEqual(DirectionName.frontRight60.targetYawDeg, -60)
         XCTAssertEqual(DirectionName.right.targetYawDeg, -90)
+        XCTAssertEqual(DirectionName.backRight120.targetYawDeg, -120)
+        XCTAssertEqual(DirectionName.backRight150.targetYawDeg, -150)
         XCTAssertEqual(DirectionName.back.targetYawDeg, -180)
+        XCTAssertEqual(DirectionName.backLeft210.targetYawDeg, -210)
+        XCTAssertEqual(DirectionName.backLeft240.targetYawDeg, -240)
         XCTAssertEqual(DirectionName.left.targetYawDeg, -270)
-        XCTAssertEqual(DirectionCaptureGuide.normalizeYaw0to360(-90), 270, accuracy: 0.01)
-        XCTAssertEqual(DirectionCaptureGuide.normalizeYaw0to360(-45), 315, accuracy: 0.01)
+        XCTAssertEqual(DirectionName.frontLeft300.targetYawDeg, -300)
+        XCTAssertEqual(DirectionName.frontLeft330.targetYawDeg, -330)
     }
 
-    func testElevationFromGravityLooksUpVsDown() {
-        let down = DirectionCaptureGuide.elevationDeg(gravityX: 0, gravityY: 0, gravityZ: -1)
-        XCTAssertLessThan(down, -50)
-        let up = DirectionCaptureGuide.elevationDeg(gravityX: 0, gravityY: 0, gravityZ: 1)
-        XCTAssertGreaterThan(up, 50)
+    func testObliqueYawAndElevationTargets() {
+        XCTAssertEqual(DirectionName.upFrontRight.targetYawDeg, -45)
+        XCTAssertEqual(DirectionName.upBackRight.targetYawDeg, -135)
+        XCTAssertEqual(DirectionName.upBackLeft.targetYawDeg, -225)
+        XCTAssertEqual(DirectionName.upFrontLeft.targetYawDeg, -315)
+        XCTAssertEqual(DirectionName.downFrontRight.targetYawDeg, -45)
+        XCTAssertEqual(DirectionName.upFrontRight.targetElevationDeg, 60)
+        XCTAssertEqual(DirectionName.downFrontLeft.targetElevationDeg, -60)
+    }
+
+    func testYawToleranceHorizontalDefault8() {
+        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -8, targetYaw: 0))
+        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -9, targetYaw: 0))
+        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -30, targetYaw: -30))
+        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -39, targetYaw: -30))
+    }
+
+    func testObliqueYawTolerance15() {
+        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(
+            currentYaw: -60, targetYaw: -45, toleranceDeg: DirectionCaptureConfig.obliqueYawToleranceDeg
+        ))
+        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(
+            currentYaw: -61, targetYaw: -45, toleranceDeg: DirectionCaptureConfig.obliqueYawToleranceDeg
+        ))
+    }
+
+    func testElevationBandForOblique() {
+        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 52, targetElevation: 60))
+        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 51, targetElevation: 60))
+        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -68, targetElevation: -60))
+        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -69, targetElevation: -60))
     }
 
     func testFileNamesMatchCanonical() {
-        XCTAssertEqual(DirectionName.frontRight.fileName, "front_right.jpg")
-        XCTAssertEqual(DirectionName.backLeft.rawValue, "back_left")
+        XCTAssertEqual(DirectionName.frontRight30.fileName, "front_right_30.jpg")
+        XCTAssertEqual(DirectionName.upFrontRight.fileName, "up_front_right.jpg")
+        XCTAssertEqual(DirectionName.downBackLeft.fileName, "down_back_left.jpg")
     }
 
-    // MARK: - A–E photo request / advance
+    // MARK: - Engine
 
-    /// A. yaw 0 → front capture request exactly once
-    func testA_FrontCaptureRequestExactlyOnceAtYaw0() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-
-        engine.ingestMotionSample(unwrappedYaw: 0, pitchDeg: -5)
-        XCTAssertEqual(engine.photoRequestCounts[.front] ?? 0, 1)
-        XCTAssertEqual(engine.pendingDirection, .front)
-        XCTAssertNil(engine.captured[.front], "save 전 captured 금지")
-
-        engine.ingestMotionSample(unwrappedYaw: 1, pitchDeg: -5)
-        engine.ingestMotionSample(unwrappedYaw: -2, pitchDeg: -5)
-        XCTAssertEqual(engine.photoRequestCounts[.front] ?? 0, 1)
-
-        engine.completePendingPhotoForTests(success: true)
-        XCTAssertNotNil(engine.captured[.front])
-        XCTAssertEqual(engine.capturedCount, 1)
-        XCTAssertEqual(engine.currentTarget, .frontRight)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// B. yaw -37,-41,-44 → front_right request once (target -45 ±10)
-    func testB_FrontRightRadiusTriggersOnce() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedFrontCaptured(engine)
-
-        // -37 is inside ±10 of -45 (distance 8) → first request
-        engine.ingestMotionSample(unwrappedYaw: -37, pitchDeg: -8)
-        XCTAssertEqual(engine.photoRequestCounts[.frontRight] ?? 0, 1)
-        XCTAssertEqual(engine.pendingDirection, .frontRight)
-
-        engine.ingestMotionSample(unwrappedYaw: -41, pitchDeg: -8)
-        engine.ingestMotionSample(unwrappedYaw: -44, pitchDeg: -8)
-        XCTAssertEqual(engine.photoRequestCounts[.frontRight] ?? 0, 1)
-
-        engine.completePendingPhotoForTests(success: true)
-        XCTAssertNotNil(engine.captured[.frontRight])
-        XCTAssertEqual(engine.currentTarget, .right)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// C. 반경 안 여러 frame → capture request 1회만
-    func testC_MultipleFramesInRadiusRequestOnce() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedFrontCaptured(engine)
-
-        for yaw: Float in [-43, -44, -45, -46] {
-            engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -8)
-        }
-        XCTAssertEqual(engine.photoRequestCounts[.frontRight] ?? 0, 1)
-        XCTAssertTrue(engine.isPhotoPending)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// D. photo save 성공 전 → target advance 금지
-    func testD_NoAdvanceBeforePhotoSave() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-
-        engine.ingestMotionSample(unwrappedYaw: 0)
-        XCTAssertEqual(engine.pendingDirection, .front)
-        XCTAssertEqual(engine.capturedCount, 0)
-        XCTAssertEqual(engine.currentTarget, .front, "pending 중에도 target은 front 유지")
-        XCTAssertEqual(engine.phase, .capturingHorizontal)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// E. photo save 성공 → captured count 증가 + targetIndex advance
-    func testE_AdvanceAfterPhotoSave() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-
-        engine.ingestMotionSample(unwrappedYaw: 0)
-        XCTAssertEqual(engine.photoRequestCounts[.front] ?? 0, 1)
-        engine.completePendingPhotoForTests(success: true)
-
-        XCTAssertEqual(engine.capturedCount, 1)
-        XCTAssertNotNil(engine.captured[.front])
-        XCTAssertNil(engine.pendingDirection)
-        XCTAssertEqual(engine.currentTarget, .frontRight)
-        XCTAssertEqual(engine.progressText, "1 / 10")
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    func testFullDecreasingSweepCapturesTenOnce() throws {
-        let engine = makeTestEngine(autoComplete: true)
-        engine.beginCapture()
-
-        let yaws: [Float] = [
-            0, -40, -45, -50, -85, -90, -95,
-            -130, -135, -140, -175, -180, -185,
-            -220, -225, -230, -265, -270, -275,
-            -310, -315, -320
-        ]
-        for yaw in yaws {
-            engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -8)
-        }
-        for dir in DirectionName.horizontalOrder {
-            XCTAssertNotNil(engine.captured[dir], "missing \(dir.rawValue)")
-            XCTAssertEqual(engine.photoRequestCounts[dir] ?? 0, 1)
-        }
-
-        for elev: Float in [72, 80, 85] {
-            engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: elev)
-        }
-        XCTAssertNotNil(engine.captured[.up])
-
-        for elev: Float in [-72, -80, -85] {
-            engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: elev)
-        }
-        XCTAssertNotNil(engine.captured[.down])
-        XCTAssertEqual(engine.capturedCount, 10)
-        XCTAssertEqual(engine.phase, .completed)
-        XCTAssertEqual(engine.guideText, "촬영 완료")
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// A. UP: target zone 밖에서는 request 안 됨
-    func testA_UpOutsideZoneDoesNotRequest() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedAllHorizontals(engine)
-        XCTAssertEqual(engine.phase, .capturingUp)
-
-        for elev: Float in [60, 70, 71, 89, 90] {
-            engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: elev)
-        }
-        XCTAssertEqual(engine.photoRequestCounts[.up] ?? 0, 0)
-        XCTAssertNil(engine.pendingDirection)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// B. UP: target zone 안에서는 request 1회
-    func testB_UpInsideZoneRequestsOnce() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedAllHorizontals(engine)
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 80)
-        XCTAssertEqual(engine.photoRequestCounts[.up] ?? 0, 1)
-        XCTAssertEqual(engine.pendingDirection, .up)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// C. DOWN: target zone 밖에서는 request 안 됨
-    func testC_DownOutsideZoneDoesNotRequest() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedAllHorizontals(engine)
-        engine.autoCompletePhotoInMock = true
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 80)
-        engine.autoCompletePhotoInMock = false
-        XCTAssertEqual(engine.phase, .capturingDown)
-
-        for elev: Float in [-60, -70, -71, -89, -90] {
-            engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: elev)
-        }
-        XCTAssertEqual(engine.photoRequestCounts[.down] ?? 0, 0)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// D. DOWN: target zone 안에서는 request 1회
-    func testD_DownInsideZoneRequestsOnce() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedAllHorizontals(engine)
-        engine.autoCompletePhotoInMock = true
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 80)
-        engine.autoCompletePhotoInMock = false
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: -80)
-        XCTAssertEqual(engine.photoRequestCounts[.down] ?? 0, 1)
-        XCTAssertEqual(engine.pendingDirection, .down)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// E. pending 중 duplicate 없음
-    func testE_VerticalPendingNoDuplicate() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedAllHorizontals(engine)
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 80)
-        XCTAssertEqual(engine.photoRequestCounts[.up] ?? 0, 1)
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 82)
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 85)
-        XCTAssertEqual(engine.photoRequestCounts[.up] ?? 0, 1)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// F. save 성공 후만 phase advance
-    func testF_VerticalAdvanceOnlyAfterSave() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedAllHorizontals(engine)
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 80)
-        XCTAssertEqual(engine.phase, .capturingUp)
-        XCTAssertEqual(engine.capturedCount, 8)
-        engine.completePendingPhotoForTests(success: true)
-        XCTAssertEqual(engine.phase, .capturingDown)
-        XCTAssertEqual(engine.capturedCount, 9)
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// UP: 70 no, 72 yes, pending 중 duplicate 없음; advance only after save
-    func testUpElevationRadiusTriggersOnceAndAdvancesAfterSave() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedAllHorizontals(engine)
-        XCTAssertEqual(engine.phase, .capturingUp)
-        XCTAssertEqual(engine.guideText, "휴대폰 카메라를 천장 쪽으로 향해주세요")
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 70)
-        XCTAssertEqual(engine.photoRequestCounts[.up] ?? 0, 0)
-        XCTAssertNil(engine.pendingDirection)
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 72)
-        XCTAssertEqual(engine.photoRequestCounts[.up] ?? 0, 1)
-        XCTAssertEqual(engine.pendingDirection, .up)
-        XCTAssertEqual(engine.phase, .capturingUp)
-        XCTAssertEqual(engine.capturedCount, 8)
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 80)
-        XCTAssertEqual(engine.photoRequestCounts[.up] ?? 0, 1)
-
-        engine.completePendingPhotoForTests(success: true)
-        XCTAssertNotNil(engine.captured[.up])
-        XCTAssertEqual(engine.captured[.up]?.elevationDeg ?? 0, 72, accuracy: 0.1)
-        XCTAssertEqual(engine.progressText, "9 / 10")
-        XCTAssertEqual(engine.phase, .capturingDown)
-        XCTAssertEqual(engine.guideText, "휴대폰 카메라를 바닥 쪽으로 향해주세요")
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    /// DOWN: −70 no, −72 yes, pending 중 duplicate 없음; complete after save
-    func testDownElevationRadiusTriggersOnceAndCompletesAfterSave() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        seedAllHorizontals(engine)
-
-        engine.autoCompletePhotoInMock = true
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: 80)
-        XCTAssertNotNil(engine.captured[.up])
-        engine.autoCompletePhotoInMock = false
-        XCTAssertEqual(engine.phase, .capturingDown)
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: -70)
-        XCTAssertEqual(engine.photoRequestCounts[.down] ?? 0, 0)
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: -72)
-        XCTAssertEqual(engine.photoRequestCounts[.down] ?? 0, 1)
-        XCTAssertEqual(engine.pendingDirection, .down)
-        XCTAssertEqual(engine.phase, .capturingDown)
-        XCTAssertEqual(engine.capturedCount, 9)
-
-        engine.ingestMotionSample(unwrappedYaw: -320, elevationDeg: -80)
-        XCTAssertEqual(engine.photoRequestCounts[.down] ?? 0, 1)
-
-        engine.completePendingPhotoForTests(success: true)
-        XCTAssertNotNil(engine.captured[.down])
-        XCTAssertEqual(engine.captured[.down]?.elevationDeg ?? 0, -72, accuracy: 0.1)
-        XCTAssertEqual(engine.progressText, "10 / 10")
-        XCTAssertEqual(engine.phase, .completed)
-        XCTAssertEqual(engine.guideText, "촬영 완료")
-
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    func testMotionSequenceKeepsUpdatingLastMotion() throws {
-        let engine = makeTestEngine(autoComplete: false)
-        engine.beginCapture()
-        // Stay outside front radius after first pending so we can still update motion.
-        engine.ingestMotionSample(unwrappedYaw: 0)
-        XCTAssertTrue(engine.isPhotoPending)
-
-        let samples: [Float] = [-20, -45, -90, -180]
-        for yaw in samples {
-            engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -10)
-            XCTAssertEqual(engine.lastMotion.relativeYawDeg, yaw, accuracy: 0.01)
-        }
-        CaptureSessionStore.deleteSession(sessionId: engine.sessionId)
-    }
-
-    // MARK: - Helpers
-
-    private func makeTestEngine(autoComplete: Bool) -> DirectionCaptureEngine {
+    func testHorizontalOrderAdvancesAndProgressUses20() {
         let engine = DirectionCaptureEngine()
         engine.enableMockSweep = false
-        engine.autoCompletePhotoInMock = autoComplete
+        engine.autoCompletePhotoInMock = true
         try? engine.prepareCamera(mockMode: true)
-        return engine
-    }
+        engine.beginCapture()
+        XCTAssertEqual(engine.progressText, "0 / 20")
+        XCTAssertEqual(engine.currentTarget, .front)
 
-    private func seedFrontCaptured(_ engine: DirectionCaptureEngine) {
-        engine.autoCompletePhotoInMock = true
-        engine.ingestMotionSample(unwrappedYaw: 0)
+        engine.ingestMotionSample(unwrappedYaw: 0, pitchDeg: -5)
         XCTAssertNotNil(engine.captured[.front])
-        engine.autoCompletePhotoInMock = false
+        XCTAssertEqual(engine.progressText, "1 / 20")
+        XCTAssertEqual(engine.currentTarget, .frontRight30)
+
+        engine.ingestMotionSample(unwrappedYaw: -30, pitchDeg: -5)
+        XCTAssertNotNil(engine.captured[.frontRight30])
+        XCTAssertEqual(engine.currentTarget, .frontRight60)
     }
 
-    private func seedAllHorizontals(_ engine: DirectionCaptureEngine) {
-        engine.autoCompletePhotoInMock = true
-        let yaws: [Float] = [0, -45, -90, -135, -180, -225, -270, -315]
-        for yaw in yaws {
-            engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -8)
-        }
-        XCTAssertEqual(engine.capturedCount, 8)
+    func testPendingBlocksDuplicateHorizontalRequest() {
+        let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
         engine.autoCompletePhotoInMock = false
+        try? engine.prepareCamera(mockMode: true)
+        engine.beginCapture()
+        engine.ingestMotionSample(unwrappedYaw: 0)
+        XCTAssertEqual(engine.pendingDirection, .front)
+        XCTAssertEqual(engine.photoRequestCounts[.front] ?? 0, 1)
+        engine.ingestMotionSample(unwrappedYaw: 0)
+        XCTAssertEqual(engine.photoRequestCounts[.front] ?? 0, 1)
+        engine.completePendingPhotoForTests(success: true)
+        XCTAssertNotNil(engine.captured[.front])
+    }
+
+    func testFullTwentyShotSequencePhases() {
+        let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
+        engine.autoCompletePhotoInMock = true
+        try? engine.prepareCamera(mockMode: true)
+        engine.beginCapture()
+
+        for yaw: Float in [0, -30, -60, -90, -120, -150, -180, -210, -240, -270, -300, -330] {
+            engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -5, elevationDeg: 0)
+        }
+        XCTAssertEqual(engine.capturedCount, 12)
+        XCTAssertEqual(engine.phase, .capturingUpperOblique)
+        XCTAssertEqual(engine.currentTarget, .upFrontRight)
+
+        for yaw: Float in [-45, -135, -225, -315] {
+            engine.ingestMotionSample(unwrappedYaw: yaw, elevationDeg: 60)
+        }
+        XCTAssertEqual(engine.capturedCount, 16)
+        XCTAssertEqual(engine.phase, .capturingLowerOblique)
+        XCTAssertEqual(engine.currentTarget, .downFrontRight)
+
+        for yaw: Float in [-45, -135, -225, -315] {
+            engine.ingestMotionSample(unwrappedYaw: yaw, elevationDeg: -60)
+        }
+        XCTAssertEqual(engine.capturedCount, 20)
+        XCTAssertEqual(engine.phase, .completed)
+        XCTAssertEqual(engine.progressText, "20 / 20")
+    }
+
+    func testUpperObliqueRequiresBothYawAndElevation() {
+        let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
+        engine.autoCompletePhotoInMock = true
+        try? engine.prepareCamera(mockMode: true)
+        engine.beginCapture()
+        for yaw: Float in [0, -30, -60, -90, -120, -150, -180, -210, -240, -270, -300, -330] {
+            engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -5, elevationDeg: 0)
+        }
+        // Correct yaw but flat elevation — should not fire.
+        engine.ingestMotionSample(unwrappedYaw: -45, elevationDeg: 10)
+        XCTAssertEqual(engine.photoRequestCounts[.upFrontRight] ?? 0, 0)
+        // Elevation ok but wrong yaw.
+        engine.ingestMotionSample(unwrappedYaw: -90, elevationDeg: 60)
+        XCTAssertEqual(engine.photoRequestCounts[.upFrontRight] ?? 0, 0)
+        engine.ingestMotionSample(unwrappedYaw: -45, elevationDeg: 60)
+        XCTAssertEqual(engine.photoRequestCounts[.upFrontRight] ?? 0, 1)
+        XCTAssertNotNil(engine.captured[.upFrontRight])
+    }
+
+    func testSaveSuccessOnlyThenAdvance() {
+        let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
+        engine.autoCompletePhotoInMock = false
+        try? engine.prepareCamera(mockMode: true)
+        engine.beginCapture()
+        engine.ingestMotionSample(unwrappedYaw: 0)
+        XCTAssertEqual(engine.pendingDirection, .front)
+        XCTAssertNil(engine.captured[.front])
+        XCTAssertEqual(engine.currentTarget, .front)
+        engine.completePendingPhotoForTests(success: true)
+        XCTAssertNotNil(engine.captured[.front])
+        XCTAssertEqual(engine.currentTarget, .frontRight30)
+        XCTAssertEqual(engine.progressText, "1 / 20")
+    }
+
+    func testUploadPreparationKeepsTwentyImagesUnderSoftBudget() throws {
+        let sessionId = "dir-upload-budget-\(UUID().uuidString)"
+        let dir = try CaptureSessionStore.createDirectionCaptureDirectory(sessionId: sessionId)
+        defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
+
+        var files: [(direction: String, fileURL: URL)] = []
+        for name in DirectionName.captureOrder {
+            // Simulate a large portrait capture before client compress.
+            let size = CGSize(width: 3024, height: 4032)
+            let renderer = UIGraphicsImageRenderer(size: size)
+            let img = renderer.image { ctx in
+                UIColor.darkGray.setFill()
+                ctx.fill(CGRect(origin: .zero, size: size))
+            }
+            let url = dir.appendingPathComponent(name.fileName)
+            guard let data = img.jpegData(compressionQuality: 0.92) else {
+                return XCTFail("jpeg encode failed")
+            }
+            try data.write(to: url)
+            files.append((direction: name.rawValue, fileURL: url))
+        }
+
+        let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(files, sessionId: sessionId)
+        XCTAssertEqual(prepared.files.count, 20)
+        XCTAssertLessThanOrEqual(
+            prepared.report.estimatedMultipartBytes,
+            SpaceRecordUploadPreparer.preferredMultipartBudgetBytes,
+            "20-shot multipart must stay under soft Vercel budget"
+        )
+        // Log numbers only (no image bodies).
+        print(
+            "[uploadBudget] totalImageBytes=\(prepared.report.totalImageBytes)"
+                + " estimatedMultipart=\(prepared.report.estimatedMultipartBytes)"
+        )
     }
 }

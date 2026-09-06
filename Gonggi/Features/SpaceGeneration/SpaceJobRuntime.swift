@@ -40,7 +40,7 @@ final class SpaceJobRuntime: ObservableObject {
         }
     }
 
-    /// Start upload + server job after 10-direction capture. Returns immediately to UI.
+    /// Start upload + server job after 20-direction capture. Returns immediately to UI.
     func start(from result: DirectionCaptureResult) {
         let validation = SpaceGenerationCoordinator.validateCaptureFiles(result: result)
         switch validation {
@@ -342,6 +342,6 @@ final class SpaceJobRuntime: ObservableObject {
             guard FileManager.default.fileExists(atPath: url.path) else { return nil }
             files.append((direction: name.rawValue, fileURL: url))
         }
-        return files.count == 10 ? files : nil
+        return files.count == DirectionName.requiredCount ? files : nil
     }
 }

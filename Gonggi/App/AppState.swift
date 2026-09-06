@@ -56,7 +56,7 @@ final class AppState: ObservableObject {
     }
 
     func startSpaceGeneration(from result: DirectionCaptureResult) {
-        // Natural permission moment: user just finished a 10-direction capture.
+        // Natural permission moment: user just finished a 20-direction capture.
         GonggiPushRegistrar.shared.requestPermissionIfAppropriate()
         jobRuntime.configure(useMock: isMockMode)
         jobRuntime.start(from: result)

@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-/// Orchestrates: validate 10 photos → upload → poll → download → VR (no LatLong preview).
+/// Orchestrates: validate 20 photos → upload → poll → download → VR (no LatLong preview).
 @MainActor
 final class SpaceGenerationCoordinator: ObservableObject {
     @Published private(set) var state: SpaceRecordState = .idle
@@ -153,7 +153,7 @@ final class SpaceGenerationCoordinator: ObservableObject {
             files.append((direction: name.rawValue, fileURL: url))
         }
 
-        guard files.count == 10 else { return .failure(.captureIncomplete) }
+        guard files.count == DirectionName.requiredCount else { return .failure(.captureIncomplete) }
         return .success(files)
     }
 

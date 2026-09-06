@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Single loading / error / VR experience after 10-direction capture.
+/// Single loading / error / VR experience after 20-direction capture.
 struct SpaceRecordFlowView: View {
     @ObservedObject var coordinator: SpaceGenerationCoordinator
     var onRecapture: () -> Void

@@ -4,8 +4,8 @@ import UIKit
 
 @MainActor
 final class SpaceGenerationCoordinatorTests: XCTestCase {
-    func testA_NineOfTenDoesNotStartGeneration() throws {
-        let result = try makeResult(missing: .down)
+    func testA_NineteenOfTwentyDoesNotStartGeneration() throws {
+        let result = try makeResult(missing: .downFrontLeft)
         let api = CountingAPIClient()
         let coordinator = SpaceGenerationCoordinator(api: api)
         coordinator.start(from: result)
@@ -15,7 +15,7 @@ final class SpaceGenerationCoordinatorTests: XCTestCase {
         CaptureSessionStore.deleteSession(sessionId: result.sessionId)
     }
 
-    func testB_TenOfTenStartsGenerationOnce() async throws {
+    func testB_TwentyOfTwentyStartsGenerationOnce() async throws {
         let result = try makeResult(missing: nil)
         let api = CountingAPIClient()
         let coordinator = SpaceGenerationCoordinator(api: api)
@@ -32,7 +32,7 @@ final class SpaceGenerationCoordinatorTests: XCTestCase {
 
     func testC_ValidateDoesNotRequireResultView() throws {
         // DirectionCaptureView no longer presents DirectionCaptureResultView in production flow;
-        // coordinator is the next hop after 10/10.
+        // coordinator is the next hop after 20/20.
         let result = try makeResult(missing: nil)
         let validated = SpaceGenerationCoordinator.validateCaptureFiles(result: result)
         XCTAssertTrue(validated.isSuccess)
