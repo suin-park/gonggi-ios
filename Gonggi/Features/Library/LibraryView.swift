@@ -3,7 +3,10 @@ import SwiftUI
 struct LibraryView: View {
     @EnvironmentObject private var appState: AppState
     @State private var selectedSpace: SpaceRecord?
-    @State private var vrPath: String?
+    @State private var viewerSession: SpaceViewerSession?
+    @State private var isPreparingViewer = false
+    @State private var viewerError: String?
+    @State private var retryJobId: String?
 
     var body: some View {
         NavigationStack {
@@ -27,13 +30,29 @@ struct LibraryView: View {
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
             }
-            .fullScreenCover(isPresented: Binding(
-                get: { vrPath != nil },
-                set: { if !$0 { vrPath = nil } }
-            )) {
-                if let path = vrPath {
-                    VRSphereSpaceView(imageURL: URL(fileURLWithPath: path), onClose: { vrPath = nil })
+            .fullScreenCover(item: $viewerSession) { session in
+                VRSphereSpaceView(imageURL: session.fileURL, onClose: { viewerSession = nil })
+            }
+            .overlay {
+                if isPreparingViewer {
+                    ZStack {
+                        Color.black.opacity(0.35).ignoresSafeArea()
+                        ProgressView().tint(.white).scaleEffect(1.2)
+                    }
                 }
+            }
+            .alert("공간을 불러오지 못했어요", isPresented: Binding(
+                get: { viewerError != nil },
+                set: { if !$0 { viewerError = nil } }
+            )) {
+                Button("다시 불러오기") {
+                    if let id = retryJobId {
+                        Task { await openViewer(jobId: id) }
+                    }
+                }
+                Button("닫기", role: .cancel) { viewerError = nil }
+            } message: {
+                Text(viewerError ?? "")
             }
         }
     }
@@ -43,13 +62,21 @@ struct LibraryView: View {
         case .failed:
             appState.retrySpaceGeneration(jobId: space.id)
         case .ready:
-            if let path = space.localLatLongPath {
-                vrPath = path
-            } else {
-                selectedSpace = space
-            }
+            Task { await openViewer(jobId: space.id) }
         default:
             selectedSpace = space
+        }
+    }
+
+    private func openViewer(jobId: String) async {
+        retryJobId = jobId
+        isPreparingViewer = true
+        defer { isPreparingViewer = false }
+        switch await appState.prepareSpaceViewer(jobId: jobId) {
+        case .success(let url):
+            viewerSession = SpaceViewerSession(id: jobId, fileURL: url)
+        case .failure(let error):
+            viewerError = error.userMessage
         }
     }
 

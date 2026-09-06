@@ -6,7 +6,9 @@ struct SpaceDetailView: View {
     let space: SpaceRecord
     @State private var showViewer = false
     @State private var showDeleteConfirm = false
-    @State private var showVR = false
+    @State private var viewerSession: SpaceViewerSession?
+    @State private var isPreparingViewer = false
+    @State private var viewerError: String?
 
     var body: some View {
         ScrollView {
@@ -26,10 +28,27 @@ struct SpaceDetailView: View {
         .sheet(isPresented: $showViewer) {
             ViewerPlaceholderView(space: space)
         }
-        .fullScreenCover(isPresented: $showVR) {
-            if let path = space.localLatLongPath {
-                VRSphereSpaceView(imageURL: URL(fileURLWithPath: path), onClose: { showVR = false })
+        .fullScreenCover(item: $viewerSession) { session in
+            VRSphereSpaceView(imageURL: session.fileURL, onClose: { viewerSession = nil })
+        }
+        .overlay {
+            if isPreparingViewer {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    ProgressView().tint(.white).scaleEffect(1.2)
+                }
             }
+        }
+        .alert("공간을 불러오지 못했어요", isPresented: Binding(
+            get: { viewerError != nil },
+            set: { if !$0 { viewerError = nil } }
+        )) {
+            Button("다시 불러오기") {
+                Task { await openViewer() }
+            }
+            Button("닫기", role: .cancel) { viewerError = nil }
+        } message: {
+            Text(viewerError ?? "")
         }
         .alert("공간을 삭제할까요?", isPresented: $showDeleteConfirm) {
             Button("삭제", role: .destructive) {}
@@ -115,11 +134,7 @@ struct SpaceDetailView: View {
             case .ready:
                 PrimaryButton(title: "공간 보기", icon: "cube.transparent") {
                     GonggiHaptics.light()
-                    if space.localLatLongPath != nil {
-                        showVR = true
-                    } else {
-                        showViewer = true
-                    }
+                    Task { await openViewer() }
                 }
             case .failed:
                 PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
@@ -150,6 +165,17 @@ struct SpaceDetailView: View {
             }
         }
         .padding(.top, GonggiSpacing.xs)
+    }
+
+    private func openViewer() async {
+        isPreparingViewer = true
+        defer { isPreparingViewer = false }
+        switch await appState.prepareSpaceViewer(jobId: space.id) {
+        case .success(let url):
+            viewerSession = SpaceViewerSession(id: space.id, fileURL: url)
+        case .failure(let error):
+            viewerError = error.userMessage
+        }
     }
 
     private var statusBadge: some View {

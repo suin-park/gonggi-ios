@@ -110,6 +110,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
             body.append("\(value)\r\n".data(using: .utf8)!)
         }
         appendField(name: "sessionId", value: sessionId)
+        appendField(name: "installationId", value: GonggiInstallation.id)
 
         for item in imageFiles {
             let data = try Data(contentsOf: item.fileURL)

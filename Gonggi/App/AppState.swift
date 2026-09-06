@@ -8,6 +8,9 @@ final class AppState: ObservableObject {
     @Published var selectedTab: AppTab = .home
     @Published var pendingCapture: CaptureSessionSummary?
     @Published private(set) var spaces: [SpaceRecord] = []
+    /// Set when a completion push / deep link should open VR for this session/job.
+    @Published var pendingViewerJobId: String?
+    @Published var pendingViewerError: String?
 
     let spaceService: SpaceGenerationService
     let jobStore: SpaceJobStore
@@ -53,15 +56,60 @@ final class AppState: ObservableObject {
     }
 
     func startSpaceGeneration(from result: DirectionCaptureResult) {
+        // Natural permission moment: user just finished a 10-direction capture.
+        GonggiPushRegistrar.shared.requestPermissionIfAppropriate()
         jobRuntime.configure(useMock: isMockMode)
         jobRuntime.start(from: result)
         rebuildSpaces()
         selectedTab = .home
     }
 
+    /// Notification tap → sync status → download if needed → open VR (never black).
+    func openSpaceFromPush(sessionId: String) async {
+        GonggiPushDeepLink.pendingSessionId = nil
+        selectedTab = .home
+        if jobStore.job(id: sessionId) == nil,
+           jobStore.jobs.first(where: { $0.sessionId == sessionId }) == nil {
+            jobStore.upsert(
+                SpaceJobRecord(
+                    sessionId: sessionId,
+                    jobId: sessionId,
+                    createdAt: Date(),
+                    completedAt: nil,
+                    serverStatus: "generating",
+                    displayName: "공간",
+                    resultImageURL: nil,
+                    localLatLongPath: nil,
+                    width: nil,
+                    height: nil
+                )
+            )
+        }
+        await jobRuntime.syncActiveJobsOnce()
+        let jobId = jobStore.jobs.first(where: { $0.sessionId == sessionId || $0.jobId == sessionId })?.jobId
+            ?? sessionId
+        let result = await prepareSpaceViewer(jobId: jobId)
+        switch result {
+        case .success:
+            pendingViewerJobId = jobId
+            pendingViewerError = nil
+        case .failure(let error):
+            pendingViewerJobId = nil
+            pendingViewerError = error.userMessage
+        }
+    }
+
     func retrySpaceGeneration(jobId: String) {
         jobRuntime.retryFailed(jobId: jobId)
         rebuildSpaces()
+    }
+
+    /// Download/cache if needed, then return a durable file URL for VR. Never invent a black viewer.
+    func prepareSpaceViewer(jobId: String) async -> Result<URL, SpaceViewerError> {
+        jobRuntime.configure(useMock: isMockMode)
+        let result = await jobRuntime.prepareViewer(jobId: jobId)
+        rebuildSpaces()
+        return result
     }
 
     func handleScenePhase(_ phase: ScenePhase) {

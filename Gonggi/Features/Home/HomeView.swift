@@ -3,7 +3,9 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
     @State private var selectedSpace: SpaceRecord?
-    @State private var showVR = false
+    @State private var viewerSession: SpaceViewerSession?
+    @State private var isPreparingViewer = false
+    @State private var viewerError: String?
 
     private var recentSpace: SpaceRecord? {
         appState.spaces.first
@@ -28,9 +30,45 @@ struct HomeView: View {
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
             }
-            .fullScreenCover(isPresented: $showVR) {
-                if let path = selectedSpace?.localLatLongPath {
-                    VRSphereSpaceView(imageURL: URL(fileURLWithPath: path), onClose: { showVR = false })
+            .fullScreenCover(item: $viewerSession) { session in
+                VRSphereSpaceView(imageURL: session.fileURL, onClose: { viewerSession = nil })
+            }
+            .overlay {
+                if isPreparingViewer {
+                    ZStack {
+                        Color.black.opacity(0.35).ignoresSafeArea()
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(1.2)
+                    }
+                }
+            }
+            .alert("공간을 불러오지 못했어요", isPresented: Binding(
+                get: { viewerError != nil || appState.pendingViewerError != nil },
+                set: {
+                    if !$0 {
+                        viewerError = nil
+                        appState.pendingViewerError = nil
+                    }
+                }
+            )) {
+                Button("다시 불러오기") {
+                    if let id = appState.pendingViewerJobId ?? selectedSpace?.id ?? recentSpace?.id {
+                        Task { await openViewer(jobId: id) }
+                    }
+                }
+                Button("닫기", role: .cancel) {
+                    viewerError = nil
+                    appState.pendingViewerError = nil
+                }
+            } message: {
+                Text(viewerError ?? appState.pendingViewerError ?? "")
+            }
+            .onChange(of: appState.pendingViewerJobId) { _, jobId in
+                guard let jobId else { return }
+                Task {
+                    await openViewer(jobId: jobId)
+                    appState.pendingViewerJobId = nil
                 }
             }
         }
@@ -113,18 +151,26 @@ struct HomeView: View {
     }
 
     private func handleSpaceTap(_ space: SpaceRecord) {
+        selectedSpace = space
         switch space.status {
         case .ready:
-            if space.localLatLongPath != nil {
-                selectedSpace = space
-                showVR = true
-            } else {
-                selectedSpace = space
-            }
+            Task { await openViewer(jobId: space.id) }
         case .failed:
             appState.retrySpaceGeneration(jobId: space.id)
         case .processing, .uploading, .draft:
-            selectedSpace = space
+            break
+        }
+    }
+
+    private func openViewer(jobId: String) async {
+        isPreparingViewer = true
+        defer { isPreparingViewer = false }
+        let result = await appState.prepareSpaceViewer(jobId: jobId)
+        switch result {
+        case .success(let url):
+            viewerSession = SpaceViewerSession(id: jobId, fileURL: url)
+        case .failure(let error):
+            viewerError = error.userMessage
         }
     }
 

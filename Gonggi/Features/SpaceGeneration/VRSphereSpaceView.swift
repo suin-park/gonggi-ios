@@ -71,14 +71,19 @@ final class SCNHostView: UIView {
 
         let material = SCNMaterial()
         material.isDoubleSided = true
+        // Only file URLs with a readable JPEG become textures. Never invent an empty black sphere silently.
         let raw = UIImage(contentsOfFile: imageURL.path)
         if let raw,
            let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
             material.diffuse.contents = prepared
-        } else if let raw {
+        } else if let raw, raw.cgImage != nil {
             material.diffuse.contents = raw
         } else {
-            material.diffuse.contents = UIColor.darkGray
+            // Visible fallback so black-screen regressions are obvious in debug; callers must not open without a valid file.
+            material.diffuse.contents = UIColor(white: 0.12, alpha: 1)
+            #if DEBUG
+            assertionFailure("VRSphere opened without readable latlong at \(imageURL.path)")
+            #endif
         }
         material.diffuse.wrapS = .repeat
         material.diffuse.wrapT = .clamp

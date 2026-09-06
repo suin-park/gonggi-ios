@@ -22,6 +22,11 @@ final class SpaceJobRuntime: ObservableObject {
         }
     }
 
+    /// Test / recovery hook — replace the API client even if already configured.
+    func replaceAPI(_ client: SpaceRecordAPIClienting) {
+        api = client
+    }
+
     func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .active:
@@ -44,6 +49,7 @@ final class SpaceJobRuntime: ObservableObject {
                 sessionId: result.sessionId,
                 jobId: result.sessionId,
                 createdAt: Date(),
+                completedAt: nil,
                 serverStatus: "failed",
                 displayName: Self.displayName(for: result.sessionId),
                 resultImageURL: nil,
@@ -59,6 +65,7 @@ final class SpaceJobRuntime: ObservableObject {
                 sessionId: result.sessionId,
                 jobId: result.sessionId,
                 createdAt: Date(),
+                completedAt: nil,
                 serverStatus: "uploading",
                 displayName: Self.displayName(for: result.sessionId),
                 resultImageURL: nil,
@@ -81,6 +88,7 @@ final class SpaceJobRuntime: ObservableObject {
         job.serverStatus = "uploading"
         job.resultImageURL = nil
         job.localLatLongPath = nil
+        job.completedAt = nil
         store.upsert(job)
         uploadTasks[job.sessionId]?.cancel()
         uploadTasks[job.sessionId] = Task {
@@ -100,13 +108,53 @@ final class SpaceJobRuntime: ObservableObject {
         pollTask = nil
     }
 
-    /// One-shot sync for all active jobs (app launch / foreground).
+    /// Launch / foreground: sync in-flight jobs and re-cache completed textures if needed.
     func syncActiveJobsOnce() async {
         for job in store.activeJobs() {
             await refreshStatus(jobId: job.jobId)
         }
+        for job in store.jobs where job.serverStatus == "completed" && !job.isDeviceReadyForVR {
+            _ = await prepareViewer(jobId: job.jobId)
+        }
         if isForeground {
             resumePolling()
+        }
+    }
+
+    /// Resolve a durable local latlong file before opening VR. Never opens without a valid texture.
+    @discardableResult
+    func prepareViewer(jobId: String) async -> Result<URL, SpaceViewerError> {
+        guard var job = store.job(id: jobId) else { return .failure(.jobNotFound) }
+
+        if SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath),
+           let path = job.localLatLongPath {
+            return .success(URL(fileURLWithPath: path))
+        }
+
+        // Refresh status so we pick up result URL if missing.
+        await refreshStatus(jobId: jobId)
+        guard let refreshed = store.job(id: jobId) else { return .failure(.jobNotFound) }
+        job = refreshed
+
+        if SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath),
+           let path = job.localLatLongPath {
+            return .success(URL(fileURLWithPath: path))
+        }
+
+        guard job.serverStatus == "completed" || job.resultImageURL != nil else {
+            return .failure(.notCompleted)
+        }
+        guard let urlString = job.resultImageURL, let remote = URL(string: urlString) else {
+            return .failure(.missingResultURL)
+        }
+
+        do {
+            let local = try await downloadAndPersist(sessionId: job.sessionId, jobId: job.jobId, remote: remote)
+            return .success(local)
+        } catch let err as SpaceViewerError {
+            return .failure(err)
+        } catch {
+            return .failure(.downloadFailed)
         }
     }
 
@@ -116,18 +164,14 @@ final class SpaceJobRuntime: ObservableObject {
         guard let api else { return }
         do {
             let response = try await api.create(sessionId: sessionId, imageFiles: files)
-            // Persist jobId immediately — do not require latlong / dimensions yet.
             store.update(jobId: sessionId) { job in
                 job.jobId = response.jobId
                 job.sessionId = response.sessionId
                 job.serverStatus = Self.normalizeStatus(response.status)
             }
-            // Job may already be completed if reused.
             await refreshStatus(jobId: response.jobId)
             resumePolling()
         } catch {
-            // Only mark local failed when we never obtained a server jobId.
-            // Transient network after jobId exists must not flip a live server job to failed.
             store.update(jobId: sessionId) { job in
                 if job.serverStatus == "uploading" {
                     job.serverStatus = "failed"
@@ -183,21 +227,24 @@ final class SpaceJobRuntime: ObservableObject {
                 await finishCompleted(jobId: jobId, status: status)
             default:
                 store.update(jobId: jobId) { job in
-                    // Never downgrade completed/failed on transient poll.
                     if !job.isTerminal {
                         job.serverStatus = Self.normalizeStatus(status.status)
                     }
                 }
             }
         } catch {
-            // Transient network — keep last known state; do not mark failed.
+            // Transient — keep last known state.
         }
     }
 
     private func finishCompleted(jobId: String, status: SpaceRecordStatusResponse) async {
-        guard let api else { return }
         guard let urlString = status.imageUrl, let remote = URL(string: urlString) else {
-            store.update(jobId: jobId) { $0.serverStatus = "failed" }
+            // Keep generating so a later poll can recover; do not invent failed.
+            store.update(jobId: jobId) { job in
+                if !job.isTerminal {
+                    job.serverStatus = "generating"
+                }
+            }
             return
         }
         if let width = status.width, let height = status.height,
@@ -206,33 +253,63 @@ final class SpaceJobRuntime: ObservableObject {
             return
         }
 
-        let dest = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("gonggi-latlong-\(jobId).jpg")
-        do {
-            try await api.downloadImage(from: remote, to: dest)
-            guard let img = UIImage(contentsOfFile: dest.path),
-                  let cg = img.cgImage,
-                  cg.width > 0, cg.height > 0
-            else {
-                store.update(jobId: jobId) { $0.serverStatus = "failed" }
-                return
+        // Persist remote URL even before download succeeds.
+        store.update(jobId: jobId) { job in
+            job.resultImageURL = urlString
+            if let w = status.width { job.width = w }
+            if let h = status.height { job.height = h }
+        }
+
+        if let existing = store.job(id: jobId),
+           SpaceLatLongStore.isValidLocalFile(at: existing.localLatLongPath) {
+            store.update(jobId: jobId) { job in
+                job.serverStatus = "completed"
+                if job.completedAt == nil { job.completedAt = Date() }
             }
+            return
+        }
+
+        do {
+            _ = try await downloadAndPersist(
+                sessionId: store.job(id: jobId)?.sessionId ?? jobId,
+                jobId: jobId,
+                remote: remote,
+                reportedWidth: status.width,
+                reportedHeight: status.height
+            )
+        } catch {
+            // Server completed; device not ready yet — keep resultURL, retry on next sync/tap.
             store.update(jobId: jobId) { job in
                 job.serverStatus = "completed"
                 job.resultImageURL = urlString
-                job.localLatLongPath = dest.path
-                job.width = status.width ?? cg.width
-                job.height = status.height ?? cg.height
-            }
-        } catch {
-            // Download failed — keep generating/queued known state so resume can retry download.
-            store.update(jobId: jobId) { job in
-                if job.serverStatus != "completed" {
-                    job.serverStatus = "generating"
-                    job.resultImageURL = urlString
-                }
+                if job.completedAt == nil { job.completedAt = Date() }
             }
         }
+    }
+
+    private func downloadAndPersist(
+        sessionId: String,
+        jobId: String,
+        remote: URL,
+        reportedWidth: Int? = nil,
+        reportedHeight: Int? = nil
+    ) async throws -> URL {
+        guard let api else { throw SpaceViewerError.downloadFailed }
+        let dest = try SpaceLatLongStore.latLongURL(sessionId: sessionId)
+        try await api.downloadImage(from: remote, to: dest)
+        guard let validated = SpaceLatLongStore.validateImage(at: dest) else {
+            try? FileManager.default.removeItem(at: dest)
+            throw SpaceViewerError.invalidImage
+        }
+        store.update(jobId: jobId) { job in
+            job.serverStatus = "completed"
+            job.resultImageURL = remote.absoluteString
+            job.localLatLongPath = dest.path
+            job.width = reportedWidth ?? validated.width
+            job.height = reportedHeight ?? validated.height
+            if job.completedAt == nil { job.completedAt = Date() }
+        }
+        return dest
     }
 
     private static func normalizeStatus(_ raw: String) -> String {

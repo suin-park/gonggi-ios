@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct GonggiApp: App {
+    @UIApplicationDelegateAdaptor(GonggiAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var appState = AppState()
 
@@ -18,6 +19,12 @@ struct GonggiApp: App {
                 }
                 .onAppear {
                     appState.handleScenePhase(.active)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .gonggiOpenCompletedSpace)) { note in
+                    let sid = (note.object as? String) ?? GonggiPushDeepLink.pendingSessionId
+                    if let sid {
+                        Task { await appState.openSpaceFromPush(sessionId: sid) }
+                    }
                 }
         }
     }

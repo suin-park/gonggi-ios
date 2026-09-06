@@ -10,6 +10,7 @@ final class SpaceJobStoreTests: XCTestCase {
             sessionId: "dir-test-1",
             jobId: "job-test-1",
             createdAt: Date(),
+            completedAt: nil,
             serverStatus: "generating",
             displayName: "테스트 공간",
             resultImageURL: nil,

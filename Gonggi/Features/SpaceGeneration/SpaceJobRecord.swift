@@ -6,10 +6,12 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var sessionId: String
     var jobId: String
     var createdAt: Date
+    var completedAt: Date?
     /// Local/server-aligned status string: uploading | queued | uploaded | preprocessing | generating | completed | failed
     var serverStatus: String
     var displayName: String
     var resultImageURL: String?
+    /// Absolute path under Application Support (durable). Never Caches/tmp.
     var localLatLongPath: String?
     var width: Int?
     var height: Int?
@@ -20,6 +22,11 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
 
     var isActive: Bool {
         !isTerminal
+    }
+
+    /// Server says completed AND a valid local texture file is present.
+    var isDeviceReadyForVR: Bool {
+        serverStatus == "completed" && SpaceLatLongStore.isValidLocalFile(at: localLatLongPath)
     }
 
     var uiStatus: SpaceGenerationStatus {
@@ -44,7 +51,7 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
         case "failed":
             return "생성 실패"
         case "completed":
-            return nil
+            return isDeviceReadyForVR ? nil : "공간을 불러오는 중…"
         default:
             return "공간을 만들고 있어요"
         }
@@ -64,4 +71,25 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
             remoteImageURL: resultImageURL
         )
     }
+}
+
+enum SpaceViewerError: Error, Equatable {
+    case jobNotFound
+    case notCompleted
+    case missingResultURL
+    case downloadFailed
+    case invalidImage
+
+    var userMessage: String {
+        switch self {
+        case .jobNotFound, .notCompleted, .missingResultURL, .downloadFailed, .invalidImage:
+            return "공간을 불러오지 못했어요"
+        }
+    }
+}
+
+/// Identifiable payload for fullScreenCover(item:) — never present VR without a file URL.
+struct SpaceViewerSession: Identifiable, Equatable {
+    let id: String
+    let fileURL: URL
 }
