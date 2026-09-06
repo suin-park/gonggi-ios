@@ -35,25 +35,32 @@ enum SpaceRecordUploadPreparer {
         guard let image = UIImage(data: data) else {
             throw SpaceRecordClientError.invalidResponse
         }
-        let longEdge = max(image.size.width, image.size.height)
+        let pixelLongEdge = max(image.size.width * image.scale, image.size.height * image.scale)
         let resized = resizeIfNeeded(image, maxLongEdge: maxLongEdge)
         guard let out = resized.jpegData(compressionQuality: jpegQuality), !out.isEmpty else {
             throw SpaceRecordClientError.invalidResponse
         }
         // Always use resized output when we downscaled; otherwise keep the smaller of the two.
-        if longEdge > maxLongEdge {
+        if pixelLongEdge > maxLongEdge {
             return out
         }
         return out.count < data.count ? out : data
     }
 
     static func resizeIfNeeded(_ image: UIImage, maxLongEdge: CGFloat) -> UIImage {
-        let size = image.size
-        let longEdge = max(size.width, size.height)
+        let pixelWidth = image.size.width * image.scale
+        let pixelHeight = image.size.height * image.scale
+        let longEdge = max(pixelWidth, pixelHeight)
         guard longEdge > maxLongEdge, longEdge > 0 else { return image }
         let scale = maxLongEdge / longEdge
-        let newSize = CGSize(width: (size.width * scale).rounded(.down), height: (size.height * scale).rounded(.down))
-        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let newSize = CGSize(
+            width: (pixelWidth * scale).rounded(.down),
+            height: (pixelHeight * scale).rounded(.down)
+        )
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: newSize, format: format)
         return renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: newSize))
         }

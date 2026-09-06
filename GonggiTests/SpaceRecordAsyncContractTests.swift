@@ -111,7 +111,8 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
         let out = try SpaceRecordUploadPreparer.compressForUpload(large)
         XCTAssertLessThan(out.count, large.count)
         let img = UIImage(data: out)!
-        XCTAssertLessThanOrEqual(max(img.size.width, img.size.height), SpaceRecordUploadPreparer.maxLongEdge + 1)
+        let pixelLong = max(img.size.width * img.scale, img.size.height * img.scale)
+        XCTAssertLessThanOrEqual(pixelLong, SpaceRecordUploadPreparer.maxLongEdge + 1)
     }
 
     func test413MapsToPayloadTooLarge() async {
