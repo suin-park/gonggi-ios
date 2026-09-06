@@ -1,15 +1,17 @@
 import Foundation
 import SwiftUI
 
-/// Global app state: mock mode, navigation, sample library.
+/// Global app state: mock mode, navigation, library + async space jobs.
 @MainActor
 final class AppState: ObservableObject {
     @Published var isMockMode: Bool
     @Published var selectedTab: AppTab = .home
-    @Published var spaces: [SpaceRecord]
     @Published var pendingCapture: CaptureSessionSummary?
+    @Published private(set) var spaces: [SpaceRecord] = []
 
     let spaceService: SpaceGenerationService
+    let jobStore: SpaceJobStore
+    let jobRuntime: SpaceJobRuntime
 
     init(
         isMockMode: Bool = {
@@ -20,11 +22,20 @@ final class AppState: ObservableObject {
             false
             #endif
         }(),
-        spaceService: SpaceGenerationService? = nil
+        spaceService: SpaceGenerationService? = nil,
+        jobStore: SpaceJobStore? = nil
     ) {
         self.isMockMode = isMockMode
         self.spaceService = spaceService ?? MockSpaceGenerationService()
-        self.spaces = SpaceRecord.sampleArchive
+        let store = jobStore ?? SpaceJobStore.shared
+        self.jobStore = store
+        self.jobRuntime = SpaceJobRuntime(store: store)
+        self.jobRuntime.configure(useMock: isMockMode)
+        store.onChange = { [weak self] in
+            self?.rebuildSpaces()
+        }
+        rebuildSpaces()
+
         #if DEBUG
         if let screen = ScreenshotLaunchConfig.screen {
             switch screen {
@@ -39,6 +50,25 @@ final class AppState: ObservableObject {
 
     func selectTab(_ tab: AppTab) {
         selectedTab = tab
+    }
+
+    func startSpaceGeneration(from result: DirectionCaptureResult) {
+        jobRuntime.configure(useMock: isMockMode)
+        jobRuntime.start(from: result)
+        rebuildSpaces()
+        selectedTab = .home
+    }
+
+    func retrySpaceGeneration(jobId: String) {
+        jobRuntime.retryFailed(jobId: jobId)
+        rebuildSpaces()
+    }
+
+    func handleScenePhase(_ phase: ScenePhase) {
+        jobRuntime.handleScenePhase(phase)
+        if phase == .active {
+            Task { await jobRuntime.syncActiveJobsOnce() }
+        }
     }
 
     func addSpace(from summary: CaptureSessionSummary, jobId: String) {
@@ -57,6 +87,17 @@ final class AppState: ObservableObject {
     func updateSpaceStatus(id: String, status: SpaceGenerationStatus) {
         guard let idx = spaces.firstIndex(where: { $0.id == id }) else { return }
         spaces[idx].status = status
+    }
+
+    func rebuildSpaces() {
+        let live = jobStore.jobs.map { $0.asSpaceRecord() }
+        #if DEBUG
+        if ScreenshotLaunchConfig.isActive {
+            spaces = live.isEmpty ? SpaceRecord.sampleArchive : live
+            return
+        }
+        #endif
+        spaces = live.isEmpty ? SpaceRecord.sampleArchive : live
     }
 }
 

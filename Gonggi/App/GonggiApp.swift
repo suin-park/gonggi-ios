@@ -11,9 +11,13 @@ struct GonggiApp: App {
                 .environmentObject(appState)
                 .preferredColorScheme(.dark)
                 .onChange(of: scenePhase) { _, phase in
+                    appState.handleScenePhase(phase)
                     if phase == .background {
                         CaptureSessionStore.pruneStaleSessions()
                     }
+                }
+                .onAppear {
+                    appState.handleScenePhase(.active)
                 }
         }
     }

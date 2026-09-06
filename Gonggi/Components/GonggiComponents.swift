@@ -510,12 +510,20 @@ struct MemoryArchiveCard: View {
                             .padding(.top, 2)
                     }
                     HStack {
-                        Text("공간 보기")
+                        Text(ctaTitle(for: space.status))
                             .font(GonggiTypography.caption(14))
-                            .foregroundStyle(GonggiColors.accentTeal)
-                        Image(systemName: "arrow.right")
+                            .foregroundStyle(
+                                space.status == .failed
+                                    ? GonggiColors.error
+                                    : GonggiColors.accentTeal
+                            )
+                        Image(systemName: space.status == .failed ? "arrow.clockwise" : "arrow.right")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(GonggiColors.accentTeal)
+                            .foregroundStyle(
+                                space.status == .failed
+                                    ? GonggiColors.error
+                                    : GonggiColors.accentTeal
+                            )
                     }
                     .padding(.top, GonggiSpacing.xs)
                 }
@@ -530,6 +538,15 @@ struct MemoryArchiveCard: View {
         }
         .buttonStyle(GonggiPressableStyle(scale: 0.98))
         .accessibilityLabel("\(space.name), \(space.capturedAt.formatted(date: .abbreviated, time: .omitted)), \(space.status.label)")
+    }
+
+    private func ctaTitle(for status: SpaceGenerationStatus) -> String {
+        switch status {
+        case .ready: return "공간 보기"
+        case .failed: return "다시 시도"
+        case .processing, .uploading: return "진행 상태"
+        case .draft: return "이어서 보기"
+        }
     }
 
     private var thumbnailHero: some View {
@@ -548,9 +565,19 @@ struct MemoryArchiveCard: View {
                 startRadius: 10,
                 endRadius: 120
             )
-            Image(systemName: space.thumbnailSystemImage)
-                .font(.system(size: 48, weight: .light))
-                .foregroundStyle(GonggiColors.textPrimary.opacity(0.85))
+            if space.status == .processing || space.status == .uploading {
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .tint(GonggiColors.accentTeal)
+                    Text(space.note ?? "공간을 만들고 있어요")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+            } else {
+                Image(systemName: space.thumbnailSystemImage)
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(GonggiColors.textPrimary.opacity(0.85))
+            }
         }
         .frame(height: 160)
         .frame(maxWidth: .infinity)

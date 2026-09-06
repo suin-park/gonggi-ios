@@ -2,9 +2,11 @@ import SwiftUI
 import WebKit
 
 struct SpaceDetailView: View {
+    @EnvironmentObject private var appState: AppState
     let space: SpaceRecord
     @State private var showViewer = false
     @State private var showDeleteConfirm = false
+    @State private var showVR = false
 
     var body: some View {
         ScrollView {
@@ -23,6 +25,11 @@ struct SpaceDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showViewer) {
             ViewerPlaceholderView(space: space)
+        }
+        .fullScreenCover(isPresented: $showVR) {
+            if let path = space.localLatLongPath {
+                VRSphereSpaceView(imageURL: URL(fileURLWithPath: path), onClose: { showVR = false })
+            }
         }
         .alert("공간을 삭제할까요?", isPresented: $showDeleteConfirm) {
             Button("삭제", role: .destructive) {}
@@ -104,9 +111,36 @@ struct SpaceDetailView: View {
 
     private var actionsSection: some View {
         VStack(spacing: GonggiSpacing.sm) {
-            PrimaryButton(title: "다시 들어가기", icon: "cube.transparent") {
-                GonggiHaptics.light()
-                showViewer = true
+            switch space.status {
+            case .ready:
+                PrimaryButton(title: "공간 보기", icon: "cube.transparent") {
+                    GonggiHaptics.light()
+                    if space.localLatLongPath != nil {
+                        showVR = true
+                    } else {
+                        showViewer = true
+                    }
+                }
+            case .failed:
+                PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
+                    GonggiHaptics.medium()
+                    appState.retrySpaceGeneration(jobId: space.id)
+                }
+            case .processing, .uploading:
+                GonggiElevatedCard {
+                    HStack(spacing: GonggiSpacing.md) {
+                        ProgressView()
+                            .tint(GonggiColors.accentTeal)
+                        Text(space.note ?? "공간을 만들고 있어요")
+                            .font(GonggiTypography.body(15))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            case .draft:
+                PrimaryButton(title: "이어서 보기", icon: "cube.transparent") {
+                    showViewer = true
+                }
             }
             HStack(spacing: GonggiSpacing.sm) {
                 SecondaryButton(title: "공유", icon: "square.and.arrow.up") {}
@@ -191,5 +225,6 @@ struct WebView: UIViewRepresentable {
 #Preview {
     NavigationStack {
         SpaceDetailView(space: SpaceRecord.sampleArchive[0])
+            .environmentObject(AppState(isMockMode: true))
     }
 }

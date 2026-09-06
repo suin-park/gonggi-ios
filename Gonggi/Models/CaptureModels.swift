@@ -214,6 +214,9 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
     var thumbnailSystemImage: String
     var note: String?
     var viewerURL: URL?
+    var localLatLongPath: String? = nil
+    var sessionId: String? = nil
+    var remoteImageURL: String? = nil
 
     static let sampleArchive: [SpaceRecord] = [
         SpaceRecord(

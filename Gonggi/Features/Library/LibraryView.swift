@@ -3,6 +3,7 @@ import SwiftUI
 struct LibraryView: View {
     @EnvironmentObject private var appState: AppState
     @State private var selectedSpace: SpaceRecord?
+    @State private var vrPath: String?
 
     var body: some View {
         NavigationStack {
@@ -12,7 +13,7 @@ struct LibraryView: View {
                     LazyVStack(spacing: GonggiSpacing.md) {
                         ForEach(appState.spaces) { space in
                             MemoryArchiveCard(space: space) {
-                                selectedSpace = space
+                                handleOpen(space)
                             }
                         }
                     }
@@ -26,6 +27,29 @@ struct LibraryView: View {
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
             }
+            .fullScreenCover(isPresented: Binding(
+                get: { vrPath != nil },
+                set: { if !$0 { vrPath = nil } }
+            )) {
+                if let path = vrPath {
+                    VRSphereSpaceView(imageURL: URL(fileURLWithPath: path), onClose: { vrPath = nil })
+                }
+            }
+        }
+    }
+
+    private func handleOpen(_ space: SpaceRecord) {
+        switch space.status {
+        case .failed:
+            appState.retrySpaceGeneration(jobId: space.id)
+        case .ready:
+            if let path = space.localLatLongPath {
+                vrPath = path
+            } else {
+                selectedSpace = space
+            }
+        default:
+            selectedSpace = space
         }
     }
 

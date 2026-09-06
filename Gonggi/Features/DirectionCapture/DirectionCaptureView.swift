@@ -1,11 +1,9 @@
 import SwiftUI
 
-/// Full-screen 10-direction auto capture → space generation → VR (no result grid).
+/// Full-screen 10-direction auto capture → enqueue async generation → home.
 struct DirectionCaptureView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel = DirectionCaptureViewModel()
-    @StateObject private var generationCoordinator = SpaceGenerationCoordinator()
-    @State private var showSpaceFlow = false
     let onClose: () -> Void
 
     var body: some View {
@@ -45,29 +43,13 @@ struct DirectionCaptureView: View {
         }
         .onAppear {
             viewModel.configure(mockMode: appState.isMockMode)
-            // Simulator/mock: local fake LatLong. Device: 3D Locker backend.
-            generationCoordinator.configure(useMock: appState.isMockMode)
         }
         .onChange(of: viewModel.didComplete) { _, done in
             guard done, let result = viewModel.result else { return }
-            // Skip DirectionCaptureResultView — go straight to generation.
-            generationCoordinator.start(from: result)
-            showSpaceFlow = true
-        }
-        .fullScreenCover(isPresented: $showSpaceFlow) {
-            SpaceRecordFlowView(
-                coordinator: generationCoordinator,
-                onRecapture: {
-                    showSpaceFlow = false
-                    generationCoordinator.resetForRecapture()
-                    viewModel.retake()
-                },
-                onClose: {
-                    showSpaceFlow = false
-                    viewModel.close()
-                    onClose()
-                }
-            )
+            // Async job: UI may leave; server generation continues.
+            appState.startSpaceGeneration(from: result)
+            viewModel.close()
+            onClose()
         }
         .statusBarHidden(true)
     }

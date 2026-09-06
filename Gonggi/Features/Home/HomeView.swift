@@ -2,6 +2,8 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var selectedSpace: SpaceRecord?
+    @State private var showVR = false
 
     private var recentSpace: SpaceRecord? {
         appState.spaces.first
@@ -23,6 +25,14 @@ struct HomeView: View {
             }
             .background(GonggiAmbientBackground())
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $selectedSpace) { space in
+                SpaceDetailView(space: space)
+            }
+            .fullScreenCover(isPresented: $showVR) {
+                if let path = selectedSpace?.localLatLongPath {
+                    VRSphereSpaceView(imageURL: URL(fileURLWithPath: path), onClose: { showVR = false })
+                }
+            }
         }
     }
 
@@ -57,24 +67,33 @@ struct HomeView: View {
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
             Button {
-                appState.selectTab(.library)
+                handleSpaceTap(space)
             } label: {
                 HStack(spacing: GonggiSpacing.md) {
                     ZStack {
                         RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
                             .fill(GonggiColors.surface)
                             .frame(width: 56, height: 56)
-                        Image(systemName: space.thumbnailSystemImage)
-                            .font(.system(size: 24, weight: .light))
-                            .foregroundStyle(GonggiColors.accentTeal)
+                        if space.status == .processing || space.status == .uploading {
+                            ProgressView()
+                                .tint(GonggiColors.accentTeal)
+                        } else {
+                            Image(systemName: space.thumbnailSystemImage)
+                                .font(.system(size: 24, weight: .light))
+                                .foregroundStyle(GonggiColors.accentTeal)
+                        }
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         Text(space.name)
                             .font(GonggiTypography.headline(16))
                             .foregroundStyle(GonggiColors.textPrimary)
-                        Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
+                        Text(space.note ?? space.status.label)
                             .font(GonggiTypography.caption(12))
-                            .foregroundStyle(GonggiColors.textTertiary)
+                            .foregroundStyle(
+                                space.status == .failed
+                                    ? GonggiColors.error
+                                    : GonggiColors.textTertiary
+                            )
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -90,6 +109,22 @@ struct HomeView: View {
                 .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
             }
             .buttonStyle(GonggiPressableStyle())
+        }
+    }
+
+    private func handleSpaceTap(_ space: SpaceRecord) {
+        switch space.status {
+        case .ready:
+            if space.localLatLongPath != nil {
+                selectedSpace = space
+                showVR = true
+            } else {
+                selectedSpace = space
+            }
+        case .failed:
+            appState.retrySpaceGeneration(jobId: space.id)
+        case .processing, .uploading, .draft:
+            selectedSpace = space
         }
     }
 
