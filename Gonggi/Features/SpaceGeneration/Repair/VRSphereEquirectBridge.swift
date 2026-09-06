@@ -170,14 +170,9 @@ enum VRSphereEquirectBridge {
         abs(yawDeltaDeg) > softWarnYawDeltaDeg || abs(pitchDeltaDeg) > softWarnPitchDeltaDeg
     }
 
-    /// DEBUG: enable numeric HUD on VR long-press selection.
-    static var debugOverlayEnabled: Bool {
-        #if DEBUG
-        true
-        #else
-        false
-        #endif
-    }
+    /// Numeric yaw/pitch HUD after long-press (kept on for bridge device validation / TestFlight).
+    /// Marker + pink mask outline are always drawn when a target is selected.
+    static var debugOverlayEnabled: Bool { true }
 }
 
 // MARK: - Forensic / regression fixtures (no secrets)
