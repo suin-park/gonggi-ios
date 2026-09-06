@@ -1,6 +1,7 @@
 import Combine
 import SwiftUI
 import AVFoundation
+import SceneKit
 
 /// Full-screen VR with long-press → selective repair flow.
 struct VRSphereSpaceView: View {
@@ -8,15 +9,14 @@ struct VRSphereSpaceView: View {
     let sessionId: String
     var baseRevisionId: String = "rev-0-base"
     var onClose: () -> Void
-    /// Called when a repair revision is ready locally (file URL).
     var onRepairCompleted: ((URL) -> Void)? = nil
 
     @State private var pendingTarget: RepairTarget?
     @State private var showConfirmSheet = false
-    @State private var showCapture = false
+    /// Item-based cover avoids sheet/fullScreenCover race that broke Cancel.
+    @State private var captureTarget: RepairTarget?
     @State private var markerYawDeg: Float?
     @State private var markerPitchDeg: Float?
-    @State private var repairBusy = false
     @State private var repairStatusText: String?
     @State private var repairError: String?
     @State private var toastText: String?
@@ -85,42 +85,46 @@ struct VRSphereSpaceView: View {
         }
         .statusBarHidden(true)
         .sheet(isPresented: $showConfirmSheet, onDismiss: {
-            if !showCapture {
-                markerYawDeg = nil
-                markerPitchDeg = nil
-                pendingTarget = nil
+            // If user dismissed sheet without starting camera, clear marker.
+            if captureTarget == nil {
+                clearRepairSelection()
             }
         }) {
             RepairConfirmSheet(
                 onRecapture: {
+                    guard let target = pendingTarget else { return }
                     showConfirmSheet = false
-                    showCapture = true
+                    // Present after sheet fully dismisses — fixes Cancel / cover race.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        captureTarget = target
+                    }
                 },
                 onCancel: {
                     showConfirmSheet = false
-                    markerYawDeg = nil
-                    markerPitchDeg = nil
-                    pendingTarget = nil
+                    clearRepairSelection()
                 }
             )
             .presentationDetents([.height(220)])
         }
-        .fullScreenCover(isPresented: $showCapture) {
-            if let pendingTarget {
-                RepairOneShotCaptureView(
-                    target: pendingTarget,
-                    onCancel: {
-                        showCapture = false
-                        markerYawDeg = nil
-                        markerPitchDeg = nil
-                        self.pendingTarget = nil
-                    },
-                    onReadyToRepair: { image, yaw, elev in
-                        showCapture = false
-                        Task { await runRepair(target: pendingTarget, image: image, yaw: yaw, elev: elev) }
-                    }
-                )
-            }
+        .fullScreenCover(item: $captureTarget, onDismiss: {
+            // Returning to VR without submitting repair — keep marker optional clear.
+            // Marker cleared only on explicit cancel from camera.
+        }) { target in
+            RepairManualCaptureView(
+                target: target,
+                onCancel: {
+                    captureTarget = nil
+                    clearRepairSelection()
+                },
+                onConfirmRepair: { image, yaw, elev in
+                    let t = target
+                    captureTarget = nil
+                    markerYawDeg = nil
+                    markerPitchDeg = nil
+                    pendingTarget = nil
+                    Task { await runRepair(target: t, image: image, yaw: yaw, elev: elev) }
+                }
+            )
         }
         .alert("부분 수정에 실패했어요", isPresented: Binding(
             get: { repairError != nil },
@@ -132,28 +136,27 @@ struct VRSphereSpaceView: View {
         }
     }
 
+    private func clearRepairSelection() {
+        markerYawDeg = nil
+        markerPitchDeg = nil
+        pendingTarget = nil
+    }
+
     private func runRepair(target: RepairTarget, image: UIImage, yaw: Float, elev: Float) async {
-        repairBusy = true
         repairStatusText = "선택한 부분을 수정하고 있어요"
-        defer {
-            repairBusy = false
-            repairStatusText = nil
-        }
+        defer { repairStatusText = nil }
         do {
             let job = try await repairRuntime.submitRepair(
                 target: target,
                 image: image,
                 capturedYawDeg: yaw,
                 capturedElevationDeg: elev,
-                repairMode: "ai_local_repair" // compareModes=1 → Mode A + Mode B from one capture
+                repairMode: "ai_local_repair"
             )
             let done = try await repairRuntime.pollUntilComplete(
                 repairJobId: job.repairJobId,
                 sessionId: target.sessionId
             )
-            markerYawDeg = nil
-            markerPitchDeg = nil
-            pendingTarget = nil
             toastText = "수정 완료"
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { toastText = nil }
             if let path = done.localLatLongPath {
@@ -161,8 +164,6 @@ struct VRSphereSpaceView: View {
             }
         } catch {
             repairError = "부분 수정에 실패했어요"
-            markerYawDeg = nil
-            markerPitchDeg = nil
         }
     }
 }
@@ -190,90 +191,179 @@ private struct RepairConfirmSheet: View {
     }
 }
 
-struct RepairOneShotCaptureView: View {
+// MARK: - Manual repair camera + preview
+
+private enum RepairCameraPhase: Equatable {
+    case camera
+    case preview
+}
+
+struct RepairManualCaptureView: View {
     let target: RepairTarget
     var onCancel: () -> Void
-    var onReadyToRepair: (UIImage, Float, Float) -> Void
+    var onConfirmRepair: (UIImage, Float, Float) -> Void
 
-    @StateObject private var model = RepairOneShotCaptureModel()
-    @State private var captured: (UIImage, Float, Float)?
+    @StateObject private var model = RepairManualCaptureModel()
+    @State private var phase: RepairCameraPhase = .camera
+    @State private var previewImage: UIImage?
+    @State private var previewYaw: Float = 0
+    @State private var previewElev: Float = 0
+    @State private var showSoftWarning = false
 
     var body: some View {
+        ZStack {
+            if phase == .preview, let previewImage {
+                previewLayer(image: previewImage)
+            } else {
+                cameraLayer
+            }
+        }
+        .background(Color.black.ignoresSafeArea())
+        .onAppear {
+            model.configure(target: target)
+            model.start()
+            model.onCaptured = { img, yaw, elev, _, _ in
+                previewImage = img
+                previewYaw = yaw
+                previewElev = elev
+                showSoftWarning = model.softMisalignmentWarning
+                phase = .preview
+            }
+        }
+        .onDisappear {
+            model.cancelAndStop()
+        }
+    }
+
+    private var cameraLayer: some View {
         ZStack {
             RepairCameraPreview(session: model.engine.session)
                 .ignoresSafeArea()
 
-            VStack(spacing: 16) {
-                Text("선택한 부분을 다시 촬영해주세요.")
+            // Subtle center guide — not an alignment reticle.
+            Circle()
+                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                .frame(width: 28, height: 28)
+
+            VStack(spacing: 10) {
+                Text("수정할 부분을 다시 촬영해주세요.")
                     .font(.headline)
                     .foregroundStyle(.white)
                     .shadow(radius: 2)
-                Text("처음 기록했던 위치에서 화면의 원을 맞춰주세요.")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.9))
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+                Text("처음 기록했던 위치에서\n수정할 부분이 잘 보이도록 한 장 촬영해주세요.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.92))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+
+                if model.softMisalignmentWarning {
+                    Text("선택한 부분이 화면에 잘 보이는지 확인해주세요.")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.yellow)
+                        .padding(.top, 4)
+                }
 
                 Spacer()
 
-                ZStack {
-                    Circle()
-                        .stroke(model.isAligned ? Color.green : Color.white.opacity(0.85), lineWidth: 3)
-                        .frame(width: 88, height: 88)
-                    Circle()
-                        .fill(Color.white.opacity(0.35))
-                        .frame(width: 8, height: 8)
-                }
-
-                Text(model.guideText)
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(.white)
-                    .padding(.bottom, 8)
-
-                if let captured {
-                    Button("이 부분 수정하기") {
-                        onReadyToRepair(captured.0, captured.1, captured.2)
+                HStack {
+                    Button("취소") {
+                        GonggiHaptics.light()
+                        model.cancelAndStop()
+                        onCancel()
                     }
-                    .buttonStyle(.borderedProminent)
-                    .padding(.bottom, 28)
-                } else {
-                    Button("취소", action: onCancel)
-                        .foregroundStyle(.white)
-                        .padding(.bottom, 28)
+                    .foregroundStyle(.white)
+                    .frame(width: 72)
+
+                    Spacer()
+
+                    Button {
+                        GonggiHaptics.medium()
+                        model.capture()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.white, lineWidth: 4)
+                                .frame(width: 72, height: 72)
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 58, height: 58)
+                        }
+                    }
+                    .accessibilityLabel("촬영")
+
+                    Spacer()
+                    Color.clear.frame(width: 72)
                 }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 36)
             }
-            .padding(.top, 48)
+            .padding(.top, 52)
         }
-        .onAppear {
-            model.configure(target: target)
-            model.start()
-            model.onCaptured = { img, yaw, elev in
-                captured = (img, yaw, elev)
+    }
+
+    private func previewLayer(image: UIImage) -> some View {
+        VStack(spacing: 0) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black)
+
+            if showSoftWarning {
+                Text("선택한 부분이 화면에 잘 보이는지 확인해주세요.")
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(.yellow)
+                    .padding(.top, 8)
             }
+
+            HStack(spacing: 12) {
+                Button("취소") {
+                    GonggiHaptics.light()
+                    model.cancelAndStop()
+                    onCancel()
+                }
+                .buttonStyle(.bordered)
+
+                Button("다시 촬영") {
+                    GonggiHaptics.light()
+                    previewImage = nil
+                    phase = .camera
+                    model.retake()
+                }
+                .buttonStyle(.bordered)
+
+                Button("이 사진으로 수정") {
+                    GonggiHaptics.medium()
+                    model.stop()
+                    onConfirmRepair(image, previewYaw, previewElev)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(16)
+            .padding(.bottom, 20)
         }
-        .onDisappear { model.stop() }
     }
 }
 
 @MainActor
-final class RepairOneShotCaptureModel: ObservableObject {
+final class RepairManualCaptureModel: ObservableObject {
     let engine = RepairOneShotCaptureEngine()
-    @Published var guideText = ""
-    @Published var isAligned = false
-    var onCaptured: ((UIImage, Float, Float) -> Void)?
+    @Published var softMisalignmentWarning = false
+    var onCaptured: ((UIImage, Float, Float, Float, Float) -> Void)?
 
     func configure(target: RepairTarget) {
         engine.targetEquirectYawDeg = Float(target.targetYawDeg)
         engine.targetPitchDeg = Float(target.targetPitchDeg)
         engine.onUIUpdate = { [weak self] in
             Task { @MainActor in
-                self?.guideText = self?.engine.guideText ?? ""
-                self?.isAligned = self?.engine.isAligned ?? false
+                self?.softMisalignmentWarning = self?.engine.softMisalignmentWarning ?? false
             }
         }
-        engine.onCaptured = { [weak self] img, yaw, elev in
+        engine.onCaptured = { [weak self] img, yaw, elev, dyaw, dpitch in
             Task { @MainActor in
-                self?.onCaptured?(img, yaw, elev)
+                self?.softMisalignmentWarning = self?.engine.softMisalignmentWarning ?? false
+                self?.onCaptured?(img, yaw, elev, dyaw, dpitch)
             }
         }
     }
@@ -283,11 +373,20 @@ final class RepairOneShotCaptureModel: ObservableObject {
             try engine.prepareCamera(mockMode: false)
             engine.start()
         } catch {
-            guideText = "카메라를 열 수 없어요"
+            softMisalignmentWarning = false
         }
     }
 
+    func capture() { engine.captureNow() }
+
+    func retake() { engine.resetForRetake() }
+
     func stop() { engine.stop() }
+
+    func cancelAndStop() {
+        engine.cancelPendingPhoto()
+        engine.stop()
+    }
 }
 
 private struct RepairCameraPreview: UIViewRepresentable {
@@ -310,7 +409,8 @@ private struct RepairCameraPreview: UIViewRepresentable {
     }
 }
 
-/// SceneKit viewer with long-press → equirect yaw/pitch callback.
+// MARK: - SceneKit VR host
+
 private struct Panorama360SceneOnlyView: UIViewRepresentable {
     let imageURL: URL
     var markerYawDeg: Float?
@@ -330,8 +430,6 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         uiView.updateMarker(yawDeg: markerYawDeg, pitchDeg: markerPitchDeg)
     }
 }
-
-import SceneKit
 
 final class SCNHostView: UIView {
     private let scnView = SCNView()
@@ -410,7 +508,6 @@ final class SCNHostView: UIView {
         markerNode = nil
         guard let yawDeg, let pitchDeg, let scene = scnView.scene else { return }
 
-        // Place a small marker on the inside of the sphere (equirect right-positive → camera convention).
         let camYaw = -yawDeg * .pi / 180
         let camPitch = -pitchDeg * .pi / 180
         let r: Float = 9.2

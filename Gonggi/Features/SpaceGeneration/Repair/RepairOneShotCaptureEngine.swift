@@ -2,7 +2,8 @@ import AVFoundation
 import Foundation
 import UIKit
 
-/// Single-shot repair capture: align to target direction, freeze motionAtPhotoRequest, auto-shoot.
+/// Manual one-shot repair capture — no auto-alignment gate.
+/// Freezes `motionAtPhotoRequest` at shutter tap for metadata.
 final class RepairOneShotCaptureEngine: NSObject {
     let session = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -15,28 +16,28 @@ final class RepairOneShotCaptureEngine: NSObject {
         timestamp: 0, relativeYawDeg: 0, yaw0to360: 0,
         pitchDeg: 0, rollDeg: 0, rotationRate: 0, elevationDeg: 0
     )
-    private(set) var guideText = "선택한 부분을 다시 촬영해주세요."
-    private(set) var isAligned = false
     private(set) var didCapture = false
     private(set) var capturedImage: UIImage?
     private(set) var capturedYawDeg: Float = 0
     private(set) var capturedElevationDeg: Float = 0
+    private(set) var yawDeltaDeg: Float = 0
+    private(set) var pitchDeltaDeg: Float = 0
+    /// Soft warning only — never blocks shutter.
+    private(set) var softMisalignmentWarning = false
 
-    /// Equirect target (right-positive) — converted to iOS yaw for alignment.
+    /// Equirect target from VR long-press (right-positive).
     var targetEquirectYawDeg: Float = 0
     var targetPitchDeg: Float = 0
-    var yawToleranceDeg: Float = 12
-    var pitchToleranceDeg: Float = 12
 
     private var useMock = false
     private var photoInFlight = false
     private var motionAtPhotoRequest: DirectionMotionReading?
-    private var alignedSince: TimeInterval?
-    private let settleSeconds: TimeInterval = 0.35
     private var sessionActive = false
+    /// Bumps on cancel/reset so in-flight photo callbacks are ignored.
+    private var captureGeneration: UInt64 = 0
 
     var onUIUpdate: (() -> Void)?
-    var onCaptured: ((UIImage, Float, Float) -> Void)?
+    var onCaptured: ((UIImage, Float, Float, Float, Float) -> Void)?
 
     func prepareCamera(mockMode: Bool) throws {
         useMock = mockMode
@@ -74,16 +75,9 @@ final class RepairOneShotCaptureEngine: NSObject {
     func start() {
         yawTracker.reset()
         motion.resetReference()
-        didCapture = false
-        capturedImage = nil
-        alignedSince = nil
+        resetCaptureState(keepSession: true)
         sessionActive = true
-        if useMock {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.finishMockCapture()
-            }
-            return
-        }
+        if useMock { return }
         guard !session.isRunning else { return }
         queue.async { [weak self] in self?.session.startRunning() }
         motion.start()
@@ -91,25 +85,104 @@ final class RepairOneShotCaptureEngine: NSObject {
 
     func stop() {
         sessionActive = false
+        captureGeneration &+= 1
+        photoInFlight = false
         if !useMock {
             queue.async { [weak self] in self?.session.stopRunning() }
         }
         motion.stop()
     }
 
-    private func finishMockCapture() {
-        guard !didCapture else { return }
+    /// Cancel: ignore pending photo, clear capture, keep camera usable until dismiss.
+    func cancelPendingPhoto() {
+        captureGeneration &+= 1
+        photoInFlight = false
+        resetCaptureState(keepSession: true)
+        onUIUpdate?()
+    }
+
+    func resetForRetake() {
+        captureGeneration &+= 1
+        photoInFlight = false
+        resetCaptureState(keepSession: true)
+        onUIUpdate?()
+    }
+
+    private func resetCaptureState(keepSession: Bool) {
+        didCapture = false
+        capturedImage = nil
+        capturedYawDeg = 0
+        capturedElevationDeg = 0
+        yawDeltaDeg = 0
+        pitchDeltaDeg = 0
+        softMisalignmentWarning = false
+        motionAtPhotoRequest = nil
+        if !keepSession { sessionActive = false }
+    }
+
+    /// Manual shutter — never gated on yaw/pitch alignment.
+    func captureNow() {
+        guard sessionActive, !photoInFlight, !didCapture else { return }
+        photoInFlight = true
+        let gen = captureGeneration
+        motionAtPhotoRequest = lastMotion
+        refreshDeltas(from: lastMotion)
+
+        if useMock {
+            finishMockCapture(generation: gen)
+            return
+        }
+        let settings = AVCapturePhotoSettings()
+        photoOutput.capturePhoto(with: settings, delegate: self)
+    }
+
+    private func finishMockCapture(generation: UInt64) {
+        guard generation == captureGeneration else {
+            photoInFlight = false
+            return
+        }
         let img = UIImage(systemName: "photo") ?? UIImage()
-        capturedImage = img
-        capturedYawDeg = VRSphereEquirectBridge.iosCaptureYaw(fromEquirectYawDeg: targetEquirectYawDeg)
-        capturedElevationDeg = targetPitchDeg
+        let yaw = lastMotion.relativeYawDeg
+        let elev = lastMotion.elevationDeg
+        applyCapture(image: img, yaw: yaw, elev: elev, generation: generation)
+    }
+
+    private func refreshDeltas(from motion: DirectionMotionReading) {
+        let iosTargetYaw = VRSphereEquirectBridge.iosCaptureYaw(fromEquirectYawDeg: targetEquirectYawDeg)
+        yawDeltaDeg = motion.relativeYawDeg - iosTargetYaw
+        pitchDeltaDeg = motion.elevationDeg - targetPitchDeg
+        softMisalignmentWarning = VRSphereEquirectBridge.shouldSoftWarnMisalignment(
+            yawDeltaDeg: yawDeltaDeg,
+            pitchDeltaDeg: pitchDeltaDeg
+        )
+    }
+
+    private func applyCapture(image: UIImage, yaw: Float, elev: Float, generation: UInt64) {
+        guard generation == captureGeneration else {
+            photoInFlight = false
+            return
+        }
+        capturedImage = image
+        capturedYawDeg = yaw
+        capturedElevationDeg = elev
         didCapture = true
-        onCaptured?(img, capturedYawDeg, capturedElevationDeg)
+        photoInFlight = false
+        let reading = DirectionMotionReading(
+            timestamp: lastMotion.timestamp,
+            relativeYawDeg: yaw,
+            yaw0to360: DirectionCaptureGuide.normalizeYaw0to360(yaw),
+            pitchDeg: lastMotion.pitchDeg,
+            rollDeg: lastMotion.rollDeg,
+            rotationRate: lastMotion.rotationRate,
+            elevationDeg: elev
+        )
+        refreshDeltas(from: reading)
+        onCaptured?(image, yaw, elev, yawDeltaDeg, pitchDeltaDeg)
         onUIUpdate?()
     }
 
     private func processMotionTick() {
-        guard sessionActive, !didCapture else { return }
+        guard sessionActive else { return }
         let m = motion.latest
         let unwrapped = yawTracker.update(rawYawDeg: m.yawDeg)
         lastMotion = DirectionMotionReading(
@@ -121,42 +194,10 @@ final class RepairOneShotCaptureEngine: NSObject {
             rotationRate: m.rotationRate,
             elevationDeg: m.elevationDeg
         )
-        evaluateAlignment(now: CACurrentMediaTime())
-    }
-
-    private func evaluateAlignment(now: TimeInterval) {
-        guard !didCapture, !photoInFlight else { return }
-        let iosTargetYaw = VRSphereEquirectBridge.iosCaptureYaw(fromEquirectYawDeg: targetEquirectYawDeg)
-        let dyaw = abs(lastMotion.relativeYawDeg - iosTargetYaw)
-        let dpitch = abs(lastMotion.elevationDeg - targetPitchDeg)
-        let extreme = DirectionCaptureGuide.isExtremePose(pitchDeg: lastMotion.pitchDeg, rollDeg: lastMotion.rollDeg)
-            || DirectionCaptureGuide.isExtremeRotation(lastMotion.rotationRate)
-
-        let aligned = dyaw <= yawToleranceDeg && dpitch <= pitchToleranceDeg && !extreme
-        isAligned = aligned
-        if aligned {
-            if alignedSince == nil { alignedSince = now }
-            guideText = "좋아요. 잠시만요…"
-            if let since = alignedSince, now - since >= settleSeconds {
-                requestPhoto()
-            }
-        } else {
-            alignedSince = nil
-            guideText = "처음 기록했던 위치에서 화면의 원을 맞춰주세요."
+        if !didCapture {
+            refreshDeltas(from: lastMotion)
+            DispatchQueue.main.async { [weak self] in self?.onUIUpdate?() }
         }
-        DispatchQueue.main.async { [weak self] in self?.onUIUpdate?() }
-    }
-
-    private func requestPhoto() {
-        guard !photoInFlight, !didCapture else { return }
-        photoInFlight = true
-        motionAtPhotoRequest = lastMotion
-        if useMock {
-            finishMockCapture()
-            return
-        }
-        let settings = AVCapturePhotoSettings()
-        photoOutput.capturePhoto(with: settings, delegate: self)
     }
 }
 
@@ -176,24 +217,24 @@ extension RepairOneShotCaptureEngine: AVCapturePhotoCaptureDelegate {
         didFinishProcessingPhoto photo: AVCapturePhoto,
         error: Error?
     ) {
-        defer { photoInFlight = false }
+        let gen = captureGeneration
+        defer {
+            if gen == captureGeneration { photoInFlight = false }
+        }
+        guard gen == captureGeneration else { return }
         guard error == nil,
               let data = photo.fileDataRepresentation(),
               let image = UIImage(data: data)
         else { return }
 
         let m = motionAtPhotoRequest ?? lastMotion
-        let yaw = m.relativeYawDeg
-        let elev = m.elevationDeg
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.didCapture else { return }
-            self.capturedImage = image
-            self.capturedYawDeg = yaw
-            self.capturedElevationDeg = elev
-            self.didCapture = true
-            self.guideText = "촬영 완료"
-            self.onCaptured?(image, yaw, elev)
-            self.onUIUpdate?()
+            self?.applyCapture(
+                image: image,
+                yaw: m.relativeYawDeg,
+                elev: m.elevationDeg,
+                generation: gen
+            )
         }
     }
 }

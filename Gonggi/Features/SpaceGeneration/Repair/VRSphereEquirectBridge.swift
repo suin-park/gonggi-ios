@@ -72,4 +72,12 @@ enum VRSphereEquirectBridge {
     static func shortestDeltaDeg(from: Float, to: Float) -> Float {
         normalizeYawDeg(to - from)
     }
+
+    /// Soft warning thresholds — never block shutter.
+    static let softWarnYawDeltaDeg: Float = 35
+    static let softWarnPitchDeltaDeg: Float = 28
+
+    static func shouldSoftWarnMisalignment(yawDeltaDeg: Float, pitchDeltaDeg: Float) -> Bool {
+        abs(yawDeltaDeg) > softWarnYawDeltaDeg || abs(pitchDeltaDeg) > softWarnPitchDeltaDeg
+    }
 }

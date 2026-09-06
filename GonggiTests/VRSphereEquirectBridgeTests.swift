@@ -62,4 +62,15 @@ final class VRSphereEquirectBridgeTests: XCTestCase {
         XCTAssertEqual(yaw, 0, accuracy: 1)
         XCTAssertEqual(pitch, 0, accuracy: 1)
     }
+
+    func testSoftWarnDoesNotTriggerNearTarget() {
+        XCTAssertFalse(VRSphereEquirectBridge.shouldSoftWarnMisalignment(yawDeltaDeg: 10, pitchDeltaDeg: 8))
+        XCTAssertFalse(VRSphereEquirectBridge.shouldSoftWarnMisalignment(yawDeltaDeg: 35, pitchDeltaDeg: 28))
+    }
+
+    func testSoftWarnTriggersFarFromTarget() {
+        XCTAssertTrue(VRSphereEquirectBridge.shouldSoftWarnMisalignment(yawDeltaDeg: 36, pitchDeltaDeg: 0))
+        XCTAssertTrue(VRSphereEquirectBridge.shouldSoftWarnMisalignment(yawDeltaDeg: 0, pitchDeltaDeg: 29))
+        XCTAssertTrue(VRSphereEquirectBridge.shouldSoftWarnMisalignment(yawDeltaDeg: -40, pitchDeltaDeg: -30))
+    }
 }
