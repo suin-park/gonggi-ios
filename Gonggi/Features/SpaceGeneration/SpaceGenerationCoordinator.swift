@@ -13,7 +13,8 @@ final class SpaceGenerationCoordinator: ObservableObject {
     private var sourceFiles: [(direction: String, fileURL: URL)] = []
     private var pollTask: Task<Void, Never>?
     private var generationStarted = false
-    private let maxWaitSec: TimeInterval = 180
+    /// OpenAI 3840×1920 can take ~80–120s; allow up to 5 minutes total after create returns.
+    private let maxWaitSec: TimeInterval = 300
 
     private static let persistenceKey = "gonggi.spaceRecord.active"
 
@@ -53,7 +54,7 @@ final class SpaceGenerationCoordinator: ObservableObject {
     }
 
     func retryGenerate() {
-        guard !sourceFiles.isEmpty, let sessionId else {
+        guard !sourceFiles.isEmpty, sessionId != nil else {
             state = .failed(.captureIncomplete)
             return
         }
@@ -61,8 +62,41 @@ final class SpaceGenerationCoordinator: ObservableObject {
         generationStarted = true
         state = .preparing
         localLatLongURL = nil
-        _ = sessionId
-        Task { await self.uploadAndPoll(regenerate: true) }
+        // Never auto-regenerate on client timeout alone: resume in-flight / completed jobs first.
+        Task { await self.resumeOrRegenerate() }
+    }
+
+    /// Resume polling when backend is still working or already completed; regenerate only on failed.
+    private func resumeOrRegenerate() async {
+        guard let api else {
+            state = .failed(.network)
+            generationStarted = false
+            return
+        }
+        if let jobId {
+            do {
+                let status = try await api.fetchStatus(jobId: jobId)
+                switch status.status {
+                case "completed":
+                    if let urlString = status.imageUrl {
+                        state = .loadingResult
+                        await finishWithRemoteURL(urlString, width: status.width, height: status.height)
+                        return
+                    }
+                case "generating", "queued", "preprocessing", "uploaded":
+                    state = .generating
+                    await pollUntilDone(jobId: jobId, startedAt: Date())
+                    return
+                case "failed":
+                    break
+                default:
+                    break
+                }
+            } catch {
+                // Fall through to explicit regenerate only if status is unreachable.
+            }
+        }
+        await uploadAndPoll(regenerate: true)
     }
 
     func resetForRecapture() {
@@ -206,12 +240,11 @@ final class SpaceGenerationCoordinator: ObservableObject {
             generationStarted = false
             return
         }
-        if let width, let height, (width != 2048 || height != 1024) {
-            if remote.scheme?.hasPrefix("http") == true {
-                state = .failed(.invalidResult)
-                generationStarted = false
-                return
-            }
+        // Accept any equirect 2:1 latlong (Build 38/39: 2048×1024, Build 41+: 3840×1920).
+        if let width, let height, !Self.isValidLatLongSize(width: width, height: height) {
+            state = .failed(.invalidResult)
+            generationStarted = false
+            return
         }
 
         let dest = FileManager.default.temporaryDirectory
@@ -243,5 +276,11 @@ final class SpaceGenerationCoordinator: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: obj) {
             UserDefaults.standard.set(data, forKey: Self.persistenceKey)
         }
+    }
+
+    /// Equirectangular latlong: width == 2×height, within production size bounds.
+    static func isValidLatLongSize(width: Int, height: Int) -> Bool {
+        guard width > 0, height > 0, width == height * 2 else { return false }
+        return width >= 1024 && width <= 8192
     }
 }

@@ -96,7 +96,8 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 120
+        // Upload of 10 photos can be slow; generation itself is polled via /status.
+        request.timeoutInterval = 180
 
         var body = Data()
         func appendField(name: String, value: String) {

@@ -76,6 +76,13 @@ final class SpaceGenerationCoordinatorTests: XCTestCase {
         CaptureSessionStore.deleteSession(sessionId: result.sessionId)
     }
 
+    func testLatLongSizeAccepts3840x1920() {
+        XCTAssertTrue(SpaceGenerationCoordinator.isValidLatLongSize(width: 3840, height: 1920))
+        XCTAssertTrue(SpaceGenerationCoordinator.isValidLatLongSize(width: 2048, height: 1024))
+        XCTAssertFalse(SpaceGenerationCoordinator.isValidLatLongSize(width: 1920, height: 1080))
+        XCTAssertFalse(SpaceGenerationCoordinator.isValidLatLongSize(width: 1024, height: 1024))
+    }
+
     // MARK: - Helpers
 
     private func makeResult(missing: DirectionName?) throws -> DirectionCaptureResult {
