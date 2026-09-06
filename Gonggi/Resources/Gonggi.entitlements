@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>aps-environment</key>
-	<string>development</string>
+	<!-- Build 44: aps-environment deferred until App Store profile includes Push Notifications.
+	     Push registration/deep-link code remains; send is server-side fail-safe. -->
 </dict>
 </plist>
