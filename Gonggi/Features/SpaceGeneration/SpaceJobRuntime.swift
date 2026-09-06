@@ -116,6 +116,7 @@ final class SpaceJobRuntime: ObservableObject {
         guard let api else { return }
         do {
             let response = try await api.create(sessionId: sessionId, imageFiles: files)
+            // Persist jobId immediately — do not require latlong / dimensions yet.
             store.update(jobId: sessionId) { job in
                 job.jobId = response.jobId
                 job.sessionId = response.sessionId
@@ -125,7 +126,8 @@ final class SpaceJobRuntime: ObservableObject {
             await refreshStatus(jobId: response.jobId)
             resumePolling()
         } catch {
-            // Network/upload failure is local — do not invent a server failed job if we never got a jobId.
+            // Only mark local failed when we never obtained a server jobId.
+            // Transient network after jobId exists must not flip a live server job to failed.
             store.update(jobId: sessionId) { job in
                 if job.serverStatus == "uploading" {
                     job.serverStatus = "failed"

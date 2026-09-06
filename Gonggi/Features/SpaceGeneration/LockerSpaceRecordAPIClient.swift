@@ -14,10 +14,11 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         sessionId: String,
         imageFiles: [(direction: String, fileURL: URL)]
     ) async throws -> SpaceRecordCreateResponse {
-        try await postMultipart(
+        let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(imageFiles, sessionId: sessionId)
+        return try await postMultipart(
             path: "/api/gonggi/space-record/create",
             sessionId: sessionId,
-            imageFiles: imageFiles
+            imageFiles: prepared
         )
     }
 
@@ -25,10 +26,11 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         sessionId: String,
         imageFiles: [(direction: String, fileURL: URL)]
     ) async throws -> SpaceRecordCreateResponse {
-        try await postMultipart(
+        let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(imageFiles, sessionId: sessionId)
+        return try await postMultipart(
             path: "/api/gonggi/space-record/regenerate",
             sessionId: sessionId,
-            imageFiles: imageFiles
+            imageFiles: prepared
         )
     }
 
@@ -47,7 +49,9 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw SpaceRecordClientError.network }
-        guard http.statusCode == 200 else { throw SpaceRecordClientError.server("status \(http.statusCode)") }
+        guard (200..<300).contains(http.statusCode) else {
+            throw SpaceRecordClientError.server("status \(http.statusCode)")
+        }
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let ok = json["ok"] as? Bool, ok,
@@ -75,7 +79,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
 
     func downloadImage(from url: URL, to destination: URL) async throws {
         let (tempURL, response) = try await session.download(from: url)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw SpaceRecordClientError.network
         }
         try? FileManager.default.removeItem(at: destination)
@@ -121,15 +125,24 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
+        // Force POST again after body assignment (defensive against URLRequest quirks).
+        request.httpMethod = "POST"
 
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw SpaceRecordClientError.network }
 
+        if http.statusCode == 413 {
+            throw SpaceRecordClientError.server("payload_too_large")
+        }
+
+        // Async create returns 202 Accepted — treat all 2xx as success.
+        let httpOK = (200..<300).contains(http.statusCode)
+
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw SpaceRecordClientError.invalidResponse
         }
-        if http.statusCode >= 400 || (json["ok"] as? Bool) == false {
-            let code = json["errorCode"] as? String ?? "server"
+        if !httpOK || (json["ok"] as? Bool) == false {
+            let code = json["errorCode"] as? String ?? "server_\(http.statusCode)"
             if code == "capture_incomplete" { throw SpaceRecordClientError.captureIncomplete }
             throw SpaceRecordClientError.server(code)
         }
@@ -139,6 +152,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         else {
             throw SpaceRecordClientError.invalidResponse
         }
+        // Create success = jobId received. resultUrl / dimensions are NOT required here.
         return SpaceRecordCreateResponse(sessionId: sid, jobId: jobId, status: status)
     }
 }

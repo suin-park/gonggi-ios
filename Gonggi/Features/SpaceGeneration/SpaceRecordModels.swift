@@ -30,12 +30,15 @@ enum SpaceRecordFailure: Error, Equatable {
     }
 }
 
+/// Create success requires jobId only — never latlong URL / dimensions.
+/// Status polling handles completed results separately.
 struct SpaceRecordCreateResponse: Equatable {
     var sessionId: String
     var jobId: String
     var status: String
 }
 
+/// Status / completed payload (result fields optional until completed).
 struct SpaceRecordStatusResponse: Equatable {
     var status: String
     var imageUrl: String?
