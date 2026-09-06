@@ -86,6 +86,19 @@ enum GonggiColors {
         case .draft: return textTertiary
         }
     }
+
+    static func statusColor(forBadge badge: SpaceRepairBadge, fallback status: SpaceGenerationStatus) -> Color {
+        switch badge {
+        case .none:
+            return statusColor(for: status)
+        case .repairing:
+            return accentTeal
+        case .repaired:
+            return successGreen
+        case .repairFailed:
+            return error
+        }
+    }
 }
 
 // MARK: - Spacing

@@ -510,7 +510,7 @@ struct MemoryArchiveCard: View {
                             .padding(.top, 2)
                     }
                     HStack {
-                        Text(ctaTitle(for: space.status))
+                        Text(ctaTitle(for: space))
                             .font(GonggiTypography.caption(14))
                             .foregroundStyle(
                                 space.status == .failed
@@ -537,11 +537,12 @@ struct MemoryArchiveCard: View {
             .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
         }
         .buttonStyle(GonggiPressableStyle(scale: 0.98))
-        .accessibilityLabel("\(space.name), \(space.capturedAt.formatted(date: .abbreviated, time: .omitted)), \(space.status.label)")
+        .accessibilityLabel("\(space.name), \(space.capturedAt.formatted(date: .abbreviated, time: .omitted)), \(space.statusBadgeLabel)")
     }
 
-    private func ctaTitle(for status: SpaceGenerationStatus) -> String {
-        switch status {
+    private func ctaTitle(for space: SpaceRecord) -> String {
+        if space.canOpenExistingVR { return "공간 보기" }
+        switch space.status {
         case .ready: return "공간 보기"
         case .failed: return "다시 시도"
         case .processing, .uploading: return "진행 상태"
@@ -565,11 +566,11 @@ struct MemoryArchiveCard: View {
                 startRadius: 10,
                 endRadius: 120
             )
-            if space.status == .processing || space.status == .uploading {
+            if space.showsActivityIndicator {
                 VStack(spacing: 10) {
                     ProgressView()
                         .tint(GonggiColors.accentTeal)
-                    Text(space.note ?? "공간을 만들고 있어요")
+                    Text(space.note ?? space.statusBadgeLabel)
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
@@ -587,11 +588,11 @@ struct MemoryArchiveCard: View {
     private var statusChip: some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(GonggiColors.statusColor(for: space.status))
+                .fill(GonggiColors.statusColor(forBadge: space.repairBadge, fallback: space.status))
                 .frame(width: 6, height: 6)
-            Text(space.status.label)
+            Text(space.statusBadgeLabel)
                 .font(GonggiTypography.label(11))
-                .foregroundStyle(GonggiColors.statusColor(for: space.status))
+                .foregroundStyle(GonggiColors.statusColor(forBadge: space.repairBadge, fallback: space.status))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)

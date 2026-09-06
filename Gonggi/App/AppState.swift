@@ -37,7 +37,18 @@ final class AppState: ObservableObject {
         store.onChange = { [weak self] in
             self?.rebuildSpaces()
         }
+        NotificationCenter.default.addObserver(
+            forName: .gonggiSpaceRepairStoreDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.rebuildSpaces()
+        }
         rebuildSpaces()
+        Task {
+            await SpaceRepairRuntime.shared.syncActiveRepairs()
+            rebuildSpaces()
+        }
 
         #if DEBUG
         if let screen = ScreenshotLaunchConfig.screen {
@@ -118,6 +129,7 @@ final class AppState: ObservableObject {
             Task {
                 await jobRuntime.syncActiveJobsOnce()
                 await SpaceRepairRuntime.shared.syncActiveRepairs()
+                rebuildSpaces()
             }
         }
     }
@@ -141,7 +153,9 @@ final class AppState: ObservableObject {
     }
 
     func rebuildSpaces() {
-        let live = jobStore.jobs.map { $0.asSpaceRecord() }
+        let live = jobStore.jobs.map { job in
+            SpaceRepairCardPresentation.enrich(job.asSpaceRecord())
+        }
         #if DEBUG
         if ScreenshotLaunchConfig.isActive {
             spaces = live.isEmpty ? SpaceRecord.sampleArchive : live

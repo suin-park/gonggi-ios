@@ -206,6 +206,23 @@ enum SpaceGenerationStatus: String, CaseIterable {
     }
 }
 
+/// Selective-repair overlay on an otherwise ready space card (does not replace base generation status).
+enum SpaceRepairBadge: String, Equatable, Hashable {
+    case none
+    case repairing
+    case repaired
+    case repairFailed
+
+    var label: String {
+        switch self {
+        case .none: return ""
+        case .repairing: return "수정 중"
+        case .repaired: return "수정 완료"
+        case .repairFailed: return "수정 실패"
+        }
+    }
+}
+
 struct SpaceRecord: Identifiable, Equatable, Hashable {
     let id: String
     var name: String
@@ -217,6 +234,23 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
     var localLatLongPath: String? = nil
     var sessionId: String? = nil
     var remoteImageURL: String? = nil
+    /// Overlay for selective repair; base `status` stays `.ready` while repairing/failed repair.
+    var repairBadge: SpaceRepairBadge = .none
+
+    /// Card / detail badge text.
+    var statusBadgeLabel: String {
+        if repairBadge != .none { return repairBadge.label }
+        return status.label
+    }
+
+    var showsActivityIndicator: Bool {
+        status == .processing || status == .uploading || repairBadge == .repairing
+    }
+
+    /// Ready enough to open VR (including while a repair is in flight / after repair failure).
+    var canOpenExistingVR: Bool {
+        status == .ready
+    }
 
     static let sampleArchive: [SpaceRecord] = [
         SpaceRecord(

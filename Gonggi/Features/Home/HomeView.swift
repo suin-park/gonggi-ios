@@ -116,7 +116,7 @@ struct HomeView: View {
                         RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
                             .fill(GonggiColors.surface)
                             .frame(width: 56, height: 56)
-                        if space.status == .processing || space.status == .uploading {
+                        if space.showsActivityIndicator {
                             ProgressView()
                                 .tint(GonggiColors.accentTeal)
                         } else {
@@ -129,10 +129,10 @@ struct HomeView: View {
                         Text(space.name)
                             .font(GonggiTypography.headline(16))
                             .foregroundStyle(GonggiColors.textPrimary)
-                        Text(space.note ?? space.status.label)
+                        Text(space.note ?? space.statusBadgeLabel)
                             .font(GonggiTypography.caption(12))
                             .foregroundStyle(
-                                space.status == .failed
+                                space.repairBadge == .repairFailed || space.status == .failed
                                     ? GonggiColors.error
                                     : GonggiColors.textTertiary
                             )
@@ -158,6 +158,7 @@ struct HomeView: View {
         selectedSpace = space
         switch space.status {
         case .ready:
+            // Includes repairing / repaired / repairFailed overlays — open latest successful revision.
             Task { await openViewer(jobId: space.id) }
         case .failed:
             appState.retrySpaceGeneration(jobId: space.id)

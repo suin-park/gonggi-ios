@@ -185,12 +185,12 @@ struct SpaceDetailView: View {
     private var statusBadge: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(GonggiColors.statusColor(for: space.status))
+                .fill(GonggiColors.statusColor(forBadge: space.repairBadge, fallback: space.status))
                 .frame(width: 7, height: 7)
-            Text(space.status.label)
+            Text(space.statusBadgeLabel)
         }
         .font(GonggiTypography.caption(13))
-        .foregroundStyle(GonggiColors.statusColor(for: space.status))
+        .foregroundStyle(GonggiColors.statusColor(forBadge: space.repairBadge, fallback: space.status))
         .padding(.horizontal, GonggiSpacing.sm)
         .padding(.vertical, GonggiSpacing.xs)
         .background(GonggiColors.backgroundPrimary.opacity(0.65))
