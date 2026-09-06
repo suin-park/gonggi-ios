@@ -23,6 +23,9 @@ struct VRSphereSpaceView: View {
     @State private var textureURL: URL
     @State private var textureGeneration: Int = 0
     @State private var uploadError: String?
+    @State private var showSelectiveRepairHint = false
+    @State private var selectiveRepairHintOpacity: Double = 0
+    @State private var selectiveRepairHintTask: Task<Void, Never>?
 
     init(
         imageURL: URL,
@@ -53,6 +56,7 @@ struct VRSphereSpaceView: View {
                     ?? Double(VRSphereEquirectBridge.defaultPitchRadiusDeg)),
                 onLongPress: { yaw, pitch in
                     GonggiHaptics.medium()
+                    markSelectiveRepairHintSeenAndHide()
                     let target = RepairTarget.make(
                         sessionId: sessionId,
                         baseRevisionId: baseRevisionId,
@@ -86,6 +90,18 @@ struct VRSphereSpaceView: View {
             }
             .padding(.leading, 16)
             .padding(.top, 12)
+            .zIndex(2)
+
+            if showSelectiveRepairHint {
+                SelectiveRepairHintPill()
+                    .opacity(selectiveRepairHintOpacity)
+                    .padding(.horizontal, 64)
+                    .padding(.top, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(selectiveRepairHintOpacity < 0.05)
+                    .zIndex(1)
+            }
 
             if VRSphereEquirectBridge.debugOverlayEnabled,
                let my = markerYawDeg,
@@ -125,6 +141,11 @@ struct VRSphereSpaceView: View {
             if let url = repairController.completedTextureURL {
                 applyCompletedTexture(url)
             }
+            presentSelectiveRepairHintIfNeeded()
+        }
+        .onDisappear {
+            selectiveRepairHintTask?.cancel()
+            selectiveRepairHintTask = nil
         }
         .sheet(isPresented: $showConfirmSheet, onDismiss: {
             if captureTarget == nil {
@@ -225,6 +246,41 @@ struct VRSphereSpaceView: View {
             .padding(.vertical, 10)
             .background(Color.black.opacity(0.65))
             .clipShape(Capsule())
+        }
+    }
+
+    private func presentSelectiveRepairHintIfNeeded() {
+        guard !SelectiveRepairHintPreferences.hasSeen else { return }
+        SelectiveRepairHintPreferences.markSeen()
+        showSelectiveRepairHint = true
+        selectiveRepairHintOpacity = 0
+        selectiveRepairHintTask?.cancel()
+        selectiveRepairHintTask = Task { @MainActor in
+            withAnimation(.easeIn(duration: SelectiveRepairHintPreferences.fadeInDurationSeconds)) {
+                selectiveRepairHintOpacity = 1
+            }
+            let holdNs = UInt64(SelectiveRepairHintPreferences.displayDurationSeconds * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: holdNs)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: SelectiveRepairHintPreferences.fadeOutDurationSeconds)) {
+                selectiveRepairHintOpacity = 0
+            }
+            let fadeNs = UInt64(SelectiveRepairHintPreferences.fadeOutDurationSeconds * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: fadeNs)
+            guard !Task.isCancelled else { return }
+            showSelectiveRepairHint = false
+        }
+    }
+
+    private func markSelectiveRepairHintSeenAndHide() {
+        SelectiveRepairHintPreferences.markSeen()
+        selectiveRepairHintTask?.cancel()
+        selectiveRepairHintTask = nil
+        if showSelectiveRepairHint {
+            withAnimation(.easeOut(duration: 0.2)) {
+                selectiveRepairHintOpacity = 0
+            }
+            showSelectiveRepairHint = false
         }
     }
 
