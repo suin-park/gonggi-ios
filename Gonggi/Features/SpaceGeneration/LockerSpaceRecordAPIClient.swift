@@ -129,6 +129,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         appendField(name: "radiusYawDeg", value: String(radiusYawDeg))
         appendField(name: "radiusPitchDeg", value: String(radiusPitchDeg))
         appendField(name: "repairMode", value: repairMode)
+        appendField(name: "compareModes", value: "1")
         appendField(name: "capturedYawDeg", value: String(capturedYawDeg))
         appendField(name: "capturedElevationDeg", value: String(capturedElevationDeg))
         appendField(name: "captureMetadata", value: captureMetadataJSON)

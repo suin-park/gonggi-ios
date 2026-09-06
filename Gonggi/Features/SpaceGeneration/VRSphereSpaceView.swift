@@ -145,7 +145,7 @@ struct VRSphereSpaceView: View {
                 image: image,
                 capturedYawDeg: yaw,
                 capturedElevationDeg: elev,
-                repairMode: "ai_local_repair"
+                repairMode: "ai_local_repair" // compareModes=1 → Mode A + Mode B from one capture
             )
             let done = try await repairRuntime.pollUntilComplete(
                 repairJobId: job.repairJobId,
