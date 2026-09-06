@@ -115,6 +115,39 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
         XCTAssertLessThanOrEqual(pixelLong, SpaceRecordUploadPreparer.maxLongEdge + 1)
     }
 
+    /// Phone-sized captures with room-like detail → compress → multipart soft budget ≤ 4.0MB.
+    func testUploadPayloadBudgetTenPhonePhotos() throws {
+        let files = try makeTenPhoneLikeFiles(sessionId: "dir-budget")
+        let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(files, sessionId: "dir-budget")
+        let report = prepared.report
+
+        XCTAssertEqual(report.images.count, DirectionName.captureOrder.count)
+        for stat in report.images {
+            XCTAssertGreaterThan(stat.byteCount, 0)
+            XCTAssertLessThanOrEqual(max(stat.width, stat.height), Int(SpaceRecordUploadPreparer.maxLongEdge) + 1)
+        }
+
+        XCTAssertTrue(report.summary.contains("totalImages:"))
+        XCTAssertTrue(report.summary.contains("estimatedMultipart:"))
+        XCTAssertEqual(
+            SpaceRecordUploadPreparer.estimatedMultipartBytes(prepared.files),
+            report.estimatedMultipartBytes
+        )
+
+        print(report.summary)
+
+        XCTAssertLessThan(
+            report.estimatedMultipartBytes,
+            4_500_000,
+            "multipart must stay under Vercel ~4.5MB hard limit"
+        )
+        XCTAssertLessThanOrEqual(
+            report.estimatedMultipartBytes,
+            SpaceRecordUploadPreparer.preferredMultipartBudgetBytes,
+            "multipart \(report.estimatedMultipartBytes) exceeds 4.0MB soft budget; consider q=0.82 or long-edge 1440"
+        )
+    }
+
     func test413MapsToPayloadTooLarge() async {
         let session = MockURLProtocol.makeSession { _ in
             (413, Data())
@@ -146,14 +179,89 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
         return files
     }
 
+    /// Approximate iPhone capture dims with room-like detail (not solid fill, not pure noise).
+    private func makeTenPhoneLikeFiles(sessionId: String) throws -> [(direction: String, fileURL: URL)] {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(sessionId, isDirectory: true)
+        try? FileManager.default.removeItem(at: dir)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var files: [(direction: String, fileURL: URL)] = []
+        for (idx, name) in DirectionName.captureOrder.enumerated() {
+            let url = dir.appendingPathComponent(name.fileName)
+            let w = idx % 2 == 0 ? 3024 : 4032
+            let h = idx % 2 == 0 ? 4032 : 3024
+            try makePhoneLikeJPEG(width: w, height: h, quality: 0.92, seed: UInt64(idx + 7)).write(to: url)
+            files.append((direction: name.rawValue, fileURL: url))
+        }
+        return files
+    }
+
     private func makeJPEG(width: Int, height: Int, quality: CGFloat) -> Data {
         let size = CGSize(width: width, height: height)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let image = renderer.image { ctx in
             UIColor.darkGray.setFill()
             ctx.fill(CGRect(origin: .zero, size: size))
         }
         return image.jpegData(compressionQuality: quality)!
+    }
+
+    private func makePhoneLikeJPEG(width: Int, height: Int, quality: CGFloat, seed: UInt64) -> Data {
+        let size = CGSize(width: width, height: height)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        var rng = SeededGenerator(seed: seed)
+        let image = renderer.image { ctx in
+            let cg = ctx.cgContext
+            let colors = [
+                UIColor(red: 0.55, green: 0.58, blue: 0.62, alpha: 1),
+                UIColor(red: 0.72, green: 0.68, blue: 0.60, alpha: 1),
+                UIColor(red: 0.35, green: 0.40, blue: 0.45, alpha: 1),
+            ]
+            let midY = CGFloat(height) * 0.55
+            cg.setFillColor(colors[0].cgColor)
+            cg.fill(CGRect(x: 0, y: 0, width: width, height: Int(midY)))
+            cg.setFillColor(colors[1].cgColor)
+            cg.fill(CGRect(x: 0, y: Int(midY), width: width, height: height - Int(midY)))
+
+            for _ in 0..<48 {
+                let rw = Int.random(in: 80...420, using: &rng)
+                let rh = Int.random(in: 80...520, using: &rng)
+                let rx = Int.random(in: 0...max(1, width - rw), using: &rng)
+                let ry = Int.random(in: 0...max(1, height - rh), using: &rng)
+                let shade = CGFloat.random(in: 0.2...0.9, using: &rng)
+                cg.setFillColor(UIColor(white: shade, alpha: 0.85).cgColor)
+                cg.fill(CGRect(x: rx, y: ry, width: rw, height: rh))
+            }
+            // Mild high-frequency grain so JPEG is not unrealistically tiny.
+            let tile = 48
+            var y = 0
+            while y < height {
+                var x = 0
+                while x < width {
+                    let a = CGFloat.random(in: 0.02...0.08, using: &rng)
+                    cg.setFillColor(UIColor(white: CGFloat.random(in: 0...1, using: &rng), alpha: a).cgColor)
+                    cg.fill(CGRect(x: x, y: y, width: tile, height: tile))
+                    x += tile
+                }
+                y += tile
+            }
+        }
+        return image.jpegData(compressionQuality: quality)!
+    }
+}
+
+private struct SeededGenerator: RandomNumberGenerator {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed == 0 ? 0x9E3779B97F4A7C15 : seed }
+    mutating func next() -> UInt64 {
+        state &+= 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
     }
 }
 

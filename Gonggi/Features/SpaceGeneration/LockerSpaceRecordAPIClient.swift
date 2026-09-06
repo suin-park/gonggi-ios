@@ -18,7 +18,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         return try await postMultipart(
             path: "/api/gonggi/space-record/create",
             sessionId: sessionId,
-            imageFiles: prepared
+            imageFiles: prepared.files
         )
     }
 
@@ -30,7 +30,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         return try await postMultipart(
             path: "/api/gonggi/space-record/regenerate",
             sessionId: sessionId,
-            imageFiles: prepared
+            imageFiles: prepared.files
         )
     }
 
@@ -124,6 +124,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
             body.append("\r\n".data(using: .utf8)!)
         }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        SpaceRecordUploadLog.multipartBodyBytes(body.count, sessionId: sessionId)
         request.httpBody = body
         // Force POST again after body assignment (defensive against URLRequest quirks).
         request.httpMethod = "POST"
