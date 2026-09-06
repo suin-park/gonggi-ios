@@ -12,25 +12,29 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
 
     func create(
         sessionId: String,
-        imageFiles: [(direction: String, fileURL: URL)]
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
         let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(imageFiles, sessionId: sessionId)
         return try await postMultipart(
             path: "/api/gonggi/space-record/create",
             sessionId: sessionId,
-            imageFiles: prepared.files
+            imageFiles: prepared.files,
+            captureMetadataJSON: captureMetadataJSON
         )
     }
 
     func regenerate(
         sessionId: String,
-        imageFiles: [(direction: String, fileURL: URL)]
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
         let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(imageFiles, sessionId: sessionId)
         return try await postMultipart(
             path: "/api/gonggi/space-record/regenerate",
             sessionId: sessionId,
-            imageFiles: prepared.files
+            imageFiles: prepared.files,
+            captureMetadataJSON: captureMetadataJSON
         )
     }
 
@@ -89,7 +93,8 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
     private func postMultipart(
         path: String,
         sessionId: String,
-        imageFiles: [(direction: String, fileURL: URL)]
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
         let endpoint = config.apiBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             + path
@@ -100,7 +105,6 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        // Upload of 20 photos can be slow; generation itself is polled via /status.
         request.timeoutInterval = 180
 
         var body = Data()
@@ -111,6 +115,9 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         }
         appendField(name: "sessionId", value: sessionId)
         appendField(name: "installationId", value: GonggiInstallation.id)
+        if let captureMetadataJSON, !captureMetadataJSON.isEmpty {
+            appendField(name: "captureMetadata", value: captureMetadataJSON)
+        }
 
         for item in imageFiles {
             let data = try Data(contentsOf: item.fileURL)
@@ -127,7 +134,6 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         SpaceRecordUploadLog.multipartBodyBytes(body.count, sessionId: sessionId)
         request.httpBody = body
-        // Force POST again after body assignment (defensive against URLRequest quirks).
         request.httpMethod = "POST"
 
         let (data, response) = try await session.data(for: request)
@@ -137,7 +143,6 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
             throw SpaceRecordClientError.server("payload_too_large")
         }
 
-        // Async create returns 202 Accepted — treat all 2xx as success.
         let httpOK = (200..<300).contains(http.statusCode)
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -154,7 +159,6 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         else {
             throw SpaceRecordClientError.invalidResponse
         }
-        // Create success = jobId received. resultUrl / dimensions are NOT required here.
         return SpaceRecordCreateResponse(sessionId: sid, jobId: jobId, status: status)
     }
 }

@@ -10,6 +10,7 @@ final class SpaceJobRuntime: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var uploadTasks: [String: Task<Void, Never>] = [:]
     private var sourceFilesBySession: [String: [(direction: String, fileURL: URL)]] = [:]
+    private var captureMetadataBySession: [String: String] = [:]
     private var isForeground = true
 
     init(store: SpaceJobStore = .shared) {
@@ -61,6 +62,9 @@ final class SpaceJobRuntime: ObservableObject {
             return
         case .success(let files):
             sourceFilesBySession[result.sessionId] = files
+            if let meta = try? SpaceCaptureMetadataBuilder.jsonString(from: result.report) {
+                captureMetadataBySession[result.sessionId] = meta
+            }
             let pending = SpaceJobRecord(
                 sessionId: result.sessionId,
                 jobId: result.sessionId,
@@ -163,7 +167,12 @@ final class SpaceJobRuntime: ObservableObject {
     private func uploadCreate(sessionId: String, files: [(direction: String, fileURL: URL)]) async {
         guard let api else { return }
         do {
-            let response = try await api.create(sessionId: sessionId, imageFiles: files)
+            let meta = captureMetadataBySession[sessionId] ?? Self.loadCaptureMetadataJSON(sessionId: sessionId)
+            let response = try await api.create(
+                sessionId: sessionId,
+                imageFiles: files,
+                captureMetadataJSON: meta
+            )
             store.update(jobId: sessionId) { job in
                 job.jobId = response.jobId
                 job.sessionId = response.sessionId
@@ -183,7 +192,12 @@ final class SpaceJobRuntime: ObservableObject {
     private func uploadRegenerate(sessionId: String, files: [(direction: String, fileURL: URL)]) async {
         guard let api else { return }
         do {
-            let response = try await api.regenerate(sessionId: sessionId, imageFiles: files)
+            let meta = captureMetadataBySession[sessionId] ?? Self.loadCaptureMetadataJSON(sessionId: sessionId)
+            let response = try await api.regenerate(
+                sessionId: sessionId,
+                imageFiles: files,
+                captureMetadataJSON: meta
+            )
             store.update(jobId: sessionId) { job in
                 job.jobId = response.jobId
                 job.serverStatus = Self.normalizeStatus(response.status)
@@ -343,5 +357,20 @@ final class SpaceJobRuntime: ObservableObject {
             files.append((direction: name.rawValue, fileURL: url))
         }
         return files.count == DirectionName.requiredCount ? files : nil
+    }
+
+    /// Rebuild captureMetadata from on-disk capture_report.json when retrying after process death.
+    private static func loadCaptureMetadataJSON(sessionId: String) -> String? {
+        guard let dir = try? CaptureSessionStore.createDirectionCaptureDirectory(sessionId: sessionId) else {
+            return nil
+        }
+        let reportURL = dir.appendingPathComponent("capture_report.json")
+        guard let data = try? Data(contentsOf: reportURL),
+              let report = try? JSONDecoder().decode(DirectionCaptureReport.self, from: data),
+              let json = try? SpaceCaptureMetadataBuilder.jsonString(from: report)
+        else {
+            return nil
+        }
+        return json
     }
 }

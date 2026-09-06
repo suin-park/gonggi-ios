@@ -7,11 +7,13 @@ actor MockSpaceRecordAPIClient: SpaceRecordAPIClienting {
 
     func create(
         sessionId: String,
-        imageFiles: [(direction: String, fileURL: URL)]
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
         guard imageFiles.count == DirectionName.requiredCount else {
             throw SpaceRecordClientError.captureIncomplete
         }
+        _ = captureMetadataJSON
         try await Task.sleep(nanoseconds: 300_000_000)
         let jobId = sessionId
         jobs[jobId] = SpaceRecordStatusResponse(status: "generating")
@@ -21,9 +23,10 @@ actor MockSpaceRecordAPIClient: SpaceRecordAPIClienting {
 
     func regenerate(
         sessionId: String,
-        imageFiles: [(direction: String, fileURL: URL)]
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
-        try await create(sessionId: sessionId, imageFiles: imageFiles)
+        try await create(sessionId: sessionId, imageFiles: imageFiles, captureMetadataJSON: captureMetadataJSON)
     }
 
     func fetchStatus(jobId: String) async throws -> SpaceRecordStatusResponse {

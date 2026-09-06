@@ -48,8 +48,16 @@ struct SpaceRecordStatusResponse: Equatable {
 }
 
 protocol SpaceRecordAPIClienting: Sendable {
-    func create(sessionId: String, imageFiles: [(direction: String, fileURL: URL)]) async throws -> SpaceRecordCreateResponse
-    func regenerate(sessionId: String, imageFiles: [(direction: String, fileURL: URL)]) async throws -> SpaceRecordCreateResponse
+    func create(
+        sessionId: String,
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
+    ) async throws -> SpaceRecordCreateResponse
+    func regenerate(
+        sessionId: String,
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
+    ) async throws -> SpaceRecordCreateResponse
     func fetchStatus(jobId: String) async throws -> SpaceRecordStatusResponse
     func downloadImage(from url: URL, to destination: URL) async throws
 }

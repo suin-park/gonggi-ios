@@ -126,18 +126,21 @@ final class CountingAPIClient: SpaceRecordAPIClienting, @unchecked Sendable {
 
     func create(
         sessionId: String,
-        imageFiles: [(direction: String, fileURL: URL)]
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
         createCount += 1
+        _ = captureMetadataJSON
         if failCreate { throw SpaceRecordClientError.network }
         return SpaceRecordCreateResponse(sessionId: sessionId, jobId: sessionId, status: "queued")
     }
 
     func regenerate(
         sessionId: String,
-        imageFiles: [(direction: String, fileURL: URL)]
+        imageFiles: [(direction: String, fileURL: URL)],
+        captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
-        try await create(sessionId: sessionId, imageFiles: imageFiles)
+        try await create(sessionId: sessionId, imageFiles: imageFiles, captureMetadataJSON: captureMetadataJSON)
     }
 
     func fetchStatus(jobId: String) async throws -> SpaceRecordStatusResponse {

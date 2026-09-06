@@ -11,6 +11,7 @@ final class SpaceGenerationCoordinator: ObservableObject {
 
     private var api: SpaceRecordAPIClienting?
     private var sourceFiles: [(direction: String, fileURL: URL)] = []
+    private var captureMetadataJSON: String?
     private var pollTask: Task<Void, Never>?
     private var generationStarted = false
     /// OpenAI 3840×1920 can take ~80–120s; allow up to 5 minutes total after create returns.
@@ -48,6 +49,7 @@ final class SpaceGenerationCoordinator: ObservableObject {
         case .success(let files):
             sourceFiles = files
             sessionId = result.sessionId
+            captureMetadataJSON = try? SpaceCaptureMetadataBuilder.jsonString(from: result.report)
             persist()
             Task { await self.uploadAndPoll(regenerate: false) }
         }
@@ -173,9 +175,17 @@ final class SpaceGenerationCoordinator: ObservableObject {
         do {
             let response: SpaceRecordCreateResponse
             if regenerate {
-                response = try await api.regenerate(sessionId: sessionId ?? "", imageFiles: sourceFiles)
+                response = try await api.regenerate(
+                    sessionId: sessionId ?? "",
+                    imageFiles: sourceFiles,
+                    captureMetadataJSON: captureMetadataJSON
+                )
             } else {
-                response = try await api.create(sessionId: sessionId ?? "", imageFiles: sourceFiles)
+                response = try await api.create(
+                    sessionId: sessionId ?? "",
+                    imageFiles: sourceFiles,
+                    captureMetadataJSON: captureMetadataJSON
+                )
             }
             jobId = response.jobId
             sessionId = response.sessionId

@@ -14,12 +14,13 @@ actor ControllableSpaceRecordAPI: SpaceRecordAPIClienting {
         self.downloadSource = downloadSource
     }
 
-    func create(sessionId: String, imageFiles: [(direction: String, fileURL: URL)]) async throws -> SpaceRecordCreateResponse {
-        SpaceRecordCreateResponse(sessionId: sessionId, jobId: sessionId, status: "queued")
+    func create(sessionId: String, imageFiles: [(direction: String, fileURL: URL)], captureMetadataJSON: String?) async throws -> SpaceRecordCreateResponse {
+        _ = captureMetadataJSON
+        return SpaceRecordCreateResponse(sessionId: sessionId, jobId: sessionId, status: "queued")
     }
 
-    func regenerate(sessionId: String, imageFiles: [(direction: String, fileURL: URL)]) async throws -> SpaceRecordCreateResponse {
-        try await create(sessionId: sessionId, imageFiles: imageFiles)
+    func regenerate(sessionId: String, imageFiles: [(direction: String, fileURL: URL)], captureMetadataJSON: String?) async throws -> SpaceRecordCreateResponse {
+        try await create(sessionId: sessionId, imageFiles: imageFiles, captureMetadataJSON: captureMetadataJSON)
     }
 
     func fetchStatus(jobId: String) async throws -> SpaceRecordStatusResponse {

@@ -171,6 +171,7 @@ struct DirectionCaptureConfig {
 struct DirectionCaptureRecord: Codable, Equatable, Identifiable {
     var direction: DirectionName
     var filePath: String
+    /// Display yaw normalized to [0, 360).
     var yawDeg: Float
     var pitchDeg: Float
     var rollDeg: Float
@@ -184,6 +185,11 @@ struct DirectionCaptureRecord: Codable, Equatable, Identifiable {
     var phase: DirectionName.CapturePhaseKind? = nil
     var nominalYaw: Float? = nil
     var nominalElevation: Float? = nil
+    /// Unwrapped relative yaw at AVCapturePhoto request (front=0, right turn decreases).
+    /// Authoritative for scaffold projection — prefer over `yawDeg`.
+    var capturedYawDeg: Float? = nil
+    /// Elevation at photo request (same sample as `capturedYawDeg`).
+    var capturedElevationDeg: Float? = nil
 
     var id: String { direction.rawValue }
 }

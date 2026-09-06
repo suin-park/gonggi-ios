@@ -472,7 +472,10 @@ final class DirectionCaptureEngine: NSObject {
             finalPixelHeight: normalized.finalPixelHeight,
             phase: direction.phaseKind,
             nominalYaw: pendingNominalYawOverride ?? direction.targetYawDeg,
-            nominalElevation: direction.targetElevationDeg
+            nominalElevation: direction.targetElevationDeg,
+            // Authoritative scaffold pose = motion frozen at photo request (not save callback).
+            capturedYawDeg: m.relativeYawDeg,
+            capturedElevationDeg: m.elevationDeg
         )
         captured[direction] = record
         images[direction] = normalized.image
