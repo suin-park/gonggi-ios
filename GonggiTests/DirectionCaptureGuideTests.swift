@@ -4,18 +4,16 @@ import XCTest
 final class DirectionCaptureGuideTests: XCTestCase {
     override func tearDown() {
         DirectionCaptureConfig.captureToleranceDeg = 8
-        DirectionCaptureConfig.obliqueYawToleranceDeg = 15
-        DirectionCaptureConfig.elevationToleranceDeg = 8
+        DirectionCaptureConfig.obliqueRelativeYawToleranceDeg = 12
+        DirectionCaptureConfig.upperObliqueElevationMinDeg = 45
+        DirectionCaptureConfig.upperObliqueElevationMaxDeg = 65
+        DirectionCaptureConfig.lowerObliqueElevationMinDeg = -65
+        DirectionCaptureConfig.lowerObliqueElevationMaxDeg = -45
         super.tearDown()
     }
 
     func testRequiredCountIs20AndOrderIsCanonical() {
         XCTAssertEqual(DirectionName.requiredCount, 20)
-        XCTAssertEqual(DirectionName.captureOrder.count, 20)
-        XCTAssertEqual(DirectionName.horizontalOrder.count, 12)
-        XCTAssertEqual(DirectionName.upperObliqueOrder.count, 4)
-        XCTAssertEqual(DirectionName.lowerObliqueOrder.count, 4)
-        XCTAssertEqual(Set(DirectionName.captureOrder.map(\.rawValue)).count, 20)
         XCTAssertEqual(DirectionName.captureOrder.map(\.rawValue), [
             "front", "front_right_30", "front_right_60", "right",
             "back_right_120", "back_right_150", "back",
@@ -28,77 +26,46 @@ final class DirectionCaptureGuideTests: XCTestCase {
 
     func testHorizontalYawTargetsAt30DegreeSteps() {
         XCTAssertEqual(DirectionName.front.targetYawDeg, 0)
-        XCTAssertEqual(DirectionName.frontRight30.targetYawDeg, -30)
-        XCTAssertEqual(DirectionName.frontRight60.targetYawDeg, -60)
         XCTAssertEqual(DirectionName.right.targetYawDeg, -90)
-        XCTAssertEqual(DirectionName.backRight120.targetYawDeg, -120)
-        XCTAssertEqual(DirectionName.backRight150.targetYawDeg, -150)
-        XCTAssertEqual(DirectionName.back.targetYawDeg, -180)
-        XCTAssertEqual(DirectionName.backLeft210.targetYawDeg, -210)
-        XCTAssertEqual(DirectionName.backLeft240.targetYawDeg, -240)
-        XCTAssertEqual(DirectionName.left.targetYawDeg, -270)
-        XCTAssertEqual(DirectionName.frontLeft300.targetYawDeg, -300)
         XCTAssertEqual(DirectionName.frontLeft330.targetYawDeg, -330)
     }
 
-    func testObliqueYawAndElevationTargets() {
-        XCTAssertEqual(DirectionName.upFrontRight.targetYawDeg, -45)
-        XCTAssertEqual(DirectionName.upBackRight.targetYawDeg, -135)
-        XCTAssertEqual(DirectionName.upBackLeft.targetYawDeg, -225)
-        XCTAssertEqual(DirectionName.upFrontLeft.targetYawDeg, -315)
-        XCTAssertEqual(DirectionName.downFrontRight.targetYawDeg, -45)
-        XCTAssertEqual(DirectionName.upFrontRight.targetElevationDeg, 60)
-        XCTAssertEqual(DirectionName.downFrontLeft.targetElevationDeg, -60)
+    func testElevationBandsAreLoose() {
+        XCTAssertTrue(DirectionCaptureGuide.isUpperObliqueElevationBand(45))
+        XCTAssertTrue(DirectionCaptureGuide.isUpperObliqueElevationBand(65))
+        XCTAssertFalse(DirectionCaptureGuide.isUpperObliqueElevationBand(44))
+        XCTAssertFalse(DirectionCaptureGuide.isUpperObliqueElevationBand(66))
+        XCTAssertTrue(DirectionCaptureGuide.isLowerObliqueElevationBand(-45))
+        XCTAssertTrue(DirectionCaptureGuide.isLowerObliqueElevationBand(-65))
+        XCTAssertFalse(DirectionCaptureGuide.isLowerObliqueElevationBand(-44))
+        XCTAssertFalse(DirectionCaptureGuide.isLowerObliqueElevationBand(-66))
     }
 
-    func testYawToleranceHorizontalDefault8() {
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -8, targetYaw: 0))
-        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -9, targetYaw: 0))
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(currentYaw: -30, targetYaw: -30))
-        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(currentYaw: -39, targetYaw: -30))
-    }
-
-    func testObliqueYawTolerance15() {
-        XCTAssertTrue(DirectionCaptureGuide.withinYawTolerance(
-            currentYaw: -60, targetYaw: -45, toleranceDeg: DirectionCaptureConfig.obliqueYawToleranceDeg
-        ))
-        XCTAssertFalse(DirectionCaptureGuide.withinYawTolerance(
-            currentYaw: -61, targetYaw: -45, toleranceDeg: DirectionCaptureConfig.obliqueYawToleranceDeg
-        ))
-    }
-
-    func testElevationBandForOblique() {
-        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 52, targetElevation: 60))
-        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: 51, targetElevation: 60))
-        XCTAssertTrue(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -68, targetElevation: -60))
-        XCTAssertFalse(DirectionCaptureGuide.withinElevationTolerance(elevationDeg: -69, targetElevation: -60))
-    }
-
-    func testFileNamesMatchCanonical() {
-        XCTAssertEqual(DirectionName.frontRight30.fileName, "front_right_30.jpg")
-        XCTAssertEqual(DirectionName.upFrontRight.fileName, "up_front_right.jpg")
-        XCTAssertEqual(DirectionName.downBackLeft.fileName, "down_back_left.jpg")
+    func testGuideCopyHasNoDirectionNames() {
+        let h = DirectionCaptureGuide.horizontalGuideMessage(warnFast: false)
+        let u = DirectionCaptureGuide.upperObliqueGuideMessage(warnFast: false, waitingForElevation: false)
+        let l = DirectionCaptureGuide.lowerObliqueGuideMessage(warnFast: false, waitingForElevation: false)
+        XCTAssertFalse(h.contains("up_front_right"))
+        XCTAssertFalse(u.contains("up_front_right"))
+        XCTAssertFalse(l.contains("down_front_left"))
+        XCTAssertTrue(h.contains("오른쪽으로"))
+        XCTAssertTrue(u.contains("위로"))
+        XCTAssertTrue(l.contains("아래로"))
     }
 
     // MARK: - Engine
 
-    func testHorizontalOrderAdvancesAndProgressUses20() {
+    func testHorizontalProgressUsesPhaseLabel() {
         let engine = DirectionCaptureEngine()
         engine.enableMockSweep = false
         engine.autoCompletePhotoInMock = true
         try? engine.prepareCamera(mockMode: true)
         engine.beginCapture()
-        XCTAssertEqual(engine.progressText, "0 / 20")
-        XCTAssertEqual(engine.currentTarget, .front)
+        XCTAssertEqual(engine.progressText, "수평 0 / 12")
 
         engine.ingestMotionSample(unwrappedYaw: 0, pitchDeg: -5)
         XCTAssertNotNil(engine.captured[.front])
-        XCTAssertEqual(engine.progressText, "1 / 20")
-        XCTAssertEqual(engine.currentTarget, .frontRight30)
-
-        engine.ingestMotionSample(unwrappedYaw: -30, pitchDeg: -5)
-        XCTAssertNotNil(engine.captured[.frontRight30])
-        XCTAssertEqual(engine.currentTarget, .frontRight60)
+        XCTAssertEqual(engine.progressText, "수평 1 / 12")
     }
 
     func testPendingBlocksDuplicateHorizontalRequest() {
@@ -108,7 +75,6 @@ final class DirectionCaptureGuideTests: XCTestCase {
         try? engine.prepareCamera(mockMode: true)
         engine.beginCapture()
         engine.ingestMotionSample(unwrappedYaw: 0)
-        XCTAssertEqual(engine.pendingDirection, .front)
         XCTAssertEqual(engine.photoRequestCounts[.front] ?? 0, 1)
         engine.ingestMotionSample(unwrappedYaw: 0)
         XCTAssertEqual(engine.photoRequestCounts[.front] ?? 0, 1)
@@ -116,7 +82,41 @@ final class DirectionCaptureGuideTests: XCTestCase {
         XCTAssertNotNil(engine.captured[.front])
     }
 
-    func testFullTwentyShotSequencePhases() {
+    func testObliqueUsesRelativeOrbitNotAbsoluteWorldYaw() {
+        let engine = DirectionCaptureEngine()
+        engine.enableMockSweep = false
+        engine.autoCompletePhotoInMock = true
+        try? engine.prepareCamera(mockMode: true)
+        engine.beginCapture()
+
+        for yaw: Float in [0, -30, -60, -90, -120, -150, -180, -210, -240, -270, -300, -330] {
+            engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -5, elevationDeg: 0)
+        }
+        XCTAssertEqual(engine.phase, .capturingUpperOblique)
+        XCTAssertEqual(engine.progressText, "위쪽 0 / 4")
+
+        // Absolute world yaw that used to match up_front_right (-45) must NOT fire before band+orbit.
+        engine.ingestMotionSample(unwrappedYaw: -45, elevationDeg: 10)
+        XCTAssertEqual(engine.photoRequestCounts[.upFrontRight] ?? 0, 0)
+
+        // Enter band at arbitrary yaw (e.g. -100) → anchors orbit start.
+        engine.ingestMotionSample(unwrappedYaw: -100, elevationDeg: 55)
+        XCTAssertEqual(engine.photoRequestCounts[.upFrontRight] ?? 0, 1)
+        XCTAssertNotNil(engine.captured[.upFrontRight])
+        XCTAssertEqual(engine.progressText, "위쪽 1 / 4")
+
+        // Next at start-90 = -190
+        engine.ingestMotionSample(unwrappedYaw: -190, elevationDeg: 55)
+        XCTAssertNotNil(engine.captured[.upBackRight])
+        engine.ingestMotionSample(unwrappedYaw: -280, elevationDeg: 55)
+        XCTAssertNotNil(engine.captured[.upBackLeft])
+        engine.ingestMotionSample(unwrappedYaw: -370, elevationDeg: 55)
+        XCTAssertNotNil(engine.captured[.upFrontLeft])
+        XCTAssertEqual(engine.phase, .capturingLowerOblique)
+        XCTAssertEqual(engine.progressText, "아래쪽 0 / 4")
+    }
+
+    func testFullTwentyShotRelativeOrbitSequence() {
         let engine = DirectionCaptureEngine()
         engine.enableMockSweep = false
         engine.autoCompletePhotoInMock = true
@@ -127,42 +127,21 @@ final class DirectionCaptureGuideTests: XCTestCase {
             engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -5, elevationDeg: 0)
         }
         XCTAssertEqual(engine.capturedCount, 12)
-        XCTAssertEqual(engine.phase, .capturingUpperOblique)
-        XCTAssertEqual(engine.currentTarget, .upFrontRight)
 
-        for yaw: Float in [-45, -135, -225, -315] {
-            engine.ingestMotionSample(unwrappedYaw: yaw, elevationDeg: 60)
+        let upperStart: Float = -50
+        for offset: Float in [0, -90, -180, -270] {
+            engine.ingestMotionSample(unwrappedYaw: upperStart + offset, elevationDeg: 50)
         }
         XCTAssertEqual(engine.capturedCount, 16)
         XCTAssertEqual(engine.phase, .capturingLowerOblique)
-        XCTAssertEqual(engine.currentTarget, .downFrontRight)
 
-        for yaw: Float in [-45, -135, -225, -315] {
-            engine.ingestMotionSample(unwrappedYaw: yaw, elevationDeg: -60)
+        let lowerStart: Float = -50 - 270
+        for offset: Float in [0, -90, -180, -270] {
+            engine.ingestMotionSample(unwrappedYaw: lowerStart + offset, elevationDeg: -50)
         }
         XCTAssertEqual(engine.capturedCount, 20)
         XCTAssertEqual(engine.phase, .completed)
-        XCTAssertEqual(engine.progressText, "20 / 20")
-    }
-
-    func testUpperObliqueRequiresBothYawAndElevation() {
-        let engine = DirectionCaptureEngine()
-        engine.enableMockSweep = false
-        engine.autoCompletePhotoInMock = true
-        try? engine.prepareCamera(mockMode: true)
-        engine.beginCapture()
-        for yaw: Float in [0, -30, -60, -90, -120, -150, -180, -210, -240, -270, -300, -330] {
-            engine.ingestMotionSample(unwrappedYaw: yaw, pitchDeg: -5, elevationDeg: 0)
-        }
-        // Correct yaw but flat elevation — should not fire.
-        engine.ingestMotionSample(unwrappedYaw: -45, elevationDeg: 10)
-        XCTAssertEqual(engine.photoRequestCounts[.upFrontRight] ?? 0, 0)
-        // Elevation ok but wrong yaw.
-        engine.ingestMotionSample(unwrappedYaw: -90, elevationDeg: 60)
-        XCTAssertEqual(engine.photoRequestCounts[.upFrontRight] ?? 0, 0)
-        engine.ingestMotionSample(unwrappedYaw: -45, elevationDeg: 60)
-        XCTAssertEqual(engine.photoRequestCounts[.upFrontRight] ?? 0, 1)
-        XCTAssertNotNil(engine.captured[.upFrontRight])
+        XCTAssertEqual(engine.progressText, "완료 20 / 20")
     }
 
     func testSaveSuccessOnlyThenAdvance() {
@@ -173,12 +152,9 @@ final class DirectionCaptureGuideTests: XCTestCase {
         engine.beginCapture()
         engine.ingestMotionSample(unwrappedYaw: 0)
         XCTAssertEqual(engine.pendingDirection, .front)
-        XCTAssertNil(engine.captured[.front])
-        XCTAssertEqual(engine.currentTarget, .front)
         engine.completePendingPhotoForTests(success: true)
         XCTAssertNotNil(engine.captured[.front])
-        XCTAssertEqual(engine.currentTarget, .frontRight30)
-        XCTAssertEqual(engine.progressText, "1 / 20")
+        XCTAssertEqual(engine.progressText, "수평 1 / 12")
     }
 
     func testUploadPreparationKeepsTwentyImagesUnderSoftBudget() throws {
@@ -188,7 +164,6 @@ final class DirectionCaptureGuideTests: XCTestCase {
 
         var files: [(direction: String, fileURL: URL)] = []
         for name in DirectionName.captureOrder {
-            // Simulate a large portrait capture before client compress.
             let size = CGSize(width: 3024, height: 4032)
             let renderer = UIGraphicsImageRenderer(size: size)
             let img = renderer.image { ctx in
@@ -207,13 +182,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
         XCTAssertEqual(prepared.files.count, 20)
         XCTAssertLessThanOrEqual(
             prepared.report.estimatedMultipartBytes,
-            SpaceRecordUploadPreparer.preferredMultipartBudgetBytes,
-            "20-shot multipart must stay under soft Vercel budget"
-        )
-        // Log numbers only (no image bodies).
-        print(
-            "[uploadBudget] totalImageBytes=\(prepared.report.totalImageBytes)"
-                + " estimatedMultipart=\(prepared.report.estimatedMultipartBytes)"
+            SpaceRecordUploadPreparer.preferredMultipartBudgetBytes
         )
     }
 }

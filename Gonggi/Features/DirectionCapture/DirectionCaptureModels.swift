@@ -136,14 +136,19 @@ enum DirectionCapturePhase: Equatable {
 struct DirectionCaptureConfig {
     /// Horizontal angle radius around each yaw target (degrees).
     static var captureToleranceDeg: Float = 8
-    /// Oblique yaw radius (degrees).
-    static var obliqueYawToleranceDeg: Float = 15
-    /// Upper oblique elevation target.
-    static var upperObliqueElevationTargetDeg: Float = 60
-    /// Lower oblique elevation target.
-    static var lowerObliqueElevationTargetDeg: Float = -60
-    /// Elevation radius for oblique bands.
-    static var elevationToleranceDeg: Float = 8
+    /// Relative orbit yaw radius for upper/lower 90° steps (degrees).
+    static var obliqueRelativeYawToleranceDeg: Float = 12
+    /// Upper oblique elevation band (inclusive).
+    static var upperObliqueElevationMinDeg: Float = 45
+    static var upperObliqueElevationMaxDeg: Float = 65
+    /// Lower oblique elevation band (inclusive).
+    static var lowerObliqueElevationMinDeg: Float = -65
+    static var lowerObliqueElevationMaxDeg: Float = -45
+    /// Nominal mid-band elevation (report / metadata only).
+    static var upperObliqueElevationTargetDeg: Float = 55
+    static var lowerObliqueElevationTargetDeg: Float = -55
+    /// Relative yaw offsets from phase-start (right turn decreases yaw).
+    static var obliqueRelativeYawOffsetsDeg: [Float] = [0, -90, -180, -270]
     /// Extreme pitch hard-reject for horizontal frames only (relative pitch).
     static var extremePitchRejectDeg: Float = 60
     /// Extreme roll hard-reject.

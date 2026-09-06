@@ -26,12 +26,14 @@ enum DirectionCaptureGuide {
         abs(currentYaw - targetYaw) <= toleranceDeg
     }
 
-    static func withinElevationTolerance(
-        elevationDeg: Float,
-        targetElevation: Float,
-        toleranceDeg: Float = DirectionCaptureConfig.elevationToleranceDeg
-    ) -> Bool {
-        abs(elevationDeg - targetElevation) <= toleranceDeg
+    static func isUpperObliqueElevationBand(_ elevationDeg: Float) -> Bool {
+        elevationDeg >= DirectionCaptureConfig.upperObliqueElevationMinDeg
+            && elevationDeg <= DirectionCaptureConfig.upperObliqueElevationMaxDeg
+    }
+
+    static func isLowerObliqueElevationBand(_ elevationDeg: Float) -> Bool {
+        elevationDeg >= DirectionCaptureConfig.lowerObliqueElevationMinDeg
+            && elevationDeg <= DirectionCaptureConfig.lowerObliqueElevationMaxDeg
     }
 
     static func isExtremePose(pitchDeg: Float, rollDeg: Float) -> Bool {
@@ -57,19 +59,24 @@ enum DirectionCaptureGuide {
         return asin(dot) * 180 / .pi
     }
 
-    static func horizontalGuideMessage(target: DirectionName?, warnFast: Bool) -> String {
+    static func horizontalGuideMessage(warnFast: Bool) -> String {
         if warnFast { return "조금 천천히 움직여주세요" }
-        let next = target.map { "\n다음: \($0.userFacingHint)" } ?? ""
-        return "휴대폰을 들고 천천히 오른쪽으로 회전해주세요.\(next)"
+        return "휴대폰을 세운 채 천천히 오른쪽으로 돌아주세요."
     }
 
-    static func upperObliqueGuideMessage(target: DirectionName?) -> String {
-        let hint = target?.userFacingHint ?? "천장과 벽"
-        return "휴대폰을 위로 조금 들어 천장과 벽이 함께 보이게 해주세요.\n\(hint)"
+    static func upperObliqueGuideMessage(warnFast: Bool, waitingForElevation: Bool) -> String {
+        if warnFast { return "조금 천천히 움직여주세요" }
+        if waitingForElevation {
+            return "휴대폰을 약간 위로 들어 천장과 벽이 함께 보이게 한 뒤,\n천천히 한 바퀴 돌아주세요."
+        }
+        return "휴대폰을 약간 위로 들고 천천히 한 바퀴 돌아주세요."
     }
 
-    static func lowerObliqueGuideMessage(target: DirectionName?) -> String {
-        let hint = target?.userFacingHint ?? "바닥과 벽"
-        return "휴대폰을 아래로 조금 내려 바닥과 벽이 함께 보이게 해주세요.\n\(hint)"
+    static func lowerObliqueGuideMessage(warnFast: Bool, waitingForElevation: Bool) -> String {
+        if warnFast { return "조금 천천히 움직여주세요" }
+        if waitingForElevation {
+            return "휴대폰을 약간 아래로 내려 바닥과 벽이 함께 보이게 한 뒤,\n천천히 한 바퀴 돌아주세요."
+        }
+        return "휴대폰을 약간 아래로 내리고 천천히 한 바퀴 돌아주세요."
     }
 }

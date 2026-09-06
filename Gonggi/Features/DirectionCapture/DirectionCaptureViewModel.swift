@@ -7,8 +7,9 @@ final class DirectionCaptureViewModel: ObservableObject {
     let engine = DirectionCaptureEngine()
 
     @Published var phase: DirectionCapturePhase = .idle
-    @Published var progressText: String = "0 / \(DirectionName.requiredCount)"
+    @Published var progressText: String = "준비"
     @Published var guideText: String = ""
+    @Published var phaseTitle: String = "공간 기록"
     @Published var currentTarget: DirectionName?
     @Published var completed: Set<DirectionName> = []
     @Published var result: DirectionCaptureResult?
@@ -76,8 +77,20 @@ final class DirectionCaptureViewModel: ObservableObject {
         completed = Set(engine.captured.keys)
         isPhotoPending = engine.isPhotoPending
         pendingDirection = engine.pendingDirection
+        phaseTitle = Self.title(for: engine.phase)
         let m = engine.lastMotion
         yawDisplay = String(format: "yaw %.0f°", m.yaw0to360)
         pitchDisplay = String(format: "elev %.0f°", m.elevationDeg)
+    }
+
+    private static func title(for phase: DirectionCapturePhase) -> String {
+        switch phase {
+        case .capturingHorizontal: return "수평 한 바퀴"
+        case .capturingUpperOblique: return "위로 한 바퀴"
+        case .capturingLowerOblique: return "아래로 한 바퀴"
+        case .completed: return "촬영 완료"
+        case .failed: return "다시 시도"
+        default: return "공간 기록"
+        }
     }
 }
