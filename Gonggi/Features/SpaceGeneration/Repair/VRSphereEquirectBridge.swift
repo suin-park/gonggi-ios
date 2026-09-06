@@ -33,9 +33,9 @@ import CoreGraphics
 ///
 /// Do **not** add a second ad-hoc ±180° offset on top of this. One mapping only.
 enum VRSphereEquirectBridge {
-    /// Structural doorway/wood region (forensic: 20° left door body outside +148° target).
-    static let defaultYawRadiusDeg: Float = 30
-    static let defaultPitchRadiusDeg: Float = 15
+    /// Structural doorway/wood/wall/lamp region (must match backend DEFAULT_REPAIR_*).
+    static let defaultYawRadiusDeg: Float = 40
+    static let defaultPitchRadiusDeg: Float = 45
 
     /// Normalize to (−180, 180].
     static func normalizeYawDeg(_ deg: Float) -> Float {

@@ -95,7 +95,9 @@ struct VRSphereSpaceView: View {
                         .font(.caption2.weight(.semibold))
                     Text(String(format: "yaw %+.1f°  pitch %+.1f°", my, mp))
                         .font(.caption.monospacedDigit())
-                    Text("mask ±\(Int(VRSphereEquirectBridge.defaultYawRadiusDeg))° / ±\(Int(VRSphereEquirectBridge.defaultPitchRadiusDeg))°")
+                    Text(
+                        "mask ±\(Int(VRSphereEquirectBridge.defaultYawRadiusDeg))° / ±\(Int(VRSphereEquirectBridge.defaultPitchRadiusDeg))° · 넓게 적용됨"
+                    )
                         .font(.caption2)
                 }
                 .foregroundStyle(.white)
