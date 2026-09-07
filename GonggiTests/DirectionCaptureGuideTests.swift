@@ -21,7 +21,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
 
     func testRequiredCountIs20AndOrderIsCanonical() {
         XCTAssertEqual(DirectionName.requiredCount, 20)
-        XCTAssertEqual(DirectionName.captureOrder.map(\.rawValue).prefix(4).map(String.init), [
+        XCTAssertEqual(Array(DirectionName.captureOrder.map(\.rawValue).prefix(4)), [
             "front", "front_right_30", "front_right_60", "right",
         ])
         XCTAssertEqual(DirectionName.captureOrder.last?.rawValue, "down_front_left")
@@ -95,11 +95,11 @@ final class DirectionCaptureGuideTests: XCTestCase {
         XCTAssertNotNil(engine.captured[.upFrontRight])
         XCTAssertEqual(engine.progressText, "위쪽 1 / 4")
 
-        turnRight(&engine, from: -100, by: 70, elev: 50, time: &t)
+        turnRight(engine, from: -100, by: 70, elev: 50, time: &t)
         XCTAssertNotNil(engine.captured[.upBackRight])
-        turnRight(&engine, from: -170, by: 70, elev: 50, time: &t)
+        turnRight(engine, from: -170, by: 70, elev: 50, time: &t)
         XCTAssertNotNil(engine.captured[.upBackLeft])
-        turnRight(&engine, from: -240, by: 55, elev: 50, time: &t)
+        turnRight(engine, from: -240, by: 55, elev: 50, time: &t)
         XCTAssertNotNil(engine.captured[.upFrontLeft])
         XCTAssertEqual(engine.phase, .capturingLowerOblique)
     }
