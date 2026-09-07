@@ -4,6 +4,7 @@ import SceneKit
 import UIKit
 
 private var vrPlacedAssetContentBaseScaleKey: UInt8 = 0
+private var vrPlacedAssetVisualBoundsKey: UInt8 = 0
 
 enum VRPlacedAssetCategory {
     static let panorama = 1 << 0
@@ -11,11 +12,15 @@ enum VRPlacedAssetCategory {
     static let shadow = 1 << 2
     /// Invisible Edit-only grab target (Build 67).
     static let interaction = 1 << 3
+    /// Selection overlay — never hit-tested.
+    static let selection = 1 << 4
 }
 
 enum VRPlacedAssetNodeFactory {
     static let rootNamePrefix = "placedAsset:"
     static let hitProxyName = "placedAssetHitProxy"
+    static let selectionVisualName = "placedAssetSelectionVisual"
+    static let selectionRingName = "placedAssetSelectionRing"
 
     static func makeNode(
         entry: VRPlacedAssetEntry,
@@ -26,64 +31,175 @@ enum VRPlacedAssetNodeFactory {
         root.name = rootNamePrefix + entry.id
         root.position = SCNVector3(entry.position.x, entry.position.y, entry.position.z)
         root.eulerAngles.y = entry.rotationY
+        // Uniform scale lives on root so selection/proxy/shadow inherit (Build 68).
+        let uniform = VRPlacedAssetEntry.clampedScale(entry.uniformScale)
+        root.scale = SCNVector3(uniform, uniform, uniform)
         root.categoryBitMask = VRPlacedAssetCategory.asset
 
-        let scale = VRPlacedAssetEntry.clampedScale(entry.uniformScale)
         let content: SCNNode
         let footprint: SIMD2<Float>
+        let physicalScale: Float
         if asset?.availableForPlacement != false,
            let modelURL,
            let loaded = loadModel(from: modelURL) {
             applyPhysicallyBasedMaterials(to: loaded)
             setCategoryRecursively(loaded, category: VRPlacedAssetCategory.asset)
             let rawFootprint = normalizeBottom(of: loaded)
-            let physicalScale = metadataScale(asset: asset, node: loaded)
+            physicalScale = metadataScale(asset: asset, node: loaded)
             footprint = rawFootprint * physicalScale
-            let renderedScale = scale * physicalScale
-            loaded.scale = SCNVector3(renderedScale, renderedScale, renderedScale)
+            loaded.scale = SCNVector3(physicalScale, physicalScale, physicalScale)
             content = loaded
-            setContentBaseScale(physicalScale, on: root)
         } else {
             let placeholder = makePlaceholder(asset: asset)
-            placeholder.scale = SCNVector3(scale, scale, scale)
+            physicalScale = 1
             footprint = placeholderFootprint(asset: asset)
             content = placeholder
-            setContentBaseScale(1, on: root)
         }
+        setContentBaseScale(physicalScale, on: root)
         root.addChildNode(content)
+
+        let bounds = computeVisualBounds(content: content)
+        setVisualBounds(bounds, on: root)
 
         let fallbackRadius = max(footprint.x, footprint.y) * 0.55
         let shadowRadius = max(0.08, entry.shadowRadius ?? fallbackRadius)
-        let shadow = makeShadow(
-            radius: shadowRadius,
-            opacity: entry.shadowOpacity ?? 0.25
-        )
-        // Uniform scale applied as node scale so pinch can resize shadow continuously.
-        shadow.scale = SCNVector3(scale, scale, scale)
+        let shadow = makeShadow(radius: shadowRadius, opacity: entry.shadowOpacity ?? 0.25)
+        // Shadow scale = 1 under root — inherits root uniform scale.
         root.addChildNode(shadow)
-        // Default proxy; host refreshes with camera-distance adaptive size in Edit.
-        attachHitProxy(on: root, content: content, minimumExtent: 0.28)
+
+        attachHitProxy(on: root, bounds: bounds, minimumExtent: 0.28, enabled: false)
         return root
     }
 
-    static func attachHitProxy(on root: SCNNode, content: SCNNode, minimumExtent: Float) {
-        root.childNodes.filter { $0.name == hitProxyName }.forEach { $0.removeFromParentNode() }
+    static func setVisualBounds(_ bounds: AssetVisualBounds, on root: SCNNode) {
+        objc_setAssociatedObject(
+            root,
+            &vrPlacedAssetVisualBoundsKey,
+            [
+                "minx": bounds.min.x, "miny": bounds.min.y, "minz": bounds.min.z,
+                "maxx": bounds.max.x, "maxy": bounds.max.y, "maxz": bounds.max.z,
+            ] as NSDictionary,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+    }
 
-        let bb = content.boundingBox
-        let sx = abs(content.scale.x)
-        let sy = abs(content.scale.y)
-        let sz = abs(content.scale.z)
-        let meshW = max(0.01, (bb.max.x - bb.min.x) * sx)
-        let meshH = max(0.01, (bb.max.y - bb.min.y) * sy)
-        let meshD = max(0.01, (bb.max.z - bb.min.z) * sz)
-        let w = CGFloat(VRGestureMath.expandExtent(meshW, minimum: minimumExtent))
-        let h = CGFloat(VRGestureMath.expandExtent(meshH, minimum: minimumExtent))
-        let d = CGFloat(VRGestureMath.expandExtent(meshD, minimum: minimumExtent))
+    static func readVisualBounds(from root: SCNNode) -> AssetVisualBounds? {
+        guard let dict = objc_getAssociatedObject(root, &vrPlacedAssetVisualBoundsKey) as? NSDictionary,
+              let minx = (dict["minx"] as? NSNumber)?.floatValue,
+              let miny = (dict["miny"] as? NSNumber)?.floatValue,
+              let minz = (dict["minz"] as? NSNumber)?.floatValue,
+              let maxx = (dict["maxx"] as? NSNumber)?.floatValue,
+              let maxy = (dict["maxy"] as? NSNumber)?.floatValue,
+              let maxz = (dict["maxz"] as? NSNumber)?.floatValue
+        else { return nil }
+        return AssetVisualBounds(min: SIMD3(minx, miny, minz), max: SIMD3(maxx, maxy, maxz))
+    }
+
+    static func visualBoundsCached(of root: SCNNode) -> AssetVisualBounds {
+        if let cached = readVisualBounds(from: root) { return cached }
+        #if DEBUG
+        VRSelectionPerfCounters.boundsRecalculations += 1
+        #endif
+        guard let content = modelContent(of: root) else { return .fallback }
+        let bounds = computeVisualBounds(content: content)
+        setVisualBounds(bounds, on: root)
+        return bounds
+    }
+
+    /// Creates selection overlay once. Subsequent calls only toggle visibility.
+    @discardableResult
+    static func ensureSelectionVisual(on root: SCNNode, visible: Bool) -> SCNNode {
+        if let existing = root.childNode(withName: selectionVisualName, recursively: false) {
+            existing.isHidden = !visible
+            return existing
+        }
+        #if DEBUG
+        VRSelectionPerfCounters.selectionGeometryCreates += 1
+        #endif
+        let bounds = visualBoundsCached(of: root)
+        let container = SCNNode()
+        container.name = selectionVisualName
+        container.categoryBitMask = VRPlacedAssetCategory.selection
+        container.isHidden = !visible
+
+        // Thin wire box from mesh bounds only (not hit-proxy size).
+        let size = bounds.size
+        let box = SCNBox(
+            width: CGFloat(max(0.05, size.x)),
+            height: CGFloat(max(0.05, size.y)),
+            length: CGFloat(max(0.05, size.z)),
+            chamferRadius: 0
+        )
+        let material = SCNMaterial()
+        material.lightingModel = .constant
+        material.diffuse.contents = UIColor.systemYellow.withAlphaComponent(0.85)
+        material.emission.contents = UIColor.systemYellow.withAlphaComponent(0.35)
+        material.fillMode = .lines
+        material.isDoubleSided = true
+        material.writesToDepthBuffer = false
+        box.materials = [material]
+        let wire = SCNNode(geometry: box)
+        wire.position = SCNVector3(bounds.center.x, bounds.center.y, bounds.center.z)
+        wire.categoryBitMask = VRPlacedAssetCategory.selection
+        container.addChildNode(wire)
+
+        // Floor ring — cheap silhouette cue.
+        let ringRadius = max(size.x, size.z) * 0.55
+        let ring = SCNTube(
+            innerRadius: CGFloat(max(0.02, ringRadius * 0.82)),
+            outerRadius: CGFloat(max(0.03, ringRadius)),
+            height: 0.008
+        )
+        let ringMat = SCNMaterial()
+        ringMat.lightingModel = .constant
+        ringMat.diffuse.contents = UIColor.systemYellow.withAlphaComponent(0.55)
+        ringMat.emission.contents = UIColor.systemYellow.withAlphaComponent(0.25)
+        ringMat.writesToDepthBuffer = false
+        ring.materials = [ringMat]
+        let ringNode = SCNNode(geometry: ring)
+        ringNode.name = selectionRingName
+        ringNode.position = SCNVector3(bounds.center.x, 0.004, bounds.center.z)
+        ringNode.categoryBitMask = VRPlacedAssetCategory.selection
+        container.addChildNode(ringNode)
+
+        root.addChildNode(container)
+        return container
+    }
+
+    static func setSelectionVisible(on root: SCNNode, visible: Bool) {
+        if let existing = root.childNode(withName: selectionVisualName, recursively: false) {
+            existing.isHidden = !visible
+        } else if visible {
+            ensureSelectionVisual(on: root, visible: true)
+        }
+    }
+
+    static func hideAllSelectionVisuals(in placedAssetsRoot: SCNNode) {
+        for child in placedAssetsRoot.childNodes {
+            setSelectionVisible(on: child, visible: false)
+        }
+    }
+
+    static func attachHitProxy(
+        on root: SCNNode,
+        bounds: AssetVisualBounds,
+        minimumExtent: Float,
+        enabled: Bool
+    ) {
+        root.childNodes.filter { $0.name == hitProxyName }.forEach { $0.removeFromParentNode() }
+        #if DEBUG
+        VRSelectionPerfCounters.proxyGeometryCreates += 1
+        #endif
+
+        let size = bounds.size
+        let w = CGFloat(VRGestureMath.expandExtent(max(0.01, size.x), minimum: minimumExtent))
+        let h = CGFloat(VRGestureMath.expandExtent(max(0.01, size.y), minimum: minimumExtent))
+        let d = CGFloat(VRGestureMath.expandExtent(max(0.01, size.z), minimum: minimumExtent))
 
         let box = SCNBox(width: w, height: h, length: d, chamferRadius: 0)
         let material = SCNMaterial()
         material.diffuse.contents = UIColor.clear
-        material.transparency = 0.0
+        material.transparency = 0
         material.writesToDepthBuffer = false
         material.readsFromDepthBuffer = false
         material.isDoubleSided = true
@@ -91,24 +207,24 @@ enum VRPlacedAssetNodeFactory {
 
         let proxy = SCNNode(geometry: box)
         proxy.name = hitProxyName
-        proxy.categoryBitMask = VRPlacedAssetCategory.interaction
+        proxy.categoryBitMask = enabled ? VRPlacedAssetCategory.interaction : 0
+        proxy.isHidden = !enabled
         proxy.renderingOrder = 10
-        proxy.position = SCNVector3(
-            (bb.min.x + bb.max.x) * 0.5 * sx + content.position.x,
-            (bb.min.y + bb.max.y) * 0.5 * sy + content.position.y,
-            (bb.min.z + bb.max.z) * 0.5 * sz + content.position.z
-        )
+        proxy.position = SCNVector3(bounds.center.x, bounds.center.y, bounds.center.z)
         root.addChildNode(proxy)
     }
 
     static func refreshHitProxy(on root: SCNNode, minimumExtent: Float, enabled: Bool) {
-        guard let content = root.childNodes.first(where: {
-            $0.categoryBitMask == VRPlacedAssetCategory.asset
-        }) else { return }
-        attachHitProxy(on: root, content: content, minimumExtent: minimumExtent)
-        if let proxy = root.childNodes.first(where: { $0.name == hitProxyName }) {
-            proxy.isHidden = !enabled
-            proxy.categoryBitMask = enabled ? VRPlacedAssetCategory.interaction : 0
+        let bounds = visualBoundsCached(of: root)
+        attachHitProxy(on: root, bounds: bounds, minimumExtent: minimumExtent, enabled: enabled)
+    }
+
+    static func modelContent(of root: SCNNode) -> SCNNode? {
+        root.childNodes.first {
+            $0.name != hitProxyName
+                && $0.name != selectionVisualName
+                && $0.name != "placedAssetShadow"
+                && ($0.categoryBitMask & VRPlacedAssetCategory.asset) != 0
         }
     }
 
@@ -136,8 +252,25 @@ enum VRPlacedAssetNodeFactory {
         )
     }
 
+    private static func computeVisualBounds(content: SCNNode) -> AssetVisualBounds {
+        let bb = content.boundingBox
+        let sx = abs(content.scale.x)
+        let sy = abs(content.scale.y)
+        let sz = abs(content.scale.z)
+        let min = SIMD3(
+            bb.min.x * sx + content.position.x,
+            bb.min.y * sy + content.position.y,
+            bb.min.z * sz + content.position.z
+        )
+        let max = SIMD3(
+            bb.max.x * sx + content.position.x,
+            bb.max.y * sy + content.position.y,
+            bb.max.z * sz + content.position.z
+        )
+        return AssetVisualBounds(min: min, max: max)
+    }
+
     private static func loadModel(from url: URL) -> SCNNode? {
-        // Build 65: USDZ-first via SceneKit only (no native GLB / ModelIO bridge dependency).
         guard let scene = try? SCNScene(url: url, options: nil) else { return nil }
         return container(from: scene)
     }

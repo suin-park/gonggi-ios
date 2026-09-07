@@ -16,6 +16,8 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var maskOutlineNode: SCNNode?
     private let placedAssetsRoot = SCNNode()
     private var selectionIndicatorNode: SCNNode?
+    /// Tracks selected placement root for create-once selection visual (Build 68).
+    private var selectedPlacementRoot: SCNNode?
     private weak var repairLongPressRecognizer: UILongPressGestureRecognizer?
     private var editModeActive = false
     private var editTool: VREditTool = .none
@@ -196,6 +198,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         if !active {
             oneFingerOwner = .none
             stopSmoothingAndDisplayLink()
+            VRPlacedAssetNodeFactory.hideAllSelectionVisuals(in: placedAssetsRoot)
+            selectionIndicatorNode = nil
+            selectedPlacementRoot = nil
         }
         refreshAllHitProxies(enabled: active)
         if wasFrozen, !isMotionFrozen {
@@ -270,38 +275,19 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     func selectAsset(id: String?) {
         selectedPlacementID = id
-        selectionIndicatorNode?.removeFromParentNode()
+        VRPlacedAssetNodeFactory.hideAllSelectionVisuals(in: placedAssetsRoot)
         selectionIndicatorNode = nil
+        selectedPlacementRoot = nil
         guard let id,
               let assetNode = placedAssetsRoot.childNodes.first(where: {
                   VRPlacedAssetNodeFactory.placedAssetID(from: $0) == id
               })
         else { return }
 
-        let bounds = assetNode.boundingBox
-        let box = SCNBox(
-            width: CGFloat(max(0.1, bounds.max.x - bounds.min.x)),
-            height: CGFloat(max(0.1, bounds.max.y - bounds.min.y)),
-            length: CGFloat(max(0.1, bounds.max.z - bounds.min.z)),
-            chamferRadius: 0
-        )
-        let material = SCNMaterial()
-        material.diffuse.contents = UIColor.systemYellow
-        material.emission.contents = UIColor.systemYellow
-        material.fillMode = .lines
-        material.isDoubleSided = true
-        box.materials = [material]
-
-        let indicator = SCNNode(geometry: box)
-        indicator.name = "placedAssetSelection"
-        indicator.position = SCNVector3(
-            (bounds.min.x + bounds.max.x) * 0.5,
-            (bounds.min.y + bounds.max.y) * 0.5,
-            (bounds.min.z + bounds.max.z) * 0.5
-        )
-        indicator.categoryBitMask = VRPlacedAssetCategory.shadow
-        assetNode.addChildNode(indicator)
-        selectionIndicatorNode = indicator
+        // Create-once (or unhide). Uses cached mesh bounds — never proxy-inflated root.boundingBox.
+        let visual = VRPlacedAssetNodeFactory.ensureSelectionVisual(on: assetNode, visible: true)
+        selectionIndicatorNode = visual
+        selectedPlacementRoot = assetNode
     }
 
     func floorPointFromScreen(_ point: CGPoint, floorY: Float) -> SIMD3<Float> {
@@ -321,20 +307,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         uniformScale: Float
     ) {
         guard let node = assetNode(id: id) else { return }
+        let scale = VRPlacedAssetEntry.clampedScale(uniformScale)
         node.position = SCNVector3(position.x, placementFloorY, position.z)
         node.eulerAngles.y = rotationY
-        let scale = VRPlacedAssetEntry.clampedScale(uniformScale)
-        if let content = node.childNodes.first(where: { $0.categoryBitMask == VRPlacedAssetCategory.asset }) {
-            let base = VRPlacedAssetNodeFactory.contentBaseScale(of: node)
-            content.scale = SCNVector3(scale * base, scale * base, scale * base)
-        }
-        if let shadow = node.childNodes.first(where: { $0.name == "placedAssetShadow" }) {
-            shadow.scale = SCNVector3(scale, scale, scale)
-        }
-        // Avoid rebuilding selection outline every transform tick (Build 66 choppy-move fix).
-        if selectedPlacementID == id, selectionIndicatorNode == nil {
-            selectAsset(id: id)
-        }
+        // Root uniform scale — selection/proxy/shadow inherit. No geometry rebuild.
+        node.scale = SCNVector3(scale, scale, scale)
     }
 
     func removePlacedAsset(id: String) {
@@ -841,11 +818,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func currentUniformScale(of node: SCNNode) -> Float {
-        let rendered = node.childNodes.first(where: {
-            $0.categoryBitMask == VRPlacedAssetCategory.asset
-        })?.scale.x ?? 1
-        let base = VRPlacedAssetNodeFactory.contentBaseScale(of: node)
-        return rendered / max(base, 1e-4)
+        VRPlacedAssetEntry.clampedScale(node.scale.x)
     }
 
     private func beginSmoothing(for id: String, node: SCNNode) {
@@ -860,17 +833,10 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func applyRenderedTransform(to node: SCNNode) {
+        // Parent-only transform updates — selection/proxy/shadow inherit. Zero geometry work.
         node.eulerAngles.y = renderedRotationY
         let scale = VRPlacedAssetEntry.clampedScale(renderedUniformScale)
-        if let content = node.childNodes.first(where: {
-            $0.categoryBitMask == VRPlacedAssetCategory.asset
-        }) {
-            let base = VRPlacedAssetNodeFactory.contentBaseScale(of: node)
-            content.scale = SCNVector3(scale * base, scale * base, scale * base)
-        }
-        if let shadow = node.childNodes.first(where: { $0.name == "placedAssetShadow" }) {
-            shadow.scale = SCNVector3(scale, scale, scale)
-        }
+        node.scale = SCNVector3(scale, scale, scale)
     }
 
     private func startTransformDisplayLinkIfNeeded() {
@@ -910,9 +876,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         targetRotationY = nil
         smoothingPlacementID = nil
         stopTransformDisplayLink()
-        if editModeActive {
-            refreshAllHitProxies(enabled: true)
-        }
+        // Proxy refresh only after gesture settles — never during CADisplayLink frames.
     }
 
     @objc private func tickTransformSmoothing() {
@@ -950,6 +914,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         if dirty || pinchGestureActive || rotationGestureActive {
             applyRenderedTransform(to: node)
         }
+        #if DEBUG
+        // Selection/proxy must stay allocation-free on the hot path.
+        #endif
         if !pinchGestureActive, !rotationGestureActive, !dirty {
             stopTransformDisplayLink()
         }

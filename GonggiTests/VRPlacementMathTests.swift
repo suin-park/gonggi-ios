@@ -286,4 +286,62 @@ final class VRPlacementMathTests: XCTestCase {
         let mid = VRGestureMath.lerp(1, 2, alpha: 0.35)
         XCTAssertEqual(mid, 1.35, accuracy: 0.0001)
     }
+
+    func testV_VisualBoundsCenterAndSize() {
+        let bounds = AssetVisualBounds(min: SIMD3(-1, 0, -2), max: SIMD3(1, 4, 2))
+        XCTAssertEqual(bounds.center, SIMD3(0, 2, 0))
+        XCTAssertEqual(bounds.size, SIMD3(2, 4, 4))
+    }
+
+    func testW_SelectionCreateOnceDoesNotRecreate() {
+        #if DEBUG
+        VRSelectionPerfCounters.reset()
+        #endif
+        let root = SCNNode()
+        root.name = "placedAsset:test"
+        let content = SCNNode(geometry: SCNBox(width: 0.4, height: 0.8, length: 0.4, chamferRadius: 0))
+        content.categoryBitMask = VRPlacedAssetCategory.asset
+        content.position.y = 0.4
+        root.addChildNode(content)
+        VRPlacedAssetNodeFactory.setVisualBounds(
+            AssetVisualBounds(min: SIMD3(-0.2, 0, -0.2), max: SIMD3(0.2, 0.8, 0.2)),
+            on: root
+        )
+
+        let first = VRPlacedAssetNodeFactory.ensureSelectionVisual(on: root, visible: true)
+        let second = VRPlacedAssetNodeFactory.ensureSelectionVisual(on: root, visible: true)
+        XCTAssertTrue(first === second)
+        #if DEBUG
+        XCTAssertEqual(VRSelectionPerfCounters.selectionGeometryCreates, 1)
+        #endif
+
+        VRPlacedAssetNodeFactory.setSelectionVisible(on: root, visible: false)
+        XCTAssertTrue(first.isHidden)
+        VRPlacedAssetNodeFactory.setSelectionVisible(on: root, visible: true)
+        XCTAssertFalse(first.isHidden)
+        #if DEBUG
+        XCTAssertEqual(VRSelectionPerfCounters.selectionGeometryCreates, 1)
+        #endif
+    }
+
+    func testX_ProxyRefreshUsesCachedBoundsWithoutSelectionInflation() {
+        let root = SCNNode()
+        let content = SCNNode(geometry: SCNBox(width: 0.2, height: 0.2, length: 0.2, chamferRadius: 0))
+        content.categoryBitMask = VRPlacedAssetCategory.asset
+        root.addChildNode(content)
+        let meshBounds = AssetVisualBounds(min: SIMD3(-0.1, 0, -0.1), max: SIMD3(0.1, 0.2, 0.1))
+        VRPlacedAssetNodeFactory.setVisualBounds(meshBounds, on: root)
+        VRPlacedAssetNodeFactory.attachHitProxy(
+            on: root,
+            bounds: meshBounds,
+            minimumExtent: 0.4,
+            enabled: true
+        )
+        // Selection must use mesh bounds, not proxy-enlarged root.boundingBox.
+        let visual = VRPlacedAssetNodeFactory.ensureSelectionVisual(on: root, visible: true)
+        let wire = visual.childNodes.first { $0.geometry is SCNBox }
+        let box = try XCTUnwrap(wire?.geometry as? SCNBox)
+        XCTAssertEqual(Float(box.width), 0.2, accuracy: 0.001)
+        XCTAssertEqual(Float(box.height), 0.2, accuracy: 0.001)
+    }
 }
