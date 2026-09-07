@@ -44,24 +44,51 @@ enum VRFloorRay {
         floorY: Float,
         verticalFOVDegrees: Float = 70
     ) -> SIMD3<Float> {
+        if let hit = floorPointIfValid(
+            screenPoint: screenPoint,
+            viewportSize: viewportSize,
+            cameraTransform: cameraTransform,
+            floorY: floorY,
+            verticalFOVDegrees: verticalFOVDegrees
+        ) {
+            return hit
+        }
         let worldRay = ray(
             screenPoint: screenPoint,
             viewportSize: viewportSize,
             cameraTransform: cameraTransform,
             verticalFOVDegrees: verticalFOVDegrees
         )
-        return intersectFloor(ray: worldRay, floorY: floorY)
+        return fallbackPoint(ray: worldRay, floorY: floorY)
+    }
+
+    /// Continuous drag: return nil on miss so callers keep lastValidFloorHit (no jump).
+    static func floorPointIfValid(
+        screenPoint: CGPoint,
+        viewportSize: CGSize,
+        cameraTransform: simd_float4x4,
+        floorY: Float,
+        verticalFOVDegrees: Float = 70
+    ) -> SIMD3<Float>? {
+        let worldRay = ray(
+            screenPoint: screenPoint,
+            viewportSize: viewportSize,
+            cameraTransform: cameraTransform,
+            verticalFOVDegrees: verticalFOVDegrees
+        )
+        return intersectFloorIfValid(ray: worldRay, floorY: floorY)
     }
 
     static func intersectFloor(ray: VRWorldRay, floorY: Float) -> SIMD3<Float> {
-        if ray.direction.y < -1e-5 {
-            let t = (floorY - ray.origin.y) / ray.direction.y
-            if t > 0, t.isFinite {
-                let hit = ray.origin + ray.direction * t
-                return clampToFloor(hit, origin: ray.origin, floorY: floorY)
-            }
-        }
-        return fallbackPoint(ray: ray, floorY: floorY)
+        intersectFloorIfValid(ray: ray, floorY: floorY) ?? fallbackPoint(ray: ray, floorY: floorY)
+    }
+
+    static func intersectFloorIfValid(ray: VRWorldRay, floorY: Float) -> SIMD3<Float>? {
+        guard ray.direction.y < -1e-5 else { return nil }
+        let t = (floorY - ray.origin.y) / ray.direction.y
+        guard t > 0, t.isFinite else { return nil }
+        let hit = ray.origin + ray.direction * t
+        return clampToFloor(hit, origin: ray.origin, floorY: floorY)
     }
 
     private static func fallbackPoint(ray: VRWorldRay, floorY: Float) -> SIMD3<Float> {
@@ -79,6 +106,15 @@ enum VRFloorRay {
     }
 
     private static func clampToFloor(
+        _ point: SIMD3<Float>,
+        origin: SIMD3<Float>,
+        floorY: Float
+    ) -> SIMD3<Float> {
+        clampDistance(point, origin: origin, floorY: floorY)
+    }
+
+    /// Continuous distance clamp (no discrete snap between frames).
+    static func clampDistance(
         _ point: SIMD3<Float>,
         origin: SIMD3<Float>,
         floorY: Float

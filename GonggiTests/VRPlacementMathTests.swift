@@ -168,4 +168,65 @@ final class VRPlacementMathTests: XCTestCase {
         let layout = try JSONDecoder().decode(VRPlacementLayout.self, from: Data(json.utf8))
         XCTAssertEqual(layout.assets.first?.uniformScale, VRPlacedAssetEntry.maximumScale)
     }
+
+    func testO_APIEnvelopeDecodeKeepsAssets_NotEmptyWipe() throws {
+        let json = """
+        {
+          "ok": true,
+          "spaceId": "s1",
+          "sessionId": "sess",
+          "layout": {
+            "version": 1,
+            "frame": "gonggi.vr.v1",
+            "floorY": -1.35,
+            "assets": [
+              {
+                "id": "p1",
+                "assetId": "a1",
+                "position": {"x": 0, "y": -1.35, "z": -2},
+                "rotationY": 0.5,
+                "uniformScale": 1.2,
+                "sortIndex": 0
+              }
+            ]
+          }
+        }
+        """
+        // Wrong order (bare layout first) would yield assets=[] — regression lock.
+        let wiped = try JSONDecoder().decode(VRPlacementLayout.self, from: Data(json.utf8))
+        XCTAssertTrue(wiped.assets.isEmpty, "bare decode of API wrapper must not be used")
+
+        let layout = try VRPlacementLayoutCoding.decodeResponse(Data(json.utf8))
+        XCTAssertEqual(layout.assets.count, 1)
+        XCTAssertEqual(layout.assets[0].id, "p1")
+        XCTAssertEqual(layout.assets[0].uniformScale, 1.2, accuracy: 0.001)
+    }
+
+    func testP_FloorMissReturnsNilWithoutFallbackJump() {
+        let miss = VRFloorRay.intersectFloorIfValid(
+            ray: VRWorldRay(origin: SIMD3(0, 0, 0), direction: SIMD3(0, 0, -1)),
+            floorY: -1.35
+        )
+        XCTAssertNil(miss)
+
+        let hit = VRFloorRay.intersectFloorIfValid(
+            ray: VRWorldRay(
+                origin: SIMD3(0, 0, 0),
+                direction: simd_normalize(SIMD3(0, -1, -1))
+            ),
+            floorY: -1
+        )
+        XCTAssertNotNil(hit)
+        XCTAssertEqual(hit?.y, -1, accuracy: 0.001)
+    }
+
+    func testQ_GrabOffsetPreservesRelativeFingerOffset() {
+        let floorHit = SIMD3<Float>(1, -1.35, -2)
+        let nodePos = SIMD3<Float>(1.4, -1.35, -2.3)
+        let grab = SIMD2(nodePos.x - floorHit.x, nodePos.z - floorHit.z)
+        let nextHit = SIMD3<Float>(2, -1.35, -3)
+        let applied = SIMD3(nextHit.x + grab.x, -1.35, nextHit.z + grab.y)
+        XCTAssertEqual(applied.x, 2.4, accuracy: 0.001)
+        XCTAssertEqual(applied.z, -3.3, accuracy: 0.001)
+    }
 }

@@ -74,8 +74,8 @@ struct VRPlacementLayout: Codable, Equatable, Sendable {
 }
 
 struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
-    static let minimumScale: Float = 0.25
-    static let maximumScale: Float = 3
+    static let minimumScale: Float = 0.1
+    static let maximumScale: Float = 5
 
     var id: String
     var assetId: String

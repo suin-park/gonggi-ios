@@ -5,6 +5,24 @@ enum VRPlacementStoreError: Error, Equatable {
     case server(status: Int)
 }
 
+enum VRPlacementLayoutCoding {
+    private struct LayoutEnvelope: Decodable {
+        var layout: VRPlacementLayout
+    }
+
+    /// Decode GET/PUT API bodies. Envelope-first to avoid empty-layout wipe (Build 66).
+    static func decodeResponse(_ data: Data) throws -> VRPlacementLayout {
+        let decoder = JSONDecoder()
+        if let envelope = try? decoder.decode(LayoutEnvelope.self, from: data) {
+            return envelope.layout
+        }
+        if let layout = try? decoder.decode(VRPlacementLayout.self, from: data) {
+            return layout
+        }
+        throw VRPlacementStoreError.invalidResponse
+    }
+}
+
 actor VRPlacementLayoutStore {
     private let config: AppConfiguration
     private let session: URLSession
@@ -125,23 +143,12 @@ actor VRPlacementLayoutStore {
         }
     }
 
-    private struct LayoutEnvelope: Decodable {
-        var layout: VRPlacementLayout
-    }
-
     private struct LayoutRequest: Encodable {
         var layout: VRPlacementLayout
     }
 
     private func decodeLayout(from data: Data) throws -> VRPlacementLayout {
-        let decoder = JSONDecoder()
-        if let layout = try? decoder.decode(VRPlacementLayout.self, from: data) {
-            return layout
-        }
-        if let envelope = try? decoder.decode(LayoutEnvelope.self, from: data) {
-            return envelope.layout
-        }
-        throw VRPlacementStoreError.invalidResponse
+        try VRPlacementLayoutCoding.decodeResponse(data)
     }
 
     private func localURL(sessionId: String, createDirectory: Bool) throws -> URL {

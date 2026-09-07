@@ -1,5 +1,4 @@
 import Foundation
-import ModelIO
 import ObjectiveC
 import SceneKit
 import UIKit
@@ -50,12 +49,14 @@ enum VRPlacedAssetNodeFactory {
         }
         root.addChildNode(content)
 
-        let fallbackRadius = max(footprint.x, footprint.y) * scale * 0.55
+        let fallbackRadius = max(footprint.x, footprint.y) * 0.55
         let shadowRadius = max(0.08, entry.shadowRadius ?? fallbackRadius)
         let shadow = makeShadow(
             radius: shadowRadius,
             opacity: entry.shadowOpacity ?? 0.25
         )
+        // Uniform scale applied as node scale so pinch can resize shadow continuously.
+        shadow.scale = SCNVector3(scale, scale, scale)
         root.addChildNode(shadow)
         return root
     }

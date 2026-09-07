@@ -350,9 +350,14 @@ struct VRSphereSpaceView: View {
 
             HStack(spacing: 8) {
                 if selectedPlacementId != nil {
-                    editToolButton("이동", icon: "arrow.up.and.down.and.arrow.left.and.right", tool: .move)
-                    editToolButton("회전", icon: "rotate.right", tool: .rotate)
-                    editToolButton("크기", icon: "arrow.up.left.and.arrow.down.right", tool: .scale)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("한 손가락으로 이동")
+                        Text("두 손가락으로 회전·크기 조절")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 4)
+
                     Button {
                         deleteSelectedPlacement()
                     } label: {
@@ -374,16 +379,6 @@ struct VRSphereSpaceView: View {
             .padding(10)
             .background(.ultraThinMaterial, in: Capsule())
         }
-    }
-
-    private func editToolButton(_ title: String, icon: String, tool: VREditTool) -> some View {
-        Button {
-            editTool = tool
-        } label: {
-            Label(title, systemImage: icon)
-        }
-        .buttonStyle(.bordered)
-        .tint(editTool == tool ? .blue : .white)
     }
 
     private var saveErrorBanner: some View {
@@ -542,12 +537,43 @@ struct VRSphereSpaceView: View {
     }
 
     private func saveAndFinishEditing() async {
+        // Build 66: keep in-memory draft + scene nodes; switch to View immediately.
+        // Never wait for PUT before showing placements in View.
+        let snapshot = draftLayout
+        #if DEBUG
+        print(
+            "[vr-place66] Done pressed draftCount=\(snapshot.assets.count) mode→view"
+        )
+        #endif
+        try? await placementStore.saveLocal(snapshot, sessionId: sessionId)
+        exitEditMode()
+
         do {
-            let saved = try await placementStore.pushRemote(draftLayout, sessionId: sessionId)
-            draftLayout = saved
-            try? await placementStore.saveLocal(saved, sessionId: sessionId)
-            exitEditMode()
+            let saved = try await placementStore.pushRemote(snapshot, sessionId: sessionId)
+            #if DEBUG
+            print(
+                "[vr-place66] PUT ok requestCount=\(snapshot.assets.count) responseCount=\(saved.assets.count)"
+            )
+            #endif
+            // Guard against empty/mismatched decode wiping local placements.
+            let responseIds = Set(saved.assets.map(\.id))
+            let snapshotIds = Set(snapshot.assets.map(\.id))
+            if saved.assets.count >= snapshot.assets.count
+                || responseIds == snapshotIds
+                || snapshot.assets.isEmpty {
+                draftLayout = saved
+                try? await placementStore.saveLocal(saved, sessionId: sessionId)
+            } else {
+                #if DEBUG
+                print("[vr-place66] PUT response ignored (would shrink layout); keeping draft")
+                #endif
+                try? await placementStore.saveLocal(snapshot, sessionId: sessionId)
+            }
+            saveError = nil
         } catch {
+            #if DEBUG
+            print("[vr-place66] PUT failed; keeping draft count=\(draftLayout.assets.count)")
+            #endif
             saveError = "배치를 저장하지 못했어요"
         }
     }
@@ -616,7 +642,7 @@ struct VRSphereSpaceView: View {
         guard draftLayout.append(entry) else { return }
         pendingPlacementAsset = nil
         selectedPlacementId = entry.id
-        editTool = .move
+        editTool = .none
         saveDraftLocally()
     }
 
@@ -630,6 +656,7 @@ struct VRSphereSpaceView: View {
         draftLayout.assets[index].position = SIMD3(position.x, draftLayout.floorY, position.z)
         draftLayout.assets[index].rotationY = rotationY
         draftLayout.assets[index].setUniformScale(scale)
+        // Disk write only on gesture end / Done — not every pan.changed (Build 66).
         saveDraftLocally()
     }
 
