@@ -36,6 +36,36 @@ enum DirectionCaptureGuide {
             && elevationDeg <= DirectionCaptureConfig.lowerObliqueElevationMaxDeg
     }
 
+    static func isUpperPreferredElevation(_ elevationDeg: Float) -> Bool {
+        elevationDeg >= DirectionCaptureConfig.upperObliqueElevationPreferredMinDeg
+            && elevationDeg <= DirectionCaptureConfig.upperObliqueElevationPreferredMaxDeg
+    }
+
+    static func isLowerPreferredElevation(_ elevationDeg: Float) -> Bool {
+        elevationDeg >= DirectionCaptureConfig.lowerObliqueElevationPreferredMinDeg
+            && elevationDeg <= DirectionCaptureConfig.lowerObliqueElevationPreferredMaxDeg
+    }
+
+    static func isUpperTooSteep(_ elevationDeg: Float) -> Bool {
+        elevationDeg > DirectionCaptureConfig.upperObliqueElevationPreferredMaxDeg
+            && elevationDeg <= DirectionCaptureConfig.upperObliqueElevationMaxDeg
+    }
+
+    static func isLowerTooSteep(_ elevationDeg: Float) -> Bool {
+        elevationDeg < DirectionCaptureConfig.lowerObliqueElevationPreferredMinDeg
+            && elevationDeg >= DirectionCaptureConfig.lowerObliqueElevationMinDeg
+    }
+
+    /// Portrait gravity upright: inverted when gravity.y is strongly positive.
+    /// Independent of Euler relative roll (which can read ≈±180 at high pitch).
+    static func isGravityUpright(
+        gravityY: Float,
+        invertedThreshold: Float = DirectionCaptureConfig.gravityInvertedYThreshold
+    ) -> Bool {
+        gravityY < invertedThreshold
+    }
+
+    /// Horizontal-only extreme pose (relative pitch/roll). Never use for oblique gates.
     static func isExtremePose(pitchDeg: Float, rollDeg: Float) -> Bool {
         abs(pitchDeg) > DirectionCaptureConfig.extremePitchRejectDeg
             || abs(rollDeg) > DirectionCaptureConfig.extremeRollRejectDeg
@@ -47,6 +77,10 @@ enum DirectionCaptureGuide {
 
     static func shouldWarnRotation(_ rate: Float) -> Bool {
         rate > DirectionCaptureConfig.rotationWarnRate
+    }
+
+    static func isObliqueMotionSettled(_ rate: Float) -> Bool {
+        rate <= DirectionCaptureConfig.obliqueSettleMaxRotationRate
     }
 
     static func elevationDeg(gravityX: Double, gravityY: Double, gravityZ: Double) -> Float {
@@ -157,29 +191,60 @@ enum DirectionCaptureGuide {
         )
     }
 
+    // MARK: - Build 63 oblique guides
+    // Priority: inverted → settle → preferred elev → boundary helper → stuck → orbit
+
     static func upperObliqueGuideMessage(
         warnFast: Bool,
         waitingForElevation: Bool,
-        stuckAtLastShot: Bool = false
+        stuckAtLastShot: Bool = false,
+        inverted: Bool = false,
+        waitingForSettle: Bool = false,
+        tooSteep: Bool = false,
+        inPreferredBand: Bool = false
     ) -> String {
+        if inverted { return "휴대폰을 바로 세워주세요" }
         if warnFast { return "조금 천천히 움직여주세요" }
-        if stuckAtLastShot { return "조금만 더 돌아주세요." }
         if waitingForElevation {
-            return "휴대폰을 약간 위로 들어 천장과 벽이 함께 보이게 한 뒤,\n천천히 한 바퀴 돌아주세요."
+            return "벽과 하늘(천장) 경계가 보이게"
         }
-        return "휴대폰을 약간 위로 들고 천천히 한 바퀴 돌아주세요."
+        if tooSteep {
+            return "조금 덜 위로 들어주세요"
+        }
+        if waitingForSettle {
+            return "벽과 하늘(천장) 경계가 보이게"
+        }
+        if stuckAtLastShot { return "조금만 더 돌아주세요." }
+        if inPreferredBand {
+            return "천천히 오른쪽으로 돌아주세요"
+        }
+        return "벽과 하늘(천장) 경계가 보이게"
     }
 
     static func lowerObliqueGuideMessage(
         warnFast: Bool,
         waitingForElevation: Bool,
-        stuckAtLastShot: Bool = false
+        stuckAtLastShot: Bool = false,
+        inverted: Bool = false,
+        waitingForSettle: Bool = false,
+        tooSteep: Bool = false,
+        inPreferredBand: Bool = false
     ) -> String {
+        if inverted { return "휴대폰을 바로 세워주세요" }
         if warnFast { return "조금 천천히 움직여주세요" }
-        if stuckAtLastShot { return "조금만 더 돌아주세요." }
         if waitingForElevation {
-            return "휴대폰을 약간 아래로 내려 바닥과 벽이 함께 보이게 한 뒤,\n천천히 한 바퀴 돌아주세요."
+            return "바닥과 벽 아래가 함께 보이게"
         }
-        return "휴대폰을 약간 아래로 내리고 천천히 한 바퀴 돌아주세요."
+        if tooSteep {
+            return "조금 덜 아래로 내려주세요"
+        }
+        if waitingForSettle {
+            return "바닥과 벽 아래가 함께 보이게"
+        }
+        if stuckAtLastShot { return "조금만 더 돌아주세요." }
+        if inPreferredBand {
+            return "천천히 오른쪽으로 돌아주세요"
+        }
+        return "바닥과 벽 아래가 함께 보이게"
     }
 }

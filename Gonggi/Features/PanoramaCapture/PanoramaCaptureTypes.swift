@@ -110,6 +110,10 @@ struct PanoramaMotionSample: Equatable {
     var rotationRate: Float
     /// Camera elevation vs horizon from gravity (+up / −down). Optional for panorama; used by DirectionCapture.
     var elevationDeg: Float = 0
+    /// Device-frame gravity Y (CoreMotion). Portrait upright ≈ negative.
+    var gravityY: Float = -1
+    /// Gravity-based upright (not Euler relative roll).
+    var gravityUprightPassed: Bool = true
 }
 
 /// Continuous relative yaw with ±180° wrap handling.

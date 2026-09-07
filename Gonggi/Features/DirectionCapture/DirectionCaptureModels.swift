@@ -142,24 +142,36 @@ struct DirectionCaptureConfig {
     /// Lower oblique elevation band (inclusive).
     static var lowerObliqueElevationMinDeg: Float = -70
     static var lowerObliqueElevationMaxDeg: Float = -35
+    /// Preferred elevation (Build 63) — wall–boundary friendly; soft hold outside.
+    static var upperObliqueElevationPreferredMinDeg: Float = 40
+    static var upperObliqueElevationPreferredMaxDeg: Float = 55
+    static var lowerObliqueElevationPreferredMinDeg: Float = -55
+    static var lowerObliqueElevationPreferredMaxDeg: Float = -40
     /// Nominal mid-band elevation (report / metadata only).
-    static var upperObliqueElevationTargetDeg: Float = 52
-    static var lowerObliqueElevationTargetDeg: Float = -52
-    /// Min accumulated right-turn yaw between oblique shots (shot 1…4).
-    /// Index 0 = first shot (immediate after band entry).
-    static var obliqueMinAccumulatedYawDeg: [Float] = [0, 70, 70, 55]
-    /// Last-shot fail-safe: lower yaw threshold after waiting.
-    static var obliqueLastShotFailSafeYawDeg: Float = 45
+    static var upperObliqueElevationTargetDeg: Float = 48
+    static var lowerObliqueElevationTargetDeg: Float = -48
+    /// Build 63: phase-local cumulative right-turn targets for shots 1…4 (~90° spacing).
+    static var obliquePhaseLocalTargetYawDeg: [Float] = [0, 90, 180, 270]
+    /// Legacy inter-shot gaps (tests / tearDown). Engine uses `obliquePhaseLocalTargetYawDeg`.
+    static var obliqueMinAccumulatedYawDeg: [Float] = [0, 90, 90, 90]
+    /// Ignore per-sample yaw deltas larger than this (Euler discontinuity guard).
+    static var obliqueMaxSampleDeltaDeg: Float = 22
+    /// Last-shot fail-safe: lower cumulative phase-local yaw after waiting.
+    static var obliqueLastShotFailSafeYawDeg: Float = 240
     /// Last-shot fail-safe wait after previous shot (seconds).
     static var obliqueLastShotFailSafeWaitSec: TimeInterval = 4.0
     /// Show “조금만 더…” after waiting this long on 3/4.
     static var obliqueStuckHintWaitSec: TimeInterval = 3.0
-    /// Brief settle after band entry / prior shot before firing (seconds). Soft — never blocks last-shot fail-safe.
-    static var obliqueShotSettleSec: TimeInterval = 0.12
+    /// Build 63: first oblique phase settle after preferred elev + upright + calm motion.
+    static var obliqueShotSettleSec: TimeInterval = 0.5
+    /// Soft angular-velocity ceiling for phase settle / first accept (rad/s).
+    static var obliqueSettleMaxRotationRate: Float = 1.2
     /// Extreme pitch hard-reject for horizontal frames only (relative pitch).
     static var extremePitchRejectDeg: Float = 60
-    /// Extreme roll hard-reject.
+    /// Extreme roll hard-reject — **horizontal only**. Do not apply to oblique (Euler ±180 false positive).
     static var extremeRollRejectDeg: Float = 50
+    /// Gravity Y above this ⇒ device inverted (portrait).
+    static var gravityInvertedYThreshold: Float = 0.35
     /// Soft UX warning threshold (rotationRate rad/s).
     static var rotationWarnRate: Float = 1.6
     /// Extreme rotation — briefly hold capture (non-last oblique shots).
@@ -209,6 +221,22 @@ struct DirectionCaptureRecord: Codable, Equatable, Identifiable {
     var horizontalLevelDeltaDeg: Float? = nil
     /// Build 60 debug: front seam soft/preferred gate passed (last horizontal only).
     var closureGatePassed: Bool? = nil
+    /// Build 63: `up_oblique` / `down_oblique` / nil for horizontal.
+    var obliquePhase: String? = nil
+    /// Phase-local right-turn degrees from phase anchor (0 at first oblique shot).
+    var phaseLocalYawDeg: Float? = nil
+    /// Global unwrapped yaw frozen when phase-local baseline was set.
+    var phaseAnchorGlobalYawDeg: Float? = nil
+    /// Whether phase settle completed before this shot.
+    var phaseSettled: Bool? = nil
+    /// Settle duration used for this phase entry (ms).
+    var settleDurationMs: Double? = nil
+    /// Elevation was inside preferred band at shutter.
+    var elevationPreferredBandPassed: Bool? = nil
+    /// Angular velocity (rad/s) at photo request.
+    var angularVelocityAtCapture: Float? = nil
+    /// Gravity upright check at shutter (not Euler relative roll).
+    var gravityUprightPassed: Bool? = nil
 
     var id: String { direction.rawValue }
 }
@@ -239,4 +267,8 @@ struct DirectionMotionReading: Equatable {
     var rotationRate: Float
     /// Camera elevation vs horizon from gravity (+up / −down).
     var elevationDeg: Float
+    /// Device-frame gravity Y.
+    var gravityY: Float = -1
+    /// Gravity-based upright (independent of Euler relative roll).
+    var gravityUprightPassed: Bool = true
 }

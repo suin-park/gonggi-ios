@@ -21,6 +21,15 @@ struct SpaceCaptureMetadataEntry: Codable, Equatable, Sendable {
     var appBuild: String?
     /// Client-requested generation mode when Build61 scaffold opt-in is active.
     var clientGenerationMode: String?
+    /// Build 63 additive oblique forensics.
+    var obliquePhase: String?
+    var phaseLocalYawDeg: Double?
+    var phaseAnchorGlobalYawDeg: Double?
+    var phaseSettled: Bool?
+    var settleDurationMs: Double?
+    var elevationPreferredBandPassed: Bool?
+    var angularVelocityAtCapture: Double?
+    var gravityUprightPassed: Bool?
 }
 
 enum SpaceCaptureMetadataBuilder {
@@ -45,7 +54,15 @@ enum SpaceCaptureMetadataBuilder {
                 horizontalLevelDeltaDeg: rec.horizontalLevelDeltaDeg.map(Double.init),
                 closureGatePassed: rec.closureGatePassed,
                 appBuild: GonggiSpaceRecordAIMode.currentAppBuildNumber,
-                clientGenerationMode: GonggiSpaceRecordAIMode.createRequestMode
+                clientGenerationMode: GonggiSpaceRecordAIMode.createRequestMode,
+                obliquePhase: rec.obliquePhase,
+                phaseLocalYawDeg: rec.phaseLocalYawDeg.map(Double.init),
+                phaseAnchorGlobalYawDeg: rec.phaseAnchorGlobalYawDeg.map(Double.init),
+                phaseSettled: rec.phaseSettled,
+                settleDurationMs: rec.settleDurationMs,
+                elevationPreferredBandPassed: rec.elevationPreferredBandPassed,
+                angularVelocityAtCapture: rec.angularVelocityAtCapture.map(Double.init),
+                gravityUprightPassed: rec.gravityUprightPassed
             )
         }
         guard entries.count == DirectionName.requiredCount else {

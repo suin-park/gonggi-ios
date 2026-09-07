@@ -34,19 +34,21 @@ final class DirectionCaptureEngine: NSObject {
     private var horizontalTargetIndex: Int = 0
     private var upperObliqueTargetIndex: Int = 0
     private var lowerObliqueTargetIndex: Int = 0
-    /// Set when elevation first enters the current oblique band.
-    private var obliqueOrbitAnchored = false
-    /// Unwrapped yaw of the previous sample (for accumulated right-turn tracking).
+    /// Build 63: phase-local baseline locked after settle (not global Euler continuity).
+    private var obliquePhaseSettled = false
+    private var obliquePhaseLocalYaw0: Float?
+    private var obliquePhaseLocalAccumulated: Float = 0
+    private var obliqueSettleStartedAt: TimeInterval?
+    private var obliqueSettleDurationMs: Double = 0
+    /// Unwrapped yaw of the previous sample (for phase-local right-turn deltas only).
     private var obliqueLastSampleYaw: Float?
-    /// Accumulated right-turn yaw degrees since the previous oblique shot (or band entry).
-    private var obliqueAccumulatedSinceLastShot: Float = 0
     private var obliqueLastShotAt: TimeInterval = 0
-    private var obliqueSlotStartedAt: TimeInterval = 0
     private var obliqueHadMotionSinceLastShot = false
     private var captureStartedAt: TimeInterval = 0
     private var warnFast = false
     private var motionAtPhotoRequest: DirectionMotionReading?
     private var pendingNominalYawOverride: Float?
+    private var pendingPhaseLocalYaw: Float?
     /// Uptime when `front_left_330` first entered soft-min yaw band (≤ −325).
     private var frontSeamSoftMinEnteredAt: TimeInterval?
 
@@ -178,16 +180,22 @@ final class DirectionCaptureEngine: NSObject {
         rollDeg: Float = 0,
         rotationRate: Float = 0.2,
         elevationDeg: Float = 0,
-        timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
+        timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime,
+        gravityY: Float = -1,
+        gravityUprightPassed: Bool? = nil
     ) {
         guard isCapturing else { return }
+        let upright = gravityUprightPassed
+            ?? DirectionCaptureGuide.isGravityUpright(gravityY: gravityY)
         applyMotionAndEvaluate(
             unwrappedYaw: unwrappedYaw,
             pitchDeg: pitchDeg,
             rollDeg: rollDeg,
             rotationRate: rotationRate,
             elevationDeg: elevationDeg,
-            timestamp: timestamp
+            timestamp: timestamp,
+            gravityY: gravityY,
+            gravityUprightPassed: upright
         )
     }
 
@@ -201,6 +209,7 @@ final class DirectionCaptureEngine: NSObject {
             pendingDirection = nil
             motionAtPhotoRequest = nil
             pendingNominalYawOverride = nil
+            pendingPhaseLocalYaw = nil
             notify()
         }
     }
@@ -217,7 +226,9 @@ final class DirectionCaptureEngine: NSObject {
             rollDeg: m.rollDeg,
             rotationRate: m.rotationRate,
             elevationDeg: m.elevationDeg,
-            timestamp: m.timestamp
+            timestamp: m.timestamp,
+            gravityY: m.gravityY,
+            gravityUprightPassed: m.gravityUprightPassed
         )
     }
 
@@ -227,7 +238,9 @@ final class DirectionCaptureEngine: NSObject {
         rollDeg: Float,
         rotationRate: Float,
         elevationDeg: Float,
-        timestamp: TimeInterval
+        timestamp: TimeInterval,
+        gravityY: Float = -1,
+        gravityUprightPassed: Bool = true
     ) {
         lastMotion = DirectionMotionReading(
             timestamp: timestamp,
@@ -236,7 +249,9 @@ final class DirectionCaptureEngine: NSObject {
             pitchDeg: pitchDeg,
             rollDeg: rollDeg,
             rotationRate: rotationRate,
-            elevationDeg: elevationDeg
+            elevationDeg: elevationDeg,
+            gravityY: gravityY,
+            gravityUprightPassed: gravityUprightPassed
         )
         warnFast = DirectionCaptureGuide.shouldWarnRotation(rotationRate)
 
@@ -258,8 +273,10 @@ final class DirectionCaptureEngine: NSObject {
                     unwrappedYaw: unwrappedYaw,
                     elevationDeg: elevationDeg,
                     rotationRate: rotationRate,
-                    inBand: DirectionCaptureGuide.isUpperObliqueElevationBand(elevationDeg),
-                    timestamp: timestamp
+                    inHardBand: DirectionCaptureGuide.isUpperObliqueElevationBand(elevationDeg),
+                    inPreferred: DirectionCaptureGuide.isUpperPreferredElevation(elevationDeg),
+                    timestamp: timestamp,
+                    gravityUprightPassed: gravityUprightPassed
                 )
             case .capturingLowerOblique:
                 evaluateObliqueOrbit(
@@ -268,8 +285,10 @@ final class DirectionCaptureEngine: NSObject {
                     unwrappedYaw: unwrappedYaw,
                     elevationDeg: elevationDeg,
                     rotationRate: rotationRate,
-                    inBand: DirectionCaptureGuide.isLowerObliqueElevationBand(elevationDeg),
-                    timestamp: timestamp
+                    inHardBand: DirectionCaptureGuide.isLowerObliqueElevationBand(elevationDeg),
+                    inPreferred: DirectionCaptureGuide.isLowerPreferredElevation(elevationDeg),
+                    timestamp: timestamp,
+                    gravityUprightPassed: gravityUprightPassed
                 )
             default:
                 break
@@ -333,15 +352,17 @@ final class DirectionCaptureEngine: NSObject {
         requestPhoto(for: target)
     }
 
-    /// Upper/lower: elevation band + accumulated right-turn yaw between shots (no absolute yaw targets).
+    /// Upper/lower: phase-local orbit (Build 63). Does not gate on absolute Euler yaw jumps vs prior phase.
     private func evaluateObliqueOrbit(
         order: [DirectionName],
         index: inout Int,
         unwrappedYaw: Float,
         elevationDeg: Float,
         rotationRate: Float,
-        inBand: Bool,
-        timestamp: TimeInterval
+        inHardBand: Bool,
+        inPreferred: Bool,
+        timestamp: TimeInterval,
+        gravityUprightPassed: Bool
     ) {
         guard index < order.count else {
             advancePhaseIfNeeded()
@@ -353,39 +374,71 @@ final class DirectionCaptureEngine: NSObject {
             return
         }
 
-        guard inBand else {
-            // Keep sample yaw continuous so we don't invent a jump when re-entering band.
+        // Never use relative Euler roll as oblique reject. Gravity inverted → wait.
+        if !gravityUprightPassed {
+            obliqueSettleStartedAt = nil
             obliqueLastSampleYaw = unwrappedYaw
             return
         }
 
-        // Accumulate right-turn progress (device right → unwrapped yaw decreases).
-        if let prev = obliqueLastSampleYaw {
-            let rightTurn = prev - unwrappedYaw
-            if rightTurn > 0.15 {
-                obliqueAccumulatedSinceLastShot += rightTurn
-                obliqueHadMotionSinceLastShot = true
-            } else if abs(rightTurn) > 1.5 {
-                obliqueHadMotionSinceLastShot = true
+        guard inHardBand else {
+            // Keep sample continuous; do not invent jumps on re-entry.
+            obliqueSettleStartedAt = nil
+            obliqueLastSampleYaw = unwrappedYaw
+            return
+        }
+
+        // Preferred band required for auto-capture (too-steep soft hold).
+        if !inPreferred {
+            obliqueSettleStartedAt = nil
+            // Still track continuity so re-entry does not spike.
+            if let prev = obliqueLastSampleYaw, obliquePhaseSettled {
+                accumulatePhaseLocalDelta(from: prev, to: unwrappedYaw)
             }
-        }
-        obliqueLastSampleYaw = unwrappedYaw
-
-        if !obliqueOrbitAnchored {
-            obliqueOrbitAnchored = true
-            obliqueSlotStartedAt = ProcessInfo.processInfo.systemUptime
-            obliqueAccumulatedSinceLastShot = 0
+            obliqueLastSampleYaw = unwrappedYaw
+            return
         }
 
-        let now = ProcessInfo.processInfo.systemUptime
-        let thresholds = DirectionCaptureConfig.obliqueMinAccumulatedYawDeg
-        let needed = index < thresholds.count ? thresholds[index] : 55
+        // Phase-local settle + re-anchor (first time in preferred + calm motion).
+        if !obliquePhaseSettled {
+            let calm = DirectionCaptureGuide.isObliqueMotionSettled(rotationRate)
+            if !calm {
+                obliqueSettleStartedAt = nil
+                obliqueLastSampleYaw = unwrappedYaw
+                return
+            }
+            if obliqueSettleStartedAt == nil {
+                obliqueSettleStartedAt = timestamp
+            }
+            let started = obliqueSettleStartedAt ?? timestamp
+            let elapsed = timestamp - started
+            if elapsed < DirectionCaptureConfig.obliqueShotSettleSec {
+                obliqueLastSampleYaw = unwrappedYaw
+                return
+            }
+            // Lock NEW phase-local baseline — ignore prior-phase absolute Euler yaw.
+            obliquePhaseLocalYaw0 = unwrappedYaw
+            obliquePhaseLocalAccumulated = 0
+            obliquePhaseSettled = true
+            obliqueSettleDurationMs = max(0, elapsed) * 1000
+            obliqueLastSampleYaw = unwrappedYaw
+            obliqueHadMotionSinceLastShot = false
+            // Fall through — first shot ready at phase-local 0°.
+        } else if let prev = obliqueLastSampleYaw {
+            accumulatePhaseLocalDelta(from: prev, to: unwrappedYaw)
+            obliqueLastSampleYaw = unwrappedYaw
+        } else {
+            obliqueLastSampleYaw = unwrappedYaw
+        }
+
+        let targets = DirectionCaptureConfig.obliquePhaseLocalTargetYawDeg
+        let needed = index < targets.count ? targets[index] : 270
         let isLastShot = index == order.count - 1
-        var ready = obliqueAccumulatedSinceLastShot >= needed
+        var ready = obliquePhaseLocalAccumulated + 0.01 >= needed
 
         if isLastShot, !ready {
-            let sinceLast = now - obliqueLastShotAt
-            if obliqueAccumulatedSinceLastShot >= DirectionCaptureConfig.obliqueLastShotFailSafeYawDeg
+            let sinceLast = timestamp - obliqueLastShotAt
+            if obliquePhaseLocalAccumulated >= DirectionCaptureConfig.obliqueLastShotFailSafeYawDeg
                 && sinceLast >= DirectionCaptureConfig.obliqueLastShotFailSafeWaitSec
                 && obliqueHadMotionSinceLastShot
             {
@@ -394,24 +447,38 @@ final class DirectionCaptureEngine: NSObject {
         }
 
         guard ready else { return }
-
-        // Soft settle only for the first band-entry shot — never stall later shots.
-        if index == 0 {
-            if now - obliqueSlotStartedAt < DirectionCaptureConfig.obliqueShotSettleSec { return }
-        }
-        // Hold only on extreme spin for non-last shots; last shot should not stall.
         if !isLastShot, DirectionCaptureGuide.isExtremeRotation(rotationRate) { return }
+        if !DirectionCaptureGuide.isObliqueMotionSettled(rotationRate), index == 0 { return }
 
+        pendingPhaseLocalYaw = obliquePhaseLocalAccumulated
         requestPhoto(for: target, nominalYawOverride: unwrappedYaw)
     }
 
+    private func accumulatePhaseLocalDelta(from prev: Float, to current: Float) {
+        let rightTurn = prev - current
+        let maxDelta = DirectionCaptureConfig.obliqueMaxSampleDeltaDeg
+        // Euler discontinuity: skip huge single-sample jumps (do not treat as user spin).
+        if abs(rightTurn) > maxDelta {
+            return
+        }
+        if rightTurn > 0.15 {
+            obliquePhaseLocalAccumulated += rightTurn
+            obliqueHadMotionSinceLastShot = true
+        } else if abs(rightTurn) > 1.5 {
+            obliqueHadMotionSinceLastShot = true
+        }
+    }
+
     private func resetObliqueOrbitTracking() {
-        obliqueOrbitAnchored = false
+        obliquePhaseSettled = false
+        obliquePhaseLocalYaw0 = nil
+        obliquePhaseLocalAccumulated = 0
+        obliqueSettleStartedAt = nil
+        obliqueSettleDurationMs = 0
         obliqueLastSampleYaw = nil
-        obliqueAccumulatedSinceLastShot = 0
         obliqueLastShotAt = 0
-        obliqueSlotStartedAt = 0
         obliqueHadMotionSinceLastShot = false
+        pendingPhaseLocalYaw = nil
     }
 
     // MARK: - Photo capture
@@ -499,6 +566,16 @@ final class DirectionCaptureEngine: NSObject {
             closureDelta = m.relativeYawDeg - target
             closurePassed = DirectionCaptureGuide.isFrontSeamSoftMinSatisfied(unwrappedYaw: m.relativeYawDeg)
         }
+        let preferredPassed: Bool? = {
+            switch direction.phaseKind {
+            case .upOblique:
+                return DirectionCaptureGuide.isUpperPreferredElevation(m.elevationDeg)
+            case .downOblique:
+                return DirectionCaptureGuide.isLowerPreferredElevation(m.elevationDeg)
+            case .horizontal:
+                return nil
+            }
+        }()
         let record = DirectionCaptureRecord(
             direction: direction,
             filePath: "direction_capture/\(direction.fileName)",
@@ -519,13 +596,22 @@ final class DirectionCaptureEngine: NSObject {
             capturedElevationDeg: m.elevationDeg,
             closureDeltaDeg: closureDelta,
             horizontalLevelDeltaDeg: levelDelta,
-            closureGatePassed: closurePassed
+            closureGatePassed: closurePassed,
+            obliquePhase: direction.isHorizontal ? nil : direction.phaseKind.rawValue,
+            phaseLocalYawDeg: direction.isHorizontal ? nil : (pendingPhaseLocalYaw ?? obliquePhaseLocalAccumulated),
+            phaseAnchorGlobalYawDeg: direction.isHorizontal ? nil : obliquePhaseLocalYaw0,
+            phaseSettled: direction.isHorizontal ? nil : obliquePhaseSettled,
+            settleDurationMs: direction.isHorizontal ? nil : obliqueSettleDurationMs,
+            elevationPreferredBandPassed: preferredPassed,
+            angularVelocityAtCapture: direction.isHorizontal ? nil : m.rotationRate,
+            gravityUprightPassed: direction.isHorizontal ? nil : m.gravityUprightPassed
         )
         captured[direction] = record
         images[direction] = normalized.image
         pendingDirection = nil
         motionAtPhotoRequest = nil
         pendingNominalYawOverride = nil
+        pendingPhaseLocalYaw = nil
         onCaptured?(direction)
 
         switch direction.phaseKind {
@@ -537,18 +623,14 @@ final class DirectionCaptureEngine: NSObject {
             if let idx = DirectionName.upperObliqueOrder.firstIndex(of: direction) {
                 upperObliqueTargetIndex = idx + 1
             }
-            obliqueAccumulatedSinceLastShot = 0
-            obliqueLastShotAt = ProcessInfo.processInfo.systemUptime
-            obliqueSlotStartedAt = obliqueLastShotAt
+            obliqueLastShotAt = m.timestamp
             obliqueHadMotionSinceLastShot = false
             obliqueLastSampleYaw = m.relativeYawDeg
         case .downOblique:
             if let idx = DirectionName.lowerObliqueOrder.firstIndex(of: direction) {
                 lowerObliqueTargetIndex = idx + 1
             }
-            obliqueAccumulatedSinceLastShot = 0
-            obliqueLastShotAt = ProcessInfo.processInfo.systemUptime
-            obliqueSlotStartedAt = obliqueLastShotAt
+            obliqueLastShotAt = m.timestamp
             obliqueHadMotionSinceLastShot = false
             obliqueLastSampleYaw = m.relativeYawDeg
         }
@@ -598,30 +680,46 @@ final class DirectionCaptureEngine: NSObject {
             currentTarget = upperObliqueTargetIndex < DirectionName.upperObliqueOrder.count
                 ? DirectionName.upperObliqueOrder[upperObliqueTargetIndex]
                 : nil
-            let waiting = !obliqueOrbitAnchored
+            let elev = lastMotion.elevationDeg
+            let waitingElev = !DirectionCaptureGuide.isUpperObliqueElevationBand(elev)
+            let tooSteep = DirectionCaptureGuide.isUpperTooSteep(elev)
+            let preferred = DirectionCaptureGuide.isUpperPreferredElevation(elev)
+            let waitingSettle = preferred && !obliquePhaseSettled
             let stuckLast = upperObliqueTargetIndex == 3
-                && obliqueOrbitAnchored
-                && (ProcessInfo.processInfo.systemUptime - obliqueLastShotAt)
+                && obliquePhaseSettled
+                && (lastMotion.timestamp - obliqueLastShotAt)
                     >= DirectionCaptureConfig.obliqueStuckHintWaitSec
             guideText = DirectionCaptureGuide.upperObliqueGuideMessage(
                 warnFast: warnFast,
-                waitingForElevation: waiting,
-                stuckAtLastShot: stuckLast
+                waitingForElevation: waitingElev,
+                stuckAtLastShot: stuckLast,
+                inverted: !lastMotion.gravityUprightPassed,
+                waitingForSettle: waitingSettle,
+                tooSteep: tooSteep,
+                inPreferredBand: preferred && obliquePhaseSettled
             )
             progressText = "위쪽 \(capturedUpperCount) / 4"
         case .capturingLowerOblique:
             currentTarget = lowerObliqueTargetIndex < DirectionName.lowerObliqueOrder.count
                 ? DirectionName.lowerObliqueOrder[lowerObliqueTargetIndex]
                 : nil
-            let waiting = !obliqueOrbitAnchored
+            let elev = lastMotion.elevationDeg
+            let waitingElev = !DirectionCaptureGuide.isLowerObliqueElevationBand(elev)
+            let tooSteep = DirectionCaptureGuide.isLowerTooSteep(elev)
+            let preferred = DirectionCaptureGuide.isLowerPreferredElevation(elev)
+            let waitingSettle = preferred && !obliquePhaseSettled
             let stuckLast = lowerObliqueTargetIndex == 3
-                && obliqueOrbitAnchored
-                && (ProcessInfo.processInfo.systemUptime - obliqueLastShotAt)
+                && obliquePhaseSettled
+                && (lastMotion.timestamp - obliqueLastShotAt)
                     >= DirectionCaptureConfig.obliqueStuckHintWaitSec
             guideText = DirectionCaptureGuide.lowerObliqueGuideMessage(
                 warnFast: warnFast,
-                waitingForElevation: waiting,
-                stuckAtLastShot: stuckLast
+                waitingForElevation: waitingElev,
+                stuckAtLastShot: stuckLast,
+                inverted: !lastMotion.gravityUprightPassed,
+                waitingForSettle: waitingSettle,
+                tooSteep: tooSteep,
+                inPreferredBand: preferred && obliquePhaseSettled
             )
             progressText = "아래쪽 \(capturedLowerCount) / 4"
         case .completed:
@@ -701,22 +799,43 @@ final class DirectionCaptureEngine: NSObject {
                 t += 0.05
                 Thread.sleep(forTimeInterval: 0.04)
             }
-            // Upper/lower: band entry + accumulate right-turn (~70/70/55).
+            // Upper/lower: preferred-band settle + phase-local ~90° orbit (Build 63).
             func sweepOblique(startYaw: Float, elev: Float) {
                 var yaw = startYaw
-                for step in 0..<12 {
+                // Phase settle (~0.5s+) in preferred elevation.
+                for _ in 0..<8 {
                     guard self.isCapturing else { return }
                     while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
                     DispatchQueue.main.sync {
-                        self.ingestMotionSample(unwrappedYaw: yaw, elevationDeg: elev, timestamp: t)
+                        self.ingestMotionSample(
+                            unwrappedYaw: yaw,
+                            rotationRate: 0.2,
+                            elevationDeg: elev,
+                            timestamp: t
+                        )
                     }
-                    t += 0.08
-                    Thread.sleep(forTimeInterval: 0.06)
-                    yaw -= (step == 0 ? 3 : 35)
+                    t += 0.1
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+                // ~270° right-turn in small steps (phase-local targets 0/90/180/270).
+                for _ in 0..<40 {
+                    guard self.isCapturing else { return }
+                    while self.isPhotoPending { Thread.sleep(forTimeInterval: 0.02) }
+                    yaw -= 8
+                    DispatchQueue.main.sync {
+                        self.ingestMotionSample(
+                            unwrappedYaw: yaw,
+                            rotationRate: 0.3,
+                            elevationDeg: elev,
+                            timestamp: t
+                        )
+                    }
+                    t += 0.05
+                    Thread.sleep(forTimeInterval: 0.03)
                 }
             }
-            sweepOblique(startYaw: -330, elev: 50)
-            sweepOblique(startYaw: -550, elev: -50)
+            sweepOblique(startYaw: -330, elev: 48)
+            sweepOblique(startYaw: -600, elev: -48)
         }
     }
 

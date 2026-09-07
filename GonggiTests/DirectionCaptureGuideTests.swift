@@ -8,10 +8,15 @@ final class DirectionCaptureGuideTests: XCTestCase {
         DirectionCaptureConfig.upperObliqueElevationMaxDeg = 70
         DirectionCaptureConfig.lowerObliqueElevationMinDeg = -70
         DirectionCaptureConfig.lowerObliqueElevationMaxDeg = -35
-        DirectionCaptureConfig.obliqueMinAccumulatedYawDeg = [0, 70, 70, 55]
-        DirectionCaptureConfig.obliqueLastShotFailSafeYawDeg = 45
+        DirectionCaptureConfig.upperObliqueElevationPreferredMinDeg = 40
+        DirectionCaptureConfig.upperObliqueElevationPreferredMaxDeg = 55
+        DirectionCaptureConfig.lowerObliqueElevationPreferredMinDeg = -55
+        DirectionCaptureConfig.lowerObliqueElevationPreferredMaxDeg = -40
+        DirectionCaptureConfig.obliquePhaseLocalTargetYawDeg = [0, 90, 180, 270]
+        DirectionCaptureConfig.obliqueMinAccumulatedYawDeg = [0, 90, 90, 90]
+        DirectionCaptureConfig.obliqueLastShotFailSafeYawDeg = 240
         DirectionCaptureConfig.obliqueLastShotFailSafeWaitSec = 4.0
-        DirectionCaptureConfig.obliqueShotSettleSec = 0.12
+        DirectionCaptureConfig.obliqueShotSettleSec = 0.5
         DirectionCaptureConfig.frontSeamPreferredYawDeg = -327
         DirectionCaptureConfig.frontSeamSoftMinYawDeg = -325
         DirectionCaptureConfig.frontSeamSoftAcceptWaitSec = 1.8
@@ -67,7 +72,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
         from start: Float,
         by degrees: Float,
         elev: Float,
-        step: Float = 10,
+        step: Float = 8,
         time: inout TimeInterval
     ) {
         var yaw = start
@@ -75,7 +80,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
         while yaw > end + 0.1 {
             yaw -= step
             if yaw < end { yaw = end }
-            time += 0.2
+            time += 0.05
             engine.ingestMotionSample(unwrappedYaw: yaw, elevationDeg: elev, timestamp: time)
         }
     }
@@ -95,11 +100,11 @@ final class DirectionCaptureGuideTests: XCTestCase {
         XCTAssertNotNil(engine.captured[.upFrontRight])
         XCTAssertEqual(engine.progressText, "위쪽 1 / 4")
 
-        turnRight(engine, from: -100, by: 70, elev: 50, time: &t)
+        turnRight(engine, from: -100, by: 90, elev: 50, time: &t)
         XCTAssertNotNil(engine.captured[.upBackRight])
-        turnRight(engine, from: -170, by: 70, elev: 50, time: &t)
+        turnRight(engine, from: -190, by: 90, elev: 50, time: &t)
         XCTAssertNotNil(engine.captured[.upBackLeft])
-        turnRight(engine, from: -240, by: 55, elev: 50, time: &t)
+        turnRight(engine, from: -280, by: 90, elev: 50, time: &t)
         XCTAssertNotNil(engine.captured[.upFrontLeft])
         XCTAssertEqual(engine.phase, .capturingLowerOblique)
     }
@@ -107,7 +112,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
     func testLastShotFailSafeWithLowerYawAndWait() {
         DirectionCaptureConfig.obliqueShotSettleSec = 0
         DirectionCaptureConfig.obliqueLastShotFailSafeWaitSec = 0.3
-        DirectionCaptureConfig.obliqueLastShotFailSafeYawDeg = 45
+        DirectionCaptureConfig.obliqueLastShotFailSafeYawDeg = 240
 
         let engine = DirectionCaptureEngine()
         engine.enableMockSweep = false
@@ -118,14 +123,16 @@ final class DirectionCaptureGuideTests: XCTestCase {
 
         var t: TimeInterval = 20
         engine.ingestMotionSample(unwrappedYaw: -10, elevationDeg: 50, timestamp: t)
-        turnRight(engine, from: -10, by: 70, elev: 50, time: &t)
-        turnRight(engine, from: -80, by: 70, elev: 50, time: &t)
+        turnRight(engine, from: -10, by: 90, elev: 50, time: &t)
+        turnRight(engine, from: -100, by: 90, elev: 50, time: &t)
         XCTAssertEqual(engine.progressText, "위쪽 3 / 4")
         XCTAssertNil(engine.captured[.upFrontLeft])
 
-        turnRight(engine, from: -150, by: 48, elev: 50, time: &t)
-        Thread.sleep(forTimeInterval: 0.35)
-        engine.ingestMotionSample(unwrappedYaw: -198, elevationDeg: 50, timestamp: t + 1)
+        // Only ~55° more → cumulative ~235; fail-safe at 230 after wait.
+        DirectionCaptureConfig.obliqueLastShotFailSafeYawDeg = 230
+        turnRight(engine, from: -190, by: 55, elev: 50, time: &t)
+        t += 0.35
+        engine.ingestMotionSample(unwrappedYaw: -245, elevationDeg: 50, timestamp: t)
         XCTAssertNotNil(engine.captured[.upFrontLeft], "last-shot fail-safe must fire")
     }
 
@@ -141,13 +148,13 @@ final class DirectionCaptureGuideTests: XCTestCase {
         var t: TimeInterval = 30
         func oneObliquePhase(start: Float, elev: Float) {
             engine.ingestMotionSample(unwrappedYaw: start, elevationDeg: elev, timestamp: t)
-            turnRight(engine, from: start, by: 70, elev: elev, time: &t)
-            turnRight(engine, from: start - 70, by: 70, elev: elev, time: &t)
-            turnRight(engine, from: start - 140, by: 55, elev: elev, time: &t)
+            turnRight(engine, from: start, by: 90, elev: elev, time: &t)
+            turnRight(engine, from: start - 90, by: 90, elev: elev, time: &t)
+            turnRight(engine, from: start - 180, by: 90, elev: elev, time: &t)
         }
-        oneObliquePhase(start: -40, elev: 40)
+        oneObliquePhase(start: -40, elev: 45)
         XCTAssertEqual(engine.capturedCount, 16)
-        oneObliquePhase(start: -200, elev: -40)
+        oneObliquePhase(start: -320, elev: -45)
         XCTAssertEqual(engine.capturedCount, 20)
         XCTAssertEqual(engine.phase, .completed)
     }

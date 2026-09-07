@@ -1,6 +1,6 @@
 import Foundation
 
-/// Build 61–62 TestFlight validation: explicit H12 actual-pose scaffold opt-in.
+/// Build 61–63 TestFlight validation: explicit H12 actual-pose scaffold opt-in.
 ///
 /// Backend production default remains `direct` when `mode` is omitted.
 /// Builds outside the validation set must NOT send scaffold mode.
@@ -9,8 +9,8 @@ enum GonggiSpaceRecordAIMode {
     static let scaffoldRepairV4bH12 = "scaffold_repair_v4b_h12"
 
     /// Build numbers that ship the scaffold real-device validation path.
-    /// Build 62 keeps the same opt-in as Build 61 (upload hard-cap hotfix only).
-    static let scaffoldValidationBuildNumbers: Set<String> = ["61", "62"]
+    /// Build 63: capture-side up/down phase-local stabilization (same scaffold mode).
+    static let scaffoldValidationBuildNumbers: Set<String> = ["61", "62", "63"]
 
     /// Multipart `mode` for space-record create/regenerate, or `nil` → backend default direct.
     static var createRequestMode: String? {
@@ -28,7 +28,7 @@ enum GonggiSpaceRecordAIMode {
     }
 
     /// Back-compat alias used by older call sites / tests.
-    static var scaffoldValidationBuildNumber: String { "62" }
+    static var scaffoldValidationBuildNumber: String { "63" }
 
     static var isBuild61ScaffoldValidation: Bool {
         isScaffoldValidationBuild

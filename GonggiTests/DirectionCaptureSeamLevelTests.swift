@@ -10,7 +10,7 @@ final class DirectionCaptureSeamLevelTests: XCTestCase {
         DirectionCaptureConfig.frontSeamHelperActiveYawDeg = -300
         DirectionCaptureConfig.horizontalLevelWarnDeg = 10
         DirectionCaptureConfig.frontAutoCaptureDelaySec = 0.2
-        DirectionCaptureConfig.obliqueShotSettleSec = 0.12
+        DirectionCaptureConfig.obliqueShotSettleSec = 0.5
         super.tearDown()
     }
 
