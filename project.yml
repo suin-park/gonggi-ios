@@ -12,9 +12,10 @@ settings:
     DEVELOPMENT_TEAM: ""
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "58"
-  configs:
-    Debug: debug
-    Release: release
+
+configs:
+  Debug: debug
+  Release: release
 
 # Single source for Google iOS OAuth client id (Debug + Release).
 configFiles:
