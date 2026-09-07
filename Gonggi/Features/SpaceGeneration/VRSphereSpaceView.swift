@@ -111,119 +111,151 @@ struct VRSphereSpaceView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            Panorama360SceneOnlyView(
-                imageURL: textureURL,
-                textureGeneration: textureGeneration,
-                markerYawDeg: markerYawDeg,
-                markerPitchDeg: markerPitchDeg,
-                maskRadiusYawDeg: Float(pendingTarget?.radiusYawDeg
-                    ?? Double(VRSphereEquirectBridge.defaultYawRadiusDeg)),
-                maskRadiusPitchDeg: Float(pendingTarget?.radiusPitchDeg
-                    ?? Double(VRSphereEquirectBridge.defaultPitchRadiusDeg)),
-                motionDesiredEnabled: motionEnabled,
-                confirmSheetPresented: showConfirmSheet,
-                recenterToken: recenterToken,
-                editModeActive: interactionMode == .edit,
-                repairLongPressEnabled: interactionMode == .view,
-                placementEntries: draftLayout.assets,
-                placementFloorY: draftLayout.floorY,
-                assetMetadata: assetMetadata,
-                modelURLs: modelURLs,
-                selectedId: selectedPlacementId,
-                editTool: editTool,
-                placementRequestToken: placementRequestToken,
-                environmentLightingURL: textureURL,
-                lightingExperimentActive: lightingExperimentActiveForHost,
-                lightingMode: lightingMode,
-                lightingIBLIntensity: lightingIBL,
-                supportLiveRevision: supportLiveRevision,
-                supportLiveId: supportLiveId,
-                supportLiveY: supportLiveY,
-                spaceLinks: spaceLinks,
-                selectedSpaceLinkId: selectedSpaceLinkId,
-                spaceLinkSpawnToken: spaceLinkSpawnToken,
-                onViewerReady: {
-                    panoramaReady = true
-                    scheduleHintFlowIfNeeded()
-                    loadPlacementIfNeeded()
-                    loadSpaceLinksIfNeeded()
-                },
-                onLongPress: { yaw, pitch in
-                    GonggiHaptics.medium()
-                    markSelectiveRepairHintSeenAndHide()
-                    hideMotionHintImmediate()
-                    let target = RepairTarget.make(
-                        sessionId: sessionId,
-                        baseRevisionId: baseRevisionId,
-                        targetYawDeg: Double(yaw),
-                        targetPitchDeg: Double(pitch)
-                    )
-                    pendingTarget = target
-                    markerYawDeg = yaw
-                    markerPitchDeg = pitch
-                    #if DEBUG
-                    print(
-                        "[repair-bridge] long-press equirect yaw=\(yaw) pitch=\(pitch) session=\(sessionId)"
-                    )
-                    #endif
-                    showConfirmSheet = true
-                },
-                onMotionHardwareAvailable: { available in
-                    motionHardwareOK = available
-                },
-                onPlacedAssetTapped: { id in
-                    selectedPlacementId = id
-                    if id != nil {
-                        selectedSpaceLinkId = nil
-                    }
-                    editTool = id == nil ? .none : editTool
-                },
-                onPlacedAssetTransformChanged: { id, position, rotationY, scale in
-                    updateDraftTransform(
-                        id: id,
-                        position: position,
-                        rotationY: rotationY,
-                        scale: scale
-                    )
-                },
-                onPlacementPointResolved: { point in
-                    addPendingAsset(at: point)
-                },
-                onSpaceLinkTapped: { id in
-                    handleSpaceLinkTapped(id)
-                },
-                onSpaceLinkPoseChanged: { id, yaw, pitch, radius in
-                    updateSpaceLinkPose(id: id, yaw: yaw, pitch: pitch, radius: radius)
-                },
-                onSpaceLinkSpawnResolved: { yaw, pitch in
-                    spawnDraftSpaceLink(yaw: yaw, pitch: pitch)
-                },
-                onLightingDebug: { label in
-                    lightingEstimateLabel = label
-                }
-            )
-            .ignoresSafeArea()
-            .allowsHitTesting(true)
-
-            Button {
-                GonggiHaptics.light()
-                if interactionMode == .edit {
-                    exitEditMode()
-                } else {
-                    onClose()
-                }
-            } label: {
-                Image(systemName: "chevron.backward")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(Color.black.opacity(0.45))
-                    .clipShape(Circle())
+        mainChrome
+            .statusBarHidden(true)
+            .onChange(of: repairController.completedTextureURL) { _, newURL in
+                guard let newURL else { return }
+                applyCompletedTexture(newURL)
             }
-            .padding(.leading, 16)
-            .padding(.top, 12)
-            .zIndex(2)
+            .onAppear {
+                repairController.refreshFromStore()
+                #if DEBUG
+                lightingPoCActive = VRLightingExperimentPrefs.experimentUIEnabled
+                #else
+                lightingPoCActive = false
+                #endif
+                if let url = repairController.completedTextureURL {
+                    applyCompletedTexture(url)
+                }
+                if panoramaReady {
+                    scheduleHintFlowIfNeeded()
+                }
+            }
+            .onDisappear {
+                cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
+                motionHintTask?.cancel()
+                motionHintTask = nil
+                placementTask?.cancel()
+                placementTask = nil
+                spaceLinkTask?.cancel()
+                spaceLinkTask = nil
+            }
+            .sheet(isPresented: $showConfirmSheet, onDismiss: {
+                if captureTarget == nil {
+                    clearRepairSelection()
+                }
+            }) {
+                RepairConfirmSheet(
+                    onRecapture: {
+                        guard let target = pendingTarget else { return }
+                        showConfirmSheet = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            captureTarget = target
+                        }
+                    },
+                    onCancel: {
+                        showConfirmSheet = false
+                        clearRepairSelection()
+                    }
+                )
+                .presentationDetents([.height(220)])
+            }
+            .sheet(isPresented: $assetPickerPresented) {
+                assetPicker
+                    .presentationDetents([.medium, .large])
+            }
+            .confirmationDialog("추가", isPresented: $addMenuPresented, titleVisibility: .visible) {
+                Button("3D 오브젝트") {
+                    assetPickerPresented = true
+                }
+                .disabled(draftLayout.assets.count >= VRPlacementLayout.maxAssets)
+                Button("공간 연결") {
+                    spaceLinkSpawnToken += 1
+                }
+                .disabled(spaceLinks.count >= SpaceLink.maxLinksPerSource)
+                Button("취소", role: .cancel) {}
+            }
+            .sheet(isPresented: $showSpaceLinkCaptureIntro) {
+                spaceLinkCaptureIntroSheet
+                    .presentationDetents([.height(240)])
+            }
+            .fullScreenCover(isPresented: $showSpaceLinkDirectionCapture) {
+                DirectionCaptureView(
+                    onClose: {
+                        showSpaceLinkDirectionCapture = false
+                    },
+                    onCaptureCompleted: { result in
+                        finishSpaceLinkCapture(result)
+                    }
+                )
+                .environmentObject(appState)
+            }
+            .fullScreenCover(item: $captureTarget) { target in
+                RepairManualCaptureView(
+                    target: target,
+                    onCancel: {
+                        captureTarget = nil
+                        clearRepairSelection()
+                    },
+                    onSubmitted: {
+                        captureTarget = nil
+                        markerYawDeg = nil
+                        markerPitchDeg = nil
+                        pendingTarget = nil
+                        onClose()
+                    }
+                )
+            }
+            .alert("부분 수정에 실패했어요", isPresented: Binding(
+                get: { uploadError != nil },
+                set: { if !$0 { uploadError = nil } }
+            )) {
+                Button("확인", role: .cancel) { uploadError = nil }
+            } message: {
+                Text(uploadError ?? "")
+            }
+            .alert("공간을 만들지 못했어요", isPresented: Binding(
+                get: { appState.spaceLinkUserMessage != nil },
+                set: { if !$0 { appState.spaceLinkUserMessage = nil } }
+            )) {
+                Button("확인", role: .cancel) { appState.spaceLinkUserMessage = nil }
+            } message: {
+                Text(appState.spaceLinkUserMessage ?? "")
+            }
+    }
+
+    private func finishSpaceLinkCapture(_ result: DirectionCaptureResult) {
+        guard let selectedSpaceLinkId,
+              let link = spaceLinks.first(where: { $0.id == selectedSpaceLinkId })
+        else { return }
+        let pending = PendingSpaceLinkCapture(
+            sourceSpaceId: sessionId,
+            draftHotspotId: link.id,
+            yawDeg: link.yawDeg,
+            pitchDeg: link.pitchDeg,
+            radius: link.radius,
+            label: link.label,
+            targetSessionId: result.sessionId,
+            createdAt: Date()
+        )
+        spaceLinks.removeAll { $0.id == link.id }
+        self.selectedSpaceLinkId = nil
+        appState.startSpaceGenerationFromSpaceLink(result: result, pending: pending)
+        spaceLinkBusyMessage = "공간을 만드는 중…"
+        onClose()
+    }
+
+    @ViewBuilder
+    private var mainChrome: some View {
+        ZStack(alignment: .topLeading) {
+            panoramaHost
+                .ignoresSafeArea()
+                .allowsHitTesting(true)
+
+            backButton
+                .padding(.leading, 16)
+                .padding(.top, 12)
+                .zIndex(2)
 
             if interactionMode == .view {
                 vrToolbar
@@ -321,137 +353,118 @@ struct VRSphereSpaceView: View {
                     .zIndex(4)
             }
         }
-        .statusBarHidden(true)
-        .onChange(of: repairController.completedTextureURL) { _, newURL in
-            guard let newURL else { return }
-            applyCompletedTexture(newURL)
-        }
-        .onAppear {
-            repairController.refreshFromStore()
-            #if DEBUG
-            lightingPoCActive = VRLightingExperimentPrefs.experimentUIEnabled
-            #else
-            lightingPoCActive = false
-            #endif
-            if let url = repairController.completedTextureURL {
-                applyCompletedTexture(url)
+    }
+
+    private var backButton: some View {
+        Button {
+            GonggiHaptics.light()
+            if interactionMode == .edit {
+                exitEditMode()
+            } else {
+                onClose()
             }
-            if panoramaReady {
+        } label: {
+            Image(systemName: "chevron.backward")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(Color.black.opacity(0.45))
+                .clipShape(Circle())
+        }
+    }
+
+    private var panoramaHost: some View {
+        Panorama360SceneOnlyView(
+            imageURL: textureURL,
+            textureGeneration: textureGeneration,
+            markerYawDeg: markerYawDeg,
+            markerPitchDeg: markerPitchDeg,
+            maskRadiusYawDeg: Float(pendingTarget?.radiusYawDeg
+                ?? Double(VRSphereEquirectBridge.defaultYawRadiusDeg)),
+            maskRadiusPitchDeg: Float(pendingTarget?.radiusPitchDeg
+                ?? Double(VRSphereEquirectBridge.defaultPitchRadiusDeg)),
+            motionDesiredEnabled: motionEnabled,
+            confirmSheetPresented: showConfirmSheet,
+            recenterToken: recenterToken,
+            editModeActive: interactionMode == .edit,
+            repairLongPressEnabled: interactionMode == .view,
+            placementEntries: draftLayout.assets,
+            placementFloorY: draftLayout.floorY,
+            assetMetadata: assetMetadata,
+            modelURLs: modelURLs,
+            selectedId: selectedPlacementId,
+            editTool: editTool,
+            placementRequestToken: placementRequestToken,
+            environmentLightingURL: textureURL,
+            lightingExperimentActive: lightingExperimentActiveForHost,
+            lightingMode: lightingMode,
+            lightingIBLIntensity: lightingIBL,
+            supportLiveRevision: supportLiveRevision,
+            supportLiveId: supportLiveId,
+            supportLiveY: supportLiveY,
+            spaceLinks: spaceLinks,
+            selectedSpaceLinkId: selectedSpaceLinkId,
+            spaceLinkSpawnToken: spaceLinkSpawnToken,
+            onViewerReady: {
+                panoramaReady = true
                 scheduleHintFlowIfNeeded()
-            }
-        }
-        .onDisappear {
-            cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
-            motionHintTask?.cancel()
-            motionHintTask = nil
-            placementTask?.cancel()
-            placementTask = nil
-            spaceLinkTask?.cancel()
-            spaceLinkTask = nil
-        }
-        .sheet(isPresented: $showConfirmSheet, onDismiss: {
-            if captureTarget == nil {
-                clearRepairSelection()
-            }
-        }) {
-            RepairConfirmSheet(
-                onRecapture: {
-                    guard let target = pendingTarget else { return }
-                    showConfirmSheet = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        captureTarget = target
-                    }
-                },
-                onCancel: {
-                    showConfirmSheet = false
-                    clearRepairSelection()
-                }
-            )
-            .presentationDetents([.height(220)])
-        }
-        .sheet(isPresented: $assetPickerPresented) {
-            assetPicker
-                .presentationDetents([.medium, .large])
-        }
-        .confirmationDialog("추가", isPresented: $addMenuPresented, titleVisibility: .visible) {
-            Button("3D 오브젝트") {
-                assetPickerPresented = true
-            }
-            .disabled(draftLayout.assets.count >= VRPlacementLayout.maxAssets)
-            Button("공간 연결") {
-                spaceLinkSpawnToken += 1
-            }
-            .disabled(spaceLinks.count >= SpaceLink.maxLinksPerSource)
-            Button("취소", role: .cancel) {}
-        }
-        .sheet(isPresented: $showSpaceLinkCaptureIntro) {
-            spaceLinkCaptureIntroSheet
-                .presentationDetents([.height(240)])
-        }
-        .fullScreenCover(isPresented: $showSpaceLinkDirectionCapture) {
-            DirectionCaptureView(
-                onClose: {
-                    showSpaceLinkDirectionCapture = false
-                },
-                onCaptureCompleted: { result in
-                    guard let selectedSpaceLinkId,
-                          let link = spaceLinks.first(where: { $0.id == selectedSpaceLinkId })
-                    else { return }
-                    let pending = PendingSpaceLinkCapture(
-                        sourceSpaceId: sessionId,
-                        draftHotspotId: link.id,
-                        yawDeg: link.yawDeg,
-                        pitchDeg: link.pitchDeg,
-                        radius: link.radius,
-                        label: link.label,
-                        targetSessionId: result.sessionId,
-                        createdAt: Date()
-                    )
-                    // Remove local draft — server row created only after SUCCESS.
-                    spaceLinks.removeAll { $0.id == link.id }
+                loadPlacementIfNeeded()
+                loadSpaceLinksIfNeeded()
+            },
+            onLongPress: { yaw, pitch in
+                GonggiHaptics.medium()
+                markSelectiveRepairHintSeenAndHide()
+                hideMotionHintImmediate()
+                let target = RepairTarget.make(
+                    sessionId: sessionId,
+                    baseRevisionId: baseRevisionId,
+                    targetYawDeg: Double(yaw),
+                    targetPitchDeg: Double(pitch)
+                )
+                pendingTarget = target
+                markerYawDeg = yaw
+                markerPitchDeg = pitch
+                #if DEBUG
+                print(
+                    "[repair-bridge] long-press equirect yaw=\(yaw) pitch=\(pitch) session=\(sessionId)"
+                )
+                #endif
+                showConfirmSheet = true
+            },
+            onMotionHardwareAvailable: { available in
+                motionHardwareOK = available
+            },
+            onPlacedAssetTapped: { id in
+                selectedPlacementId = id
+                if id != nil {
                     selectedSpaceLinkId = nil
-                    appState.startSpaceGenerationFromSpaceLink(result: result, pending: pending)
-                    spaceLinkBusyMessage = "공간을 만드는 중…"
-                    onClose()
                 }
-            )
-            .environmentObject(appState)
-        }
-        .fullScreenCover(item: $captureTarget) { target in
-            RepairManualCaptureView(
-                target: target,
-                onCancel: {
-                    captureTarget = nil
-                    clearRepairSelection()
-                },
-                onSubmitted: {
-                    // 202 + persist + success feedback already shown in capture.
-                    // Dismiss capture + VR; SpaceRepairRuntime polling keeps running.
-                    captureTarget = nil
-                    markerYawDeg = nil
-                    markerPitchDeg = nil
-                    pendingTarget = nil
-                    // Do not set repairing banner — user leaves VR; card shows “수정 중”.
-                    onClose()
-                }
-            )
-        }
-        .alert("부분 수정에 실패했어요", isPresented: Binding(
-            get: { uploadError != nil },
-            set: { if !$0 { uploadError = nil } }
-        )) {
-            Button("확인", role: .cancel) { uploadError = nil }
-        } message: {
-            Text(uploadError ?? "")
-        }
-        .alert("공간을 만들지 못했어요", isPresented: Binding(
-            get: { appState.spaceLinkUserMessage != nil },
-            set: { if !$0 { appState.spaceLinkUserMessage = nil } }
-        )) {
-            Button("확인", role: .cancel) { appState.spaceLinkUserMessage = nil }
-        } message: {
-            Text(appState.spaceLinkUserMessage ?? "")
-        }
+                editTool = id == nil ? .none : editTool
+            },
+            onPlacedAssetTransformChanged: { id, position, rotationY, scale in
+                updateDraftTransform(
+                    id: id,
+                    position: position,
+                    rotationY: rotationY,
+                    scale: scale
+                )
+            },
+            onPlacementPointResolved: { point in
+                addPendingAsset(at: point)
+            },
+            onSpaceLinkTapped: { id in
+                handleSpaceLinkTapped(id)
+            },
+            onSpaceLinkPoseChanged: { id, yaw, pitch, radius in
+                updateSpaceLinkPose(id: id, yaw: yaw, pitch: pitch, radius: radius)
+            },
+            onSpaceLinkSpawnResolved: { yaw, pitch in
+                spawnDraftSpaceLink(yaw: yaw, pitch: pitch)
+            },
+            onLightingDebug: { label in
+                lightingEstimateLabel = label
+            }
+        )
     }
 
     private var editDoneButton: some View {

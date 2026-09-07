@@ -55,7 +55,7 @@ enum SpaceHotspotNodeFactory {
         root.addChildNode(proxy)
 
         if selected {
-            let ring = SCNNode(geometry: SCNPlane(width: CGFloat(diameter * 1.35), height: CGFloat(diameter * 1.35)))
+            let ringPlane = SCNPlane(width: CGFloat(diameter * 1.35), height: CGFloat(diameter * 1.35))
             let ringMat = SCNMaterial()
             ringMat.lightingModel = .constant
             ringMat.isDoubleSided = true
@@ -63,7 +63,8 @@ enum SpaceHotspotNodeFactory {
             ringMat.diffuse.contents = makeRingImage()
             ringMat.transparencyMode = .singleLayer
             ringMat.blendMode = .alpha
-            ring.firstMaterial = ringMat
+            ringPlane.firstMaterial = ringMat
+            let ring = SCNNode(geometry: ringPlane)
             ring.name = selectionName
             ring.categoryBitMask = VRPlacedAssetCategory.selection
             ring.renderingOrder = 22
