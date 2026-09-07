@@ -7,20 +7,19 @@ final class GonggiSpaceRecordAIModeTests: XCTestCase {
             GonggiSpaceRecordAIMode.scaffoldRepairV4bH12,
             "scaffold_repair_v4b_h12"
         )
-        XCTAssertEqual(GonggiSpaceRecordAIMode.scaffoldValidationBuildNumber, "61")
+        XCTAssertEqual(GonggiSpaceRecordAIMode.scaffoldValidationBuildNumbers, ["61", "62"])
     }
 
-    func testCreateRequestModeOnlyWhenBuild61() {
-        // Runtime Bundle CFBundleVersion is set by the app target; in unit tests it is typically
-        // the test host build. Assert the gate logic shape rather than forcing Bundle mutation.
-        let build = GonggiSpaceRecordAIMode.currentAppBuildNumber
-        if build == "61" {
-            XCTAssertEqual(
-                GonggiSpaceRecordAIMode.createRequestMode,
-                GonggiSpaceRecordAIMode.scaffoldRepairV4bH12
-            )
-        } else {
-            XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode)
-        }
+    func testG_ModeScaffoldForBuild61And62Only() {
+        XCTAssertEqual(
+            GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "61"),
+            "scaffold_repair_v4b_h12"
+        )
+        XCTAssertEqual(
+            GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "62"),
+            "scaffold_repair_v4b_h12"
+        )
+        XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "60"))
+        XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "63"))
     }
 }

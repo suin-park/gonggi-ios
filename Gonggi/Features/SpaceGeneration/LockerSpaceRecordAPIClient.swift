@@ -15,7 +15,15 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         imageFiles: [(direction: String, fileURL: URL)],
         captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
-        let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(imageFiles, sessionId: sessionId)
+        let mode = GonggiSpaceRecordAIMode.createRequestMode
+        let appBuild = GonggiSpaceRecordAIMode.currentAppBuildNumber
+        let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(
+            imageFiles,
+            sessionId: sessionId,
+            captureMetadataJSON: captureMetadataJSON,
+            mode: mode,
+            clientAppBuild: appBuild.isEmpty ? nil : appBuild
+        )
         return try await postMultipart(
             path: "/api/gonggi/space-record/create",
             sessionId: sessionId,
@@ -29,7 +37,15 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         imageFiles: [(direction: String, fileURL: URL)],
         captureMetadataJSON: String?
     ) async throws -> SpaceRecordCreateResponse {
-        let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(imageFiles, sessionId: sessionId)
+        let mode = GonggiSpaceRecordAIMode.createRequestMode
+        let appBuild = GonggiSpaceRecordAIMode.currentAppBuildNumber
+        let prepared = try SpaceRecordUploadPreparer.prepareUploadFiles(
+            imageFiles,
+            sessionId: sessionId,
+            captureMetadataJSON: captureMetadataJSON,
+            mode: mode,
+            clientAppBuild: appBuild.isEmpty ? nil : appBuild
+        )
         return try await postMultipart(
             path: "/api/gonggi/space-record/regenerate",
             sessionId: sessionId,
@@ -263,6 +279,10 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         }
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         SpaceRecordUploadLog.multipartBodyBytes(body.count, sessionId: sessionId)
+        // Final hard-cap: never send oversize body to Vercel edge.
+        if body.count > SpaceRecordUploadPreparer.hardCeilingMultipartBytes {
+            throw SpaceRecordClientError.payloadTooLargeLocal
+        }
         request.httpBody = body
         request.httpMethod = "POST"
 

@@ -155,15 +155,15 @@ struct HomeView: View {
     }
 
     private func handleSpaceTap(_ space: SpaceRecord) {
-        selectedSpace = space
-        switch space.status {
-        case .ready:
+        switch SpaceCardTapPolicy.action(for: space.status) {
+        case .openViewer:
             // Includes repairing / repaired / repairFailed overlays — open latest successful revision.
             Task { await openViewer(jobId: space.id) }
-        case .failed:
-            appState.retrySpaceGeneration(jobId: space.id)
-        case .processing, .uploading, .draft:
-            break
+        case .openDetail:
+            // Failed: detail only — never auto-regenerate (explicit “다시 시도” only).
+            selectedSpace = space
+        case .ignore:
+            selectedSpace = space
         }
     }
 

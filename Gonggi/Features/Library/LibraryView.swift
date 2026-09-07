@@ -97,12 +97,11 @@ struct LibraryView: View {
     }
 
     private func handleOpen(_ space: SpaceRecord) {
-        switch space.status {
-        case .failed:
-            appState.retrySpaceGeneration(jobId: space.id)
-        case .ready:
+        switch SpaceCardTapPolicy.action(for: space.status) {
+        case .openViewer:
             Task { await openViewer(jobId: space.id) }
-        default:
+        case .openDetail, .ignore:
+            // Failed → detail only; explicit “다시 시도” in SpaceDetailView regenerates.
             selectedSpace = space
         }
     }

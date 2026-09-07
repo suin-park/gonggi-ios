@@ -82,4 +82,6 @@ enum SpaceRecordClientError: Error {
     case network
     case server(String)
     case invalidResponse
+    /// Client hard-cap: multipart would exceed safe ceiling — do not send HTTP.
+    case payloadTooLargeLocal
 }

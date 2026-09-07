@@ -86,6 +86,12 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
         )
         XCTAssertEqual(job.uiStatus, .failed)
         XCTAssertEqual(job.statusNote, "생성 실패")
+        var withPayload = job
+        withPayload.lastErrorCode = "payload_too_large_local"
+        XCTAssertEqual(
+            withPayload.statusNote,
+            "사진 용량이 커서 업로드할 수 없어요. 다시 촬영해 주세요."
+        )
     }
 
     func testI_HTTP500IsCreateFailure() async {

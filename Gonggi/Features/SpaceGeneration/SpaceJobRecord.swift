@@ -15,6 +15,8 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var localLatLongPath: String?
     var width: Int?
     var height: Int?
+    /// Internal failure code (payload_too_large_local, network_error, …). Never shown raw in UI.
+    var lastErrorCode: String? = nil
 
     var isTerminal: Bool {
         serverStatus == "completed" || serverStatus == "failed"
@@ -49,7 +51,7 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
         case "queued", "uploaded", "preprocessing", "generating":
             return "공간을 만들고 있어요"
         case "failed":
-            return "생성 실패"
+            return SpaceJobErrorPresentation.userMessage(for: lastErrorCode)
         case "completed":
             return isDeviceReadyForVR ? nil : "공간을 불러오는 중…"
         default:

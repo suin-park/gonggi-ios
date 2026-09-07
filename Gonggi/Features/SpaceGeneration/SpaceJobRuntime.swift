@@ -93,6 +93,7 @@ final class SpaceJobRuntime: ObservableObject {
         job.resultImageURL = nil
         job.localLatLongPath = nil
         job.completedAt = nil
+        job.lastErrorCode = nil
         store.upsert(job)
         uploadTasks[job.sessionId]?.cancel()
         uploadTasks[job.sessionId] = Task {
@@ -188,6 +189,7 @@ final class SpaceJobRuntime: ObservableObject {
                 job.jobId = response.jobId
                 job.sessionId = response.sessionId
                 job.serverStatus = Self.normalizeStatus(response.status)
+                job.lastErrorCode = nil
             }
             await refreshStatus(jobId: response.jobId)
             resumePolling()
@@ -195,6 +197,7 @@ final class SpaceJobRuntime: ObservableObject {
             store.update(jobId: sessionId) { job in
                 if job.serverStatus == "uploading" {
                     job.serverStatus = "failed"
+                    job.lastErrorCode = SpaceJobErrorPresentation.code(from: error)
                 }
             }
         }
@@ -212,12 +215,14 @@ final class SpaceJobRuntime: ObservableObject {
             store.update(jobId: sessionId) { job in
                 job.jobId = response.jobId
                 job.serverStatus = Self.normalizeStatus(response.status)
+                job.lastErrorCode = nil
             }
             await refreshStatus(jobId: response.jobId)
             resumePolling()
         } catch {
             store.update(jobId: sessionId) { job in
                 job.serverStatus = "failed"
+                job.lastErrorCode = SpaceJobErrorPresentation.code(from: error)
             }
         }
     }
@@ -247,6 +252,9 @@ final class SpaceJobRuntime: ObservableObject {
             case "failed":
                 store.update(jobId: jobId) { job in
                     job.serverStatus = "failed"
+                    if job.lastErrorCode == nil {
+                        job.lastErrorCode = status.errorCode ?? "generation_failed"
+                    }
                 }
             case "completed":
                 await finishCompleted(jobId: jobId, status: status)

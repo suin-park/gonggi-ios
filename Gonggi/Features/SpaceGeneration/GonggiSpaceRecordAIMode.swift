@@ -1,19 +1,20 @@
 import Foundation
 
-/// Build 61 TestFlight validation: explicit H12 actual-pose scaffold opt-in.
+/// Build 61–62 TestFlight validation: explicit H12 actual-pose scaffold opt-in.
 ///
 /// Backend production default remains `direct` when `mode` is omitted.
-/// Older builds (≤60) and future builds (≠61) must NOT send scaffold mode.
+/// Builds outside the validation set must NOT send scaffold mode.
 enum GonggiSpaceRecordAIMode {
     /// Matches cloud `getGonggiAIMode` alias for H12 actual-pose scaffold repair.
     static let scaffoldRepairV4bH12 = "scaffold_repair_v4b_h12"
 
-    /// Build number that ships the scaffold real-device validation path.
-    static let scaffoldValidationBuildNumber = "61"
+    /// Build numbers that ship the scaffold real-device validation path.
+    /// Build 62 keeps the same opt-in as Build 61 (upload hard-cap hotfix only).
+    static let scaffoldValidationBuildNumbers: Set<String> = ["61", "62"]
 
     /// Multipart `mode` for space-record create/regenerate, or `nil` → backend default direct.
     static var createRequestMode: String? {
-        guard currentAppBuildNumber == scaffoldValidationBuildNumber else { return nil }
+        guard isScaffoldValidationBuild else { return nil }
         return scaffoldRepairV4bH12
     }
 
@@ -22,7 +23,19 @@ enum GonggiSpaceRecordAIMode {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    static var isScaffoldValidationBuild: Bool {
+        scaffoldValidationBuildNumbers.contains(currentAppBuildNumber)
+    }
+
+    /// Back-compat alias used by older call sites / tests.
+    static var scaffoldValidationBuildNumber: String { "62" }
+
     static var isBuild61ScaffoldValidation: Bool {
-        currentAppBuildNumber == scaffoldValidationBuildNumber
+        isScaffoldValidationBuild
+    }
+
+    /// Pure gate for unit tests (does not read Bundle).
+    static func createRequestMode(forBuildNumber build: String) -> String? {
+        scaffoldValidationBuildNumbers.contains(build) ? scaffoldRepairV4bH12 : nil
     }
 }
