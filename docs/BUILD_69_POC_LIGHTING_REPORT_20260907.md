@@ -10,9 +10,13 @@
 
 | Field | Value |
 |-------|--------|
-| iOS SHA | _(fill after commit)_ |
+| iOS SHA | `8c4e843` |
 | version/build | **1.0 (69)** |
-| TestFlight | _(fill after workflow)_ |
+| workflow | [Gonggi TestFlight #34122495314](https://github.com/suin-park/gonggi-ios/actions/runs/34122495314) |
+| ASC | **UPLOAD SUCCEEDED** |
+| Delivery UUID | `44b6db26-00c3-4d9d-b8b8-fd34aa97a169` |
+| dSYM UUID | `135947D3-981B-3753-906B-DAA597361E78` (arm64) |
+| dSYM artifact | `Gonggi-dSYM-1.0-69` |
 | experiment flag | `VRLightingExperimentPrefs` + VR 하단 **PoC Light** 셀렉터 (기본 OFF → baseline IBL 0.7) |
 
 ### Modes (비교 분리)
