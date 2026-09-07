@@ -11,10 +11,15 @@ final class AppState: ObservableObject {
     /// Set when a completion push / deep link should open VR for this session/job.
     @Published var pendingViewerJobId: String?
     @Published var pendingViewerError: String?
+    /// Build 72 — open VR with optional source→target stack after Space Link finalize.
+    @Published var pendingViewerLaunch: SpaceViewerLaunch?
+    @Published var spaceLinkUserMessage: String?
 
     let spaceService: SpaceGenerationService
     let jobStore: SpaceJobStore
     let jobRuntime: SpaceJobRuntime
+    private let spaceLinkStore = SpaceLinkStore()
+    private var spaceLinkFinalizeTask: Task<Void, Never>?
 
     init(
         isMockMode: Bool = {
@@ -36,6 +41,7 @@ final class AppState: ObservableObject {
         self.jobRuntime.configure(useMock: isMockMode)
         store.onChange = { [weak self] in
             self?.rebuildSpaces()
+            self?.schedulePendingSpaceLinkFinalize()
         }
         NotificationCenter.default.addObserver(
             forName: .gonggiSpaceRepairStoreDidChange,
@@ -73,6 +79,81 @@ final class AppState: ObservableObject {
         jobRuntime.start(from: result)
         rebuildSpaces()
         selectedTab = .home
+        schedulePendingSpaceLinkFinalize()
+    }
+
+    /// Build 72 — capture from 공간 연결; linked row only after target SUCCESS.
+    func startSpaceGenerationFromSpaceLink(
+        result: DirectionCaptureResult,
+        pending: PendingSpaceLinkCapture
+    ) {
+        var stamped = pending
+        stamped.targetSessionId = result.sessionId
+        PendingSpaceLinkCaptureStore.shared.set(stamped)
+        startSpaceGeneration(from: result)
+    }
+
+    private func schedulePendingSpaceLinkFinalize() {
+        spaceLinkFinalizeTask?.cancel()
+        spaceLinkFinalizeTask = Task { [weak self] in
+            await self?.finalizePendingSpaceLinkIfReady()
+        }
+    }
+
+    /// Creates SpaceLink only when target job is completed/usable.
+    func finalizePendingSpaceLinkIfReady() async {
+        guard let pending = PendingSpaceLinkCaptureStore.shared.pending else { return }
+        let targetId = pending.targetSessionId
+        guard let job = jobStore.jobs.first(where: {
+            $0.sessionId == targetId || $0.jobId == targetId
+        }) else { return }
+
+        let status = job.serverStatus.lowercased()
+        if status == "failed" {
+            PendingSpaceLinkCaptureStore.shared.clear()
+            spaceLinkUserMessage = "공간을 만들지 못했어요"
+            return
+        }
+        guard status == "completed" else { return }
+        // Usable: local file or remote URL present.
+        let usable = SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath)
+            || (job.resultImageURL?.isEmpty == false)
+        guard usable else { return }
+
+        do {
+            _ = try await spaceLinkStore.createLinked(
+                sourceSpaceId: pending.sourceSpaceId,
+                targetSpaceId: targetId,
+                yawDeg: pending.yawDeg,
+                pitchDeg: pending.pitchDeg,
+                radius: pending.radius,
+                label: pending.label
+            )
+            PendingSpaceLinkCaptureStore.shared.clear()
+
+            // Prepare source + target and open stack (target on top).
+            let sourceResult = await prepareSpaceViewer(jobId: pending.sourceSpaceId)
+            let targetResult = await prepareSpaceViewer(jobId: targetId)
+            switch (sourceResult, targetResult) {
+            case (.success(let sourceURL), .success(let targetURL)):
+                pendingViewerLaunch = SpaceViewerLaunch(sessions: [
+                    SpaceViewerSession(id: pending.sourceSpaceId, fileURL: sourceURL),
+                    SpaceViewerSession(id: targetId, fileURL: targetURL),
+                ])
+                pendingViewerError = nil
+            case (_, .success(let targetURL)):
+                pendingViewerLaunch = SpaceViewerLaunch(
+                    single: SpaceViewerSession(id: targetId, fileURL: targetURL)
+                )
+            default:
+                pendingViewerJobId = targetId
+            }
+        } catch {
+            // Keep pending so a later sync can retry; do not create broken UX toast unless hard fail.
+            #if DEBUG
+            print("[spaceLink72] finalize failed: \(error)")
+            #endif
+        }
     }
 
     /// Notification tap → sync status → download if needed → open VR (never black).
@@ -163,6 +244,7 @@ final class AppState: ObservableObject {
         }
         #endif
         spaces = live.isEmpty ? SpaceRecord.sampleArchive : live
+        schedulePendingSpaceLinkFinalize()
     }
 }
 

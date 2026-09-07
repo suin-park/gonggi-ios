@@ -16,6 +16,8 @@ enum VRPlacedAssetCategory {
     static let selection = 1 << 4
     /// Build 69 shadow receiver plane — repair/asset hitTest excluded.
     static let shadowReceiver = 1 << 5
+    /// Build 72 — 공간 연결 billboard (sibling of placedAssetsRoot).
+    static let spaceLink = 1 << 6
 }
 
 enum VRPlacedAssetNodeFactory {

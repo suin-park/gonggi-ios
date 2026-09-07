@@ -6,7 +6,7 @@ struct SpaceDetailView: View {
     let space: SpaceRecord
     @State private var showViewer = false
     @State private var showDeleteConfirm = false
-    @State private var viewerSession: SpaceViewerSession?
+    @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
     @State private var showAddObjectSheet = false
@@ -29,11 +29,10 @@ struct SpaceDetailView: View {
         .sheet(isPresented: $showViewer) {
             ViewerPlaceholderView(space: space)
         }
-        .fullScreenCover(item: $viewerSession) { session in
-            VRSphereSpaceView(
-                imageURL: session.fileURL,
-                sessionId: session.id,
-                onClose: { viewerSession = nil }
+        .fullScreenCover(item: $viewerLaunch) { launch in
+            SpaceVRNavigationHost(
+                sessions: launch.sessions,
+                onClose: { viewerLaunch = nil }
             )
         }
         .overlay {
@@ -186,7 +185,7 @@ struct SpaceDetailView: View {
         defer { isPreparingViewer = false }
         switch await appState.prepareSpaceViewer(jobId: space.id) {
         case .success(let url):
-            viewerSession = SpaceViewerSession(id: space.id, fileURL: url)
+            viewerLaunch = SpaceViewerLaunch(single: SpaceViewerSession(id: space.id, fileURL: url))
         case .failure(let error):
             viewerError = error.userMessage
         }

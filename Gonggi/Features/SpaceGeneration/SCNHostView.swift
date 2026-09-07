@@ -15,6 +15,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var markerNode: SCNNode?
     private var maskOutlineNode: SCNNode?
     private let placedAssetsRoot = SCNNode()
+    private let spaceLinksRoot = SCNNode()
     private var selectionIndicatorNode: SCNNode?
     /// Tracks selected placement root for create-once selection visual (Build 68).
     private var selectedPlacementRoot: SCNNode?
@@ -22,6 +23,8 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var editModeActive = false
     private var editTool: VREditTool = .none
     private var selectedPlacementID: String?
+    private var selectedSpaceLinkID: String?
+    private var spaceLinkPoses: [String: (yaw: Float, pitch: Float, radius: Float)] = [:]
     private var placementFloorY = VRPlacementLayout.defaultFloorY
     private var gestureStartScale: Float = 1
     private var gestureStartRotationY: Float = 0
@@ -70,6 +73,10 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     var onMotionAvailabilityChanged: ((Bool) -> Void)?
     var onPlacedAssetTapped: ((String?) -> Void)?
     var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)?
+    /// Edit: select · View: navigate intent.
+    var onSpaceLinkTapped: ((String?) -> Void)?
+    /// Edit drag — yaw/pitch/radius source of truth.
+    var onSpaceLinkPoseChanged: ((String, Float, Float, Float) -> Void)?
 
     /// Effective motion tracking (desired ∧ hardware).
     private(set) var isMotionEffectivelyEnabled = false
@@ -118,6 +125,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         rotationRecognizer = rotation
         repairLongPressRecognizer = longPress
         placedAssetsRoot.name = "placedAssetsRoot"
+        spaceLinksRoot.name = "spaceLinksRoot"
 
         NotificationCenter.default.addObserver(
             self,
@@ -167,6 +175,8 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
         placedAssetsRoot.removeFromParentNode()
         scene.rootNode.addChildNode(placedAssetsRoot)
+        spaceLinksRoot.removeFromParentNode()
+        scene.rootNode.addChildNode(spaceLinksRoot)
 
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
@@ -212,8 +222,10 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             VRPlacedAssetNodeFactory.hideAllSelectionVisuals(in: placedAssetsRoot)
             selectionIndicatorNode = nil
             selectedPlacementRoot = nil
+            selectedSpaceLinkID = nil
         }
         refreshAllHitProxies(enabled: active)
+        refreshSpaceLinkHitSizes()
         if wasFrozen, !isMotionFrozen {
             unfreezeBakeAndReanchor()
         }
@@ -259,6 +271,45 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         // Re-apply contact opacity / castsShadow after membership rebuild (nodes reused for lights).
         lastLightingApplyKey = ""
         applyLightingExperimentIfNeeded(force: true)
+    }
+
+    /// Sync 공간 연결 billboards (sibling of placedAssetsRoot — never under assets).
+    func syncSpaceLinks(_ links: [SpaceLink], selectedId: String?, pulseInView: Bool) {
+        selectedSpaceLinkID = selectedId
+        spaceLinkPoses = Dictionary(uniqueKeysWithValues: links.map {
+            ($0.id, (yaw: $0.yawDeg, pitch: $0.pitchDeg, radius: $0.radius))
+        })
+        spaceLinksRoot.childNodes.forEach { $0.removeFromParentNode() }
+        let showPulse = pulseInView && !editModeActive
+        for link in links.prefix(SpaceLink.maxLinksPerSource) {
+            let node = SpaceHotspotNodeFactory.makeNode(
+                link: link,
+                selected: editModeActive && link.id == selectedId,
+                pulse: showPulse
+            )
+            spaceLinksRoot.addChildNode(node)
+        }
+        refreshSpaceLinkHitSizes()
+    }
+
+    private func refreshSpaceLinkHitSizes() {
+        let cam = SIMD3(
+            cameraWorldTransform.columns.3.x,
+            cameraWorldTransform.columns.3.y,
+            cameraWorldTransform.columns.3.z
+        )
+        let fov = Float(cameraNode?.camera?.fieldOfView ?? 70)
+        let vh = Float(max(viewportSize.height, 1))
+        for node in spaceLinksRoot.childNodes {
+            let pos = SIMD3(node.position.x, node.position.y, node.position.z)
+            let distance = max(simd_length(pos - cam), 0.5)
+            SpaceHotspotNodeFactory.refreshHitSize(
+                on: node,
+                distance: distance,
+                viewportHeight: vh,
+                verticalFOVDegrees: fov
+            )
+        }
     }
 
     private func refreshAllHitProxies(enabled: Bool) {
@@ -381,6 +432,72 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         return hits.lazy.compactMap {
             VRPlacedAssetNodeFactory.placedAssetID(from: $0.node)
         }.first
+    }
+
+    func hitTestSpaceLink(at point: CGPoint) -> String? {
+        let hits = scnView.hitTest(point, options: [
+            .searchMode: SCNHitTestSearchMode.closest.rawValue,
+            .categoryBitMask: VRPlacedAssetCategory.spaceLink,
+            .boundingBoxOnly: false,
+        ])
+        return hits.lazy.compactMap { SpaceHotspotNodeFactory.linkID(from: $0.node) }.first
+    }
+
+    /// Front-most among spaceLink vs asset; when both near, prefer spaceLink (smaller billboard).
+    private func hitTestEditTarget(at point: CGPoint) -> EditOneFingerOwner {
+        let linkMask = VRPlacedAssetCategory.spaceLink
+        let assetMask = VRPlacedAssetCategory.asset | VRPlacedAssetCategory.interaction
+        let combined = linkMask | assetMask
+        let hits = scnView.hitTest(point, options: [
+            .searchMode: SCNHitTestSearchMode.all.rawValue,
+            .categoryBitMask: combined,
+            .boundingBoxOnly: false,
+        ])
+        guard !hits.isEmpty else { return .cameraPan }
+
+        var bestLink: (id: String, dist: Float)?
+        var bestAsset: (id: String, dist: Float)?
+        let cam = SIMD3(
+            cameraWorldTransform.columns.3.x,
+            cameraWorldTransform.columns.3.y,
+            cameraWorldTransform.columns.3.z
+        )
+        for hit in hits {
+            let wp = hit.worldCoordinates
+            let dist = simd_length(SIMD3(wp.x, wp.y, wp.z) - cam)
+            if hit.node.categoryBitMask & linkMask != 0,
+               let id = SpaceHotspotNodeFactory.linkID(from: hit.node) {
+                if bestLink == nil || dist < bestLink!.dist {
+                    bestLink = (id, dist)
+                }
+            } else if let id = VRPlacedAssetNodeFactory.placedAssetID(from: hit.node) {
+                if bestAsset == nil || dist < bestAsset!.dist {
+                    bestAsset = (id, dist)
+                }
+            }
+        }
+        if let link = bestLink, let asset = bestAsset {
+            // Prefer closer; within 15cm prefer spaceLink.
+            if link.dist <= asset.dist + 0.15 {
+                return .spaceLinkMove(linkId: link.id)
+            }
+            return .assetMove(placementId: asset.id)
+        }
+        if let link = bestLink {
+            return .spaceLinkMove(linkId: link.id)
+        }
+        if let asset = bestAsset {
+            return .assetMove(placementId: asset.id)
+        }
+        return .cameraPan
+    }
+
+    /// Camera look at screen center → equirect degrees (공간 연결 spawn).
+    func currentEquirectCenterDegrees() -> (yawDeg: Float, pitchDeg: Float) {
+        VRSphereEquirectBridge.equirectDegreesFromCamera(
+            cameraYawRad: look.cameraEulerRad.yaw,
+            cameraPitchRad: look.cameraEulerRad.pitch
+        )
     }
 
     func applyEnvironmentLighting(from imageURL: URL) {
@@ -735,15 +852,41 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
-        guard editModeActive, gesture.state == .ended else { return }
-        // Don't steal selection mid-drag.
-        if case .assetMove = oneFingerOwner { return }
-        let id = hitTestPlacedAsset(at: gesture.location(in: scnView))
-        selectAsset(id: id)
-        onPlacedAssetTapped?(id)
-        #if DEBUG
-        print("[vr-place67] tap select=\(id ?? "nil")")
-        #endif
+        guard gesture.state == .ended else { return }
+        let location = gesture.location(in: scnView)
+        if editModeActive {
+            // Don't steal selection mid-drag.
+            if case .assetMove = oneFingerOwner { return }
+            if case .spaceLinkMove = oneFingerOwner { return }
+            switch hitTestEditTarget(at: location) {
+            case .spaceLinkMove(let id):
+                selectAsset(id: nil)
+                onPlacedAssetTapped?(nil)
+                selectedSpaceLinkID = id
+                onSpaceLinkTapped?(id)
+            case .assetMove(let id):
+                selectedSpaceLinkID = nil
+                onSpaceLinkTapped?(nil)
+                selectAsset(id: id)
+                onPlacedAssetTapped?(id)
+            case .cameraPan, .none:
+                selectedSpaceLinkID = nil
+                onSpaceLinkTapped?(nil)
+                selectAsset(id: nil)
+                onPlacedAssetTapped?(nil)
+            }
+            #if DEBUG
+            print("[vr-place72] tap edit select link=\(selectedSpaceLinkID ?? "nil") asset=\(selectedPlacementID ?? "nil")")
+            #endif
+            return
+        }
+        // View: spaceLink tap → navigate
+        if let linkId = hitTestSpaceLink(at: location) {
+            onSpaceLinkTapped?(linkId)
+            #if DEBUG
+            print("[vr-spaceLink72] view tap link=\(linkId)")
+            #endif
+        }
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
@@ -816,8 +959,21 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         switch gesture.state {
         case .began:
             // Lock owner once — never re-hitTest on changed (Build 67 small-asset fix).
-            if let hitId = hitTestPlacedAsset(at: location) {
+            let owner = hitTestEditTarget(at: location)
+            switch owner {
+            case .spaceLinkMove(let linkId):
+                oneFingerOwner = .spaceLinkMove(linkId: linkId)
+                selectAsset(id: nil)
+                onPlacedAssetTapped?(nil)
+                selectedSpaceLinkID = linkId
+                onSpaceLinkTapped?(linkId)
+                #if DEBUG
+                print("[vr-spaceLink72] owner=spaceLinkMove id=\(linkId)")
+                #endif
+            case .assetMove(let hitId):
                 oneFingerOwner = .assetMove(placementId: hitId)
+                selectedSpaceLinkID = nil
+                onSpaceLinkTapped?(nil)
                 selectedPlacementID = hitId
                 selectAsset(id: hitId)
                 onPlacedAssetTapped?(hitId)
@@ -825,7 +981,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
                 #if DEBUG
                 print("[vr-place67] owner=assetMove id=\(hitId)")
                 #endif
-            } else {
+            case .cameraPan, .none:
                 oneFingerOwner = .cameraPan
                 gesture.setTranslation(.zero, in: scnView)
                 #if DEBUG
@@ -834,6 +990,8 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             }
         case .changed:
             switch oneFingerOwner {
+            case .spaceLinkMove(let id):
+                continueSpaceLinkMove(linkId: id, screenPoint: location)
             case .assetMove(let id):
                 guard let node = assetNode(id: id) else { return }
                 continueMove(node: node, screenPoint: location)
@@ -846,17 +1004,53 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
                 break
             }
         case .ended, .cancelled, .failed:
-            if case .assetMove(let id) = oneFingerOwner {
+            switch oneFingerOwner {
+            case .spaceLinkMove(let id):
+                if let pose = spaceLinkPoses[id] {
+                    onSpaceLinkPoseChanged?(id, pose.yaw, pose.pitch, pose.radius)
+                }
+                #if DEBUG
+                print("[vr-spaceLink72] move end id=\(id)")
+                #endif
+            case .assetMove(let id):
                 publishTransform(for: id)
                 #if DEBUG
                 print("[vr-place67] move end id=\(id)")
                 #endif
+            default:
+                break
             }
             oneFingerOwner = .none
             lastValidFloorHit = nil
         default:
             break
         }
+    }
+
+    private func continueSpaceLinkMove(linkId: String, screenPoint: CGPoint) {
+        guard var pose = spaceLinkPoses[linkId] else { return }
+        let fov = Float(cameraNode?.camera?.fieldOfView ?? 70)
+        let angles = VRSphereEquirectBridge.equirectDegreesFromScreenPoint(
+            point: screenPoint,
+            viewSize: viewportSize,
+            cameraYawRad: look.cameraEulerRad.yaw,
+            cameraPitchRad: look.cameraEulerRad.pitch,
+            fieldOfViewDeg: fov
+        )
+        pose.yaw = angles.yawDeg
+        pose.pitch = angles.pitchDeg
+        spaceLinkPoses[linkId] = pose
+        if let node = spaceLinksRoot.childNodes.first(where: {
+            SpaceHotspotNodeFactory.linkID(from: $0) == linkId
+        }) {
+            SpaceHotspotNodeFactory.applyPose(
+                on: node,
+                yawDeg: pose.yaw,
+                pitchDeg: pose.pitch,
+                radius: pose.radius
+            )
+        }
+        onSpaceLinkPoseChanged?(linkId, pose.yaw, pose.pitch, pose.radius)
     }
 
     private func beginMove(id: String, screenPoint: CGPoint) {

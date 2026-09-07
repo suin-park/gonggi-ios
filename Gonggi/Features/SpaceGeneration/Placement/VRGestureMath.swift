@@ -5,6 +5,7 @@ import simd
 enum EditOneFingerOwner: Equatable {
     case none
     case assetMove(placementId: String)
+    case spaceLinkMove(linkId: String)
     case cameraPan
 }
 

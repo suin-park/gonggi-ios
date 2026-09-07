@@ -3,7 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
     @State private var selectedSpace: SpaceRecord?
-    @State private var viewerSession: SpaceViewerSession?
+    @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
 
@@ -30,11 +30,10 @@ struct HomeView: View {
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
             }
-            .fullScreenCover(item: $viewerSession) { session in
-                VRSphereSpaceView(
-                    imageURL: session.fileURL,
-                    sessionId: session.id,
-                    onClose: { viewerSession = nil }
+            .fullScreenCover(item: $viewerLaunch) { launch in
+                SpaceVRNavigationHost(
+                    sessions: launch.sessions,
+                    onClose: { viewerLaunch = nil }
                 )
             }
             .overlay {
@@ -74,6 +73,11 @@ struct HomeView: View {
                     await openViewer(jobId: jobId)
                     appState.pendingViewerJobId = nil
                 }
+            }
+            .onChange(of: appState.pendingViewerLaunch) { _, launch in
+                guard let launch else { return }
+                viewerLaunch = launch
+                appState.pendingViewerLaunch = nil
             }
         }
     }
@@ -173,7 +177,7 @@ struct HomeView: View {
         let result = await appState.prepareSpaceViewer(jobId: jobId)
         switch result {
         case .success(let url):
-            viewerSession = SpaceViewerSession(id: jobId, fileURL: url)
+            viewerLaunch = SpaceViewerLaunch(single: SpaceViewerSession(id: jobId, fileURL: url))
         case .failure(let error):
             viewerError = error.userMessage
         }

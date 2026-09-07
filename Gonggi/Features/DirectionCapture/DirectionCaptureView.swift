@@ -5,6 +5,8 @@ struct DirectionCaptureView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel = DirectionCaptureViewModel()
     let onClose: () -> Void
+    /// When set, caller owns generation enqueue (Build 72 Space Link).
+    var onCaptureCompleted: ((DirectionCaptureResult) -> Void)? = nil
 
     var body: some View {
         ZStack {
@@ -46,8 +48,11 @@ struct DirectionCaptureView: View {
         }
         .onChange(of: viewModel.didComplete) { _, done in
             guard done, let result = viewModel.result else { return }
-            // Async job: UI may leave; server generation continues.
-            appState.startSpaceGeneration(from: result)
+            if let onCaptureCompleted {
+                onCaptureCompleted(result)
+            } else {
+                appState.startSpaceGeneration(from: result)
+            }
             viewModel.close()
             onClose()
         }

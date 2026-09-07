@@ -5,7 +5,7 @@ struct LibraryView: View {
     @ObservedObject private var assetStore = AssetLibraryStore.shared
     @State private var category: LibraryCategory = .spaces
     @State private var selectedSpace: SpaceRecord?
-    @State private var viewerSession: SpaceViewerSession?
+    @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
     @State private var retryJobId: String?
@@ -51,11 +51,10 @@ struct LibraryView: View {
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
             }
-            .fullScreenCover(item: $viewerSession) { session in
-                VRSphereSpaceView(
-                    imageURL: session.fileURL,
-                    sessionId: session.id,
-                    onClose: { viewerSession = nil }
+            .fullScreenCover(item: $viewerLaunch) { launch in
+                SpaceVRNavigationHost(
+                    sessions: launch.sessions,
+                    onClose: { viewerLaunch = nil }
                 )
             }
             .sheet(isPresented: $showCreateAsset) {
@@ -112,7 +111,7 @@ struct LibraryView: View {
         defer { isPreparingViewer = false }
         switch await appState.prepareSpaceViewer(jobId: jobId) {
         case .success(let url):
-            viewerSession = SpaceViewerSession(id: jobId, fileURL: url)
+            viewerLaunch = SpaceViewerLaunch(single: SpaceViewerSession(id: jobId, fileURL: url))
         case .failure(let error):
             viewerError = error.userMessage
         }
