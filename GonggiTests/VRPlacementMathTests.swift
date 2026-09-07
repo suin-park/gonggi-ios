@@ -229,4 +229,61 @@ final class VRPlacementMathTests: XCTestCase {
         XCTAssertEqual(applied.x, 2.4, accuracy: 0.001)
         XCTAssertEqual(applied.z, -3.3, accuracy: 0.001)
     }
+
+    func testR_LerpAngleUsesShortestPathAcrossWrap() {
+        let from: Float = 3.0
+        let to: Float = -3.0
+        let delta = VRGestureMath.shortestAngleDelta(from: from, to: to)
+        XCTAssertLessThan(abs(delta), Float.pi)
+        XCTAssertGreaterThan(delta, 0)
+
+        let arrived = VRGestureMath.lerpAngle(from, to, alpha: 1)
+        XCTAssertLessThan(
+            abs(VRGestureMath.shortestAngleDelta(from: arrived, to: to)),
+            0.001
+        )
+
+        // 350° → 10° should pass near 0°, not spin the long way.
+        let a = 350 * Float.pi / 180
+        let b = 10 * Float.pi / 180
+        let mid = VRGestureMath.lerpAngle(a, b, alpha: 0.5)
+        XCTAssertLessThan(abs(mid), 0.35)
+    }
+
+    func testS_OwnerAssetMoveDoesNotEqualCameraPan() {
+        let move = EditOneFingerOwner.assetMove(placementId: "p1")
+        XCTAssertNotEqual(move, .cameraPan)
+        XCTAssertNotEqual(move, .none)
+        if case .assetMove(let id) = move {
+            XCTAssertEqual(id, "p1")
+        } else {
+            XCTFail("expected assetMove")
+        }
+    }
+
+    func testT_MinimumHitExtentGrowsWithDistance() {
+        let near = VRGestureMath.minimumHitExtentMeters(
+            distance: 1.0,
+            viewportHeight: 800,
+            targetPoints: 52
+        )
+        let far = VRGestureMath.minimumHitExtentMeters(
+            distance: 3.0,
+            viewportHeight: 800,
+            targetPoints: 52
+        )
+        XCTAssertGreaterThan(far, near)
+        XCTAssertEqual(
+            VRGestureMath.expandExtent(0.05, minimum: near),
+            near,
+            accuracy: 0.0001
+        )
+    }
+
+    func testU_PinchLerpMovesTowardTargetWithoutOvershootOnAlphaOne() {
+        XCTAssertEqual(VRGestureMath.lerp(1, 2, alpha: 1), 2, accuracy: 0.0001)
+        XCTAssertEqual(VRGestureMath.lerp(1, 2, alpha: 0), 1, accuracy: 0.0001)
+        let mid = VRGestureMath.lerp(1, 2, alpha: 0.35)
+        XCTAssertEqual(mid, 1.35, accuracy: 0.0001)
+    }
 }

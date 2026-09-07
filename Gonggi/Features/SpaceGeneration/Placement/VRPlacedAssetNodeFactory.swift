@@ -9,10 +9,13 @@ enum VRPlacedAssetCategory {
     static let panorama = 1 << 0
     static let asset = 1 << 1
     static let shadow = 1 << 2
+    /// Invisible Edit-only grab target (Build 67).
+    static let interaction = 1 << 3
 }
 
 enum VRPlacedAssetNodeFactory {
     static let rootNamePrefix = "placedAsset:"
+    static let hitProxyName = "placedAssetHitProxy"
 
     static func makeNode(
         entry: VRPlacedAssetEntry,
@@ -58,7 +61,55 @@ enum VRPlacedAssetNodeFactory {
         // Uniform scale applied as node scale so pinch can resize shadow continuously.
         shadow.scale = SCNVector3(scale, scale, scale)
         root.addChildNode(shadow)
+        // Default proxy; host refreshes with camera-distance adaptive size in Edit.
+        attachHitProxy(on: root, content: content, minimumExtent: 0.28)
         return root
+    }
+
+    static func attachHitProxy(on root: SCNNode, content: SCNNode, minimumExtent: Float) {
+        root.childNodes.filter { $0.name == hitProxyName }.forEach { $0.removeFromParentNode() }
+
+        let bb = content.boundingBox
+        let sx = abs(content.scale.x)
+        let sy = abs(content.scale.y)
+        let sz = abs(content.scale.z)
+        let meshW = max(0.01, (bb.max.x - bb.min.x) * sx)
+        let meshH = max(0.01, (bb.max.y - bb.min.y) * sy)
+        let meshD = max(0.01, (bb.max.z - bb.min.z) * sz)
+        let w = CGFloat(VRGestureMath.expandExtent(meshW, minimum: minimumExtent))
+        let h = CGFloat(VRGestureMath.expandExtent(meshH, minimum: minimumExtent))
+        let d = CGFloat(VRGestureMath.expandExtent(meshD, minimum: minimumExtent))
+
+        let box = SCNBox(width: w, height: h, length: d, chamferRadius: 0)
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.clear
+        material.transparency = 0.0
+        material.writesToDepthBuffer = false
+        material.readsFromDepthBuffer = false
+        material.isDoubleSided = true
+        box.materials = [material]
+
+        let proxy = SCNNode(geometry: box)
+        proxy.name = hitProxyName
+        proxy.categoryBitMask = VRPlacedAssetCategory.interaction
+        proxy.renderingOrder = 10
+        proxy.position = SCNVector3(
+            (bb.min.x + bb.max.x) * 0.5 * sx + content.position.x,
+            (bb.min.y + bb.max.y) * 0.5 * sy + content.position.y,
+            (bb.min.z + bb.max.z) * 0.5 * sz + content.position.z
+        )
+        root.addChildNode(proxy)
+    }
+
+    static func refreshHitProxy(on root: SCNNode, minimumExtent: Float, enabled: Bool) {
+        guard let content = root.childNodes.first(where: {
+            $0.categoryBitMask == VRPlacedAssetCategory.asset
+        }) else { return }
+        attachHitProxy(on: root, content: content, minimumExtent: minimumExtent)
+        if let proxy = root.childNodes.first(where: { $0.name == hitProxyName }) {
+            proxy.isHidden = !enabled
+            proxy.categoryBitMask = enabled ? VRPlacedAssetCategory.interaction : 0
+        }
     }
 
     static func placedAssetID(from node: SCNNode) -> String? {

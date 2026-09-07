@@ -23,12 +23,22 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var placementFloorY = VRPlacementLayout.defaultFloorY
     private var gestureStartScale: Float = 1
     private var gestureStartRotationY: Float = 0
-    private var moveLockedPlacementID: String?
+    private var oneFingerOwner: EditOneFingerOwner = .none
     private var moveGrabOffset = SIMD2<Float>(0, 0)
     private var lastValidFloorHit: SIMD3<Float>?
-    private var editCameraPanActive = false
     private weak var pinchRecognizer: UIPinchGestureRecognizer?
     private weak var rotationRecognizer: UIRotationGestureRecognizer?
+    private weak var panRecognizer: UIPanGestureRecognizer?
+
+    // Pinch/rotate smoothing targets (Build 67).
+    private var smoothingPlacementID: String?
+    private var targetUniformScale: Float?
+    private var targetRotationY: Float?
+    private var renderedUniformScale: Float = 1
+    private var renderedRotationY: Float = 0
+    private var pinchGestureActive = false
+    private var rotationGestureActive = false
+    private var transformDisplayLink: CADisplayLink?
 
     private var look = VRLookComposer()
     private let motionManager = CMMotionManager()
@@ -81,6 +91,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         pan.minimumNumberOfTouches = 1
         pan.delegate = self
         scnView.addGestureRecognizer(pan)
+        panRecognizer = pan
 
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPress.minimumPressDuration = 0.45
@@ -117,6 +128,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        stopTransformDisplayLink()
         stopMotionUpdates()
     }
 
@@ -181,6 +193,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         let wasFrozen = isMotionFrozen
         freezeEditMode = active
         editModeActive = active
+        if !active {
+            oneFingerOwner = .none
+            stopSmoothingAndDisplayLink()
+        }
+        refreshAllHitProxies(enabled: active)
         if wasFrozen, !isMotionFrozen {
             unfreezeBakeAndReanchor()
         }
@@ -218,7 +235,37 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             )
             placedAssetsRoot.addChildNode(node)
         }
+        refreshAllHitProxies(enabled: editModeActive)
         selectAsset(id: selectedPlacementID)
+    }
+
+    private func refreshAllHitProxies(enabled: Bool) {
+        let cam = SIMD3(
+            cameraWorldTransform.columns.3.x,
+            cameraWorldTransform.columns.3.y,
+            cameraWorldTransform.columns.3.z
+        )
+        let minExtentBase = VRGestureMath.minimumHitExtentMeters(
+            distance: 2.0,
+            viewportHeight: Float(max(viewportSize.height, 1)),
+            verticalFOVDegrees: Float(cameraNode?.camera?.fieldOfView ?? 70)
+        )
+        for node in placedAssetsRoot.childNodes {
+            let pos = SIMD3(node.position.x, node.position.y, node.position.z)
+            let distance = max(simd_length(pos - cam), 0.5)
+            let minExtent = VRGestureMath.minimumHitExtentMeters(
+                distance: distance,
+                viewportHeight: Float(max(viewportSize.height, 1)),
+                verticalFOVDegrees: Float(cameraNode?.camera?.fieldOfView ?? 70)
+            )
+            // Cap growth so nearby small assets don't swallow neighbors.
+            let capped = min(max(minExtent, minExtentBase * 0.85), 0.55)
+            VRPlacedAssetNodeFactory.refreshHitProxy(
+                on: node,
+                minimumExtent: capped,
+                enabled: enabled
+            )
+        }
     }
 
     func selectAsset(id: String?) {
@@ -310,11 +357,20 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     func hitTestPlacedAsset(at point: CGPoint) -> String? {
+        let mask = VRPlacedAssetCategory.asset | VRPlacedAssetCategory.interaction
         let hits = scnView.hitTest(point, options: [
             .searchMode: SCNHitTestSearchMode.closest.rawValue,
-            .categoryBitMask: VRPlacedAssetCategory.asset,
+            .categoryBitMask: mask,
             .boundingBoxOnly: false,
         ])
+        // Prefer real mesh hits over proxy-only when both present at similar depth.
+        let meshHit = hits.first {
+            $0.node.categoryBitMask & VRPlacedAssetCategory.asset != 0
+                && $0.node.name != VRPlacedAssetNodeFactory.hitProxyName
+        }
+        if let meshHit {
+            return VRPlacedAssetNodeFactory.placedAssetID(from: meshHit.node)
+        }
         return hits.lazy.compactMap {
             VRPlacedAssetNodeFactory.placedAssetID(from: $0.node)
         }.first
@@ -588,6 +644,13 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         return false
     }
 
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard editModeActive, gestureRecognizer is UIPanGestureRecognizer else { return true }
+        // While a two-finger transform is active, block one-finger pan ownership flips.
+        if pinchGestureActive || rotationGestureActive { return false }
+        return true
+    }
+
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
         if editModeActive {
             handleEditPan(g)
@@ -615,11 +678,13 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard editModeActive, gesture.state == .ended else { return }
+        // Don't steal selection mid-drag.
+        if case .assetMove = oneFingerOwner { return }
         let id = hitTestPlacedAsset(at: gesture.location(in: scnView))
         selectAsset(id: id)
         onPlacedAssetTapped?(id)
         #if DEBUG
-        print("[vr-place66] tap select=\(id ?? "nil") rootChildren=\(placedAssetsRoot.childNodes.count)")
+        print("[vr-place67] tap select=\(id ?? "nil")")
         #endif
     }
 
@@ -629,22 +694,27 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         else { return }
         switch gesture.state {
         case .began:
-            gestureStartScale = currentUniformScale(of: node)
+            pinchGestureActive = true
+            beginSmoothing(for: id, node: node)
+            gestureStartScale = renderedUniformScale
+            targetUniformScale = renderedUniformScale
             #if DEBUG
-            print("[vr-place66] pinch begin id=\(id) scale=\(gestureStartScale)")
+            print("[vr-place67] pinch begin id=\(id) scale=\(gestureStartScale)")
             #endif
         case .changed:
-            let scale = VRPlacedAssetEntry.clampedScale(gestureStartScale * Float(gesture.scale))
-            updatePlacedAssetTransform(
-                id: id,
-                position: SIMD3(node.position.x, placementFloorY, node.position.z),
-                rotationY: node.eulerAngles.y,
-                uniformScale: scale
+            targetUniformScale = VRPlacedAssetEntry.clampedScale(
+                gestureStartScale * Float(gesture.scale)
             )
+            startTransformDisplayLinkIfNeeded()
         case .ended, .cancelled, .failed:
-            publishTransform(for: id)
+            pinchGestureActive = false
+            if let target = targetUniformScale {
+                renderedUniformScale = target
+                applyRenderedTransform(to: node)
+            }
+            finishSmoothingIfIdle(id: id)
             #if DEBUG
-            print("[vr-place66] pinch end id=\(id)")
+            print("[vr-place67] pinch end id=\(id)")
             #endif
         default:
             break
@@ -657,17 +727,26 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         else { return }
         switch gesture.state {
         case .began:
-            gestureStartRotationY = node.eulerAngles.y
+            rotationGestureActive = true
+            beginSmoothing(for: id, node: node)
+            gestureStartRotationY = renderedRotationY
+            targetRotationY = renderedRotationY
             #if DEBUG
-            print("[vr-place66] rotate begin id=\(id)")
+            print("[vr-place67] rotate begin id=\(id)")
             #endif
         case .changed:
             // Match visual clockwise finger motion (UIKit rotation is CCW-positive).
-            node.eulerAngles.y = gestureStartRotationY - Float(gesture.rotation)
+            targetRotationY = gestureStartRotationY - Float(gesture.rotation)
+            startTransformDisplayLinkIfNeeded()
         case .ended, .cancelled, .failed:
-            publishTransform(for: id)
+            rotationGestureActive = false
+            if let target = targetRotationY {
+                renderedRotationY = target
+                applyRenderedTransform(to: node)
+            }
+            finishSmoothingIfIdle(id: id)
             #if DEBUG
-            print("[vr-place66] rotate end id=\(id)")
+            print("[vr-place67] rotate end id=\(id)")
             #endif
         default:
             break
@@ -678,36 +757,44 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         let location = gesture.location(in: scnView)
         switch gesture.state {
         case .began:
-            editCameraPanActive = false
-            moveLockedPlacementID = nil
+            // Lock owner once — never re-hitTest on changed (Build 67 small-asset fix).
             if let hitId = hitTestPlacedAsset(at: location) {
+                oneFingerOwner = .assetMove(placementId: hitId)
                 selectedPlacementID = hitId
                 selectAsset(id: hitId)
                 onPlacedAssetTapped?(hitId)
                 beginMove(id: hitId, screenPoint: location)
+                #if DEBUG
+                print("[vr-place67] owner=assetMove id=\(hitId)")
+                #endif
             } else {
-                // Empty space: camera look pan (Build 66 routing).
-                editCameraPanActive = true
+                oneFingerOwner = .cameraPan
                 gesture.setTranslation(.zero, in: scnView)
+                #if DEBUG
+                print("[vr-place67] owner=cameraPan")
+                #endif
             }
         case .changed:
-            if let id = moveLockedPlacementID, let node = assetNode(id: id) {
+            switch oneFingerOwner {
+            case .assetMove(let id):
+                guard let node = assetNode(id: id) else { return }
                 continueMove(node: node, screenPoint: location)
-            } else if editCameraPanActive {
+            case .cameraPan:
                 let t = gesture.translation(in: scnView)
                 gesture.setTranslation(.zero, in: scnView)
                 look.applyTouchTranslation(dx: t.x, dy: t.y)
                 applyLookToCamera()
+            case .none:
+                break
             }
         case .ended, .cancelled, .failed:
-            if let id = moveLockedPlacementID {
+            if case .assetMove(let id) = oneFingerOwner {
                 publishTransform(for: id)
                 #if DEBUG
-                print("[vr-place66] move end id=\(id) children=\(placedAssetsRoot.childNodes.count)")
+                print("[vr-place67] move end id=\(id)")
                 #endif
             }
-            moveLockedPlacementID = nil
-            editCameraPanActive = false
+            oneFingerOwner = .none
             lastValidFloorHit = nil
         default:
             break
@@ -716,7 +803,6 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     private func beginMove(id: String, screenPoint: CGPoint) {
         guard let node = assetNode(id: id) else { return }
-        moveLockedPlacementID = id
         let floorHit = floorPointIfValid(screenPoint) ?? SIMD3(
             node.position.x,
             placementFloorY,
@@ -724,9 +810,6 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         )
         lastValidFloorHit = floorHit
         moveGrabOffset = SIMD2(node.position.x - floorHit.x, node.position.z - floorHit.z)
-        #if DEBUG
-        print("[vr-place66] move begin id=\(id) grab=\(moveGrabOffset)")
-        #endif
     }
 
     private func continueMove(node: SCNNode, screenPoint: CGPoint) {
@@ -734,8 +817,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         lastValidFloorHit = floorHit
         let x = floorHit.x + moveGrabOffset.x
         let z = floorHit.z + moveGrabOffset.y
-        // Continuous clamp around camera — no discrete snap jumps.
-        let origin = SIMD3(cameraWorldTransform.columns.3.x, placementFloorY, cameraWorldTransform.columns.3.z)
+        let origin = SIMD3(
+            cameraWorldTransform.columns.3.x,
+            placementFloorY,
+            cameraWorldTransform.columns.3.z
+        )
         let clamped = VRFloorRay.clampDistance(
             SIMD3(x, placementFloorY, z),
             origin: origin,
@@ -760,6 +846,113 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         })?.scale.x ?? 1
         let base = VRPlacedAssetNodeFactory.contentBaseScale(of: node)
         return rendered / max(base, 1e-4)
+    }
+
+    private func beginSmoothing(for id: String, node: SCNNode) {
+        if smoothingPlacementID != id {
+            renderedUniformScale = currentUniformScale(of: node)
+            renderedRotationY = node.eulerAngles.y
+            smoothingPlacementID = id
+        }
+        targetUniformScale = renderedUniformScale
+        targetRotationY = renderedRotationY
+        startTransformDisplayLinkIfNeeded()
+    }
+
+    private func applyRenderedTransform(to node: SCNNode) {
+        node.eulerAngles.y = renderedRotationY
+        let scale = VRPlacedAssetEntry.clampedScale(renderedUniformScale)
+        if let content = node.childNodes.first(where: {
+            $0.categoryBitMask == VRPlacedAssetCategory.asset
+        }) {
+            let base = VRPlacedAssetNodeFactory.contentBaseScale(of: node)
+            content.scale = SCNVector3(scale * base, scale * base, scale * base)
+        }
+        if let shadow = node.childNodes.first(where: { $0.name == "placedAssetShadow" }) {
+            shadow.scale = SCNVector3(scale, scale, scale)
+        }
+    }
+
+    private func startTransformDisplayLinkIfNeeded() {
+        guard transformDisplayLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(tickTransformSmoothing))
+        link.add(to: .main, forMode: .common)
+        transformDisplayLink = link
+    }
+
+    private func stopTransformDisplayLink() {
+        transformDisplayLink?.invalidate()
+        transformDisplayLink = nil
+    }
+
+    private func stopSmoothingAndDisplayLink() {
+        pinchGestureActive = false
+        rotationGestureActive = false
+        targetUniformScale = nil
+        targetRotationY = nil
+        smoothingPlacementID = nil
+        stopTransformDisplayLink()
+    }
+
+    private func finishSmoothingIfIdle(id: String) {
+        guard !pinchGestureActive, !rotationGestureActive else {
+            startTransformDisplayLinkIfNeeded()
+            return
+        }
+        // Snap to targets then commit draft once.
+        if let node = assetNode(id: id) {
+            if let t = targetUniformScale { renderedUniformScale = t }
+            if let t = targetRotationY { renderedRotationY = t }
+            applyRenderedTransform(to: node)
+            publishTransform(for: id, scale: renderedUniformScale)
+        }
+        targetUniformScale = nil
+        targetRotationY = nil
+        smoothingPlacementID = nil
+        stopTransformDisplayLink()
+        if editModeActive {
+            refreshAllHitProxies(enabled: true)
+        }
+    }
+
+    @objc private func tickTransformSmoothing() {
+        guard let id = smoothingPlacementID, let node = assetNode(id: id) else {
+            stopTransformDisplayLink()
+            return
+        }
+        var dirty = false
+        if let target = targetUniformScale {
+            let next = VRGestureMath.lerp(
+                renderedUniformScale,
+                target,
+                alpha: VRGestureMath.pinchLerpAlpha
+            )
+            if abs(next - renderedUniformScale) > 1e-4 {
+                renderedUniformScale = next
+                dirty = true
+            } else {
+                renderedUniformScale = target
+            }
+        }
+        if let target = targetRotationY {
+            let next = VRGestureMath.lerpAngle(
+                renderedRotationY,
+                target,
+                alpha: VRGestureMath.rotateLerpAlpha
+            )
+            if abs(VRGestureMath.shortestAngleDelta(from: renderedRotationY, to: target)) > 1e-4 {
+                renderedRotationY = next
+                dirty = true
+            } else {
+                renderedRotationY = target
+            }
+        }
+        if dirty || pinchGestureActive || rotationGestureActive {
+            applyRenderedTransform(to: node)
+        }
+        if !pinchGestureActive, !rotationGestureActive, !dirty {
+            stopTransformDisplayLink()
+        }
     }
 
     private func publishTransform(for id: String, scale explicitScale: Float? = nil) {

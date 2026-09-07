@@ -209,7 +209,7 @@ struct VRSphereSpaceView: View {
                     Text(String(format: "yaw %+.1f°  pitch %+.1f°", my, mp))
                         .font(.caption.monospacedDigit())
                     Text(
-                        "mask ±\(Int(VRSphereEquirectBridge.defaultYawRadiusDeg))° / ±\(Int(VRSphereEquirectBridge.defaultPitchRadiusDeg))° · 넓게 적용됨"
+                        "mask ±\(Int(VRSphereEquirectBridge.defaultYawRadiusDeg))° / ±\(Int(VRSphereEquirectBridge.defaultPitchRadiusDeg))°, 넓게 적용됨"
                     )
                         .font(.caption2)
                 }
@@ -350,13 +350,12 @@ struct VRSphereSpaceView: View {
 
             HStack(spacing: 8) {
                 if selectedPlacementId != nil {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("한 손가락으로 이동")
-                        Text("두 손가락으로 회전·크기 조절")
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .padding(.horizontal, 4)
+                    Text("한 손가락으로 이동, 두 손가락으로 회전/크기 조절")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 4)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.85)
 
                     Button {
                         deleteSelectedPlacement()
