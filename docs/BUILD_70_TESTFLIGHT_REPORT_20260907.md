@@ -10,13 +10,14 @@
 
 | Field | Value |
 |-------|--------|
-| iOS SHA | _(fill after commit)_ |
-| backend SHA | _(fill after 3d-locker commit)_ |
+| iOS SHA | `4a766ff` |
+| backend SHA | `aba8a51` (3d-locker additive support fields) |
 | version/build | **1.0 (70)** |
-| workflow | _(fill)_ |
-| ASC | _(fill)_ |
-| Delivery UUID | _(fill)_ |
-| dSYM | _(fill)_ |
+| workflow | [Gonggi TestFlight #34126046642](https://github.com/suin-park/gonggi-ios/actions/runs/34126046642) |
+| ASC | **UPLOAD SUCCEEDED** |
+| Delivery UUID | `b5a5be26-66df-4a38-a598-7ebacc7d594c` |
+| dSYM UUID | `F3D50BCB-2CB9-3362-94E7-3B5539626340` (arm64) |
+| dSYM artifact | `Gonggi-dSYM-1.0-70` |
 
 ---
 
@@ -74,6 +75,16 @@
 ## Regression
 
 move / rotate / scale / motion / repair / IBL pipeline / dominant estimator: locked
+
+---
+
+## Device check (iPhone 14 Plus)
+
+1. floor-standing → **바닥에 놓기**  
+2. vase → desk height slider  
+3. small asset → shelf-like height  
+
+Confirm: shadow under asset / visible when dir OFF / not too dark / smooth slider / Done persist
 
 ---
 
