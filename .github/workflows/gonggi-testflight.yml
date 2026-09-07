@@ -112,6 +112,16 @@ jobs:
           test -d "${{ env.PROJECT }}"
           xcodebuild -list -project "${{ env.PROJECT }}"
 
+      - name: Pre-archive auth config check
+        run: |
+          set -euo pipefail
+          chmod +x scripts/preflight-auth-config.sh
+          ./scripts/preflight-auth-config.sh
+          # Resolve Release Info.plist keys after xcodegen (build settings still expand at archive).
+          /usr/libexec/PlistBuddy -c 'Print :GoogleClientID' Gonggi/Resources/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' Gonggi/Resources/Info.plist
+          echo "Bundle target: ${{ env.BUNDLE_ID }}"
+
       - name: Import signing certificate and provisioning profile
         id: signing
         env:
