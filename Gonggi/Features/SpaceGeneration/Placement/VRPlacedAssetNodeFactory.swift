@@ -72,32 +72,22 @@ enum VRPlacedAssetNodeFactory {
     }
 
     static func contentBaseScale(of node: SCNNode) -> Float {
-        (objc_getAssociatedObject(node, &contentBaseScaleAssociationKey) as? NSNumber)?.floatValue ?? 1
+        (objc_getAssociatedObject(node, &vrPlacedAssetContentBaseScaleKey) as? NSNumber)?.floatValue ?? 1
     }
 
     static func setContentBaseScale(_ scale: Float, on node: SCNNode) {
         objc_setAssociatedObject(
             node,
-            &contentBaseScaleAssociationKey,
+            &vrPlacedAssetContentBaseScaleKey,
             NSNumber(value: scale),
             .OBJC_ASSOCIATION_RETAIN_NONATOMIC
         )
     }
 
     private static func loadModel(from url: URL) -> SCNNode? {
-        if let scene = try? SCNScene(url: url, options: nil) {
-            return container(from: scene)
-        }
-
-        // ModelIO fallback without SCNScene(mdlAsset:) (not always available to Swift).
-        let asset = MDLAsset(url: url)
-        guard asset.count > 0 else { return nil }
-        let container = SCNNode()
-        for index in 0..<asset.count {
-            let object = asset.object(at: index)
-            container.addChildNode(SCNNode(mdlObject: object))
-        }
-        return container.childNodes.isEmpty ? nil : container
+        // Build 65: USDZ-first via SceneKit only (no native GLB / ModelIO bridge dependency).
+        guard let scene = try? SCNScene(url: url, options: nil) else { return nil }
+        return container(from: scene)
     }
 
     private static func container(from scene: SCNScene) -> SCNNode? {
