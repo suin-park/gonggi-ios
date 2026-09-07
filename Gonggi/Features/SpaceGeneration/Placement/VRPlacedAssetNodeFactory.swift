@@ -1,7 +1,10 @@
 import Foundation
 import ModelIO
+import ObjectiveC
 import SceneKit
 import UIKit
+
+private var vrPlacedAssetContentBaseScaleKey: UInt8 = 0
 
 enum VRPlacedAssetCategory {
     static let panorama = 1 << 0
@@ -11,7 +14,6 @@ enum VRPlacedAssetCategory {
 
 enum VRPlacedAssetNodeFactory {
     static let rootNamePrefix = "placedAsset:"
-    static let contentBaseScaleKey = "contentBaseScale"
 
     static func makeNode(
         entry: VRPlacedAssetEntry,
@@ -38,15 +40,13 @@ enum VRPlacedAssetNodeFactory {
             let renderedScale = scale * physicalScale
             loaded.scale = SCNVector3(renderedScale, renderedScale, renderedScale)
             content = loaded
-            root.userData = NSMutableDictionary()
-            root.userData?[contentBaseScaleKey] = physicalScale
+            setContentBaseScale(physicalScale, on: root)
         } else {
             let placeholder = makePlaceholder(asset: asset)
             placeholder.scale = SCNVector3(scale, scale, scale)
             footprint = placeholderFootprint(asset: asset)
             content = placeholder
-            root.userData = NSMutableDictionary()
-            root.userData?[contentBaseScaleKey] = Float(1)
+            setContentBaseScale(1, on: root)
         }
         root.addChildNode(content)
 
@@ -71,16 +71,36 @@ enum VRPlacedAssetNodeFactory {
         return nil
     }
 
+    static func contentBaseScale(of node: SCNNode) -> Float {
+        (objc_getAssociatedObject(node, &contentBaseScaleAssociationKey) as? NSNumber)?.floatValue ?? 1
+    }
+
+    static func setContentBaseScale(_ scale: Float, on node: SCNNode) {
+        objc_setAssociatedObject(
+            node,
+            &contentBaseScaleAssociationKey,
+            NSNumber(value: scale),
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+    }
+
     private static func loadModel(from url: URL) -> SCNNode? {
-        let scene: SCNScene
-        do {
-            scene = try SCNScene(url: url, options: nil)
-        } catch {
-            let asset = MDLAsset(url: url)
-            guard asset.count > 0 else { return nil }
-            scene = SCNScene(mdlAsset: asset)
+        if let scene = try? SCNScene(url: url, options: nil) {
+            return container(from: scene)
         }
 
+        // ModelIO fallback without SCNScene(mdlAsset:) (not always available to Swift).
+        let asset = MDLAsset(url: url)
+        guard asset.count > 0 else { return nil }
+        let container = SCNNode()
+        for index in 0..<asset.count {
+            let object = asset.object(at: index)
+            container.addChildNode(SCNNode(mdlObject: object))
+        }
+        return container.childNodes.isEmpty ? nil : container
+    }
+
+    private static func container(from scene: SCNScene) -> SCNNode? {
         let container = SCNNode()
         for child in scene.rootNode.childNodes {
             container.addChildNode(child.clone())

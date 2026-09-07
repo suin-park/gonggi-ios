@@ -257,7 +257,7 @@ final class SCNHostView: UIView {
         node.eulerAngles.y = rotationY
         let scale = VRPlacedAssetEntry.clampedScale(uniformScale)
         if let content = node.childNodes.first(where: { $0.categoryBitMask == VRPlacedAssetCategory.asset }) {
-            let base = node.userData?[VRPlacedAssetNodeFactory.contentBaseScaleKey] as? Float ?? 1
+            let base = VRPlacedAssetNodeFactory.contentBaseScale(of: node)
             content.scale = SCNVector3(scale * base, scale * base, scale * base)
         }
         selectAsset(id: selectedPlacementID)
@@ -590,7 +590,7 @@ final class SCNHostView: UIView {
             gestureStartScale = node.childNodes.first(where: {
                 $0.categoryBitMask == VRPlacedAssetCategory.asset
             }).map {
-                let base = node.userData?[VRPlacedAssetNodeFactory.contentBaseScaleKey] as? Float ?? 1
+                let base = VRPlacedAssetNodeFactory.contentBaseScale(of: node)
                 return $0.scale.x / base
             } ?? 1
         case .changed, .ended:
@@ -636,7 +636,7 @@ final class SCNHostView: UIView {
         let renderedScale = node.childNodes.first(where: {
             $0.categoryBitMask == VRPlacedAssetCategory.asset
         })?.scale.x ?? 1
-        let base = node.userData?[VRPlacedAssetNodeFactory.contentBaseScaleKey] as? Float ?? 1
+        let base = VRPlacedAssetNodeFactory.contentBaseScale(of: node)
         let scale = explicitScale ?? renderedScale / base
         onPlacedAssetTransformChanged?(
             id,

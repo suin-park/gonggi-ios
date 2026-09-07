@@ -168,13 +168,14 @@ struct VRSphereSpaceView: View {
 
             if interactionMode == .view {
                 vrToolbar
+                    .padding(.trailing, 16)
+                    .padding(.top, 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .zIndex(2)
             } else {
                 editDoneButton
+                    .zIndex(3)
             }
-                .padding(.trailing, 16)
-                .padding(.top, 12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .zIndex(2)
 
             if showMotionHint {
                 motionHintPill
