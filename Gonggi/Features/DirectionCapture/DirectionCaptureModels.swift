@@ -166,6 +166,19 @@ struct DirectionCaptureConfig {
     static var rotationExtremeHoldRate: Float = 3.5
     /// Front auto-capture delay after begin (seconds).
     static var frontAutoCaptureDelaySec: TimeInterval = 0.2
+
+    // MARK: - Build 60 front seam + horizontal level (capture UX only)
+
+    /// Preferred last-shot yaw (iOS right-neg). Accept immediately when reached.
+    static var frontSeamPreferredYawDeg: Float = -327
+    /// Soft minimum last-shot yaw — must be ≤ this (rejects forensic −322…−323).
+    static var frontSeamSoftMinYawDeg: Float = -325
+    /// After entering soft-min band but before preferred, wait then accept.
+    static var frontSeamSoftAcceptWaitSec: TimeInterval = 1.8
+    /// Show seam helper once near last slot (unwrapped yaw at/below this).
+    static var frontSeamHelperActiveYawDeg: Float = -300
+    /// Soft horizontal level band (±deg from horizon). Guidance only — does not block shots.
+    static var horizontalLevelWarnDeg: Float = 10
 }
 
 struct DirectionCaptureRecord: Codable, Equatable, Identifiable {
@@ -190,6 +203,12 @@ struct DirectionCaptureRecord: Codable, Equatable, Identifiable {
     var capturedYawDeg: Float? = nil
     /// Elevation at photo request (same sample as `capturedYawDeg`).
     var capturedElevationDeg: Float? = nil
+    /// Build 60 debug: `capturedYaw − (−330)` for last horizontal (negative = past nominal).
+    var closureDeltaDeg: Float? = nil
+    /// Build 60 debug: elevation vs horizon at shutter (horizontal shots).
+    var horizontalLevelDeltaDeg: Float? = nil
+    /// Build 60 debug: front seam soft/preferred gate passed (last horizontal only).
+    var closureGatePassed: Bool? = nil
 
     var id: String { direction.rawValue }
 }

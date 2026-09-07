@@ -47,6 +47,8 @@ final class DirectionCaptureEngine: NSObject {
     private var warnFast = false
     private var motionAtPhotoRequest: DirectionMotionReading?
     private var pendingNominalYawOverride: Float?
+    /// Uptime when `front_left_330` first entered soft-min yaw band (≤ −325).
+    private var frontSeamSoftMinEnteredAt: TimeInterval?
 
     /// When false, beginCapture will not spawn demo mock sweep (unit tests).
     var enableMockSweep = true
@@ -135,6 +137,7 @@ final class DirectionCaptureEngine: NSObject {
         lowerObliqueTargetIndex = 0
         resetObliqueOrbitTracking()
         warnFast = false
+        frontSeamSoftMinEnteredAt = nil
         yawTracker.reset()
         motion.resetReference()
         sessionId = "dir-\(UUID().uuidString)"
@@ -241,7 +244,13 @@ final class DirectionCaptureEngine: NSObject {
         if pendingDirection == nil {
             switch phase {
             case .capturingHorizontal:
-                evaluateHorizontal(unwrappedYaw: unwrappedYaw, pitchDeg: pitchDeg, rollDeg: rollDeg, rotationRate: rotationRate)
+                evaluateHorizontal(
+                    unwrappedYaw: unwrappedYaw,
+                    pitchDeg: pitchDeg,
+                    rollDeg: rollDeg,
+                    rotationRate: rotationRate,
+                    timestamp: timestamp
+                )
             case .capturingUpperOblique:
                 evaluateObliqueOrbit(
                     order: DirectionName.upperObliqueOrder,
@@ -274,7 +283,8 @@ final class DirectionCaptureEngine: NSObject {
         unwrappedYaw: Float,
         pitchDeg: Float,
         rollDeg: Float,
-        rotationRate: Float
+        rotationRate: Float,
+        timestamp: TimeInterval
     ) {
         guard horizontalTargetIndex < DirectionName.horizontalOrder.count else {
             advancePhaseIfNeeded()
@@ -296,11 +306,30 @@ final class DirectionCaptureEngine: NSObject {
             guard elapsed >= DirectionCaptureConfig.frontAutoCaptureDelaySec else { return }
         }
 
+        // Build 60: last horizontal requires front-seam soft/preferred closure (rejects −322-class).
+        if target == .frontLeft330 {
+            if DirectionCaptureGuide.isFrontSeamSoftMinSatisfied(unwrappedYaw: unwrappedYaw) {
+                if frontSeamSoftMinEnteredAt == nil {
+                    frontSeamSoftMinEnteredAt = timestamp
+                }
+            } else {
+                frontSeamSoftMinEnteredAt = nil
+            }
+            guard DirectionCaptureGuide.isFrontSeamClosureReady(
+                unwrappedYaw: unwrappedYaw,
+                now: timestamp,
+                softMinEnteredAt: frontSeamSoftMinEnteredAt
+            ) else { return }
+            requestPhoto(for: target)
+            return
+        }
+
         guard DirectionCaptureGuide.withinYawTolerance(
             currentYaw: unwrappedYaw,
             targetYaw: targetYaw
         ) else { return }
 
+        // Level guidance is soft only — do not block earlier horizontals.
         requestPhoto(for: target)
     }
 
@@ -458,6 +487,18 @@ final class DirectionCaptureEngine: NSObject {
                 + " final=\(normalized.finalPixelWidth)x\(normalized.finalPixelHeight)"
         )
         #endif
+        let nominalYaw = pendingNominalYawOverride ?? direction.targetYawDeg
+        var closureDelta: Float?
+        var levelDelta: Float?
+        var closurePassed: Bool?
+        if direction.isHorizontal {
+            levelDelta = m.elevationDeg
+        }
+        if direction == .frontLeft330 {
+            let target = DirectionName.frontLeft330.targetYawDeg ?? -330
+            closureDelta = m.relativeYawDeg - target
+            closurePassed = DirectionCaptureGuide.isFrontSeamSoftMinSatisfied(unwrappedYaw: m.relativeYawDeg)
+        }
         let record = DirectionCaptureRecord(
             direction: direction,
             filePath: "direction_capture/\(direction.fileName)",
@@ -471,11 +512,14 @@ final class DirectionCaptureEngine: NSObject {
             finalPixelWidth: normalized.finalPixelWidth,
             finalPixelHeight: normalized.finalPixelHeight,
             phase: direction.phaseKind,
-            nominalYaw: pendingNominalYawOverride ?? direction.targetYawDeg,
+            nominalYaw: nominalYaw,
             nominalElevation: direction.targetElevationDeg,
             // Authoritative scaffold pose = motion frozen at photo request (not save callback).
             capturedYawDeg: m.relativeYawDeg,
-            capturedElevationDeg: m.elevationDeg
+            capturedElevationDeg: m.elevationDeg,
+            closureDeltaDeg: closureDelta,
+            horizontalLevelDeltaDeg: levelDelta,
+            closureGatePassed: closurePassed
         )
         captured[direction] = record
         images[direction] = normalized.image
@@ -543,7 +587,12 @@ final class DirectionCaptureEngine: NSObject {
             } else {
                 currentTarget = nil
             }
-            guideText = DirectionCaptureGuide.horizontalGuideMessage(warnFast: warnFast)
+            guideText = DirectionCaptureGuide.horizontalGuideMessage(
+                warnFast: warnFast,
+                target: currentTarget,
+                unwrappedYaw: lastMotion.relativeYawDeg,
+                elevationDeg: lastMotion.elevationDeg
+            )
             progressText = "수평 \(capturedHorizontalCount) / 12"
         case .capturingUpperOblique:
             currentTarget = upperObliqueTargetIndex < DirectionName.upperObliqueOrder.count

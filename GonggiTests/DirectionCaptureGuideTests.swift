@@ -12,6 +12,10 @@ final class DirectionCaptureGuideTests: XCTestCase {
         DirectionCaptureConfig.obliqueLastShotFailSafeYawDeg = 45
         DirectionCaptureConfig.obliqueLastShotFailSafeWaitSec = 4.0
         DirectionCaptureConfig.obliqueShotSettleSec = 0.12
+        DirectionCaptureConfig.frontSeamPreferredYawDeg = -327
+        DirectionCaptureConfig.frontSeamSoftMinYawDeg = -325
+        DirectionCaptureConfig.frontSeamSoftAcceptWaitSec = 1.8
+        DirectionCaptureConfig.horizontalLevelWarnDeg = 10
         super.tearDown()
     }
 

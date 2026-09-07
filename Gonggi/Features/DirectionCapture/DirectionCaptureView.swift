@@ -101,6 +101,7 @@ struct DirectionCaptureView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
+                .allowsHitTesting(false)
 
             #if DEBUG
             Text("\(viewModel.yawDisplay) · \(viewModel.pitchDisplay)")

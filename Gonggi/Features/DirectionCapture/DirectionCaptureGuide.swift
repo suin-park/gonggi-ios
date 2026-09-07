@@ -59,9 +59,102 @@ enum DirectionCaptureGuide {
         return asin(dot) * 180 / .pi
     }
 
-    static func horizontalGuideMessage(warnFast: Bool) -> String {
+    // MARK: - Build 60 front seam closure
+
+    /// Soft minimum: yaw must be at least this negative (e.g. −325). Rejects −322-class early accept.
+    static func isFrontSeamSoftMinSatisfied(
+        unwrappedYaw: Float,
+        softMinYawDeg: Float = DirectionCaptureConfig.frontSeamSoftMinYawDeg
+    ) -> Bool {
+        unwrappedYaw <= softMinYawDeg
+    }
+
+    static func isFrontSeamPreferredSatisfied(
+        unwrappedYaw: Float,
+        preferredYawDeg: Float = DirectionCaptureConfig.frontSeamPreferredYawDeg
+    ) -> Bool {
+        unwrappedYaw <= preferredYawDeg
+    }
+
+    /// Last horizontal accept: nominal band ∩ soft-min, with preferred immediate / soft wait.
+    static func isFrontSeamClosureReady(
+        unwrappedYaw: Float,
+        now: TimeInterval,
+        softMinEnteredAt: TimeInterval?,
+        targetYawDeg: Float = DirectionName.frontLeft330.targetYawDeg ?? -330,
+        toleranceDeg: Float = DirectionCaptureConfig.captureToleranceDeg,
+        preferredYawDeg: Float = DirectionCaptureConfig.frontSeamPreferredYawDeg,
+        softMinYawDeg: Float = DirectionCaptureConfig.frontSeamSoftMinYawDeg,
+        softWaitSec: TimeInterval = DirectionCaptureConfig.frontSeamSoftAcceptWaitSec
+    ) -> Bool {
+        guard withinYawTolerance(
+            currentYaw: unwrappedYaw,
+            targetYaw: targetYawDeg,
+            toleranceDeg: toleranceDeg
+        ) else { return false }
+        guard isFrontSeamSoftMinSatisfied(unwrappedYaw: unwrappedYaw, softMinYawDeg: softMinYawDeg) else {
+            return false
+        }
+        if isFrontSeamPreferredSatisfied(unwrappedYaw: unwrappedYaw, preferredYawDeg: preferredYawDeg) {
+            return true
+        }
+        guard let entered = softMinEnteredAt else { return false }
+        return now - entered >= softWaitSec
+    }
+
+    /// Approx seam center gap (°) from last-shot ios yaw to front≈0 in prompt-positive space.
+    static func frontSeamCenterGapDeg(lastShotIosYaw: Float, frontIosYaw: Float = 0) -> Float {
+        let lastPrompt = normalizeYaw0to360(-lastShotIosYaw)
+        let frontPrompt = normalizeYaw0to360(-frontIosYaw)
+        return normalizeYaw0to360(frontPrompt - lastPrompt)
+    }
+
+    // MARK: - Horizontal level (soft guidance)
+
+    static func horizontalLevelGuidanceMessage(
+        elevationDeg: Float,
+        warnBandDeg: Float = DirectionCaptureConfig.horizontalLevelWarnDeg
+    ) -> String? {
+        if elevationDeg < -warnBandDeg {
+            return "카메라를 조금 위로 들어주세요"
+        }
+        if elevationDeg > warnBandDeg {
+            return "카메라를 조금 내려주세요"
+        }
+        return nil
+    }
+
+    /// Priority: seam closure → level → fast rotation → default orbit copy.
+    static func horizontalGuideMessage(
+        warnFast: Bool,
+        target: DirectionName?,
+        unwrappedYaw: Float?,
+        elevationDeg: Float?
+    ) -> String {
+        if target == .frontLeft330,
+           let yaw = unwrappedYaw,
+           yaw <= DirectionCaptureConfig.frontSeamHelperActiveYawDeg,
+           !isFrontSeamSoftMinSatisfied(unwrappedYaw: yaw)
+        {
+            return "조금 더 오른쪽으로 돌아주세요"
+        }
+        if let elev = elevationDeg,
+           let level = horizontalLevelGuidanceMessage(elevationDeg: elev)
+        {
+            return level
+        }
         if warnFast { return "조금 천천히 움직여주세요" }
         return "휴대폰을 세운 채 천천히 오른쪽으로 돌아주세요."
+    }
+
+    /// Legacy overload used by older call sites / tests.
+    static func horizontalGuideMessage(warnFast: Bool) -> String {
+        horizontalGuideMessage(
+            warnFast: warnFast,
+            target: nil,
+            unwrappedYaw: nil,
+            elevationDeg: nil
+        )
     }
 
     static func upperObliqueGuideMessage(

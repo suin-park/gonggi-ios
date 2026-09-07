@@ -13,6 +13,10 @@ struct SpaceCaptureMetadataEntry: Codable, Equatable, Sendable {
     var rollDeg: Double?
     /// iOS yaw convention: front=0, right turn decreases (unwrapped).
     var yawConvention: String?
+    /// Build 60 additive debug (not used by production prompt).
+    var closureDeltaDeg: Double?
+    var horizontalLevelDeltaDeg: Double?
+    var closureGatePassed: Bool?
 }
 
 enum SpaceCaptureMetadataBuilder {
@@ -32,7 +36,10 @@ enum SpaceCaptureMetadataBuilder {
                 width: rec.finalPixelWidth,
                 height: rec.finalPixelHeight,
                 rollDeg: Double(rec.rollDeg),
-                yawConvention: "ios_right_turn_negative_unwrapped"
+                yawConvention: "ios_right_turn_negative_unwrapped",
+                closureDeltaDeg: rec.closureDeltaDeg.map(Double.init),
+                horizontalLevelDeltaDeg: rec.horizontalLevelDeltaDeg.map(Double.init),
+                closureGatePassed: rec.closureGatePassed
             )
         }
         guard entries.count == DirectionName.requiredCount else {
