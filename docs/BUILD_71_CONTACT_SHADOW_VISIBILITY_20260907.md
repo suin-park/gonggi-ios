@@ -52,11 +52,16 @@ Minimal changes only:
 | Field | Value |
 |-------|--------|
 | version/build | **1.0 (71)** |
-| iOS SHA | _(fill)_ |
-| Delivery UUID | _(fill)_ |
+| iOS SHA | `1852815` |
+| workflow | [Gonggi TestFlight #34127477236](https://github.com/suin-park/gonggi-ios/actions/runs/34127477236) |
+| Archive | succeeded |
+| ASC | **UPLOAD FAILED** — `Upload limit reached… wait 1 day` |
+| Delivery UUID | _(pending retry)_ |
 
 ---
 
 ## Verdict
 
-**READY_FOR_SHADOW_VISIBILITY_REAL_DEVICE_TEST**
+**READY_FOR_SHADOW_VISIBILITY_REAL_DEVICE_TEST** (코드/아카이브 준비됨)
+
+TestFlight 배포만 ASC 일일 업로드 한도로 **BLOCKED** — 내일 `build_number=71` 재업로드 필요.
