@@ -54,7 +54,7 @@ def make_token() -> str:
     )
 
 
-def api(method: str, path: str, token: str, body: dict | None = None) -> dict:
+def api(method: str, path: str, token: str, body: dict | None = None, soft: bool = False) -> dict:
     url = path if path.startswith("http") else f"https://api.appstoreconnect.apple.com{path}"
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
@@ -73,6 +73,9 @@ def api(method: str, path: str, token: str, body: dict | None = None) -> dict:
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as e:
         err = e.read().decode("utf-8", errors="replace")
+        if soft:
+            print(f"WARN: ASC API {method} {path} -> HTTP {e.code}: {err[:400]}")
+            return {"errors": True, "status": e.code}
         die(f"ASC API {method} {path} -> HTTP {e.code}: {err[:800]}")
 
 
@@ -109,13 +112,11 @@ def ensure_apple_signin_capability(token: str, bundle_res_id: str) -> None:
             },
         }
     }
-    try:
-        api("POST", "/v1/bundleIdCapabilities", token, body)
+    result = api("POST", "/v1/bundleIdCapabilities", token, body, soft=True)
+    if result.get("errors"):
+        print("WARN: APPLE_ID_AUTH enable soft-failed; continuing to profile create")
+    else:
         print("Sign in with Apple capability enabled")
-    except SystemExit:
-        # Capability may already exist or require portal consent — continue to profile create.
-        print("WARN: could not POST APPLE_ID_AUTH (may already exist); continuing to profile create")
-        raise
 
 
 
