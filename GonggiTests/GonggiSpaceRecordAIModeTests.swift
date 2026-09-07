@@ -7,23 +7,20 @@ final class GonggiSpaceRecordAIModeTests: XCTestCase {
             GonggiSpaceRecordAIMode.scaffoldRepairV4bH12,
             "scaffold_repair_v4b_h12"
         )
-        XCTAssertEqual(GonggiSpaceRecordAIMode.scaffoldValidationBuildNumbers, ["61", "62", "63"])
+        XCTAssertEqual(
+            GonggiSpaceRecordAIMode.scaffoldValidationBuildNumbers,
+            ["61", "62", "63", "64"]
+        )
     }
 
-    func testG_ModeScaffoldForBuild61Through63() {
-        XCTAssertEqual(
-            GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "61"),
-            "scaffold_repair_v4b_h12"
-        )
-        XCTAssertEqual(
-            GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "62"),
-            "scaffold_repair_v4b_h12"
-        )
-        XCTAssertEqual(
-            GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "63"),
-            "scaffold_repair_v4b_h12"
-        )
+    func testG_ModeScaffoldForBuild61Through64() {
+        for build in ["61", "62", "63", "64"] {
+            XCTAssertEqual(
+                GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: build),
+                "scaffold_repair_v4b_h12"
+            )
+        }
         XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "60"))
-        XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "64"))
+        XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "65"))
     }
 }

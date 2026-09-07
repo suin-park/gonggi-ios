@@ -29,6 +29,13 @@ struct VRSphereSpaceView: View {
     /// True only after fade-in has started and markSeen ran for this presentation.
     @State private var selectiveRepairHintBecameVisible = false
     @State private var selectiveRepairHintTask: Task<Void, Never>?
+    @State private var motionEnabled: Bool = true
+    @State private var motionHardwareOK: Bool = true
+    @State private var recenterToken: Int = 0
+    @State private var showMotionHint = false
+    @State private var motionHintOpacity: Double = 0
+    @State private var motionHintTask: Task<Void, Never>?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         imageURL: URL,
@@ -44,6 +51,11 @@ struct VRSphereSpaceView: View {
         self.onRepairCompleted = onRepairCompleted
         _textureURL = State(initialValue: imageURL)
         _repairController = StateObject(wrappedValue: RepairSessionController(sessionId: sessionId))
+        _motionEnabled = State(
+            initialValue: VRMotionPreferences.resolvedMotionEnabled(
+                reduceMotion: UIAccessibility.isReduceMotionEnabled
+            )
+        )
     }
 
     var body: some View {
@@ -57,13 +69,17 @@ struct VRSphereSpaceView: View {
                     ?? Double(VRSphereEquirectBridge.defaultYawRadiusDeg)),
                 maskRadiusPitchDeg: Float(pendingTarget?.radiusPitchDeg
                     ?? Double(VRSphereEquirectBridge.defaultPitchRadiusDeg)),
+                motionDesiredEnabled: motionEnabled,
+                confirmSheetPresented: showConfirmSheet,
+                recenterToken: recenterToken,
                 onViewerReady: {
                     panoramaReady = true
-                    scheduleSelectiveRepairHintIfNeeded()
+                    scheduleHintFlowIfNeeded()
                 },
                 onLongPress: { yaw, pitch in
                     GonggiHaptics.medium()
                     markSelectiveRepairHintSeenAndHide()
+                    hideMotionHintImmediate()
                     let target = RepairTarget.make(
                         sessionId: sessionId,
                         baseRevisionId: baseRevisionId,
@@ -79,6 +95,9 @@ struct VRSphereSpaceView: View {
                     )
                     #endif
                     showConfirmSheet = true
+                },
+                onMotionHardwareAvailable: { available in
+                    motionHardwareOK = available
                 }
             )
             .ignoresSafeArea()
@@ -98,6 +117,23 @@ struct VRSphereSpaceView: View {
             .padding(.leading, 16)
             .padding(.top, 12)
             .zIndex(2)
+
+            vrToolbar
+                .padding(.trailing, 16)
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .zIndex(2)
+
+            if showMotionHint {
+                motionHintPill
+                    .opacity(motionHintOpacity)
+                    .padding(.horizontal, 64)
+                    .padding(.top, 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(motionHintOpacity < 0.05)
+                    .zIndex(1)
+            }
 
             if showSelectiveRepairHint {
                 SelectiveRepairHintPill()
@@ -129,7 +165,7 @@ struct VRSphereSpaceView: View {
                 .background(Color.black.opacity(0.55))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .padding(.trailing, 16)
-                .padding(.top, 12)
+                .padding(.top, 56)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 .allowsHitTesting(false)
             }
@@ -151,11 +187,13 @@ struct VRSphereSpaceView: View {
                 applyCompletedTexture(url)
             }
             if panoramaReady {
-                scheduleSelectiveRepairHintIfNeeded()
+                scheduleHintFlowIfNeeded()
             }
         }
         .onDisappear {
             cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
+            motionHintTask?.cancel()
+            motionHintTask = nil
         }
         .sheet(isPresented: $showConfirmSheet, onDismiss: {
             if captureTarget == nil {
@@ -204,6 +242,66 @@ struct VRSphereSpaceView: View {
         } message: {
             Text(uploadError ?? "")
         }
+    }
+
+    private var vrToolbar: some View {
+        HStack(spacing: 8) {
+            Button {
+                GonggiHaptics.light()
+                recenterToken += 1
+            } label: {
+                Image(systemName: "location.north.line")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("시점 재설정")
+
+            Button {
+                GonggiHaptics.light()
+                let next = !motionEnabled
+                motionEnabled = next
+                VRMotionPreferences.setMotionEnabled(next)
+            } label: {
+                Image(systemName: "gyroscope")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle((motionEnabled && motionHardwareOK) ? Color.white : Color.white.opacity(0.45))
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.45))
+                    .clipShape(Circle())
+                    .overlay {
+                        if !motionEnabled || !motionHardwareOK {
+                            Image(systemName: "line.diagonal")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
+                    }
+            }
+            .accessibilityLabel(motionEnabled ? "모션 끄기" : "모션 켜기")
+        }
+    }
+
+    private var motionHintPill: some View {
+        VStack(spacing: 4) {
+            Text(VRMotionPreferences.motionHintPrimary)
+                .font(.footnote.weight(.medium))
+            Text(VRMotionPreferences.motionHintSecondary)
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.85))
+        }
+        .foregroundStyle(.white)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background {
+            Capsule()
+                .fill(Color.black.opacity(0.55))
+                .background(.ultraThinMaterial, in: Capsule())
+        }
+        .clipShape(Capsule())
+        .accessibilityLabel(VRMotionPreferences.motionHintPrimary)
     }
 
     @ViewBuilder
@@ -259,6 +357,44 @@ struct VRSphereSpaceView: View {
         }
     }
 
+    /// Motion hint first (optional), then Selective Repair one-time hint. Never stacked.
+    private func scheduleHintFlowIfNeeded() {
+        guard panoramaReady else { return }
+        guard motionHintTask == nil, selectiveRepairHintTask == nil else { return }
+
+        let shouldMotionHint =
+            motionEnabled
+            && !reduceMotion
+            && !VRMotionPreferences.hasSeenMotionHint()
+
+        if shouldMotionHint {
+            motionHintTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled else { return }
+                showMotionHint = true
+                motionHintOpacity = 0
+                withAnimation(.easeIn(duration: 0.3)) { motionHintOpacity = 1 }
+                VRMotionPreferences.markMotionHintSeen()
+                try? await Task.sleep(nanoseconds: 2_800_000_000)
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.35)) { motionHintOpacity = 0 }
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                showMotionHint = false
+                motionHintTask = nil
+                scheduleSelectiveRepairHintIfNeeded()
+            }
+        } else {
+            scheduleSelectiveRepairHintIfNeeded()
+        }
+    }
+
+    private func hideMotionHintImmediate() {
+        motionHintTask?.cancel()
+        motionHintTask = nil
+        showMotionHint = false
+        motionHintOpacity = 0
+    }
+
     /// Gate (user-global, any VR entry via this view):
     /// panorama ready → 0.5s delay → fade in → markSeen → 4.5s hold → fade out.
     /// Does not check whether the space is new; only `hintSeen`.
@@ -266,6 +402,7 @@ struct VRSphereSpaceView: View {
         guard panoramaReady else { return }
         guard !SelectiveRepairHintPreferences.hasSeen else { return }
         guard selectiveRepairHintTask == nil else { return }
+        guard !showMotionHint else { return }
 
         selectiveRepairHintBecameVisible = false
         showSelectiveRepairHint = false
@@ -276,6 +413,7 @@ struct VRSphereSpaceView: View {
             try? await Task.sleep(nanoseconds: delayNs)
             guard !Task.isCancelled else { return }
             guard !SelectiveRepairHintPreferences.hasSeen else { return }
+            guard !showMotionHint else { return }
 
             showSelectiveRepairHint = true
             selectiveRepairHintOpacity = 0
@@ -690,7 +828,7 @@ private struct RepairCameraPreview: UIViewRepresentable {
     }
 }
 
-// MARK: - SceneKit VR host
+// MARK: - SceneKit VR host representable
 
 private struct Panorama360SceneOnlyView: UIViewRepresentable {
     let imageURL: URL
@@ -699,13 +837,22 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var markerPitchDeg: Float?
     var maskRadiusYawDeg: Float
     var maskRadiusPitchDeg: Float
+    var motionDesiredEnabled: Bool
+    var confirmSheetPresented: Bool
+    var recenterToken: Int
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
+    var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNHostView {
         let host = SCNHostView()
         host.onLongPressEquirect = onLongPress
+        host.onMotionAvailabilityChanged = { available in
+            onMotionHardwareAvailable?(available)
+        }
         host.configure(imageURL: imageURL)
+        host.setMotionDesiredEnabled(motionDesiredEnabled)
+        host.setConfirmSheetPresented(confirmSheetPresented)
         host.updateSelection(
             yawDeg: markerYawDeg,
             pitchDeg: markerPitchDeg,
@@ -714,7 +861,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         )
         context.coordinator.lastGeneration = textureGeneration
         context.coordinator.lastURL = imageURL
-        // Defer one runloop so the SCNView is in the hierarchy / first frame can paint.
+        context.coordinator.lastRecenterToken = recenterToken
+        context.coordinator.lastMotionDesired = motionDesiredEnabled
         DispatchQueue.main.async {
             context.coordinator.didNotifyReady = true
             onViewerReady?()
@@ -724,11 +872,23 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
 
     func updateUIView(_ uiView: SCNHostView, context: Context) {
         uiView.onLongPressEquirect = onLongPress
+        uiView.onMotionAvailabilityChanged = { available in
+            onMotionHardwareAvailable?(available)
+        }
         if textureGeneration != context.coordinator.lastGeneration
             || imageURL != context.coordinator.lastURL {
             uiView.reloadTexture(from: imageURL)
             context.coordinator.lastGeneration = textureGeneration
             context.coordinator.lastURL = imageURL
+        }
+        if motionDesiredEnabled != context.coordinator.lastMotionDesired {
+            uiView.setMotionDesiredEnabled(motionDesiredEnabled)
+            context.coordinator.lastMotionDesired = motionDesiredEnabled
+        }
+        uiView.setConfirmSheetPresented(confirmSheetPresented)
+        if recenterToken != context.coordinator.lastRecenterToken {
+            uiView.recenterKeepingVisual()
+            context.coordinator.lastRecenterToken = recenterToken
         }
         uiView.updateSelection(
             yawDeg: markerYawDeg,
@@ -750,230 +910,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         var lastGeneration: Int = -1
         var lastURL: URL?
         var didNotifyReady = false
-    }
-}
-
-final class SCNHostView: UIView {
-    private let scnView = SCNView()
-    private var cameraNode: SCNNode?
-    private var sphereNode: SCNNode?
-    private var markerNode: SCNNode?
-    private var maskOutlineNode: SCNNode?
-    private var yaw: Float = 0
-    private var pitch: Float = 0
-
-    var onLongPressEquirect: ((Float, Float) -> Void)?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        scnView.frame = bounds
-        scnView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        scnView.backgroundColor = .black
-        scnView.allowsCameraControl = false
-        scnView.antialiasingMode = .multisampling4X
-        addSubview(scnView)
-
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-        scnView.addGestureRecognizer(pan)
-
-        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-        longPress.minimumPressDuration = 0.45
-        scnView.addGestureRecognizer(longPress)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:)") }
-
-    func configure(imageURL: URL) {
-        let scene = SCNScene()
-        let sphere = SCNSphere(radius: 10)
-        sphere.segmentCount = 192
-
-        let material = SCNMaterial()
-        material.isDoubleSided = true
-        applyTexture(to: material, imageURL: imageURL)
-        material.diffuse.wrapS = .repeat
-        material.diffuse.wrapT = .clamp
-        sphere.firstMaterial = material
-        sphere.firstMaterial?.cullMode = .front
-
-        let sphereNode = SCNNode(geometry: sphere)
-        let s = Quick360SphereCoordinateConvention.insideOutScale
-        sphereNode.scale = SCNVector3(s.x, s.y, s.z)
-        sphereNode.name = "sphere"
-        scene.rootNode.addChildNode(sphereNode)
-        self.sphereNode = sphereNode
-
-        let cameraNode = SCNNode()
-        cameraNode.camera = SCNCamera()
-        cameraNode.camera?.fieldOfView = 70
-        cameraNode.camera?.zNear = 0.1
-        cameraNode.camera?.zFar = 100
-        cameraNode.position = SCNVector3(0, 0, 0)
-        cameraNode.eulerAngles = SCNVector3(pitch, yaw, 0)
-        scene.rootNode.addChildNode(cameraNode)
-
-        scnView.scene = scene
-        scnView.pointOfView = cameraNode
-        self.cameraNode = cameraNode
-    }
-
-    /// Reload equirect texture without resetting camera yaw/pitch.
-    func reloadTexture(from imageURL: URL) {
-        guard let material = sphereNode?.geometry?.firstMaterial else {
-            configure(imageURL: imageURL)
-            cameraNode?.eulerAngles = SCNVector3(pitch, yaw, 0)
-            return
-        }
-        applyTexture(to: material, imageURL: imageURL)
-        cameraNode?.eulerAngles = SCNVector3(pitch, yaw, 0)
-    }
-
-    private func applyTexture(to material: SCNMaterial, imageURL: URL) {
-        let raw = UIImage(contentsOfFile: imageURL.path)
-        if let raw,
-           let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
-            material.diffuse.contents = prepared
-        } else if let raw, raw.cgImage != nil {
-            material.diffuse.contents = raw
-        } else {
-            material.diffuse.contents = UIColor(white: 0.12, alpha: 1)
-        }
-    }
-
-    /// Target marker + elliptical mask outline on the inside-out sphere (debug / selection preview).
-    func updateSelection(
-        yawDeg: Float?,
-        pitchDeg: Float?,
-        radiusYawDeg: Float,
-        radiusPitchDeg: Float
-    ) {
-        markerNode?.removeFromParentNode()
-        markerNode = nil
-        maskOutlineNode?.removeFromParentNode()
-        maskOutlineNode = nil
-        guard let yawDeg, let pitchDeg, let scene = scnView.scene else { return }
-
-        let r: Float = 9.2
-        let p = VRSphereEquirectBridge.insideOutSpherePoint(
-            yawDeg: yawDeg,
-            pitchDeg: pitchDeg,
-            radius: r
-        )
-        let marker = SCNNode(geometry: SCNSphere(radius: 0.12))
-        marker.geometry?.firstMaterial?.diffuse.contents = UIColor.systemYellow
-        marker.geometry?.firstMaterial?.emission.contents = UIColor.systemYellow
-        marker.position = SCNVector3(p.x, p.y, p.z)
-        scene.rootNode.addChildNode(marker)
-        markerNode = marker
-
-        let outline = SCNNode()
-        outline.name = "repairMaskOutline"
-        let rim = VRSphereEquirectBridge.maskOutlineEquirectPoints(
-            centerYawDeg: yawDeg,
-            centerPitchDeg: pitchDeg,
-            radiusYawDeg: radiusYawDeg,
-            radiusPitchDeg: radiusPitchDeg,
-            samples: 56
-        )
-        for (i, pt) in rim.enumerated() {
-            let wp = VRSphereEquirectBridge.insideOutSpherePoint(
-                yawDeg: pt.yawDeg,
-                pitchDeg: pt.pitchDeg,
-                radius: r
-            )
-            let bead = SCNNode(geometry: SCNSphere(radius: 0.045))
-            bead.geometry?.firstMaterial?.diffuse.contents = UIColor.systemPink.withAlphaComponent(0.9)
-            bead.geometry?.firstMaterial?.emission.contents = UIColor.systemPink.withAlphaComponent(0.55)
-            bead.position = SCNVector3(wp.x, wp.y, wp.z)
-            outline.addChildNode(bead)
-
-            let next = rim[(i + 1) % rim.count]
-            let np = VRSphereEquirectBridge.insideOutSpherePoint(
-                yawDeg: next.yawDeg,
-                pitchDeg: next.pitchDeg,
-                radius: r
-            )
-            let mid = SIMD3((wp.x + np.x) * 0.5, (wp.y + np.y) * 0.5, (wp.z + np.z) * 0.5)
-            let dist = simd_length(SIMD3(np.x - wp.x, np.y - wp.y, np.z - wp.z))
-            guard dist > 1e-4 else { continue }
-            let cyl = SCNCylinder(radius: 0.018, height: CGFloat(dist))
-            cyl.firstMaterial?.diffuse.contents = UIColor.systemPink.withAlphaComponent(0.75)
-            cyl.firstMaterial?.emission.contents = UIColor.systemPink.withAlphaComponent(0.35)
-            let seg = SCNNode(geometry: cyl)
-            seg.position = SCNVector3(mid.x, mid.y, mid.z)
-            seg.look(at: SCNVector3(np.x, np.y, np.z), up: SCNVector3(0, 1, 0), localFront: SCNVector3(0, 1, 0))
-            outline.addChildNode(seg)
-        }
-        scene.rootNode.addChildNode(outline)
-        maskOutlineNode = outline
-    }
-
-    @objc private func handlePan(_ g: UIPanGestureRecognizer) {
-        let t = g.translation(in: scnView)
-        g.setTranslation(.zero, in: scnView)
-        let sens: Float = 0.005
-        yaw += Float(t.x) * sens
-        pitch = max(-1.48, min(1.48, pitch + Float(t.y) * sens))
-        cameraNode?.eulerAngles = SCNVector3(pitch, yaw, 0)
-    }
-
-    @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
-        guard g.state == .began else { return }
-        let point = g.location(in: scnView)
-
-        // Preferred: texture UV under finger (ground truth for displayed latlong).
-        let hits = scnView.hitTest(point, options: [
-            .searchMode: SCNHitTestSearchMode.closest.rawValue,
-            .boundingBoxOnly: false
-        ])
-        let sphereHit = hits.first { $0.node.name == "sphere" || $0.node == sphereNode }
-
-        let yawDeg: Float
-        let pitchDeg: Float
-        let source: String
-        if let hit = sphereHit {
-            let uv = hit.textureCoordinates(withMappingChannel: 0)
-            let eq = VRSphereEquirectBridge.equirectDegreesFromTextureUV(
-                u: Float(uv.x),
-                v: Float(uv.y)
-            )
-            yawDeg = eq.yawDeg
-            pitchDeg = eq.pitchDeg
-            source = "hitTestUV"
-            #if DEBUG
-            let local = hit.localCoordinates
-            let rawLon = atan2(Float(local.x), Float(local.z)) * 180 / .pi
-            print(
-                """
-                [repair-bridge] source=\(source) \
-                camYawDeg=\(yaw * 180 / .pi) camPitchDeg=\(pitch * 180 / .pi) \
-                hitLocal=(\(local.x),\(local.y),\(local.z)) rawAtan2XZ=\(rawLon) \
-                uv=(\(uv.x),\(uv.y)) bridgedYaw=\(yawDeg) bridgedPitch=\(pitchDeg)
-                """
-            )
-            #endif
-        } else {
-            let eq = VRSphereEquirectBridge.equirectDegreesFromScreenPoint(
-                point: point,
-                viewSize: scnView.bounds.size,
-                cameraYawRad: yaw,
-                cameraPitchRad: pitch,
-                fieldOfViewDeg: 70
-            )
-            yawDeg = eq.yawDeg
-            pitchDeg = eq.pitchDeg
-            source = "cameraFallback"
-            #if DEBUG
-            print(
-                """
-                [repair-bridge] source=\(source) \
-                camYawDeg=\(yaw * 180 / .pi) camPitchDeg=\(pitch * 180 / .pi) \
-                bridgedYaw=\(yawDeg) bridgedPitch=\(pitchDeg)
-                """
-            )
-            #endif
-        }
-        _ = source
-        onLongPressEquirect?(yawDeg, pitchDeg)
+        var lastRecenterToken: Int = 0
+        var lastMotionDesired: Bool = true
     }
 }
