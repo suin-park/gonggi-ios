@@ -84,7 +84,7 @@ final class Build62UploadHardCapTests: XCTestCase {
     func testE_ExplicitRetryInvokesRegenerateOnce() async throws {
         var regenerateCount = 0
         var createCount = 0
-        let mock = CountingAPIClient(
+        let mock = Build62CountingAPIClient(
             onCreate: { createCount += 1 },
             onRegenerate: { regenerateCount += 1 }
         )
@@ -128,7 +128,7 @@ final class Build62UploadHardCapTests: XCTestCase {
     func testF_AppRelaunchDoesNotAutoRegenerateFailed() async {
         let store = SpaceJobStore()
         var regenerateCount = 0
-        let mock = CountingAPIClient(onCreate: {}, onRegenerate: { regenerateCount += 1 })
+        let mock = Build62CountingAPIClient(onCreate: {}, onRegenerate: { regenerateCount += 1 })
         let runtime = SpaceJobRuntime(store: store)
         runtime.replaceAPI(mock)
         store.upsert(
@@ -284,7 +284,7 @@ private struct Build62SeededGenerator: RandomNumberGenerator {
 }
 
 /// Minimal API client that counts create/regenerate for retry-safety tests.
-private final class CountingAPIClient: SpaceRecordAPIClienting, @unchecked Sendable {
+private final class Build62CountingAPIClient: SpaceRecordAPIClienting, @unchecked Sendable {
     private let onCreate: () -> Void
     private let onRegenerate: () -> Void
 
