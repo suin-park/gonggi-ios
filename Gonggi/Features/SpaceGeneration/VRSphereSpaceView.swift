@@ -49,9 +49,8 @@ struct VRSphereSpaceView: View {
     @State private var pendingPlacementAsset: MobileAssetDTO?
     @State private var didLoadPlacement = false
     @State private var placementTask: Task<Void, Never>?
-    /// Build 69 flagged lighting PoC (internal selector; default off = baseline IBL).
-    @State private var lightingPoCActive = VRLightingExperimentPrefs.experimentUIEnabled
-    @State private var lightingPoCExpanded = false
+    /// DEBUG lighting panel state (Release always baseline; flag via UserDefaults only).
+    @State private var lightingPoCActive = false
     @State private var lightingMode = VRLightingExperimentPrefs.mode
     @State private var lightingIBL = VRLightingExperimentPrefs.iblIntensity
     @State private var lightingEstimateLabel = ""
@@ -86,6 +85,14 @@ struct VRSphereSpaceView: View {
         )
     }
 
+    private var lightingExperimentActiveForHost: Bool {
+        #if DEBUG
+        VRLightingExperimentPrefs.experimentUIEnabled && lightingPoCActive
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             Panorama360SceneOnlyView(
@@ -110,7 +117,7 @@ struct VRSphereSpaceView: View {
                 editTool: editTool,
                 placementRequestToken: placementRequestToken,
                 environmentLightingURL: textureURL,
-                lightingExperimentActive: lightingPoCActive,
+                lightingExperimentActive: lightingExperimentActiveForHost,
                 lightingMode: lightingMode,
                 lightingIBLIntensity: lightingIBL,
                 supportLiveRevision: supportLiveRevision,
@@ -255,8 +262,12 @@ struct VRSphereSpaceView: View {
                     .zIndex(3)
             }
 
-            lightingPoCOverlay
-                .zIndex(5)
+            #if DEBUG
+            if VRLightingExperimentPrefs.experimentUIEnabled {
+                lightingDebugOverlay
+                    .zIndex(5)
+            }
+            #endif
 
             if saveError != nil {
                 saveErrorBanner
@@ -272,6 +283,11 @@ struct VRSphereSpaceView: View {
         }
         .onAppear {
             repairController.refreshFromStore()
+            #if DEBUG
+            lightingPoCActive = VRLightingExperimentPrefs.experimentUIEnabled
+            #else
+            lightingPoCActive = false
+            #endif
             if let url = repairController.completedTextureURL {
                 applyCompletedTexture(url)
             }
@@ -570,98 +586,70 @@ struct VRSphereSpaceView: View {
         }
     }
 
-    /// Build 69 internal lighting PoC selector (flagged; default off = production baseline).
-    private var lightingPoCOverlay: some View {
+    /// Build 69/70 lighting debug — DEBUG + UserDefaults flag only. No production “실험 활성” toggle.
+    #if DEBUG
+    private var lightingDebugOverlay: some View {
         VStack {
             Spacer()
             HStack {
                 VStack(alignment: .leading, spacing: 8) {
-                    Button {
-                        GonggiHaptics.light()
-                        if lightingPoCExpanded {
-                            lightingPoCExpanded = false
-                        } else {
-                            lightingPoCExpanded = true
+                    Text("Light debug")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+
+                    Picker("Mode", selection: $lightingMode) {
+                        ForEach(VRLightingExperimentMode.allCases) { mode in
+                            Text(mode.shortLabel).tag(mode)
                         }
-                    } label: {
-                        Text(lightingPoCActive ? "PoC Light · ON" : "PoC Light")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.black.opacity(0.55))
-                            .clipShape(Capsule())
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: lightingMode) { _, next in
+                        VRLightingExperimentPrefs.mode = next
+                        lightingPoCActive = true
                     }
 
-                    if lightingPoCExpanded {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle("실험 활성", isOn: Binding(
-                                get: { lightingPoCActive },
-                                set: { next in
-                                    lightingPoCActive = next
-                                    VRLightingExperimentPrefs.experimentUIEnabled = next
-                                    if !next {
-                                        lightingMode = .baseline
-                                        lightingIBL = 0.7
-                                        VRLightingExperimentPrefs.mode = .baseline
-                                        VRLightingExperimentPrefs.iblIntensity = 0.7
-                                    }
-                                }
-                            ))
-                            .font(.caption)
-                            .tint(.yellow)
-
-                            if lightingPoCActive {
-                                Picker("Mode", selection: $lightingMode) {
-                                    ForEach(VRLightingExperimentMode.allCases) { mode in
-                                        Text(mode.shortLabel).tag(mode)
-                                    }
-                                }
-                                .pickerStyle(.segmented)
-                                .onChange(of: lightingMode) { _, next in
-                                    VRLightingExperimentPrefs.mode = next
-                                }
-
-                                HStack(spacing: 6) {
-                                    Text("IBL")
-                                        .font(.caption2)
-                                    ForEach(VRLightingExperimentPrefs.iblIntensityCandidates, id: \.self) { value in
-                                        Button {
-                                            lightingIBL = value
-                                            VRLightingExperimentPrefs.iblIntensity = value
-                                        } label: {
-                                            Text(String(format: "%.1f", value))
-                                                .font(.caption2.monospacedDigit().weight(lightingIBL == value ? .bold : .regular))
-                                                .foregroundStyle(lightingIBL == value ? Color.black : Color.white)
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                                .background(lightingIBL == value ? Color.white : Color.white.opacity(0.15))
-                                                .clipShape(Capsule())
-                                        }
-                                    }
-                                }
-
-                                if !lightingEstimateLabel.isEmpty {
-                                    Text(lightingEstimateLabel)
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(.white.opacity(0.85))
-                                }
+                    HStack(spacing: 6) {
+                        Text("IBL")
+                            .font(.caption2)
+                            .foregroundStyle(.white)
+                        ForEach(VRLightingExperimentPrefs.iblIntensityCandidates, id: \.self) { value in
+                            Button {
+                                lightingIBL = value
+                                VRLightingExperimentPrefs.iblIntensity = value
+                                lightingPoCActive = true
+                            } label: {
+                                Text(String(format: "%.1f", value))
+                                    .font(.caption2.monospacedDigit().weight(lightingIBL == value ? .bold : .regular))
+                                    .foregroundStyle(lightingIBL == value ? Color.black : Color.white)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(lightingIBL == value ? Color.white : Color.white.opacity(0.15))
+                                    .clipShape(Capsule())
                             }
                         }
-                        .foregroundStyle(.white)
-                        .padding(10)
-                        .background(Color.black.opacity(0.72))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .frame(maxWidth: 320)
+                    }
+
+                    if !lightingEstimateLabel.isEmpty {
+                        Text(lightingEstimateLabel)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.85))
                     }
                 }
+                .padding(10)
+                .background(Color.black.opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .frame(maxWidth: 320)
                 .padding(.leading, 12)
                 .padding(.bottom, interactionMode == .edit ? 110 : 72)
                 Spacer()
             }
         }
         .allowsHitTesting(true)
+        .onAppear {
+            lightingPoCActive = true
+        }
     }
+    #endif
 
     private var motionHintPill: some View {
         VStack(spacing: 4) {
@@ -1574,7 +1562,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
                     format: "floor %.2f support %.2f shadow≈%.2f",
                     snap.floorY,
                     selectedSupportY,
-                    selectedSupportY + 0.002
+                    selectedSupportY + VRLightingExperimentPrefs.contactShadowLocalY
                 )
             }
             return String(format: "floor %.2f", snap.floorY)

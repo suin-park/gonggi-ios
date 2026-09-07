@@ -34,7 +34,7 @@ final class VRSupportShadowBuild70Tests: XCTestCase {
     }
 
     func testD_DirectionalOffContactOpacity() {
-        XCTAssertEqual(VRLightingExperimentPrefs.contactOpacityDirectionalInactive, 0.22, accuracy: 0.001)
+        XCTAssertEqual(VRLightingExperimentPrefs.contactOpacityDirectionalInactive, 0.28, accuracy: 0.001)
     }
 
     func testE_DirectionalOnContactOpacity() {

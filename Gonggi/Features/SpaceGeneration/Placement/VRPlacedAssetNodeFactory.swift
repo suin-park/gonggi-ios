@@ -350,36 +350,54 @@ enum VRPlacedAssetNodeFactory {
             height: CGFloat(radius * 1.5)
         )
         let material = SCNMaterial()
-        material.lightingModel = .constant
-        material.diffuse.contents = shadowTexture()
-        material.transparency = CGFloat(min(max(opacity, 0), 1))
-        material.isDoubleSided = true
-        material.writesToDepthBuffer = false
+        applyContactShadowMaterial(material, opacity: opacity)
         plane.materials = [material]
 
         let node = SCNNode(geometry: plane)
         node.name = "placedAssetShadow"
+        // Horizontal on XZ (normal +Y).
         node.eulerAngles.x = -.pi / 2
-        node.position.y = 0.002
+        node.position.y = VRLightingExperimentPrefs.contactShadowLocalY
         node.categoryBitMask = VRPlacedAssetCategory.shadow
         node.castsShadow = false
-        node.renderingOrder = -1
+        node.isHidden = false
+        // After opaque mesh so soft rim isn't rejected solely by early pass ordering,
+        // while depth-test still respects asset occlusion of the footprint center.
+        node.renderingOrder = 5
         return node
     }
 
-    /// Soft ellipse: darker center, smoother edge alpha (Build 69 PoC — no custom shader).
-    private static func shadowTexture() -> UIImage {
+    static func applyContactShadowMaterial(_ material: SCNMaterial, opacity: Float) {
+        material.lightingModel = .constant
+        material.diffuse.contents = UIColor.black
+        // Alpha lives in transparent map (not double-attenuated with a second alpha texture).
+        material.transparent.contents = shadowMaskTexture()
+        material.transparency = CGFloat(min(max(opacity, 0), 1))
+        material.transparencyMode = .singleLayer
+        material.blendMode = .alpha
+        material.isDoubleSided = true
+        material.writesToDepthBuffer = false
+        material.readsFromDepthBuffer = true
+        material.colorBufferWriteMask = .all
+    }
+
+    /// Soft ellipse mask: white = opaque shadow, black = clear. Explicit non-opaque bitmap.
+    private static func shadowMaskTexture() -> UIImage {
         let size = CGSize(width: 64, height: 64)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         return renderer.image { ctx in
             let cg = ctx.cgContext
             cg.clear(CGRect(origin: .zero, size: size))
+            // Stronger core than Build69 diffuse-alpha blob so opacity×mask stays visible.
             let colors = [
-                UIColor(white: 0, alpha: 0.95).cgColor,
-                UIColor(white: 0, alpha: 0.45).cgColor,
-                UIColor(white: 0, alpha: 0).cgColor,
+                UIColor(white: 1, alpha: 1).cgColor,
+                UIColor(white: 1, alpha: 0.75).cgColor,
+                UIColor(white: 1, alpha: 0).cgColor,
             ] as CFArray
-            let locations: [CGFloat] = [0, 0.45, 1]
+            let locations: [CGFloat] = [0, 0.55, 1]
             guard let gradient = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: colors,
@@ -387,14 +405,14 @@ enum VRPlacedAssetNodeFactory {
             ) else { return }
             let center = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
             cg.saveGState()
-            cg.addEllipse(in: CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 6))
+            cg.addEllipse(in: CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 4))
             cg.clip()
             cg.drawRadialGradient(
                 gradient,
                 startCenter: center,
                 startRadius: 0,
                 endCenter: center,
-                endRadius: size.width * 0.48,
+                endRadius: size.width * 0.50,
                 options: [.drawsAfterEndLocation]
             )
             cg.restoreGState()

@@ -214,11 +214,16 @@ final class VRLightingExperimentController {
         let opposite = VREnvironmentLightMapping.oppositeYawDeg(yaw)
         let rad = opposite * .pi / 180
         let offsetXZ = SIMD2(sin(rad), -cos(rad)) * 0.08
+        let localY = VRLightingExperimentPrefs.contactShadowLocalY
 
         root.enumerateChildNodes { node, _ in
             guard node.name == "placedAssetShadow" else { return }
-            node.geometry?.firstMaterial?.transparency = CGFloat(opacity)
+            node.isHidden = false
             node.castsShadow = false
+            node.renderingOrder = 5
+            if let material = node.geometry?.firstMaterial {
+                VRPlacedAssetNodeFactory.applyContactShadowMaterial(material, opacity: opacity)
+            }
             if directionalOffset, lastEstimate.eligible {
                 node.position.x = offsetXZ.x
                 node.position.z = offsetXZ.y
@@ -226,7 +231,7 @@ final class VRLightingExperimentController {
                 node.position.x = 0
                 node.position.z = 0
             }
-            node.position.y = 0.002
+            node.position.y = localY
         }
     }
 }

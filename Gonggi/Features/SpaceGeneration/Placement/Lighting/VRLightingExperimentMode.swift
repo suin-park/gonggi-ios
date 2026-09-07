@@ -66,9 +66,11 @@ enum VRLightingExperimentPrefs {
     static let baselineContactOpacity: Float = contactOpacityDirectionalInactive
     /// Build 69 hybrid name kept for call sites; maps to directional-active contact.
     static let hybridContactOpacity: Float = contactOpacityDirectionalActive
-    /// Build 70: directional OFF / low confidence — grounding must stay visible.
-    static let contactOpacityDirectionalInactive: Float = 0.22
-    /// Build 70: directional ON — reduce double-dark with contact.
+    /// Build 70/71: directional OFF — soft texture needs ≥0.25 to stay visible.
+    static let contactOpacityDirectionalInactive: Float = 0.28
+    /// Directional ON — reduce double-dark with contact.
     static let contactOpacityDirectionalActive: Float = 0.12
+    /// Lift contact plane above support to avoid mesh-foot depth occlusion.
+    static let contactShadowLocalY: Float = 0.008
     static let directionalSceneKitIntensity: CGFloat = 400
 }
