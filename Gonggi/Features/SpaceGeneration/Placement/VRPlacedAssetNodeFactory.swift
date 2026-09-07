@@ -14,6 +14,8 @@ enum VRPlacedAssetCategory {
     static let interaction = 1 << 3
     /// Selection overlay — never hit-tested.
     static let selection = 1 << 4
+    /// Build 69 shadow receiver plane — repair/asset hitTest excluded.
+    static let shadowReceiver = 1 << 5
 }
 
 enum VRPlacedAssetNodeFactory {
@@ -120,6 +122,7 @@ enum VRPlacedAssetNodeFactory {
         let container = SCNNode()
         container.name = selectionVisualName
         container.categoryBitMask = VRPlacedAssetCategory.selection
+        container.castsShadow = false
         container.isHidden = !visible
 
         // Thin wire box from mesh bounds only (not hit-proxy size).
@@ -141,6 +144,7 @@ enum VRPlacedAssetNodeFactory {
         let wire = SCNNode(geometry: box)
         wire.position = SCNVector3(bounds.center.x, bounds.center.y, bounds.center.z)
         wire.categoryBitMask = VRPlacedAssetCategory.selection
+        wire.castsShadow = false
         container.addChildNode(wire)
 
         // Floor ring — cheap silhouette cue.
@@ -160,6 +164,7 @@ enum VRPlacedAssetNodeFactory {
         ringNode.name = selectionRingName
         ringNode.position = SCNVector3(bounds.center.x, 0.004, bounds.center.z)
         ringNode.categoryBitMask = VRPlacedAssetCategory.selection
+        ringNode.castsShadow = false
         container.addChildNode(ringNode)
 
         root.addChildNode(container)
@@ -208,6 +213,7 @@ enum VRPlacedAssetNodeFactory {
         let proxy = SCNNode(geometry: box)
         proxy.name = hitProxyName
         proxy.categoryBitMask = enabled ? VRPlacedAssetCategory.interaction : 0
+        proxy.castsShadow = false
         proxy.isHidden = !enabled
         proxy.renderingOrder = 10
         proxy.position = SCNVector3(bounds.center.x, bounds.center.y, bounds.center.z)
@@ -353,16 +359,42 @@ enum VRPlacedAssetNodeFactory {
         node.eulerAngles.x = -.pi / 2
         node.position.y = 0.002
         node.categoryBitMask = VRPlacedAssetCategory.shadow
+        node.castsShadow = false
         node.renderingOrder = -1
         return node
     }
 
+    /// Soft ellipse: darker center, smoother edge alpha (Build 69 PoC — no custom shader).
     private static func shadowTexture() -> UIImage {
         let size = CGSize(width: 64, height: 64)
         let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { context in
-            context.cgContext.setFillColor(UIColor.black.cgColor)
-            context.cgContext.fillEllipse(in: CGRect(origin: .zero, size: size).insetBy(dx: 2, dy: 8))
+        return renderer.image { ctx in
+            let cg = ctx.cgContext
+            cg.clear(CGRect(origin: .zero, size: size))
+            let colors = [
+                UIColor(white: 0, alpha: 0.95).cgColor,
+                UIColor(white: 0, alpha: 0.45).cgColor,
+                UIColor(white: 0, alpha: 0).cgColor,
+            ] as CFArray
+            let locations: [CGFloat] = [0, 0.45, 1]
+            guard let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: colors,
+                locations: locations
+            ) else { return }
+            let center = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+            cg.saveGState()
+            cg.addEllipse(in: CGRect(origin: .zero, size: size).insetBy(dx: 1, dy: 6))
+            cg.clip()
+            cg.drawRadialGradient(
+                gradient,
+                startCenter: center,
+                startRadius: 0,
+                endCenter: center,
+                endRadius: size.width * 0.48,
+                options: [.drawsAfterEndLocation]
+            )
+            cg.restoreGState()
         }
     }
 

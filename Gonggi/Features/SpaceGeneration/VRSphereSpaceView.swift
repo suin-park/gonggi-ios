@@ -49,6 +49,12 @@ struct VRSphereSpaceView: View {
     @State private var pendingPlacementAsset: MobileAssetDTO?
     @State private var didLoadPlacement = false
     @State private var placementTask: Task<Void, Never>?
+    /// Build 69 flagged lighting PoC (internal selector; default off = baseline IBL).
+    @State private var lightingPoCActive = VRLightingExperimentPrefs.experimentUIEnabled
+    @State private var lightingPoCExpanded = false
+    @State private var lightingMode = VRLightingExperimentPrefs.mode
+    @State private var lightingIBL = VRLightingExperimentPrefs.iblIntensity
+    @State private var lightingEstimateLabel = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let placementStore = VRPlacementLayoutStore()
@@ -100,6 +106,9 @@ struct VRSphereSpaceView: View {
                 editTool: editTool,
                 placementRequestToken: placementRequestToken,
                 environmentLightingURL: textureURL,
+                lightingExperimentActive: lightingPoCActive,
+                lightingMode: lightingMode,
+                lightingIBLIntensity: lightingIBL,
                 onViewerReady: {
                     panoramaReady = true
                     scheduleHintFlowIfNeeded()
@@ -142,6 +151,9 @@ struct VRSphereSpaceView: View {
                 },
                 onPlacementPointResolved: { point in
                     addPendingAsset(at: point)
+                },
+                onLightingDebug: { label in
+                    lightingEstimateLabel = label
                 }
             )
             .ignoresSafeArea()
@@ -235,6 +247,9 @@ struct VRSphereSpaceView: View {
                     .padding(.bottom, 28)
                     .zIndex(3)
             }
+
+            lightingPoCOverlay
+                .zIndex(5)
 
             if saveError != nil {
                 saveErrorBanner
@@ -495,6 +510,99 @@ struct VRSphereSpaceView: View {
             }
             .accessibilityLabel(motionEnabled ? "모션 끄기" : "모션 켜기")
         }
+    }
+
+    /// Build 69 internal lighting PoC selector (flagged; default off = production baseline).
+    private var lightingPoCOverlay: some View {
+        VStack {
+            Spacer()
+            HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        GonggiHaptics.light()
+                        if lightingPoCExpanded {
+                            lightingPoCExpanded = false
+                        } else {
+                            lightingPoCExpanded = true
+                        }
+                    } label: {
+                        Text(lightingPoCActive ? "PoC Light · ON" : "PoC Light")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.55))
+                            .clipShape(Capsule())
+                    }
+
+                    if lightingPoCExpanded {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle("실험 활성", isOn: Binding(
+                                get: { lightingPoCActive },
+                                set: { next in
+                                    lightingPoCActive = next
+                                    VRLightingExperimentPrefs.experimentUIEnabled = next
+                                    if !next {
+                                        lightingMode = .baseline
+                                        lightingIBL = 0.7
+                                        VRLightingExperimentPrefs.mode = .baseline
+                                        VRLightingExperimentPrefs.iblIntensity = 0.7
+                                    }
+                                }
+                            ))
+                            .font(.caption)
+                            .tint(.yellow)
+
+                            if lightingPoCActive {
+                                Picker("Mode", selection: $lightingMode) {
+                                    ForEach(VRLightingExperimentMode.allCases) { mode in
+                                        Text(mode.shortLabel).tag(mode)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+                                .onChange(of: lightingMode) { _, next in
+                                    VRLightingExperimentPrefs.mode = next
+                                }
+
+                                HStack(spacing: 6) {
+                                    Text("IBL")
+                                        .font(.caption2)
+                                    ForEach(VRLightingExperimentPrefs.iblIntensityCandidates, id: \.self) { value in
+                                        Button {
+                                            lightingIBL = value
+                                            VRLightingExperimentPrefs.iblIntensity = value
+                                        } label: {
+                                            Text(String(format: "%.1f", value))
+                                                .font(.caption2.monospacedDigit().weight(lightingIBL == value ? .bold : .regular))
+                                                .foregroundStyle(lightingIBL == value ? Color.black : Color.white)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(lightingIBL == value ? Color.white : Color.white.opacity(0.15))
+                                                .clipShape(Capsule())
+                                        }
+                                    }
+                                }
+
+                                if !lightingEstimateLabel.isEmpty {
+                                    Text(lightingEstimateLabel)
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.white.opacity(0.85))
+                                }
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .padding(10)
+                        .background(Color.black.opacity(0.72))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .frame(maxWidth: 320)
+                    }
+                }
+                .padding(.leading, 12)
+                .padding(.bottom, interactionMode == .edit ? 110 : 72)
+                Spacer()
+            }
+        }
+        .allowsHitTesting(true)
     }
 
     private var motionHintPill: some View {
@@ -1223,12 +1331,25 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var editTool: VREditTool
     var placementRequestToken: Int
     var environmentLightingURL: URL?
+    /// Build 69: when false, host forces baseline IBL 0.7.
+    var lightingExperimentActive: Bool = false
+    var lightingMode: VRLightingExperimentMode = .baseline
+    var lightingIBLIntensity: Float = 0.7
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
     var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
     var onPlacedAssetTapped: ((String?) -> Void)? = nil
     var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)? = nil
     var onPlacementPointResolved: ((SIMD3<Float>) -> Void)? = nil
+    var onLightingDebug: ((String) -> Void)? = nil
+
+    private var resolvedLightingMode: VRLightingExperimentMode {
+        lightingExperimentActive ? lightingMode : .baseline
+    }
+
+    private var resolvedLightingIBL: Float {
+        lightingExperimentActive ? lightingIBLIntensity : 0.7
+    }
 
     func makeUIView(context: Context) -> SCNHostView {
         let host = SCNHostView()
@@ -1250,9 +1371,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             modelURLs: modelURLs
         )
         host.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
-        if let environmentLightingURL {
-            host.applyEnvironmentLighting(from: environmentLightingURL)
-        }
+        host.setLightingExperiment(
+            mode: resolvedLightingMode,
+            iblIntensity: resolvedLightingIBL,
+            panoramaURL: environmentLightingURL ?? imageURL
+        )
         host.updateSelection(
             yawDeg: markerYawDeg,
             pitchDeg: markerPitchDeg,
@@ -1305,9 +1428,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             context.coordinator.lastPlacementFingerprint = placementFingerprint
         }
         uiView.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
-        if let environmentLightingURL {
-            uiView.applyEnvironmentLighting(from: environmentLightingURL)
-        }
+        uiView.setLightingExperiment(
+            mode: resolvedLightingMode,
+            iblIntensity: resolvedLightingIBL,
+            panoramaURL: environmentLightingURL ?? imageURL
+        )
         if placementRequestToken != context.coordinator.lastPlacementRequestToken {
             context.coordinator.lastPlacementRequestToken = placementRequestToken
             let size = uiView.viewportSize
@@ -1329,6 +1454,21 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             radiusYawDeg: maskRadiusYawDeg,
             radiusPitchDeg: maskRadiusPitchDeg
         )
+        let snap = uiView.lightingExperimentDebugSnapshot()
+        let label = String(
+            format: "yaw %+.0f° pitch %+.0f° conf %.2f %@ · assets %d",
+            snap.estimate.dominantYawDeg,
+            snap.estimate.dominantPitchDeg,
+            snap.estimate.confidence,
+            snap.estimate.eligible ? "DIR" : "—",
+            snap.assetCount
+        )
+        if label != context.coordinator.lastLightingLabel {
+            context.coordinator.lastLightingLabel = label
+            DispatchQueue.main.async {
+                onLightingDebug?(label)
+            }
+        }
         if !context.coordinator.didNotifyReady {
             context.coordinator.didNotifyReady = true
             DispatchQueue.main.async {
@@ -1347,5 +1487,6 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         var lastMotionDesired: Bool = true
         var lastPlacementRequestToken: Int = 0
         var lastPlacementFingerprint: String = ""
+        var lastLightingLabel: String = ""
     }
 }

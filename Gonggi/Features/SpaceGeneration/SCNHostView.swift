@@ -32,6 +32,13 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private weak var rotationRecognizer: UIRotationGestureRecognizer?
     private weak var panRecognizer: UIPanGestureRecognizer?
 
+    /// Build 69 lighting/shadow PoC — nodes reused across View/Edit (no flicker recreate).
+    private let lightingExperiment = VRLightingExperimentController()
+    private var lightingPanoramaURL: URL?
+    private var lightingMode: VRLightingExperimentMode = .baseline
+    private var lightingIBLIntensity: Float = 0.7
+    private var lastLightingApplyKey: String = ""
+
     // Pinch/rotate smoothing targets (Build 67).
     private var smoothingPlacementID: String?
     private var targetUniformScale: Float?
@@ -173,6 +180,10 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         scnView.pointOfView = cameraNode
         self.cameraNode = cameraNode
 
+        lightingExperiment.attach(scene: scene, placedAssetsRoot: placedAssetsRoot)
+        lightingExperiment.setFloorY(placementFloorY)
+        lastLightingApplyKey = ""
+
         look = VRLookComposer()
         referenceAttitude = nil
         applyLookToCamera()
@@ -212,6 +223,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     func setEditTool(_ tool: VREditTool, selectedId: String?, floorY: Float) {
         editTool = tool
         placementFloorY = floorY
+        lightingExperiment.setFloorY(floorY)
         if selectedPlacementID != selectedId {
             selectAsset(id: selectedId)
         } else {
@@ -226,6 +238,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         modelURLs: [String: URL] = [:]
     ) {
         placementFloorY = floorY
+        lightingExperiment.setFloorY(floorY)
         selectionIndicatorNode?.removeFromParentNode()
         selectionIndicatorNode = nil
         placedAssetsRoot.childNodes.forEach { $0.removeFromParentNode() }
@@ -242,6 +255,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         }
         refreshAllHitProxies(enabled: editModeActive)
         selectAsset(id: selectedPlacementID)
+        // Re-apply contact opacity / castsShadow after membership rebuild (nodes reused for lights).
+        lastLightingApplyKey = ""
+        applyLightingExperimentIfNeeded(force: true)
     }
 
     private func refreshAllHitProxies(enabled: Bool) {
@@ -354,9 +370,54 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     func applyEnvironmentLighting(from imageURL: URL) {
-        guard let scene = scnView.scene else { return }
-        scene.lightingEnvironment.contents = UIImage(contentsOfFile: imageURL.path)
-        scene.lightingEnvironment.intensity = Self.vrEnvironmentIntensity
+        lightingPanoramaURL = imageURL
+        applyLightingExperimentIfNeeded(force: false)
+    }
+
+    /// Build 69 PoC — mode/IBL from internal selector; default remains baseline IBL 0.7.
+    func setLightingExperiment(
+        mode: VRLightingExperimentMode,
+        iblIntensity: Float,
+        panoramaURL: URL?
+    ) {
+        lightingMode = mode
+        lightingIBLIntensity = iblIntensity
+        if let panoramaURL {
+            lightingPanoramaURL = panoramaURL
+        }
+        #if DEBUG
+        scnView.showsStatistics = mode != .baseline
+        #endif
+        applyLightingExperimentIfNeeded(force: false)
+    }
+
+    func lightingExperimentDebugSnapshot() -> (
+        mode: VRLightingExperimentMode,
+        ibl: Float,
+        estimate: VRDominantLightEstimate,
+        assetCount: Int
+    ) {
+        (
+            lightingExperiment.mode,
+            lightingExperiment.iblIntensity,
+            lightingExperiment.latestEstimate,
+            placedAssetsRoot.childNodes.count
+        )
+    }
+
+    private func applyLightingExperimentIfNeeded(force: Bool) {
+        guard scnView.scene != nil else { return }
+        let urlPath = lightingPanoramaURL?.path ?? ""
+        let key = "\(lightingMode.rawValue)|\(lightingIBLIntensity)|\(urlPath)|\(placementFloorY)"
+        guard force || key != lastLightingApplyKey else { return }
+        lastLightingApplyKey = key
+        lightingExperiment.setFloorY(placementFloorY)
+        lightingExperiment.apply(
+            mode: lightingMode,
+            iblIntensity: lightingIBLIntensity,
+            panoramaURL: lightingPanoramaURL,
+            forceReestimate: force
+        )
     }
 
     func setRepairLongPressEnabled(_ enabled: Bool) {
