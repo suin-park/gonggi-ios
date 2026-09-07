@@ -98,14 +98,14 @@ final class VRSphereEquirectBridgeTests: XCTestCase {
         XCTAssertEqual(
             VRSphereEquirectBridge.yawDegFromEquirectPixelX(x: 1919.5, width: 3840),
             0,
-            accuracy: 0.05
+            accuracy: Float(0.05)
         )
         // right
-        let rightX = (0.75 * 3840) - 0.5
+        let rightX: Float = (0.75 * 3840) - 0.5
         XCTAssertEqual(
             VRSphereEquirectBridge.yawDegFromEquirectPixelX(x: rightX, width: 3840),
             90,
-            accuracy: 0.2
+            accuracy: Float(0.2)
         )
     }
 

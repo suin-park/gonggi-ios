@@ -22,6 +22,7 @@ final class ServiceIATests: XCTestCase {
         XCTAssertEqual(LibraryCategory.allCases.map(\.title), ["공간", "3D 어셋"])
     }
 
+    @MainActor
     func testAuthShellStartsRestoringThenSignedOutWithoutKeychain() async {
         let controller = AuthSessionController()
         // Fresh controller without bootstrap may be restoring; force restore without refresh → signedOut

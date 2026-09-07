@@ -14,7 +14,7 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
         }
         let api = LockerSpaceRecordAPIClient(session: session)
         let files = try makeTenFiles(sessionId: "dir-x")
-        let response = try await api.create(sessionId: "dir-x", imageFiles: files)
+        let response = try await api.create(sessionId: "dir-x", imageFiles: files, captureMetadataJSON: nil)
         XCTAssertEqual(response.jobId, "dir-x")
         XCTAssertEqual(response.status, "queued")
     }
@@ -28,7 +28,7 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
         }
         let api = LockerSpaceRecordAPIClient(session: session)
         let files = try makeTenFiles(sessionId: "dir-y")
-        let response = try await api.create(sessionId: "dir-y", imageFiles: files)
+        let response = try await api.create(sessionId: "dir-y", imageFiles: files, captureMetadataJSON: nil)
         XCTAssertEqual(response.jobId, "dir-y")
         XCTAssertFalse(response.status.isEmpty)
     }
@@ -102,7 +102,7 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
         let api = LockerSpaceRecordAPIClient(session: session)
         do {
             let files = try makeTenFiles(sessionId: "dir-500")
-            _ = try await api.create(sessionId: "dir-500", imageFiles: files)
+            _ = try await api.create(sessionId: "dir-500", imageFiles: files, captureMetadataJSON: nil)
             XCTFail("expected throw")
         } catch SpaceRecordClientError.server(let code) {
             XCTAssertTrue(code.contains("storage_failed") || code.contains("500"))
@@ -161,7 +161,7 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
         let api = LockerSpaceRecordAPIClient(session: session)
         do {
             let files = try makeTenFiles(sessionId: "dir-413")
-            _ = try await api.create(sessionId: "dir-413", imageFiles: files)
+            _ = try await api.create(sessionId: "dir-413", imageFiles: files, captureMetadataJSON: nil)
             XCTFail("expected throw")
         } catch SpaceRecordClientError.server(let code) {
             XCTAssertEqual(code, "payload_too_large")
