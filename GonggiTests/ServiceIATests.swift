@@ -42,4 +42,15 @@ final class ServiceIATests: XCTestCase {
         let read = try GonggiKeychain.get(service: service, account: account)
         XCTAssertEqual(read, "refresh-token-value")
     }
+
+    func testGoogleReversedClientIDDerivation() {
+        let client = "123456789-abcdefghijklmnop.apps.googleusercontent.com"
+        let reversed = AppConfiguration.reversedGoogleClientID(from: client)
+        XCTAssertEqual(reversed, "com.googleusercontent.apps.123456789-abcdefghijklmnop")
+        XCTAssertTrue(reversed.hasPrefix("com.googleusercontent.apps."))
+    }
+
+    func testBundleIdIsGonggi() {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "com.whik.gonggi")
+    }
 }

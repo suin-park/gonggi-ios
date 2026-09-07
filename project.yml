@@ -12,6 +12,14 @@ settings:
     DEVELOPMENT_TEAM: ""
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "57"
+  configs:
+    Debug: debug
+    Release: release
+
+# Single source for Google iOS OAuth client id (Debug + Release).
+configFiles:
+  Debug: Config/Auth.xcconfig
+  Release: Config/Auth.xcconfig
 
 targets:
   Gonggi:
@@ -29,6 +37,9 @@ targets:
         embed: false
       - sdk: libc++.tbd
       - sdk: Accelerate.framework
+    configFiles:
+      Debug: Config/Auth.xcconfig
+      Release: Config/Auth.xcconfig
     settings:
       base:
         OTHER_LDFLAGS: "$(inherited) -framework opencv2 -lz"
@@ -57,7 +68,9 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Gonggi/Resources/Gonggi.entitlements
     entitlements:
       path: Gonggi/Resources/Gonggi.entitlements
-      properties: {}
+      properties:
+        com.apple.developer.applesignin:
+          - Default
     info:
       path: Gonggi/Resources/Info.plist
       properties:
@@ -67,12 +80,12 @@ targets:
         UILaunchScreen: {}
         NSCameraUsageDescription: 파노라마·공간 기록을 위해 카메라가 필요합니다.
         NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
-        # Set real iOS OAuth client ID in Xcode / CI secrets before Google Sign-In production use.
-        GoogleClientID: ""
+        # Injected from Config/Auth.xcconfig (Debug + Release) — not hardcoded in Swift.
+        GoogleClientID: $(GOOGLE_IOS_CLIENT_ID)
         CFBundleURLTypes:
           - CFBundleURLName: google-oauth
             CFBundleURLSchemes:
-              - com.whik.gonggi
+              - $(GOOGLE_REVERSED_CLIENT_ID)
 
   GonggiTests:
     type: bundle.unit-test

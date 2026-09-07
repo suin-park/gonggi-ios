@@ -491,10 +491,12 @@ final class GoogleSignInBridge: NSObject, ASWebAuthenticationPresentationContext
     }
 
     func signIn() async throws -> String {
-        let clientID = Bundle.main.object(forInfoDictionaryKey: "GoogleClientID") as? String
-        guard let clientID, !clientID.isEmpty else { throw GoogleError.missingClientID }
+        let config = AppConfiguration.production
+        guard config.isGoogleSignInConfigured else { throw GoogleError.missingClientID }
+        let clientID = config.googleClientID
+        let reversed = config.googleReversedClientID
+        guard !reversed.isEmpty else { throw GoogleError.missingClientID }
 
-        let reversed = clientID.split(separator: ".").reversed().joined(separator: ".")
         let redirectURI = "\(reversed):/oauth2redirect/google"
         let nonce = UUID().uuidString
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
@@ -516,17 +518,19 @@ final class GoogleSignInBridge: NSObject, ASWebAuthenticationPresentationContext
                     cont.resume(throwing: error)
                     return
                 }
-                guard let callbackURL,
-                      let fragment = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.fragment
-                else {
+                guard let callbackURL else {
                     cont.resume(throwing: GoogleError.noIdToken)
                     return
                 }
-                let params = fragment.split(separator: "&").reduce(into: [String: String]()) { acc, pair in
+                // Google returns id_token in the URL fragment for response_type=id_token.
+                let fragment = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.fragment
+                let query = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.query
+                let raw = fragment ?? query ?? ""
+                let params = raw.split(separator: "&").reduce(into: [String: String]()) { acc, pair in
                     let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
                     if parts.count == 2 { acc[parts[0]] = parts[1].removingPercentEncoding }
                 }
-                guard let idToken = params["id_token"] else {
+                guard let idToken = params["id_token"], !idToken.isEmpty else {
                     cont.resume(throwing: GoogleError.noIdToken)
                     return
                 }

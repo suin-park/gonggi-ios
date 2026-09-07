@@ -1,0 +1,6 @@
+// EXAMPLE — copy to Auth.xcconfig (or sync via scripts/sync-google-ios-oauth.ps1).
+// GOOGLE_IOS_CLIENT_ID comes from Google Cloud iOS OAuth client (Bundle ID com.whik.gonggi).
+// GOOGLE_REVERSED_CLIENT_ID = reverse-DNS of the client id (com.googleusercontent.apps.…).
+
+GOOGLE_IOS_CLIENT_ID = YOUR_IOS_CLIENT_ID.apps.googleusercontent.com
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.YOUR_IOS_CLIENT_ID

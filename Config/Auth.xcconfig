@@ -1,0 +1,4 @@
+// Single source for Gonggi Google iOS OAuth (public client id).
+// Wired into Info.plist via XcodeGen; AppConfiguration reads Bundle — do not hardcode in Swift.
+GOOGLE_IOS_CLIENT_ID = 645238834984-rpks73pock7tm5ac6a1llsj4md5gaq7l.apps.googleusercontent.com
+GOOGLE_REVERSED_CLIENT_ID = com.googleusercontent.apps.645238834984-rpks73pock7tm5ac6a1llsj4md5gaq7l
