@@ -27,7 +27,7 @@ Build72는 SpaceLink graph·capture·navigation은 동작했으나 Edit UX가 �
 ## iOS
 
 - changed: hotspot visual/hit · projected floating actions · existing-space picker · selection/drag polish
-- SHA: _(pending commit)_
+- SHA: `288046e`
 
 ## Hotspot Visual
 
@@ -71,10 +71,10 @@ Build72는 SpaceLink graph·capture·navigation은 동작했으나 Edit UX가 �
 | Field | Value |
 |-------|--------|
 | version/build | **1.0 (73)** |
-| workflow | _(pending)_ |
-| ASC | _(pending)_ |
-| Delivery UUID | _(pending)_ |
-| dSYM | _(pending)_ |
+| workflow | [Gonggi TestFlight #34171064854](https://github.com/suin-park/gonggi-ios/actions/runs/34171064854) |
+| ASC | **UPLOAD SUCCEEDED** |
+| Delivery UUID | `c51553af-c914-4fa5-a09b-85f0ac901b25` |
+| dSYM | `424ABD56-8D71-3A99-9323-D65F56750F53` (arm64) · `Gonggi-dSYM-1.0-73` |
 
 ## Deferred → Build74
 
@@ -83,4 +83,4 @@ Build72는 SpaceLink graph·capture·navigation은 동작했으나 Edit UX가 �
 
 ## Verdict
 
-**READY_FOR_REAL_DEVICE_SPACE_LINK_UX_VALIDATION** (after TestFlight)
+**READY_FOR_REAL_DEVICE_SPACE_LINK_UX_VALIDATION**
