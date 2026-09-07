@@ -1,4 +1,4 @@
-# Gonggi Build 60 candidate — front seam closure + horizontal level
+# Gonggi Build 60 candidate ??front seam closure + horizontal level
 
 **Date:** 2026-09-07  
 **Scope:** Capture UX only (no OpenAI / prompt / backend ordering / TF upload)  
@@ -10,12 +10,12 @@
 
 | Item | Value |
 |------|--------|
-| seam closure threshold | soft min **−325°**, preferred **−327°** (iOS right-neg unwrapped) |
-| last-shot gate | `front_left_330`: `withinYawTolerance(−330,±8)` **AND** soft-min; preferred → immediate; soft band (−325…−327] → wait **1.8s** then accept |
-| fail-safe | soft-band wait only; **never** accept yaw > −325 (blocks forensic −322…−323) |
+| seam closure threshold | soft min **??25°**, preferred **??27°** (iOS right-neg unwrapped) |
+| last-shot gate | `front_left_330`: `withinYawTolerance(??30,±8)` **AND** soft-min; preferred ??immediate; soft band (??25?�−327] ??wait **1.8s** then accept |
+| fail-safe | soft-band wait only; **never** accept yaw > ??25 (blocks forensic ??22?�−323) |
 | level band | soft **±10°** elev; does **not** block shots |
-| helper copy | seam: `조금 더 오른쪽으로 돌아주세요` / low: `카메라를 조금 위로 들어주세요` / high: `카메라를 조금 내려주세요` |
-| helper priority | 1 seam → 2 level → 3 fast-rotation → 4 default orbit |
+| helper copy | seam: `조금 ???�른쪽으�??�아주세?? / low: `카메?��? 조금 ?�로 ?�어주세?? / high: `카메?��? 조금 ?�려주세?? |
+| helper priority | 1 seam ??2 level ??3 fast-rotation ??4 default orbit |
 | metadata added | optional `closureDeltaDeg`, `horizontalLevelDeltaDeg`, `closureGatePassed` on record + multipart JSON (prompt unused) |
 
 ### Files
@@ -32,12 +32,12 @@
 
 | Case | Result |
 |------|--------|
-| −322 reject | yes (`isFrontSeamClosureReady` + engine) |
-| −325 accept | yes after soft wait |
-| −327 accept | yes immediate |
-| level guidance −18° | yes |
+| ??22 reject | yes (`isFrontSeamClosureReady` + engine) |
+| ??25 accept | yes after soft wait |
+| ??27 accept | yes immediate |
+| level guidance ??8° | yes |
 | level ~0 | nil guidance |
-| earlier 0…300 | unchanged nominal triggers |
+| earlier 0??00 | unchanged nominal triggers |
 | yaw wrap | unwrapped continuous (no 180 flip logic) |
 | helper hit-testing | guide `allowsHitTesting(false)` |
 | OpenAI | unchanged |
@@ -57,13 +57,13 @@
 
 ## Follow-up (not in Build 60)
 
-See `docs/UP_DOWN_CAPTURE_POSE_FOLLOWUP_20260907.md` — up roll≈±180, absurd yaw, weak ceiling support.
+See `docs/UP_DOWN_CAPTURE_POSE_FOLLOWUP_20260907.md` ??up roll?��?80, absurd yaw, weak ceiling support.
 
 ---
 
 ## SHAs
 
-- iOS: *(fill after commit)*
+- iOS: `651fa68`
 
 ## Verdict
 
