@@ -147,8 +147,11 @@ jobs:
           OUT_PROFILE_PATH: ${{ runner.temp }}/Gonggi-AppStore-SIWA.mobileprovision
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet 'PyJWT[crypto]>=2.8'
-          python3 scripts/ensure-appstore-profile-siwa.py
+          python3 -m venv "${RUNNER_TEMP}/siwa-venv"
+          # shellcheck disable=SC1091
+          source "${RUNNER_TEMP}/siwa-venv/bin/activate"
+          python -m pip install --quiet 'PyJWT[crypto]>=2.8'
+          python scripts/ensure-appstore-profile-siwa.py
           PROFILE_PATH="${OUT_PROFILE_PATH}"
           PROFILE_PLIST="${RUNNER_TEMP}/siwa-profile.plist"
           security cms -D -i "${PROFILE_PATH}" > "${PROFILE_PLIST}"
