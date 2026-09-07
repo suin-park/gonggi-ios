@@ -7,11 +7,21 @@ import UIKit
 // MARK: - SceneKit VR host (Build 64 motion-first)
 
 final class SCNHostView: UIView {
+    static let vrEnvironmentIntensity: CGFloat = 0.7
+
     private let scnView = VRSCNView()
     private var cameraNode: SCNNode?
     private var sphereNode: SCNNode?
     private var markerNode: SCNNode?
     private var maskOutlineNode: SCNNode?
+    private let placedAssetsRoot = SCNNode()
+    private var selectionIndicatorNode: SCNNode?
+    private weak var repairLongPressRecognizer: UILongPressGestureRecognizer?
+    private var editModeActive = false
+    private var editTool: VREditTool = .none
+    private var selectedPlacementID: String?
+    private var placementFloorY = VRPlacementLayout.defaultFloorY
+    private var gestureStartScale: Float = 1
 
     private var look = VRLookComposer()
     private let motionManager = CMMotionManager()
@@ -25,18 +35,22 @@ final class SCNHostView: UIView {
     private var freezeLongPress = false
     private var freezeConfirmSheet = false
     private var freezeAppBackground = false
+    private var freezeEditMode = false
 
     /// Desired motion from SwiftUI (user toggle). Hardware may still force off.
     private var motionDesiredEnabled = true
 
     var onLongPressEquirect: ((Float, Float) -> Void)?
     var onMotionAvailabilityChanged: ((Bool) -> Void)?
+    var onPlacedAssetTapped: ((String?) -> Void)?
+    var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)?
 
     /// Effective motion tracking (desired ∧ hardware).
     private(set) var isMotionEffectivelyEnabled = false
 
     private var isMotionFrozen: Bool {
         freezeFingerDown || freezePan || freezeLongPress || freezeConfirmSheet || freezeAppBackground
+            || freezeEditMode
     }
 
     /// Camera euler used by long-press fallback (composed final look).
@@ -62,6 +76,10 @@ final class SCNHostView: UIView {
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPress.minimumPressDuration = 0.45
         scnView.addGestureRecognizer(longPress)
+        scnView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap(_:))))
+        scnView.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:))))
+        repairLongPressRecognizer = longPress
+        placedAssetsRoot.name = "placedAssetsRoot"
 
         NotificationCenter.default.addObserver(
             self,
@@ -93,6 +111,7 @@ final class SCNHostView: UIView {
 
         let material = SCNMaterial()
         material.isDoubleSided = true
+        material.lightingModel = .constant
         applyTexture(to: material, imageURL: imageURL)
         material.diffuse.wrapS = .repeat
         material.diffuse.wrapT = .clamp
@@ -103,8 +122,12 @@ final class SCNHostView: UIView {
         let s = Quick360SphereCoordinateConvention.insideOutScale
         sphereNode.scale = SCNVector3(s.x, s.y, s.z)
         sphereNode.name = "sphere"
+        sphereNode.categoryBitMask = VRPlacedAssetCategory.panorama
         scene.rootNode.addChildNode(sphereNode)
         self.sphereNode = sphereNode
+
+        placedAssetsRoot.removeFromParentNode()
+        scene.rootNode.addChildNode(placedAssetsRoot)
 
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
@@ -132,6 +155,159 @@ final class SCNHostView: UIView {
         }
         applyTexture(to: material, imageURL: imageURL)
         applyLookToCamera()
+    }
+
+    // MARK: - Asset placement
+
+    func setEditModeActive(_ active: Bool) {
+        let wasFrozen = isMotionFrozen
+        freezeEditMode = active
+        editModeActive = active
+        if wasFrozen, !isMotionFrozen {
+            unfreezeBakeAndReanchor()
+        }
+        applyLookToCamera()
+    }
+
+    func setEditTool(_ tool: VREditTool, selectedId: String?, floorY: Float) {
+        editTool = tool
+        selectedPlacementID = selectedId
+        placementFloorY = floorY
+        selectAsset(id: selectedId)
+    }
+
+    func syncPlacedAssets(
+        _ entries: [VRPlacedAssetEntry],
+        floorY: Float,
+        metadata: [String: MobileAssetDTO],
+        modelURLs: [String: URL] = [:]
+    ) {
+        placementFloorY = floorY
+        selectionIndicatorNode?.removeFromParentNode()
+        selectionIndicatorNode = nil
+        placedAssetsRoot.childNodes.forEach { $0.removeFromParentNode() }
+
+        for entry in entries.prefix(VRPlacementLayout.maxAssets) {
+            var floorEntry = entry
+            floorEntry.position.y = floorY
+            let node = VRPlacedAssetNodeFactory.makeNode(
+                entry: floorEntry,
+                asset: metadata[entry.assetId],
+                modelURL: modelURLs[entry.assetId]
+            )
+            placedAssetsRoot.addChildNode(node)
+        }
+        selectAsset(id: selectedPlacementID)
+    }
+
+    func selectAsset(id: String?) {
+        selectedPlacementID = id
+        selectionIndicatorNode?.removeFromParentNode()
+        selectionIndicatorNode = nil
+        guard let id,
+              let assetNode = placedAssetsRoot.childNodes.first(where: {
+                  VRPlacedAssetNodeFactory.placedAssetID(from: $0) == id
+              })
+        else { return }
+
+        let bounds = assetNode.boundingBox
+        let box = SCNBox(
+            width: CGFloat(max(0.1, bounds.max.x - bounds.min.x)),
+            height: CGFloat(max(0.1, bounds.max.y - bounds.min.y)),
+            length: CGFloat(max(0.1, bounds.max.z - bounds.min.z)),
+            chamferRadius: 0
+        )
+        let material = SCNMaterial()
+        material.diffuse.contents = UIColor.systemYellow
+        material.emission.contents = UIColor.systemYellow
+        material.fillMode = .lines
+        material.isDoubleSided = true
+        box.materials = [material]
+
+        let indicator = SCNNode(geometry: box)
+        indicator.name = "placedAssetSelection"
+        indicator.position = SCNVector3(
+            (bounds.min.x + bounds.max.x) * 0.5,
+            (bounds.min.y + bounds.max.y) * 0.5,
+            (bounds.min.z + bounds.max.z) * 0.5
+        )
+        indicator.categoryBitMask = VRPlacedAssetCategory.shadow
+        assetNode.addChildNode(indicator)
+        selectionIndicatorNode = indicator
+    }
+
+    func floorPointFromScreen(_ point: CGPoint, floorY: Float) -> SIMD3<Float> {
+        VRFloorRay.floorPoint(
+            screenPoint: point,
+            viewportSize: viewportSize,
+            cameraTransform: cameraWorldTransform,
+            floorY: floorY,
+            verticalFOVDegrees: Float(cameraNode?.camera?.fieldOfView ?? 70)
+        )
+    }
+
+    func updatePlacedAssetTransform(
+        id: String,
+        position: SIMD3<Float>,
+        rotationY: Float,
+        uniformScale: Float
+    ) {
+        guard let node = assetNode(id: id) else { return }
+        node.position = SCNVector3(position.x, placementFloorY, position.z)
+        node.eulerAngles.y = rotationY
+        let scale = VRPlacedAssetEntry.clampedScale(uniformScale)
+        if let content = node.childNodes.first(where: { $0.categoryBitMask == VRPlacedAssetCategory.asset }) {
+            let base = node.userData?[VRPlacedAssetNodeFactory.contentBaseScaleKey] as? Float ?? 1
+            content.scale = SCNVector3(scale * base, scale * base, scale * base)
+        }
+        selectAsset(id: selectedPlacementID)
+    }
+
+    func removePlacedAsset(id: String) {
+        assetNode(id: id)?.removeFromParentNode()
+        if selectedPlacementID == id {
+            selectAsset(id: nil)
+        }
+    }
+
+    var cameraWorldTransform: simd_float4x4 {
+        cameraNode?.presentation.simdWorldTransform ?? matrix_identity_float4x4
+    }
+
+    var viewportSize: CGSize { scnView.bounds.size }
+
+    private func assetNode(id: String) -> SCNNode? {
+        placedAssetsRoot.childNodes.first {
+            VRPlacedAssetNodeFactory.placedAssetID(from: $0) == id
+        }
+    }
+
+    func hitTestPlacedAsset(at point: CGPoint) -> String? {
+        let hits = scnView.hitTest(point, options: [
+            .searchMode: SCNHitTestSearchMode.closest.rawValue,
+            .categoryBitMask: VRPlacedAssetCategory.asset,
+            .boundingBoxOnly: false,
+        ])
+        return hits.lazy.compactMap {
+            VRPlacedAssetNodeFactory.placedAssetID(from: $0.node)
+        }.first
+    }
+
+    func applyEnvironmentLighting(from imageURL: URL) {
+        guard let scene = scnView.scene else { return }
+        scene.lightingEnvironment.contents = UIImage(contentsOfFile: imageURL.path)
+        scene.lightingEnvironment.intensity = Self.vrEnvironmentIntensity
+    }
+
+    func setRepairLongPressEnabled(_ enabled: Bool) {
+        let wasFrozen = isMotionFrozen
+        repairLongPressRecognizer?.isEnabled = enabled
+        if !enabled {
+            freezeLongPress = false
+        }
+        if wasFrozen, !isMotionFrozen {
+            unfreezeBakeAndReanchor()
+        }
     }
 
     private func applyTexture(to material: SCNMaterial, imageURL: URL) {
@@ -374,6 +550,10 @@ final class SCNHostView: UIView {
     // MARK: - Gestures
 
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
+        if editModeActive {
+            handleEditPan(g)
+            return
+        }
         switch g.state {
         case .began:
             freezePan = true
@@ -392,6 +572,78 @@ final class SCNHostView: UIView {
         default:
             break
         }
+    }
+
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        guard editModeActive, gesture.state == .ended else { return }
+        let id = hitTestPlacedAsset(at: gesture.location(in: scnView))
+        selectAsset(id: id)
+        onPlacedAssetTapped?(id)
+    }
+
+    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        guard editModeActive, editTool == .scale,
+              let id = selectedPlacementID, let node = assetNode(id: id)
+        else { return }
+        switch gesture.state {
+        case .began:
+            gestureStartScale = node.childNodes.first(where: {
+                $0.categoryBitMask == VRPlacedAssetCategory.asset
+            }).map {
+                let base = node.userData?[VRPlacedAssetNodeFactory.contentBaseScaleKey] as? Float ?? 1
+                return $0.scale.x / base
+            } ?? 1
+        case .changed, .ended:
+            let scale = VRPlacedAssetEntry.clampedScale(gestureStartScale * Float(gesture.scale))
+            updatePlacedAssetTransform(
+                id: id,
+                position: SIMD3(node.position.x, placementFloorY, node.position.z),
+                rotationY: node.eulerAngles.y,
+                uniformScale: scale
+            )
+            publishTransform(for: id, scale: scale)
+        default:
+            break
+        }
+    }
+
+    private func handleEditPan(_ gesture: UIPanGestureRecognizer) {
+        guard let id = selectedPlacementID, let node = assetNode(id: id) else { return }
+        switch editTool {
+        case .move:
+            guard gesture.state == .began || gesture.state == .changed else { return }
+            let position = floorPointFromScreen(
+                gesture.location(in: scnView),
+                floorY: placementFloorY
+            )
+            node.position = SCNVector3(position.x, placementFloorY, position.z)
+            selectAsset(id: id)
+            publishTransform(for: id)
+        case .rotate:
+            guard gesture.state == .changed else { return }
+            let translation = gesture.translation(in: scnView)
+            gesture.setTranslation(.zero, in: scnView)
+            node.eulerAngles.y += Float(translation.x) * 0.01
+            selectAsset(id: id)
+            publishTransform(for: id)
+        case .none, .scale, .delete:
+            break
+        }
+    }
+
+    private func publishTransform(for id: String, scale explicitScale: Float? = nil) {
+        guard let node = assetNode(id: id) else { return }
+        let renderedScale = node.childNodes.first(where: {
+            $0.categoryBitMask == VRPlacedAssetCategory.asset
+        })?.scale.x ?? 1
+        let base = node.userData?[VRPlacedAssetNodeFactory.contentBaseScaleKey] as? Float ?? 1
+        let scale = explicitScale ?? renderedScale / base
+        onPlacedAssetTransformChanged?(
+            id,
+            SIMD3(node.position.x, placementFloorY, node.position.z),
+            node.eulerAngles.y,
+            scale
+        )
     }
 
     @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
@@ -413,6 +665,7 @@ final class SCNHostView: UIView {
     private func resolveLongPress(at point: CGPoint) {
         let hits = scnView.hitTest(point, options: [
             .searchMode: SCNHitTestSearchMode.closest.rawValue,
+            .categoryBitMask: VRPlacedAssetCategory.panorama,
             .boundingBoxOnly: false
         ])
         let sphereHit = hits.first { $0.node.name == "sphere" || $0.node == sphereNode }

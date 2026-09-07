@@ -35,7 +35,25 @@ struct VRSphereSpaceView: View {
     @State private var showMotionHint = false
     @State private var motionHintOpacity: Double = 0
     @State private var motionHintTask: Task<Void, Never>?
+    @State private var interactionMode: VRInteractionMode = .view
+    @State private var draftLayout = VRPlacementLayout()
+    @State private var selectedPlacementId: String?
+    @State private var editTool: VREditTool = .none
+    @State private var assetPickerPresented = false
+    @State private var lockerAssets: [MobileAssetDTO] = []
+    @State private var assetMetadata: [String: MobileAssetDTO] = [:]
+    @State private var modelURLs: [String: URL] = [:]
+    @State private var saveError: String?
+    @State private var loadingAssets = false
+    @State private var placementRequestToken = 0
+    @State private var pendingPlacementAsset: MobileAssetDTO?
+    @State private var didLoadPlacement = false
+    @State private var placementTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private let placementStore = VRPlacementLayoutStore()
+    private let assetsClient = MobileAssetsAPIClient()
+    private let usdzCache = VRUsdzCache()
 
     init(
         imageURL: URL,
@@ -72,9 +90,20 @@ struct VRSphereSpaceView: View {
                 motionDesiredEnabled: motionEnabled,
                 confirmSheetPresented: showConfirmSheet,
                 recenterToken: recenterToken,
+                editModeActive: interactionMode == .edit,
+                repairLongPressEnabled: interactionMode == .view,
+                placementEntries: draftLayout.assets,
+                placementFloorY: draftLayout.floorY,
+                assetMetadata: assetMetadata,
+                modelURLs: modelURLs,
+                selectedId: selectedPlacementId,
+                editTool: editTool,
+                placementRequestToken: placementRequestToken,
+                environmentLightingURL: textureURL,
                 onViewerReady: {
                     panoramaReady = true
                     scheduleHintFlowIfNeeded()
+                    loadPlacementIfNeeded()
                 },
                 onLongPress: { yaw, pitch in
                     GonggiHaptics.medium()
@@ -98,6 +127,21 @@ struct VRSphereSpaceView: View {
                 },
                 onMotionHardwareAvailable: { available in
                     motionHardwareOK = available
+                },
+                onPlacedAssetTapped: { id in
+                    selectedPlacementId = id
+                    editTool = id == nil ? .none : editTool
+                },
+                onPlacedAssetTransformChanged: { id, position, rotationY, scale in
+                    updateDraftTransform(
+                        id: id,
+                        position: position,
+                        rotationY: rotationY,
+                        scale: scale
+                    )
+                },
+                onPlacementPointResolved: { point in
+                    addPendingAsset(at: point)
                 }
             )
             .ignoresSafeArea()
@@ -105,7 +149,11 @@ struct VRSphereSpaceView: View {
 
             Button {
                 GonggiHaptics.light()
-                onClose()
+                if interactionMode == .edit {
+                    exitEditMode()
+                } else {
+                    onClose()
+                }
             } label: {
                 Image(systemName: "chevron.backward")
                     .font(.system(size: 16, weight: .semibold))
@@ -118,7 +166,11 @@ struct VRSphereSpaceView: View {
             .padding(.top, 12)
             .zIndex(2)
 
-            vrToolbar
+            if interactionMode == .view {
+                vrToolbar
+            } else {
+                editDoneButton
+            }
                 .padding(.trailing, 16)
                 .padding(.top, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -175,6 +227,20 @@ struct VRSphereSpaceView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, 28)
                 .allowsHitTesting(true)
+
+            if interactionMode == .edit {
+                editBottomBar
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.bottom, 28)
+                    .zIndex(3)
+            }
+
+            if saveError != nil {
+                saveErrorBanner
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 68)
+                    .zIndex(4)
+            }
         }
         .statusBarHidden(true)
         .onChange(of: repairController.completedTextureURL) { _, newURL in
@@ -194,6 +260,8 @@ struct VRSphereSpaceView: View {
             cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
             motionHintTask?.cancel()
             motionHintTask = nil
+            placementTask?.cancel()
+            placementTask = nil
         }
         .sheet(isPresented: $showConfirmSheet, onDismiss: {
             if captureTarget == nil {
@@ -214,6 +282,10 @@ struct VRSphereSpaceView: View {
                 }
             )
             .presentationDetents([.height(220)])
+        }
+        .sheet(isPresented: $assetPickerPresented) {
+            assetPicker
+                .presentationDetents([.medium, .large])
         }
         .fullScreenCover(item: $captureTarget) { target in
             RepairManualCaptureView(
@@ -244,8 +316,155 @@ struct VRSphereSpaceView: View {
         }
     }
 
+    private var editDoneButton: some View {
+        Button("완료") {
+            GonggiHaptics.light()
+            Task { await saveAndFinishEditing() }
+        }
+        .font(.subheadline.weight(.semibold))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+        .background(Color.blue.opacity(0.9))
+        .clipShape(Capsule())
+        .padding(.trailing, 16)
+        .padding(.top, 12)
+        .frame(maxWidth: .infinity, alignment: .topTrailing)
+        .zIndex(3)
+    }
+
+    @ViewBuilder
+    private var editBottomBar: some View {
+        VStack(spacing: 10) {
+            if let selectedPlacementId,
+               let entry = draftLayout.assets.first(where: { $0.id == selectedPlacementId }),
+               modelURLs[entry.assetId] == nil {
+                Text("원본을 불러올 수 없어요")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.black.opacity(0.55), in: Capsule())
+            }
+
+            HStack(spacing: 8) {
+                if selectedPlacementId != nil {
+                    editToolButton("이동", icon: "arrow.up.and.down.and.arrow.left.and.right", tool: .move)
+                    editToolButton("회전", icon: "rotate.right", tool: .rotate)
+                    editToolButton("크기", icon: "arrow.up.left.and.arrow.down.right", tool: .scale)
+                    Button {
+                        deleteSelectedPlacement()
+                    } label: {
+                        Label("삭제", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                } else {
+                    Button {
+                        assetPickerPresented = true
+                    } label: {
+                        Label("+ 3D 오브젝트", systemImage: "cube")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(draftLayout.assets.count >= VRPlacementLayout.maxAssets)
+                }
+            }
+            .font(.footnote.weight(.semibold))
+            .padding(10)
+            .background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+
+    private func editToolButton(_ title: String, icon: String, tool: VREditTool) -> some View {
+        Button {
+            editTool = tool
+        } label: {
+            Label(title, systemImage: icon)
+        }
+        .buttonStyle(.bordered)
+        .tint(editTool == tool ? .blue : .white)
+    }
+
+    private var saveErrorBanner: some View {
+        HStack(spacing: 10) {
+            Text("배치를 저장하지 못했어요")
+                .font(.footnote.weight(.medium))
+            Button("다시 시도") {
+                Task { await saveAndFinishEditing() }
+            }
+            .font(.footnote.weight(.semibold))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(Color.red.opacity(0.85), in: Capsule())
+    }
+
+    private var assetPicker: some View {
+        NavigationStack {
+            Group {
+                if loadingAssets {
+                    ProgressView("3D 오브젝트를 불러오는 중")
+                } else {
+                    List(lockerAssets) { asset in
+                        let available = asset.availableForPlacement
+                            && asset.usdzUrl.flatMap(URL.init(string:)) != nil
+                        Button {
+                            guard available else { return }
+                            pendingPlacementAsset = asset
+                            assetPickerPresented = false
+                            placementRequestToken += 1
+                        } label: {
+                            HStack(spacing: 12) {
+                                AsyncImage(url: asset.thumbUrl.flatMap(URL.init(string:))) { image in
+                                    image.resizable().scaledToFill()
+                                } placeholder: {
+                                    Color.gray.opacity(0.2)
+                                        .overlay(Image(systemName: "cube"))
+                                }
+                                .frame(width: 56, height: 56)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(asset.name)
+                                        .foregroundStyle(.primary)
+                                    if let createdAt = asset.createdAt {
+                                        Text(createdAt)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    if !available {
+                                        Text("3D 준비 중")
+                                            .font(.caption.weight(.medium))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                            }
+                        }
+                        .disabled(!available || draftLayout.assets.count >= VRPlacementLayout.maxAssets)
+                    }
+                }
+            }
+            .navigationTitle("3D 오브젝트")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
     private var vrToolbar: some View {
         HStack(spacing: 8) {
+            Button {
+                enterEditMode()
+            } label: {
+                Text("편집")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(height: 40)
+                    .padding(.horizontal, 12)
+                    .background(Color.black.opacity(0.45))
+                    .clipShape(Capsule())
+            }
+
             Button {
                 GonggiHaptics.light()
                 recenterToken += 1
@@ -302,6 +521,133 @@ struct VRSphereSpaceView: View {
         }
         .clipShape(Capsule())
         .accessibilityLabel(VRMotionPreferences.motionHintPrimary)
+    }
+
+    private func enterEditMode() {
+        markSelectiveRepairHintSeenAndHide()
+        hideMotionHintImmediate()
+        clearRepairSelection()
+        saveError = nil
+        selectedPlacementId = nil
+        editTool = .none
+        interactionMode = .edit
+    }
+
+    private func exitEditMode() {
+        interactionMode = .view
+        selectedPlacementId = nil
+        editTool = .none
+        saveError = nil
+    }
+
+    private func saveAndFinishEditing() async {
+        do {
+            let saved = try await placementStore.pushRemote(draftLayout, sessionId: sessionId)
+            draftLayout = saved
+            try? await placementStore.saveLocal(saved, sessionId: sessionId)
+            exitEditMode()
+        } catch {
+            saveError = "배치를 저장하지 못했어요"
+        }
+    }
+
+    private func loadPlacementIfNeeded() {
+        guard !didLoadPlacement else { return }
+        didLoadPlacement = true
+        loadingAssets = true
+        placementTask = Task {
+            let local = try? await placementStore.loadLocal(sessionId: sessionId)
+            let remote = try? await placementStore.fetchRemote(sessionId: sessionId)
+            let merged = await placementStore.merge(local: local, remote: remote)
+            guard !Task.isCancelled else { return }
+            draftLayout = merged
+            try? await placementStore.saveLocal(merged, sessionId: sessionId)
+
+            do {
+                let assets = try await assetsClient.fetchAssets()
+                guard !Task.isCancelled else { return }
+                lockerAssets = assets
+                assetMetadata = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+                loadingAssets = false
+                await downloadModels(for: assets)
+            } catch {
+                loadingAssets = false
+            }
+        }
+    }
+
+    private func downloadModels(for assets: [MobileAssetDTO]) async {
+        let downloadable = assets.compactMap { asset -> (MobileAssetDTO, URL)? in
+            guard asset.availableForPlacement,
+                  let value = asset.usdzUrl,
+                  let url = URL(string: value)
+            else { return nil }
+            return (asset, url)
+        }
+        await withTaskGroup(of: (String, URL?).self) { group in
+            for (asset, remoteURL) in downloadable {
+                group.addTask {
+                    (asset.id, await usdzCache.localURL(assetId: asset.id, remoteURL: remoteURL))
+                }
+            }
+            for await (assetId, localURL) in group {
+                guard !Task.isCancelled else { return }
+                if let localURL {
+                    modelURLs[assetId] = localURL
+                }
+            }
+        }
+    }
+
+    private func addPendingAsset(at point: SIMD3<Float>) {
+        guard let asset = pendingPlacementAsset,
+              draftLayout.assets.count < VRPlacementLayout.maxAssets
+        else {
+            pendingPlacementAsset = nil
+            return
+        }
+        let entry = VRPlacedAssetEntry(
+            assetId: asset.id,
+            position: SIMD3(point.x, draftLayout.floorY, point.z),
+            uniformScale: 1,
+            sortIndex: draftLayout.assets.count
+        )
+        guard draftLayout.append(entry) else { return }
+        pendingPlacementAsset = nil
+        selectedPlacementId = entry.id
+        editTool = .move
+        saveDraftLocally()
+    }
+
+    private func updateDraftTransform(
+        id: String,
+        position: SIMD3<Float>,
+        rotationY: Float,
+        scale: Float
+    ) {
+        guard let index = draftLayout.assets.firstIndex(where: { $0.id == id }) else { return }
+        draftLayout.assets[index].position = SIMD3(position.x, draftLayout.floorY, position.z)
+        draftLayout.assets[index].rotationY = rotationY
+        draftLayout.assets[index].setUniformScale(scale)
+        saveDraftLocally()
+    }
+
+    private func deleteSelectedPlacement() {
+        guard let id = selectedPlacementId else { return }
+        draftLayout.assets.removeAll { $0.id == id }
+        for index in draftLayout.assets.indices {
+            draftLayout.assets[index].sortIndex = index
+        }
+        selectedPlacementId = nil
+        editTool = .none
+        saveDraftLocally()
+    }
+
+    private func saveDraftLocally() {
+        let layout = draftLayout
+        Task {
+            try? await placementStore.saveLocal(layout, sessionId: sessionId)
+        }
     }
 
     @ViewBuilder
@@ -840,9 +1186,22 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var motionDesiredEnabled: Bool
     var confirmSheetPresented: Bool
     var recenterToken: Int
+    var editModeActive: Bool
+    var repairLongPressEnabled: Bool
+    var placementEntries: [VRPlacedAssetEntry]
+    var placementFloorY: Float
+    var assetMetadata: [String: MobileAssetDTO]
+    var modelURLs: [String: URL]
+    var selectedId: String?
+    var editTool: VREditTool
+    var placementRequestToken: Int
+    var environmentLightingURL: URL?
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
     var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
+    var onPlacedAssetTapped: ((String?) -> Void)? = nil
+    var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)? = nil
+    var onPlacementPointResolved: ((SIMD3<Float>) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNHostView {
         let host = SCNHostView()
@@ -850,9 +1209,23 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.onMotionAvailabilityChanged = { available in
             onMotionHardwareAvailable?(available)
         }
+        host.onPlacedAssetTapped = onPlacedAssetTapped
+        host.onPlacedAssetTransformChanged = onPlacedAssetTransformChanged
         host.configure(imageURL: imageURL)
         host.setMotionDesiredEnabled(motionDesiredEnabled)
         host.setConfirmSheetPresented(confirmSheetPresented)
+        host.setEditModeActive(editModeActive)
+        host.setRepairLongPressEnabled(repairLongPressEnabled)
+        host.syncPlacedAssets(
+            placementEntries,
+            floorY: placementFloorY,
+            metadata: assetMetadata,
+            modelURLs: modelURLs
+        )
+        host.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
+        if let environmentLightingURL {
+            host.applyEnvironmentLighting(from: environmentLightingURL)
+        }
         host.updateSelection(
             yawDeg: markerYawDeg,
             pitchDeg: markerPitchDeg,
@@ -863,6 +1236,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         context.coordinator.lastURL = imageURL
         context.coordinator.lastRecenterToken = recenterToken
         context.coordinator.lastMotionDesired = motionDesiredEnabled
+        context.coordinator.lastPlacementRequestToken = placementRequestToken
         DispatchQueue.main.async {
             context.coordinator.didNotifyReady = true
             onViewerReady?()
@@ -875,6 +1249,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         uiView.onMotionAvailabilityChanged = { available in
             onMotionHardwareAvailable?(available)
         }
+        uiView.onPlacedAssetTapped = onPlacedAssetTapped
+        uiView.onPlacedAssetTransformChanged = onPlacedAssetTransformChanged
         if textureGeneration != context.coordinator.lastGeneration
             || imageURL != context.coordinator.lastURL {
             uiView.reloadTexture(from: imageURL)
@@ -886,6 +1262,36 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             context.coordinator.lastMotionDesired = motionDesiredEnabled
         }
         uiView.setConfirmSheetPresented(confirmSheetPresented)
+        uiView.setEditModeActive(editModeActive)
+        uiView.setRepairLongPressEnabled(repairLongPressEnabled)
+        // Rebuild nodes only when membership / models change — not on every transform drag.
+        let placementFingerprint = placementEntries.map { "\($0.id):\($0.assetId)" }.joined(separator: ",")
+            + "|" + modelURLs.keys.sorted().joined(separator: ",")
+            + "|" + "\(assetMetadata.count)|\(placementFloorY)"
+        if placementFingerprint != context.coordinator.lastPlacementFingerprint {
+            uiView.syncPlacedAssets(
+                placementEntries,
+                floorY: placementFloorY,
+                metadata: assetMetadata,
+                modelURLs: modelURLs
+            )
+            context.coordinator.lastPlacementFingerprint = placementFingerprint
+        }
+        uiView.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
+        if let environmentLightingURL {
+            uiView.applyEnvironmentLighting(from: environmentLightingURL)
+        }
+        if placementRequestToken != context.coordinator.lastPlacementRequestToken {
+            context.coordinator.lastPlacementRequestToken = placementRequestToken
+            let size = uiView.viewportSize
+            let point = uiView.floorPointFromScreen(
+                CGPoint(x: size.width * 0.5, y: size.height * 0.55),
+                floorY: placementFloorY
+            )
+            DispatchQueue.main.async {
+                onPlacementPointResolved?(point)
+            }
+        }
         if recenterToken != context.coordinator.lastRecenterToken {
             uiView.recenterKeepingVisual()
             context.coordinator.lastRecenterToken = recenterToken
@@ -912,5 +1318,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         var didNotifyReady = false
         var lastRecenterToken: Int = 0
         var lastMotionDesired: Bool = true
+        var lastPlacementRequestToken: Int = 0
+        var lastPlacementFingerprint: String = ""
     }
 }

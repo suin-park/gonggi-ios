@@ -9,18 +9,18 @@ final class GonggiSpaceRecordAIModeTests: XCTestCase {
         )
         XCTAssertEqual(
             GonggiSpaceRecordAIMode.scaffoldValidationBuildNumbers,
-            ["61", "62", "63", "64"]
+            ["61", "62", "63", "64", "65"]
         )
     }
 
-    func testG_ModeScaffoldForBuild61Through64() {
-        for build in ["61", "62", "63", "64"] {
+    func testG_ModeScaffoldForBuild61Through65() {
+        for build in ["61", "62", "63", "64", "65"] {
             XCTAssertEqual(
                 GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: build),
                 "scaffold_repair_v4b_h12"
             )
         }
         XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "60"))
-        XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "65"))
+        XCTAssertNil(GonggiSpaceRecordAIMode.createRequestMode(forBuildNumber: "66"))
     }
 }
