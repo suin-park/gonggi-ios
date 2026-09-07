@@ -17,6 +17,10 @@ struct SpaceCaptureMetadataEntry: Codable, Equatable, Sendable {
     var closureDeltaDeg: Double?
     var horizontalLevelDeltaDeg: Double?
     var closureGatePassed: Bool?
+    /// App CFBundleVersion (e.g. "61") for Build61 scaffold validation forensics.
+    var appBuild: String?
+    /// Client-requested generation mode when Build61 scaffold opt-in is active.
+    var clientGenerationMode: String?
 }
 
 enum SpaceCaptureMetadataBuilder {
@@ -39,7 +43,9 @@ enum SpaceCaptureMetadataBuilder {
                 yawConvention: "ios_right_turn_negative_unwrapped",
                 closureDeltaDeg: rec.closureDeltaDeg.map(Double.init),
                 horizontalLevelDeltaDeg: rec.horizontalLevelDeltaDeg.map(Double.init),
-                closureGatePassed: rec.closureGatePassed
+                closureGatePassed: rec.closureGatePassed,
+                appBuild: GonggiSpaceRecordAIMode.currentAppBuildNumber,
+                clientGenerationMode: GonggiSpaceRecordAIMode.createRequestMode
             )
         }
         guard entries.count == DirectionName.requiredCount else {

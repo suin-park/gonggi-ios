@@ -237,6 +237,14 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         }
         appendField(name: "sessionId", value: sessionId)
         appendField(name: "installationId", value: GonggiInstallation.id)
+        // Build 61 TestFlight only: explicit H12 scaffold opt-in. Omitted → backend default `direct`.
+        if let mode = GonggiSpaceRecordAIMode.createRequestMode {
+            appendField(name: "mode", value: mode)
+        }
+        let appBuild = GonggiSpaceRecordAIMode.currentAppBuildNumber
+        if !appBuild.isEmpty {
+            appendField(name: "clientAppBuild", value: appBuild)
+        }
         if let captureMetadataJSON, !captureMetadataJSON.isEmpty {
             appendField(name: "captureMetadata", value: captureMetadataJSON)
         }
