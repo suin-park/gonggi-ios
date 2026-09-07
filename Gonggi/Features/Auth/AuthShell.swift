@@ -222,8 +222,8 @@ struct AuthShellView: View {
                     .disabled(googleBusy)
 
                     authButton(title: "Apple로 계속하기", icon: "apple.logo") {
-                        appleCoordinator.start { result in
-                            Task {
+                        appleCoordinator.beginSignIn { result in
+                            Task { @MainActor in
                                 switch result {
                                 case .success(let payload):
                                     await session.signInWithApple(
@@ -232,8 +232,8 @@ struct AuthShellView: View {
                                         fullName: payload.fullName,
                                         email: payload.email
                                     )
-                                case .failure(let message):
-                                    session.lastError = message
+                                case .failure(let err):
+                                    session.lastError = err.errorDescription ?? "Apple 로그인에 실패했습니다."
                                 }
                             }
                         }
