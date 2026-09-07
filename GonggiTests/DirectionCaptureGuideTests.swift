@@ -118,12 +118,12 @@ final class DirectionCaptureGuideTests: XCTestCase {
 
         var t: TimeInterval = 20
         engine.ingestMotionSample(unwrappedYaw: -10, elevationDeg: 50, timestamp: t)
-        turnRight(&engine, from: -10, by: 70, elev: 50, time: &t)
-        turnRight(&engine, from: -80, by: 70, elev: 50, time: &t)
+        turnRight(engine, from: -10, by: 70, elev: 50, time: &t)
+        turnRight(engine, from: -80, by: 70, elev: 50, time: &t)
         XCTAssertEqual(engine.progressText, "위쪽 3 / 4")
         XCTAssertNil(engine.captured[.upFrontLeft])
 
-        turnRight(&engine, from: -150, by: 48, elev: 50, time: &t)
+        turnRight(engine, from: -150, by: 48, elev: 50, time: &t)
         Thread.sleep(forTimeInterval: 0.35)
         engine.ingestMotionSample(unwrappedYaw: -198, elevationDeg: 50, timestamp: t + 1)
         XCTAssertNotNil(engine.captured[.upFrontLeft], "last-shot fail-safe must fire")
@@ -141,9 +141,9 @@ final class DirectionCaptureGuideTests: XCTestCase {
         var t: TimeInterval = 30
         func oneObliquePhase(start: Float, elev: Float) {
             engine.ingestMotionSample(unwrappedYaw: start, elevationDeg: elev, timestamp: t)
-            turnRight(&engine, from: start, by: 70, elev: elev, time: &t)
-            turnRight(&engine, from: start - 70, by: 70, elev: elev, time: &t)
-            turnRight(&engine, from: start - 140, by: 55, elev: elev, time: &t)
+            turnRight(engine, from: start, by: 70, elev: elev, time: &t)
+            turnRight(engine, from: start - 70, by: 70, elev: elev, time: &t)
+            turnRight(engine, from: start - 140, by: 55, elev: elev, time: &t)
         }
         oneObliquePhase(start: -40, elev: 40)
         XCTAssertEqual(engine.capturedCount, 16)
