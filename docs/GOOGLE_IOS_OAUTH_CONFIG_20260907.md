@@ -10,6 +10,12 @@
 - redirect: `{reversed}:/oauth2redirect/google`
 - ASWebAuthenticationSession `callbackURLScheme` = reversed client id (`com.googleusercontent.apps.…`)
 
+## Flow (required for Google iOS clients)
+- **Must** use authorization code + PKCE (`response_type=code`, S256)
+- **Must not** use `response_type=id_token` (causes `400 unsupported_response_type`)
+- Token exchange at `https://oauth2.googleapis.com/token` with `code_verifier` only (no client_secret)
+- See `GOOGLE_IOS_OAUTH_PKCE_HOTFIX_20260907.md`
+
 ## Backend
 - Audience: `GOOGLE_IOS_CLIENT_ID` (+ web `GOOGLE_CLIENT_ID` accepted)
 - Existing Locker GOOGLE user reused by Google `sub` → same `User.id`
