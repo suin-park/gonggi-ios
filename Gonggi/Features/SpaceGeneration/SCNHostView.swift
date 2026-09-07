@@ -75,8 +75,12 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)?
     /// Edit: select · View: navigate intent.
     var onSpaceLinkTapped: ((String?) -> Void)?
-    /// Edit drag — yaw/pitch/radius source of truth.
+    /// Edit drag live — yaw/pitch/radius source of truth (local).
     var onSpaceLinkPoseChanged: ((String, Float, Float, Float) -> Void)?
+    /// Edit drag ended — persist linked pose (PATCH).
+    var onSpaceLinkDragEnded: ((String, Float, Float, Float) -> Void)?
+    /// Projected screen point of selected hotspot (Edit overlay).
+    var onSpaceLinkScreenPoint: ((CGPoint?) -> Void)?
 
     /// Effective motion tracking (desired ∧ hardware).
     private(set) var isMotionEffectivelyEnabled = false
@@ -290,6 +294,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             spaceLinksRoot.addChildNode(node)
         }
         refreshSpaceLinkHitSizes()
+        publishSelectedSpaceLinkScreenPoint()
     }
 
     private func refreshSpaceLinkHitSizes() {
@@ -650,6 +655,35 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private func applyLookToCamera() {
         let e = look.cameraEulerRad
         cameraNode?.eulerAngles = SCNVector3(e.pitch, e.yaw, 0)
+        publishSelectedSpaceLinkScreenPoint()
+    }
+
+    func screenPointForSpaceLink(id: String) -> CGPoint? {
+        guard let node = spaceLinksRoot.childNodes.first(where: {
+            SpaceHotspotNodeFactory.linkID(from: $0) == id
+        }) else { return nil }
+        return projectNodeToScreen(node)
+    }
+
+    private func publishSelectedSpaceLinkScreenPoint() {
+        guard editModeActive, let id = selectedSpaceLinkID else {
+            onSpaceLinkScreenPoint?(nil)
+            return
+        }
+        onSpaceLinkScreenPoint?(screenPointForSpaceLink(id: id))
+    }
+
+    private func projectNodeToScreen(_ node: SCNNode) -> CGPoint? {
+        let wp = node.presentation.worldPosition
+        let projected = scnView.projectPoint(wp)
+        // Behind camera or invalid
+        guard projected.z.isFinite, projected.z > 0, projected.z < 1 else { return nil }
+        let pt = CGPoint(x: CGFloat(projected.x), y: CGFloat(projected.y))
+        let bounds = scnView.bounds
+        guard bounds.contains(pt) || bounds.insetBy(dx: -40, dy: -40).contains(pt) else {
+            return pt // still return for edge clamping in SwiftUI
+        }
+        return pt
     }
 
     // MARK: - Motion control (SwiftUI)
@@ -1008,9 +1042,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             case .spaceLinkMove(let id):
                 if let pose = spaceLinkPoses[id] {
                     onSpaceLinkPoseChanged?(id, pose.yaw, pose.pitch, pose.radius)
+                    onSpaceLinkDragEnded?(id, pose.yaw, pose.pitch, pose.radius)
                 }
+                publishSelectedSpaceLinkScreenPoint()
                 #if DEBUG
-                print("[vr-spaceLink72] move end id=\(id)")
+                print("[vr-spaceLink73] move end id=\(id)")
                 #endif
             case .assetMove(let id):
                 publishTransform(for: id)
@@ -1051,6 +1087,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             )
         }
         onSpaceLinkPoseChanged?(linkId, pose.yaw, pose.pitch, pose.radius)
+        publishSelectedSpaceLinkScreenPoint()
     }
 
     private func beginMove(id: String, screenPoint: CGPoint) {

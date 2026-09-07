@@ -83,12 +83,20 @@ final class SpaceLinkMathTests: XCTestCase {
         )
     }
 
-    func testEditOwnerSpaceLinkCase() {
-        let owner = EditOneFingerOwner.spaceLinkMove(linkId: "h1")
-        if case .spaceLinkMove(let id) = owner {
-            XCTAssertEqual(id, "h1")
-        } else {
-            XCTFail("expected spaceLinkMove")
-        }
+    func testHitProxyLargerThanVisualTargets() {
+        XCTAssertGreaterThan(
+            SpaceHotspotNodeFactory.hitTargetPoints,
+            SpaceHotspotNodeFactory.visualTargetPoints
+        )
+    }
+
+    func testOverlayFlipsNearTopEdge() {
+        let origin = SpaceLinkOverlayLayout.panelOrigin(
+            marker: CGPoint(x: 200, y: 80),
+            panelSize: CGSize(width: 180, height: 160),
+            container: CGSize(width: 390, height: 844)
+        )
+        // Near top: panel should not go above safe margin.
+        XCTAssertGreaterThan(origin.y, 40)
     }
 }

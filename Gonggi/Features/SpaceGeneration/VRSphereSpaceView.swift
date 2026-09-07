@@ -67,10 +67,14 @@ struct VRSphereSpaceView: View {
     @State private var spaceLinkSpawnToken = 0
     @State private var showSpaceLinkCaptureIntro = false
     @State private var showSpaceLinkDirectionCapture = false
+    @State private var showExistingSpacePicker = false
+    @State private var showDeleteLinkedConfirm = false
     @State private var spaceLinkLabelDraft = ""
     @State private var spaceLinkBusyMessage: String?
+    @State private var selectedSpaceLinkScreenPoint: CGPoint?
     @State private var didLoadSpaceLinks = false
     @State private var spaceLinkTask: Task<Void, Never>?
+    @State private var spaceLinkLinking = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var appState: AppState
 
@@ -178,6 +182,35 @@ struct VRSphereSpaceView: View {
             .sheet(isPresented: $showSpaceLinkCaptureIntro) {
                 spaceLinkCaptureIntroSheet
                     .presentationDetents([.height(240)])
+            }
+            .sheet(isPresented: $showExistingSpacePicker) {
+                ExistingSpaceLinkPickerView(
+                    sourceSpaceId: sessionId,
+                    spaces: appState.spaces,
+                    alreadyLinkedTargetIds: Set(
+                        spaceLinks
+                            .filter { $0.status == .linked }
+                            .compactMap { $0.targetSessionId ?? $0.targetSpaceId }
+                    ),
+                    onConfirm: { space in
+                        showExistingSpacePicker = false
+                        Task { await linkExistingSpace(space) }
+                    },
+                    onCancel: { showExistingSpacePicker = false }
+                )
+                .presentationDetents([.medium, .large])
+            }
+            .confirmationDialog(
+                "이 공간 연결을 삭제할까요?",
+                isPresented: $showDeleteLinkedConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("삭제", role: .destructive) {
+                    deleteSelectedSpaceLink(confirmed: true)
+                }
+                Button("취소", role: .cancel) {}
+            } message: {
+                Text("연결된 공간 자체는 삭제되지 않습니다.")
             }
             .fullScreenCover(isPresented: $showSpaceLinkDirectionCapture) {
                 DirectionCaptureView(
@@ -352,6 +385,41 @@ struct VRSphereSpaceView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .zIndex(4)
             }
+
+            if interactionMode == .edit,
+               let selectedSpaceLinkId,
+               let link = spaceLinks.first(where: { $0.id == selectedSpaceLinkId }),
+               let marker = selectedSpaceLinkScreenPoint {
+                GeometryReader { geo in
+                    let panelSize = CGSize(width: 188, height: link.status == .draft ? 168 : 72)
+                    let origin = SpaceLinkOverlayLayout.panelOrigin(
+                        marker: marker,
+                        panelSize: panelSize,
+                        container: geo.size
+                    )
+                    SpaceLinkFloatingActions(
+                        isDraft: link.status != .linked,
+                        onCapture: {
+                            showSpaceLinkCaptureIntro = true
+                        },
+                        onLinkExisting: {
+                            showExistingSpacePicker = true
+                        },
+                        onDelete: {
+                            if link.status == .linked {
+                                showDeleteLinkedConfirm = true
+                            } else {
+                                deleteSelectedSpaceLink(confirmed: true)
+                            }
+                        }
+                    )
+                    .frame(width: panelSize.width)
+                    .position(origin)
+                    .zIndex(6)
+                }
+                .allowsHitTesting(true)
+                .zIndex(6)
+            }
         }
     }
 
@@ -458,6 +526,13 @@ struct VRSphereSpaceView: View {
             onSpaceLinkPoseChanged: { id, yaw, pitch, radius in
                 updateSpaceLinkPose(id: id, yaw: yaw, pitch: pitch, radius: radius)
             },
+            onSpaceLinkDragEnded: { id, yaw, pitch, radius in
+                updateSpaceLinkPose(id: id, yaw: yaw, pitch: pitch, radius: radius)
+                commitSpaceLinkPoseIfLinked(id: id)
+            },
+            onSpaceLinkScreenPoint: { point in
+                selectedSpaceLinkScreenPoint = point
+            },
             onSpaceLinkSpawnResolved: { yaw, pitch in
                 spawnDraftSpaceLink(yaw: yaw, pitch: pitch)
             },
@@ -504,23 +579,11 @@ struct VRSphereSpaceView: View {
             }
 
             HStack(spacing: 8) {
-                if let selectedSpaceLinkId,
-                   let link = spaceLinks.first(where: { $0.id == selectedSpaceLinkId }) {
-                    Button {
-                        showSpaceLinkCaptureIntro = true
-                    } label: {
-                        Label("새 공간 촬영", systemImage: "camera")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(link.status == .linked)
-
-                    Button {
-                        deleteSelectedSpaceLink()
-                    } label: {
-                        Label("삭제", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.red)
+                if selectedSpaceLinkId != nil {
+                    Text("포인트를 드래그해 위치를 옮기세요")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 4)
                 } else if selectedPlacementId != nil {
                     Text("한 손가락으로 이동, 두 손가락으로 회전/크기 조절")
                         .font(.caption2)
@@ -1077,6 +1140,8 @@ struct VRSphereSpaceView: View {
             if id != nil {
                 selectedPlacementId = nil
                 editTool = .none
+            } else {
+                selectedSpaceLinkScreenPoint = nil
             }
             return
         }
@@ -1110,16 +1175,82 @@ struct VRSphereSpaceView: View {
         spaceLinks[idx].updatedAt = Date()
     }
 
-    private func deleteSelectedSpaceLink() {
+    private func commitSpaceLinkPoseIfLinked(id: String) {
+        guard let link = spaceLinks.first(where: { $0.id == id }),
+              link.status == .linked
+        else { return }
+        Task {
+            do {
+                _ = try await spaceLinkStore.patchLink(
+                    sourceSpaceId: sessionId,
+                    linkId: link.id,
+                    yawDeg: link.yawDeg,
+                    pitchDeg: link.pitchDeg,
+                    radius: link.radius,
+                    label: nil
+                )
+            } catch {
+                #if DEBUG
+                print("[spaceLink73] pose PATCH failed \(error)")
+                #endif
+            }
+        }
+    }
+
+    private func deleteSelectedSpaceLink(confirmed: Bool = false) {
         guard let id = selectedSpaceLinkId,
               let link = spaceLinks.first(where: { $0.id == id })
         else { return }
+        if link.status == .linked, !confirmed {
+            showDeleteLinkedConfirm = true
+            return
+        }
         spaceLinks.removeAll { $0.id == id }
         selectedSpaceLinkId = nil
+        selectedSpaceLinkScreenPoint = nil
         PendingSpaceLinkCaptureStore.shared.clearIfMatching(draftHotspotId: id)
         guard link.status == .linked else { return }
         Task {
             try? await spaceLinkStore.deleteLink(sourceSpaceId: sessionId, linkId: id)
+        }
+    }
+
+    private func linkExistingSpace(_ space: SpaceRecord) async {
+        guard let draftId = selectedSpaceLinkId,
+              let idx = spaceLinks.firstIndex(where: { $0.id == draftId }),
+              spaceLinks[idx].status != .linked
+        else { return }
+        guard !spaceLinkLinking else { return }
+        spaceLinkLinking = true
+        defer { spaceLinkLinking = false }
+
+        let draft = spaceLinks[idx]
+        let targetId = space.sessionId ?? space.id
+        do {
+            let created = try await spaceLinkStore.createLinked(
+                sourceSpaceId: sessionId,
+                targetSpaceId: targetId,
+                yawDeg: draft.yawDeg,
+                pitchDeg: draft.pitchDeg,
+                radius: draft.radius,
+                label: draft.label ?? space.name
+            )
+            var merged = created
+            // Prefer target session for navigation.
+            if merged.targetSessionId == nil {
+                merged.targetSessionId = targetId
+            }
+            spaceLinks[idx] = merged
+            selectedSpaceLinkId = merged.id
+            GonggiHaptics.light()
+            spaceLinkBusyMessage = nil
+        } catch SpaceLinkStoreError.tooManyLinks {
+            spaceLinkBusyMessage = "공간 연결은 최대 \(SpaceLink.maxLinksPerSource)개까지 가능해요"
+        } catch {
+            spaceLinkBusyMessage = "연결하지 못했어요"
+            #if DEBUG
+            print("[spaceLink73] existing link POST failed \(error)")
+            #endif
         }
     }
 
@@ -1687,6 +1818,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var onPlacementPointResolved: ((SIMD3<Float>) -> Void)? = nil
     var onSpaceLinkTapped: ((String?) -> Void)? = nil
     var onSpaceLinkPoseChanged: ((String, Float, Float, Float) -> Void)? = nil
+    var onSpaceLinkDragEnded: ((String, Float, Float, Float) -> Void)? = nil
+    var onSpaceLinkScreenPoint: ((CGPoint?) -> Void)? = nil
     var onSpaceLinkSpawnResolved: ((Float, Float) -> Void)? = nil
     var onLightingDebug: ((String) -> Void)? = nil
 
@@ -1708,6 +1841,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.onPlacedAssetTransformChanged = onPlacedAssetTransformChanged
         host.onSpaceLinkTapped = onSpaceLinkTapped
         host.onSpaceLinkPoseChanged = onSpaceLinkPoseChanged
+        host.onSpaceLinkDragEnded = onSpaceLinkDragEnded
+        host.onSpaceLinkScreenPoint = onSpaceLinkScreenPoint
         host.configure(imageURL: imageURL)
         host.setMotionDesiredEnabled(motionDesiredEnabled)
         host.setConfirmSheetPresented(confirmSheetPresented)
@@ -1761,6 +1896,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         uiView.onPlacedAssetTransformChanged = onPlacedAssetTransformChanged
         uiView.onSpaceLinkTapped = onSpaceLinkTapped
         uiView.onSpaceLinkPoseChanged = onSpaceLinkPoseChanged
+        uiView.onSpaceLinkDragEnded = onSpaceLinkDragEnded
+        uiView.onSpaceLinkScreenPoint = onSpaceLinkScreenPoint
         if textureGeneration != context.coordinator.lastGeneration
             || imageURL != context.coordinator.lastURL {
             uiView.reloadTexture(from: imageURL)
