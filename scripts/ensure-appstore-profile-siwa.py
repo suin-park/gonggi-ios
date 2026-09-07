@@ -139,6 +139,38 @@ def find_distribution_cert(token: str) -> str:
     die("No DISTRIBUTION certificate found via ASC API")
 
 
+def find_existing_app_store_siwa_profile(token: str, bundle_res_id: str) -> dict | None:
+    """Reuse a recent App Store profile that already includes Sign in with Apple."""
+    q = urllib.parse.urlencode(
+        {
+            "filter[profileType]": "IOS_APP_STORE",
+            "filter[profileState]": "ACTIVE",
+            "limit": 50,
+            "sort": "-createdDate",
+        }
+    )
+    data = api("GET", f"/v1/profiles?{q}", token, soft=True)
+    if data.get("errors"):
+        return None
+    for item in data.get("data") or []:
+        rel = ((item.get("relationships") or {}).get("bundleId") or {}).get("data") or {}
+        if rel.get("id") != bundle_res_id:
+            # Some list responses omit relationship; fetch profile content and check needle.
+            pass
+        try:
+            raw = download_profile(token, item["id"])
+        except SystemExit:
+            continue
+        except Exception:
+            continue
+        if not profile_has_signin(raw):
+            continue
+        # Prefer Gonggi-named profiles when present.
+        name = (item.get("attributes") or {}).get("name") or ""
+        return {"item": item, "raw": raw, "name": name}
+    return None
+
+
 def create_profile(token: str, bundle_res_id: str, cert_id: str) -> dict:
     name = f"Gonggi App Store SIWA {int(time.time())}"
     body = {
@@ -157,7 +189,14 @@ def create_profile(token: str, bundle_res_id: str, cert_id: str) -> dict:
         }
     }
     print(f"Creating profile {name}…")
-    return api("POST", "/v1/profiles", token, body)
+    last: dict = {}
+    for attempt in range(1, 4):
+        last = api("POST", "/v1/profiles", token, body, soft=True)
+        if not last.get("errors"):
+            return last
+        print(f"WARN: profile create attempt {attempt}/3 failed; retrying…")
+        time.sleep(5 * attempt)
+    return last
 
 
 def download_profile(token: str, profile_id: str) -> bytes:
@@ -180,13 +219,30 @@ def main() -> None:
     print(f"Bundle resource id={bundle_res_id} team={TEAM_ID}")
     ensure_apple_signin_capability(token, bundle_res_id)
     cert_id = find_distribution_cert(token)
+
     created = create_profile(token, bundle_res_id, cert_id)
-    profile_id = created["data"]["id"]
-    attrs = created["data"].get("attributes") or {}
-    profile_name = attrs.get("name") or "Gonggi App Store"
-    raw = download_profile(token, profile_id)
+    profile_id: str | None = None
+    profile_name = "Gonggi App Store"
+    raw: bytes | None = None
+
+    if not created.get("errors"):
+        profile_id = created["data"]["id"]
+        attrs = created["data"].get("attributes") or {}
+        profile_name = attrs.get("name") or profile_name
+        raw = download_profile(token, profile_id)
+    else:
+        print("WARN: ASC profile create failed after retries; trying existing ACTIVE App Store SIWA profile")
+        existing = find_existing_app_store_siwa_profile(token, bundle_res_id)
+        if not existing:
+            die("ASC profile create failed and no reusable SIWA App Store profile found")
+        profile_id = existing["item"]["id"]
+        profile_name = existing["name"] or profile_name
+        raw = existing["raw"]
+        print(f"Reusing existing profile id={profile_id} name={profile_name}")
+
+    assert raw is not None
     if not profile_has_signin(raw):
-        die("Newly created profile still missing com.apple.developer.applesignin")
+        die("Profile still missing com.apple.developer.applesignin")
     OUT_PROFILE.parent.mkdir(parents=True, exist_ok=True)
     OUT_PROFILE.write_bytes(raw)
     meta = {
