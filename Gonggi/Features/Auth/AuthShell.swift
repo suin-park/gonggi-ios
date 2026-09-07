@@ -386,16 +386,26 @@ struct AppleSignInPayload {
     var email: String?
 }
 
+enum AppleSignInFlowError: Error, LocalizedError {
+    case message(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .message(let text): return text
+        }
+    }
+}
+
 @MainActor
 final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
-    private var continuation: ((Result<AppleSignInPayload, String>) -> Void)?
+    private var continuation: ((Result<AppleSignInPayload, AppleSignInFlowError>) -> Void)?
     private(set) var rawNonce: String?
 
     func prepare() {
         rawNonce = Self.randomNonce()
     }
 
-    func start(completion: @escaping (Result<AppleSignInPayload, String>) -> Void) {
+    func beginSignIn(completion: @escaping (Result<AppleSignInPayload, AppleSignInFlowError>) -> Void) {
         continuation = completion
         if rawNonce == nil { prepare() }
         let request = ASAuthorizationAppleIDProvider().createRequest()
@@ -421,7 +431,7 @@ final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationC
               let tokenData = credential.identityToken,
               let identityToken = String(data: tokenData, encoding: .utf8)
         else {
-            continuation?(.failure("Apple 토큰을 읽지 못했습니다."))
+            continuation?(.failure(.message("Apple 토큰을 읽지 못했습니다.")))
             continuation = nil
             return
         }
@@ -440,7 +450,7 @@ final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationC
     }
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        continuation?(.failure(error.localizedDescription))
+        continuation?(.failure(.message(error.localizedDescription)))
         continuation = nil
     }
 
