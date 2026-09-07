@@ -86,8 +86,7 @@ def find_bundle(token: str) -> dict:
 
 
 def ensure_apple_signin_capability(token: str, bundle_res_id: str) -> None:
-    q = urllib.parse.urlencode({"limit": 50})
-    caps = api("GET", f"/v1/bundleIds/{bundle_res_id}/bundleIdCapabilities?{q}", token)
+    caps = api("GET", f"/v1/bundleIds/{bundle_res_id}/bundleIdCapabilities", token)
     for cap in caps.get("data") or []:
         if (cap.get("attributes") or {}).get("capabilityType") == "APPLE_ID_AUTH":
             print("Sign in with Apple capability already on Bundle ID")
@@ -110,8 +109,14 @@ def ensure_apple_signin_capability(token: str, bundle_res_id: str) -> None:
             },
         }
     }
-    api("POST", "/v1/bundleIdCapabilities", token, body)
-    print("Sign in with Apple capability enabled")
+    try:
+        api("POST", "/v1/bundleIdCapabilities", token, body)
+        print("Sign in with Apple capability enabled")
+    except SystemExit:
+        # Capability may already exist or require portal consent — continue to profile create.
+        print("WARN: could not POST APPLE_ID_AUTH (may already exist); continuing to profile create")
+        raise
+
 
 
 def find_distribution_cert(token: str) -> str:
