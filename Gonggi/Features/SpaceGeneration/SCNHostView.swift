@@ -644,7 +644,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         return false
     }
 
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard editModeActive, gestureRecognizer is UIPanGestureRecognizer else { return true }
         // While a two-finger transform is active, block one-finger pan ownership flips.
         if pinchGestureActive || rotationGestureActive { return false }
