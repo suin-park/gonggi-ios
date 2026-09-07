@@ -25,7 +25,7 @@ final class SpaceRepairCardPresentationTests: XCTestCase {
             updatedAt: Date().addingTimeInterval(-100),
             errorCode: nil
         )
-        // Path validity will fail for /tmp ??badge still repairing from active.
+        // Path validity will fail for /tmp — badge still repairing from active.
         let active = SpaceRepairJobRecord(
             repairJobId: "rep-active-\(UUID().uuidString)",
             sessionId: session,
@@ -44,7 +44,7 @@ final class SpaceRepairCardPresentationTests: XCTestCase {
         store.upsert(active)
         let overlay = SpaceRepairCardPresentation.overlay(sessionId: session, store: store)
         XCTAssertEqual(overlay.badge, .repairing)
-        XCTAssertEqual(overlay.note, "?섏젙 以?)
+        XCTAssertEqual(overlay.note, SpaceRepairBadge.repairing.label)
     }
 
     func testFailedDoesNotClearWhenNoSuccess() {

@@ -38,7 +38,7 @@ final class RepairAcceptedNavigationTests: XCTestCase {
 
         let overlay = SpaceRepairCardPresentation.overlay(sessionId: sessionId, store: store)
         XCTAssertEqual(overlay.badge, .repairing)
-        XCTAssertEqual(overlay.note, "?섏젙 以?)
+        XCTAssertEqual(overlay.note, SpaceRepairBadge.repairing.label)
 
         var record = SpaceRecord(
             id: sessionId,
@@ -54,6 +54,6 @@ final class RepairAcceptedNavigationTests: XCTestCase {
         record = SpaceRepairCardPresentation.enrich(record, store: store)
         XCTAssertTrue(record.showsActivityIndicator)
         XCTAssertTrue(record.canOpenExistingVR)
-        XCTAssertEqual(record.statusBadgeLabel, "?섏젙 以?)
+        XCTAssertEqual(record.statusBadgeLabel, SpaceRepairBadge.repairing.label)
     }
 }
