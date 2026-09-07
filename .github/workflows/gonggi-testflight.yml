@@ -122,6 +122,45 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' Gonggi/Resources/Info.plist
           echo "Bundle target: ${{ env.BUNDLE_ID }}"
 
+      - name: Prepare App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.private_keys"
+          umask 077
+          KEY_FILE="${HOME}/.private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "${ASC_KEY_CONTENT}" > "${KEY_FILE}"
+          chmod 600 "${KEY_FILE}"
+          test -s "${KEY_FILE}"
+          echo "ASC_KEY_PATH=${KEY_FILE}" >> "$GITHUB_ENV"
+          echo "App Store Connect API key file prepared (content not logged)."
+
+      - name: Ensure App Store profile includes Sign in with Apple
+        id: siwa_profile
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          BUNDLE_ID: ${{ env.BUNDLE_ID }}
+          OUT_PROFILE_PATH: ${{ runner.temp }}/Gonggi-AppStore-SIWA.mobileprovision
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet 'PyJWT[crypto]>=2.8'
+          python3 scripts/ensure-appstore-profile-siwa.py
+          PROFILE_PATH="${OUT_PROFILE_PATH}"
+          PROFILE_PLIST="${RUNNER_TEMP}/siwa-profile.plist"
+          security cms -D -i "${PROFILE_PATH}" > "${PROFILE_PLIST}"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "${PROFILE_PLIST}")"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "${PROFILE_PLIST}")"
+          mkdir -p "${HOME}/Library/MobileDevice/Provisioning Profiles"
+          cp "${PROFILE_PATH}" "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
+          echo "profile_name=${PROFILE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "profile_uuid=${PROFILE_UUID}" >> "$GITHUB_OUTPUT"
+          echo "Using regenerated profile: ${PROFILE_NAME} (${PROFILE_UUID})"
+          security cms -D -i "${PROFILE_PATH}" | grep -q 'com.apple.developer.applesignin'
+
       - name: Import signing certificate and provisioning profile
         id: signing
         env:
@@ -129,14 +168,14 @@ jobs:
           APPLE_DISTRIBUTION_CERT_P12: ${{ secrets.APPLE_DISTRIBUTION_CERT_P12 }}
           APPLE_DISTRIBUTION_CERT_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERT_PASSWORD }}
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          SIWA_PROFILE_NAME: ${{ steps.siwa_profile.outputs.profile_name }}
+          SIWA_PROFILE_UUID: ${{ steps.siwa_profile.outputs.profile_uuid }}
         run: |
           set -euo pipefail
 
           KEYCHAIN_PATH="${RUNNER_TEMP}/app-signing.keychain-db"
           KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
           CERT_PATH="${RUNNER_TEMP}/distribution.p12"
-          PROFILE_PATH="${RUNNER_TEMP}/Gonggi.mobileprovision"
-          PROFILE_PLIST="${RUNNER_TEMP}/profile.plist"
 
           echo "keychain_path=${KEYCHAIN_PATH}" >> "$GITHUB_OUTPUT"
           echo "keychain_password=${KEYCHAIN_PASSWORD}" >> "$GITHUB_OUTPUT"
@@ -161,27 +200,32 @@ jobs:
 
           security list-keychains -d user -s "${KEYCHAIN_PATH}" $(security list-keychains -d user | tr -d '"')
 
-          echo "${APPLE_PROVISIONING_PROFILE}" | tr -d '[:space:]' > "${RUNNER_TEMP}/profile.b64"
-          base64 -D -i "${RUNNER_TEMP}/profile.b64" -o "${PROFILE_PATH}"
-          security cms -D -i "${PROFILE_PATH}" > "${PROFILE_PLIST}"
-
-          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "${PROFILE_PLIST}")"
-          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "${PROFILE_PLIST}")"
-          PROFILE_TEAM="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "${PROFILE_PLIST}")"
-          PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "${PROFILE_PLIST}" 2>/dev/null || true)"
-
-          if [[ "${PROFILE_TEAM}" != "${APPLE_TEAM_ID}" ]]; then
-            echo "::error::Provisioning profile Team ID (${PROFILE_TEAM}) does not match APPLE_TEAM_ID"
-            exit 1
+          # Prefer ASC-regenerated SIWA profile; fall back to secret profile only if missing.
+          if [[ -n "${SIWA_PROFILE_NAME:-}" ]]; then
+            PROFILE_NAME="${SIWA_PROFILE_NAME}"
+            PROFILE_UUID="${SIWA_PROFILE_UUID}"
+            echo "Using SIWA-regenerated provisioning profile."
+          else
+            PROFILE_PATH="${RUNNER_TEMP}/Gonggi.mobileprovision"
+            PROFILE_PLIST="${RUNNER_TEMP}/profile.plist"
+            echo "${APPLE_PROVISIONING_PROFILE}" | tr -d '[:space:]' > "${RUNNER_TEMP}/profile.b64"
+            base64 -D -i "${RUNNER_TEMP}/profile.b64" -o "${PROFILE_PATH}"
+            security cms -D -i "${PROFILE_PATH}" > "${PROFILE_PLIST}"
+            PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "${PROFILE_PLIST}")"
+            PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "${PROFILE_PLIST}")"
+            PROFILE_TEAM="$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "${PROFILE_PLIST}")"
+            PROFILE_APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "${PROFILE_PLIST}" 2>/dev/null || true)"
+            if [[ "${PROFILE_TEAM}" != "${APPLE_TEAM_ID}" ]]; then
+              echo "::error::Provisioning profile Team ID (${PROFILE_TEAM}) does not match APPLE_TEAM_ID"
+              exit 1
+            fi
+            if [[ -n "${PROFILE_APP_ID}" && "${PROFILE_APP_ID}" != *"${{ env.BUNDLE_ID }}" ]]; then
+              echo "::error::Provisioning profile app id (${PROFILE_APP_ID}) does not match bundle ${{ env.BUNDLE_ID }}"
+              exit 1
+            fi
+            mkdir -p "${HOME}/Library/MobileDevice/Provisioning Profiles"
+            cp "${PROFILE_PATH}" "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
           fi
-
-          if [[ -n "${PROFILE_APP_ID}" && "${PROFILE_APP_ID}" != *"${{ env.BUNDLE_ID }}" ]]; then
-            echo "::error::Provisioning profile app id (${PROFILE_APP_ID}) does not match bundle ${{ env.BUNDLE_ID }}"
-            exit 1
-          fi
-
-          mkdir -p "${HOME}/Library/MobileDevice/Provisioning Profiles"
-          cp "${PROFILE_PATH}" "${HOME}/Library/MobileDevice/Provisioning Profiles/${PROFILE_UUID}.mobileprovision"
 
           echo "profile_name=${PROFILE_NAME}" >> "$GITHUB_OUTPUT"
           echo "profile_uuid=${PROFILE_UUID}" >> "$GITHUB_OUTPUT"
@@ -192,20 +236,6 @@ jobs:
             echo "::error::Apple Distribution identity not found in keychain"
             exit 1
           }
-
-      - name: Prepare App Store Connect API key
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-        run: |
-          set -euo pipefail
-          mkdir -p "${HOME}/.private_keys"
-          umask 077
-          KEY_FILE="${HOME}/.private_keys/AuthKey_${ASC_KEY_ID}.p8"
-          printf '%s\n' "${ASC_KEY_CONTENT}" > "${KEY_FILE}"
-          chmod 600 "${KEY_FILE}"
-          test -s "${KEY_FILE}"
-          echo "App Store Connect API key file prepared (content not logged)."
 
       - name: Archive (Release, manual signing)
         env:
