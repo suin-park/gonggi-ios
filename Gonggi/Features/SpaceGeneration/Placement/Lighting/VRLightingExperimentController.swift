@@ -68,18 +68,10 @@ final class VRLightingExperimentController {
 
         let wantsShadowCast = (mode == .receiver && wantsDirectional)
         let wantsReceiver = (mode == .receiver && wantsDirectional)
-        let contactOpacity: Float = {
-            switch mode {
-            case .baseline, .iblTuned, .directionalOnly:
-                return VRLightingExperimentPrefs.baselineContactOpacity
-            case .receiver:
-                return wantsDirectional
-                    ? VRLightingExperimentPrefs.hybridContactOpacity
-                    : VRLightingExperimentPrefs.baselineContactOpacity
-            case .hybridFallback:
-                return VRLightingExperimentPrefs.hybridContactOpacity
-            }
-        }()
+        // Build 70: confidence gates directional only — never removes grounding contact.
+        let contactOpacity: Float = wantsDirectional
+            ? VRLightingExperimentPrefs.contactOpacityDirectionalActive
+            : VRLightingExperimentPrefs.contactOpacityDirectionalInactive
 
         configureDirectional(
             enabled: wantsDirectional,
@@ -95,9 +87,28 @@ final class VRLightingExperimentController {
 
         #if DEBUG
         print(
-            "[vr-light69] mode=\(mode.rawValue) ibl=\(intensity) dir=\(wantsDirectional) shadow=\(wantsShadowCast) recv=\(wantsReceiver) contact=\(contactOpacity) conf=\(String(format: "%.2f", lastEstimate.confidence))"
+            "[vr-light70] mode=\(mode.rawValue) ibl=\(intensity) dir=\(wantsDirectional) shadow=\(wantsShadowCast) recv=\(wantsReceiver) contact=\(contactOpacity) conf=\(String(format: "%.2f", lastEstimate.confidence))"
         )
         #endif
+    }
+
+    /// Effective contact opacity for the last applied lighting state.
+    var appliedContactOpacity: Float {
+        switch mode {
+        case .baseline, .iblTuned:
+            return VRLightingExperimentPrefs.contactOpacityDirectionalInactive
+        case .directionalOnly, .receiver, .hybridFallback:
+            return lastEstimate.eligible
+                ? VRLightingExperimentPrefs.contactOpacityDirectionalActive
+                : VRLightingExperimentPrefs.contactOpacityDirectionalInactive
+        }
+    }
+
+    var isDirectionalActive: Bool {
+        switch mode {
+        case .baseline, .iblTuned: return false
+        case .directionalOnly, .receiver, .hybridFallback: return lastEstimate.eligible
+        }
     }
 
     private func ensureNodes(in scene: SCNScene) {

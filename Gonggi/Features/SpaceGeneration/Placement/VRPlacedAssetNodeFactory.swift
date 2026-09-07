@@ -65,7 +65,10 @@ enum VRPlacedAssetNodeFactory {
 
         let fallbackRadius = max(footprint.x, footprint.y) * 0.55
         let shadowRadius = max(0.08, entry.shadowRadius ?? fallbackRadius)
-        let shadow = makeShadow(radius: shadowRadius, opacity: entry.shadowOpacity ?? 0.25)
+        let shadow = makeShadow(
+            radius: shadowRadius,
+            opacity: entry.shadowOpacity ?? VRLightingExperimentPrefs.contactOpacityDirectionalInactive
+        )
         // Shadow scale = 1 under root — inherits root uniform scale.
         root.addChildNode(shadow)
 

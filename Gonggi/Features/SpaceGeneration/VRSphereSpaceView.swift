@@ -55,6 +55,10 @@ struct VRSphereSpaceView: View {
     @State private var lightingMode = VRLightingExperimentPrefs.mode
     @State private var lightingIBL = VRLightingExperimentPrefs.iblIntensity
     @State private var lightingEstimateLabel = ""
+    /// Build 70: push supportY to SCNHost without membership rebuild.
+    @State private var supportLiveRevision = 0
+    @State private var supportLiveId: String?
+    @State private var supportLiveY: Float?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let placementStore = VRPlacementLayoutStore()
@@ -109,6 +113,9 @@ struct VRSphereSpaceView: View {
                 lightingExperimentActive: lightingPoCActive,
                 lightingMode: lightingMode,
                 lightingIBLIntensity: lightingIBL,
+                supportLiveRevision: supportLiveRevision,
+                supportLiveId: supportLiveId,
+                supportLiveY: supportLiveY,
                 onViewerReady: {
                     panoramaReady = true
                     scheduleHintFlowIfNeeded()
@@ -353,6 +360,11 @@ struct VRSphereSpaceView: View {
     private var editBottomBar: some View {
         VStack(spacing: 10) {
             if let selectedPlacementId,
+               let index = draftLayout.assets.firstIndex(where: { $0.id == selectedPlacementId }) {
+                supportHeightControls(index: index)
+            }
+
+            if let selectedPlacementId,
                let entry = draftLayout.assets.first(where: { $0.id == selectedPlacementId }),
                modelURLs[entry.assetId] == nil {
                 Text("원본을 불러올 수 없어요")
@@ -393,6 +405,52 @@ struct VRSphereSpaceView: View {
             .padding(10)
             .background(.ultraThinMaterial, in: Capsule())
         }
+    }
+
+    @ViewBuilder
+    private func supportHeightControls(index: Int) -> some View {
+        let floorY = draftLayout.floorY
+        let offset = draftLayout.assets[index].heightOffset(floorY: floorY)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("높이")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                Spacer()
+                Button {
+                    GonggiHaptics.light()
+                    snapSelectedToFloor(index: index)
+                } label: {
+                    Text("바닥에 놓기")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(.white)
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(offset) },
+                    set: { applyHeightOffset(index: index, offset: Float($0), commit: false) }
+                ),
+                in: 0...Double(VRPlacementLayout.maxSupportHeightOffset),
+                onEditingChanged: { editing in
+                    if !editing {
+                        applyHeightOffset(
+                            index: index,
+                            offset: draftLayout.assets[index].heightOffset(floorY: floorY),
+                            commit: true
+                        )
+                    }
+                }
+            )
+            .tint(.white)
+            Text("테이블/선반 위에 놓을 때 높이를 조절하세요")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.75))
+        }
+        .padding(12)
+        .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 8)
     }
 
     private var saveErrorBanner: some View {
@@ -744,7 +802,9 @@ struct VRSphereSpaceView: View {
             assetId: asset.id,
             position: SIMD3(point.x, draftLayout.floorY, point.z),
             uniformScale: 1,
-            sortIndex: draftLayout.assets.count
+            sortIndex: draftLayout.assets.count,
+            supportMode: .floor,
+            supportY: draftLayout.floorY
         )
         guard draftLayout.append(entry) else { return }
         pendingPlacementAsset = nil
@@ -760,11 +820,49 @@ struct VRSphereSpaceView: View {
         scale: Float
     ) {
         guard let index = draftLayout.assets.firstIndex(where: { $0.id == id }) else { return }
-        draftLayout.assets[index].position = SIMD3(position.x, draftLayout.floorY, position.z)
+        let supportY = draftLayout.assets[index].resolvedSupportY(floorY: draftLayout.floorY)
+        // Prefer live node Y from host when already raised (Build 70).
+        let y = abs(position.y - supportY) > 0.0001 ? position.y : supportY
+        draftLayout.assets[index].position = SIMD3(position.x, y, position.z)
+        if draftLayout.assets[index].supportMode == .custom {
+            draftLayout.assets[index].supportY = y
+        } else if abs(y - draftLayout.floorY) > 0.001 {
+            draftLayout.assets[index].supportMode = .custom
+            draftLayout.assets[index].supportY = y
+        } else {
+            draftLayout.assets[index].supportMode = .floor
+            draftLayout.assets[index].supportY = draftLayout.floorY
+        }
         draftLayout.assets[index].rotationY = rotationY
         draftLayout.assets[index].setUniformScale(scale)
         // Disk write only on gesture end / Done — not every pan.changed (Build 66).
         saveDraftLocally()
+    }
+
+    private func snapSelectedToFloor(index: Int) {
+        guard draftLayout.assets.indices.contains(index) else { return }
+        draftLayout.assets[index].applyFloorSupport(floorY: draftLayout.floorY)
+        let id = draftLayout.assets[index].id
+        let y = draftLayout.floorY
+        pushLiveSupport(id: id, y: y)
+        saveDraftLocally()
+    }
+
+    private func applyHeightOffset(index: Int, offset: Float, commit: Bool) {
+        guard draftLayout.assets.indices.contains(index) else { return }
+        draftLayout.assets[index].applyCustomHeightOffset(offset, floorY: draftLayout.floorY)
+        let id = draftLayout.assets[index].id
+        let y = draftLayout.assets[index].resolvedSupportY(floorY: draftLayout.floorY)
+        pushLiveSupport(id: id, y: y)
+        if commit {
+            saveDraftLocally()
+        }
+    }
+
+    private func pushLiveSupport(id: String, y: Float) {
+        supportLiveId = id
+        supportLiveY = y
+        supportLiveRevision += 1
     }
 
     private func deleteSelectedPlacement() {
@@ -1335,6 +1433,9 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var lightingExperimentActive: Bool = false
     var lightingMode: VRLightingExperimentMode = .baseline
     var lightingIBLIntensity: Float = 0.7
+    var supportLiveRevision: Int = 0
+    var supportLiveId: String? = nil
+    var supportLiveY: Float? = nil
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
     var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
@@ -1433,6 +1534,12 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             iblIntensity: resolvedLightingIBL,
             panoramaURL: environmentLightingURL ?? imageURL
         )
+        if supportLiveRevision != context.coordinator.lastSupportLiveRevision {
+            context.coordinator.lastSupportLiveRevision = supportLiveRevision
+            if let supportLiveId, let supportLiveY {
+                uiView.setPlacedAssetSupportY(id: supportLiveId, supportY: supportLiveY)
+            }
+        }
         if placementRequestToken != context.coordinator.lastPlacementRequestToken {
             context.coordinator.lastPlacementRequestToken = placementRequestToken
             let size = uiView.viewportSize
@@ -1455,12 +1562,31 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             radiusPitchDeg: maskRadiusPitchDeg
         )
         let snap = uiView.lightingExperimentDebugSnapshot()
+        let selectedSupportY: Float? = {
+            guard let selectedId,
+                  let y = uiView.placedAssetSupportY(id: selectedId)
+            else { return nil }
+            return y
+        }()
+        let supportPart: String = {
+            if let selectedSupportY {
+                return String(
+                    format: "floor %.2f support %.2f shadow≈%.2f",
+                    snap.floorY,
+                    selectedSupportY,
+                    selectedSupportY + 0.002
+                )
+            }
+            return String(format: "floor %.2f", snap.floorY)
+        }()
         let label = String(
-            format: "yaw %+.0f° pitch %+.0f° conf %.2f %@ · assets %d",
-            snap.estimate.dominantYawDeg,
-            snap.estimate.dominantPitchDeg,
+            format: "%@ ibl %.1f conf %.2f dir %@ contact %.2f · %@ · assets %d",
+            snap.mode.shortLabel,
+            snap.ibl,
             snap.estimate.confidence,
-            snap.estimate.eligible ? "DIR" : "—",
+            snap.directionalActive ? "ON" : "OFF",
+            snap.contactOpacity,
+            supportPart,
             snap.assetCount
         )
         if label != context.coordinator.lastLightingLabel {
@@ -1488,5 +1614,6 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         var lastPlacementRequestToken: Int = 0
         var lastPlacementFingerprint: String = ""
         var lastLightingLabel: String = ""
+        var lastSupportLiveRevision: Int = 0
     }
 }

@@ -62,7 +62,13 @@ enum VRLightingExperimentPrefs {
     static let iblIntensityCandidates: [Float] = [0.5, 0.7, 0.9, 1.1]
 
     static let dominantConfidenceThreshold: Float = 0.65
-    static let baselineContactOpacity: Float = 0.25
-    static let hybridContactOpacity: Float = 0.12
+    /// Legacy alias — baseline visible grounding when directional off.
+    static let baselineContactOpacity: Float = contactOpacityDirectionalInactive
+    /// Build 69 hybrid name kept for call sites; maps to directional-active contact.
+    static let hybridContactOpacity: Float = contactOpacityDirectionalActive
+    /// Build 70: directional OFF / low confidence — grounding must stay visible.
+    static let contactOpacityDirectionalInactive: Float = 0.22
+    /// Build 70: directional ON — reduce double-dark with contact.
+    static let contactOpacityDirectionalActive: Float = 0.12
     static let directionalSceneKitIntensity: CGFloat = 400
 }

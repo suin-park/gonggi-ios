@@ -244,10 +244,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         placedAssetsRoot.childNodes.forEach { $0.removeFromParentNode() }
 
         for entry in entries.prefix(VRPlacementLayout.maxAssets) {
-            var floorEntry = entry
-            floorEntry.position.y = floorY
+            var placed = entry
+            let supportY = entry.resolvedSupportY(floorY: floorY)
+            placed.position.y = supportY
             let node = VRPlacedAssetNodeFactory.makeNode(
-                entry: floorEntry,
+                entry: placed,
                 asset: metadata[entry.assetId],
                 modelURL: modelURLs[entry.assetId]
             )
@@ -324,10 +325,23 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     ) {
         guard let node = assetNode(id: id) else { return }
         let scale = VRPlacedAssetEntry.clampedScale(uniformScale)
-        node.position = SCNVector3(position.x, placementFloorY, position.z)
+        // Preserve support height (Build 70) — do not snap Y to global floorY.
+        let supportY = position.y
+        node.position = SCNVector3(position.x, supportY, position.z)
         node.eulerAngles.y = rotationY
         // Root uniform scale — selection/proxy/shadow inherit. No geometry rebuild.
         node.scale = SCNVector3(scale, scale, scale)
+    }
+
+    /// Build 70: update support height without scene rebuild (slider hot path).
+    func setPlacedAssetSupportY(id: String, supportY: Float) {
+        guard let node = assetNode(id: id) else { return }
+        node.position.y = supportY
+        // Contact shadow is local child at y≈0.002 — follows root automatically.
+    }
+
+    func placedAssetSupportY(id: String) -> Float? {
+        assetNode(id: id).map { $0.position.y }
     }
 
     func removePlacedAsset(id: String) {
@@ -395,13 +409,19 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         mode: VRLightingExperimentMode,
         ibl: Float,
         estimate: VRDominantLightEstimate,
-        assetCount: Int
+        assetCount: Int,
+        directionalActive: Bool,
+        contactOpacity: Float,
+        floorY: Float
     ) {
         (
             lightingExperiment.mode,
             lightingExperiment.iblIntensity,
             lightingExperiment.latestEstimate,
-            placedAssetsRoot.childNodes.count
+            placedAssetsRoot.childNodes.count,
+            lightingExperiment.isDirectionalActive,
+            lightingExperiment.appliedContactOpacity,
+            placementFloorY
         )
     }
 
@@ -855,17 +875,18 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         lastValidFloorHit = floorHit
         let x = floorHit.x + moveGrabOffset.x
         let z = floorHit.z + moveGrabOffset.y
+        let supportY = node.position.y
         let origin = SIMD3(
             cameraWorldTransform.columns.3.x,
-            placementFloorY,
+            supportY,
             cameraWorldTransform.columns.3.z
         )
         let clamped = VRFloorRay.clampDistance(
-            SIMD3(x, placementFloorY, z),
+            SIMD3(x, supportY, z),
             origin: origin,
-            floorY: placementFloorY
+            floorY: supportY
         )
-        node.position = SCNVector3(clamped.x, placementFloorY, clamped.z)
+        node.position = SCNVector3(clamped.x, supportY, clamped.z)
     }
 
     private func floorPointIfValid(_ screenPoint: CGPoint) -> SIMD3<Float>? {
@@ -988,7 +1009,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         let scale = explicitScale ?? currentUniformScale(of: node)
         onPlacedAssetTransformChanged?(
             id,
-            SIMD3(node.position.x, placementFloorY, node.position.z),
+            SIMD3(node.position.x, node.position.y, node.position.z),
             node.eulerAngles.y,
             scale
         )

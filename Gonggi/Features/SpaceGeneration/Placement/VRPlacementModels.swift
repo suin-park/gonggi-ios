@@ -14,10 +14,18 @@ enum VREditTool: String, Codable, Sendable {
     case delete
 }
 
+/// Build 70 additive support surface (absent → floor).
+enum VRPlacementSupportMode: String, Codable, Sendable, Equatable {
+    case floor
+    case custom
+}
+
 struct VRPlacementLayout: Codable, Equatable, Sendable {
     static let currentVersion = 1
     static let coordinateFrame = "gonggi.vr.v1"
     static let defaultFloorY: Float = -1.35
+    /// Max height above floorY for Edit “높이” slider (meters).
+    static let maxSupportHeightOffset: Float = 2.0
     static let maxAssets = 8
 
     var version: Int
@@ -85,6 +93,10 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
     var shadowRadius: Float?
     var shadowOpacity: Float?
     var sortIndex: Int
+    /// Build 70: `floor` | `custom`. Absent → floor.
+    var supportMode: VRPlacementSupportMode?
+    /// Build 70: world Y of support plane. Absent → layout.floorY.
+    var supportY: Float?
 
     init(
         id: String = UUID().uuidString,
@@ -94,7 +106,9 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         uniformScale: Float = 1,
         shadowRadius: Float? = nil,
         shadowOpacity: Float? = nil,
-        sortIndex: Int = 0
+        sortIndex: Int = 0,
+        supportMode: VRPlacementSupportMode? = nil,
+        supportY: Float? = nil
     ) {
         self.id = id
         self.assetId = assetId
@@ -104,6 +118,8 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         self.shadowRadius = shadowRadius
         self.shadowOpacity = shadowOpacity
         self.sortIndex = sortIndex
+        self.supportMode = supportMode
+        self.supportY = supportY
     }
 
     static func clampedScale(_ scale: Float) -> Float {
@@ -112,6 +128,36 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
 
     mutating func setUniformScale(_ scale: Float) {
         uniformScale = Self.clampedScale(scale)
+    }
+
+    /// Effective support height for asset root + contact shadow.
+    func resolvedSupportY(floorY: Float) -> Float {
+        switch supportMode ?? .floor {
+        case .floor:
+            return floorY
+        case .custom:
+            return supportY ?? floorY
+        }
+    }
+
+    /// Height above floor for Edit slider (0…maxSupportHeightOffset).
+    func heightOffset(floorY: Float) -> Float {
+        let y = resolvedSupportY(floorY: floorY)
+        return min(max(y - floorY, 0), VRPlacementLayout.maxSupportHeightOffset)
+    }
+
+    mutating func applyFloorSupport(floorY: Float) {
+        supportMode = .floor
+        supportY = floorY
+        position.y = floorY
+    }
+
+    mutating func applyCustomHeightOffset(_ offset: Float, floorY: Float) {
+        let clamped = min(max(offset, 0), VRPlacementLayout.maxSupportHeightOffset)
+        let y = floorY + clamped
+        supportMode = .custom
+        supportY = y
+        position.y = y
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -123,6 +169,8 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         case shadowRadius
         case shadowOpacity
         case sortIndex
+        case supportMode
+        case supportY
     }
 
     private struct Position: Codable {
@@ -155,6 +203,12 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         shadowRadius = try container.decodeIfPresent(Float.self, forKey: .shadowRadius)
         shadowOpacity = try container.decodeIfPresent(Float.self, forKey: .shadowOpacity)
         sortIndex = try container.decodeIfPresent(Int.self, forKey: .sortIndex) ?? 0
+        if let raw = try container.decodeIfPresent(String.self, forKey: .supportMode) {
+            supportMode = VRPlacementSupportMode(rawValue: raw)
+        } else {
+            supportMode = nil
+        }
+        supportY = try container.decodeIfPresent(Float.self, forKey: .supportY)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -170,6 +224,8 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         try container.encodeIfPresent(shadowRadius, forKey: .shadowRadius)
         try container.encodeIfPresent(shadowOpacity, forKey: .shadowOpacity)
         try container.encode(sortIndex, forKey: .sortIndex)
+        try container.encodeIfPresent(supportMode, forKey: .supportMode)
+        try container.encodeIfPresent(supportY, forKey: .supportY)
     }
 }
 
