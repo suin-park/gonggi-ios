@@ -322,9 +322,16 @@ struct AssetLibraryView: View {
                     .font(GonggiTypography.body(16))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .lineLimit(2)
-                Text(asset.libraryStatus.label)
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textSecondary)
+                HStack(spacing: 6) {
+                    if asset.isUsdzProcessing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(GonggiColors.accentTeal)
+                    }
+                    Text(asset.libraryStatus.label)
+                        .font(GonggiTypography.caption(12))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
                 if let date = asset.parsedCreatedAt {
                     Text(date.formatted(date: .abbreviated, time: .omitted))
                         .font(GonggiTypography.caption(11))
@@ -348,17 +355,28 @@ struct AssetDetailView: View {
     let listSnapshot: MobileAssetDTO
 
     @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var libraryStore = AssetLibraryStore.shared
     @State private var detail: MobileAssetDTO?
     @State private var loadError: String?
+    @State private var actionError: String?
     @State private var isLoadingDetail = false
+    @State private var isPreparingAR = false
+    @State private var isDownloadingAR = false
     @State private var showSpacePicker = false
     @State private var isLaunchingPlacement = false
     @State private var placementMessage: String?
     @State private var viewerLaunch: SpaceViewerLaunch?
+    @State private var quickLookURL: IdentifiedURL?
+    @State private var pollTask: Task<Void, Never>?
+    @State private var isForeground = true
 
     private var asset: MobileAssetDTO { detail ?? listSnapshot }
     private var canPlace: Bool {
         asset.availableForPlacement && !(asset.usdzUrl ?? "").isEmpty
+    }
+    private var canOpenAR: Bool {
+        asset.isUsdzReady && !isDownloadingAR && !isPreparingAR
     }
 
     var body: some View {
@@ -368,8 +386,14 @@ struct AssetDetailView: View {
                 Text(asset.name)
                     .font(GonggiTypography.title(24))
                     .foregroundStyle(GonggiColors.textPrimary)
+                statusBanner
                 metaRows
-                placeSection
+                actionSection
+                if let actionError {
+                    Text(actionError)
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.error)
+                }
                 if let loadError {
                     Text(loadError)
                         .font(GonggiTypography.caption(13))
@@ -381,7 +405,17 @@ struct AssetDetailView: View {
         .background(GonggiAmbientBackground(showGlow: false))
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("3D 어셋")
-        .task { await loadDetail() }
+        .task {
+            await loadDetail()
+            syncPolling()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            isForeground = phase == .active
+            syncPolling()
+        }
+        .onDisappear {
+            stopPolling()
+        }
         .sheet(isPresented: $showSpacePicker) {
             PlaceAssetSpacePickerView(
                 spaces: appState.spaces,
@@ -401,11 +435,21 @@ struct AssetDetailView: View {
             )
             .environmentObject(appState)
         }
+        .fullScreenCover(item: $quickLookURL) { item in
+            AssetARQuickLookView(localUsdzURL: item.url)
+        }
         .overlay {
-            if isLaunchingPlacement {
+            if isLaunchingPlacement || isDownloadingAR {
                 ZStack {
                     Color.black.opacity(0.35).ignoresSafeArea()
-                    ProgressView().tint(.white).scaleEffect(1.2)
+                    VStack(spacing: GonggiSpacing.md) {
+                        ProgressView().tint(.white).scaleEffect(1.2)
+                        if isDownloadingAR {
+                            Text("AR을 준비하는 중…")
+                                .font(GonggiTypography.caption(14))
+                                .foregroundStyle(.white)
+                        }
+                    }
                 }
             }
         }
@@ -417,6 +461,23 @@ struct AssetDetailView: View {
         } message: {
             Text(placementMessage ?? "")
         }
+    }
+
+    @ViewBuilder
+    private var statusBanner: some View {
+        HStack(spacing: GonggiSpacing.sm) {
+            if asset.isUsdzProcessing || isPreparingAR {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(GonggiColors.accentTeal)
+            }
+            Text(asset.libraryStatus.label)
+                .font(GonggiTypography.body(15))
+                .foregroundStyle(GonggiColors.textPrimary)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(asset.libraryStatus.label)
     }
 
     @ViewBuilder
@@ -447,16 +508,16 @@ struct AssetDetailView: View {
                 )
             }
             metaRow(
-                title: "3D (GLB)",
+                title: "3D",
                 value: !(asset.glbKey ?? "").isEmpty ? "준비됨" : "없음"
             )
             metaRow(
-                title: "AR (USDZ)",
-                value: usdzStatusLabel(asset.usdzStatus)
+                title: "AR",
+                value: userFacingARMeta(asset.usdzStatus)
             )
             metaRow(
                 title: "공간 배치",
-                value: canPlace ? "가능" : (asset.placementUnavailableReason ?? "USDZ 준비 후 가능")
+                value: canPlace ? "가능" : (asset.placementUnavailableReason ?? "준비 후 가능")
             )
         }
         .padding(GonggiSpacing.md)
@@ -465,25 +526,52 @@ struct AssetDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
     }
 
-    private var placeSection: some View {
+    @ViewBuilder
+    private var actionSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            PrimaryButton(title: "공간에 배치", icon: "square.stack.3d.up") {
-                GonggiHaptics.light()
-                showSpacePicker = true
-            }
-            .disabled(!canPlace || isLaunchingPlacement)
-            .opacity(canPlace ? 1 : 0.45)
-            .accessibilityLabel("공간에 배치")
-            .accessibilityHint(canPlace ? "배치할 공간을 선택합니다" : (asset.placementUnavailableReason ?? ""))
+            if asset.isUsdzReady {
+                PrimaryButton(title: "AR로 보기", icon: "arkit") {
+                    GonggiHaptics.medium()
+                    Task { await openAR() }
+                }
+                .disabled(!canOpenAR)
+                .opacity(canOpenAR ? 1 : 0.45)
+                .accessibilityLabel("AR로 보기")
+                .accessibilityHint("Quick Look으로 3D를 봅니다")
 
-            if let reason = asset.placementUnavailableReason {
+                SecondaryButton(title: "공간에 배치", icon: "square.stack.3d.up") {
+                    GonggiHaptics.light()
+                    showSpacePicker = true
+                }
+                .disabled(!canPlace || isLaunchingPlacement)
+                .opacity(canPlace ? 1 : 0.45)
+                .accessibilityLabel("공간에 배치")
+            } else if asset.isUsdzProcessing || isPreparingAR {
+                Text("AR/공간 배치 준비 중…")
+                    .font(GonggiTypography.caption(14))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .accessibilityLabel("AR과 공간 배치를 준비하는 중")
+            } else if asset.isUsdzFailed {
+                PrimaryButton(title: "AR 다시 준비하기", icon: "arrow.clockwise") {
+                    GonggiHaptics.light()
+                    Task { await prepareAR(invalidateCache: true) }
+                }
+                .disabled(isPreparingAR)
+                .accessibilityLabel("AR과 공간 배치를 다시 준비하기")
+            } else {
+                // NONE / legacy
+                PrimaryButton(title: "AR/공간 배치 준비하기", icon: "sparkles") {
+                    GonggiHaptics.light()
+                    Task { await prepareAR(invalidateCache: false) }
+                }
+                .disabled(isPreparingAR)
+                .accessibilityLabel("AR과 공간 배치를 준비하기")
+            }
+
+            if !asset.isUsdzReady, let reason = asset.placementUnavailableReason {
                 Text(reason)
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textSecondary)
-            } else {
-                Text("AR/배치 준비가 완료된 어셋만 사용할 수 있어요")
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.textTertiary)
             }
         }
     }
@@ -502,12 +590,12 @@ struct AssetDetailView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func usdzStatusLabel(_ raw: String?) -> String {
+    private func userFacingARMeta(_ raw: String?) -> String {
         switch (raw ?? "NONE").uppercased() {
-        case "READY": return "READY"
-        case "PROCESSING": return "PROCESSING"
-        case "FAILED": return "FAILED"
-        default: return "NONE"
+        case "READY": return "준비됨"
+        case "PROCESSING": return "준비 중"
+        case "FAILED": return "실패"
+        default: return "미준비"
         }
     }
 
@@ -532,13 +620,11 @@ struct AssetDetailView: View {
         defer { isLoadingDetail = false }
         do {
             let fresh = try await MobileAssetsAPIClient().fetchAsset(id: listSnapshot.id)
-            detail = fresh
+            applyDetail(fresh)
             loadError = nil
         } catch let error as MobileAssetsAPIError {
             if case .server(let status) = error, status == 401 {
                 loadError = "로그인이 필요해요"
-            } else if case .server(let status) = error, status == 404 {
-                loadError = "3D 어셋 정보를 불러오지 못했어요"
             } else {
                 loadError = "3D 어셋 정보를 불러오지 못했어요"
             }
@@ -546,6 +632,101 @@ struct AssetDetailView: View {
             loadError = "3D 어셋 정보를 불러오지 못했어요"
         }
     }
+
+    private func applyDetail(_ fresh: MobileAssetDTO) {
+        detail = fresh
+        libraryStore.upsertAsset(fresh)
+        syncPolling()
+    }
+
+    private func prepareAR(invalidateCache: Bool) async {
+        guard !isPreparingAR else { return }
+        isPreparingAR = true
+        actionError = nil
+        defer { isPreparingAR = false }
+        if invalidateCache {
+            await VRUsdzCache().invalidate(assetId: asset.id)
+        }
+        do {
+            let response = try await MobileAssetsAPIClient().prepareAR(assetId: asset.id)
+            if response.alreadyReady || response.status.uppercased() == "READY" {
+                await loadDetail()
+                return
+            }
+            // Optimistic PROCESSING until GET confirms.
+            if var snapshot = detail ?? Optional(listSnapshot) {
+                snapshot.usdzStatus = "PROCESSING"
+                snapshot.availability = "processing"
+                snapshot.availableForPlacement = false
+                applyDetail(snapshot)
+            }
+            syncPolling()
+        } catch let error as MobilePrepareARError {
+            actionError = error.userMessage
+        } catch {
+            actionError = "AR 준비에 실패했어요"
+        }
+    }
+
+    private func openAR() async {
+        guard let urlString = asset.usdzUrl, let remote = URL(string: urlString) else {
+            actionError = "AR 파일을 불러오지 못했어요"
+            return
+        }
+        isDownloadingAR = true
+        actionError = nil
+        defer { isDownloadingAR = false }
+        guard let local = await VRUsdzCache().localURL(assetId: asset.id, remoteURL: remote) else {
+            actionError = "AR 파일을 불러오지 못했어요"
+            return
+        }
+        quickLookURL = IdentifiedURL(url: local)
+    }
+
+    private func syncPolling() {
+        if asset.isUsdzProcessing, isForeground {
+            startPollingIfNeeded()
+        } else {
+            stopPolling()
+        }
+    }
+
+    private func startPollingIfNeeded() {
+        guard pollTask == nil else { return }
+        pollTask = Task {
+            var delays: [UInt64] = [2, 3, 5, 8]
+            var delayIndex = 0
+            while !Task.isCancelled {
+                let delay = delays[min(delayIndex, delays.count - 1)]
+                try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                delayIndex = min(delayIndex + 1, delays.count - 1)
+                guard !Task.isCancelled else { return }
+                guard isForeground else { continue }
+                do {
+                    let fresh = try await MobileAssetsAPIClient().fetchAsset(id: listSnapshot.id)
+                    await MainActor.run {
+                        applyDetail(fresh)
+                    }
+                    if !fresh.isUsdzProcessing {
+                        await MainActor.run { stopPolling() }
+                        return
+                    }
+                } catch {
+                    // Keep polling; server is canonical.
+                }
+            }
+        }
+    }
+
+    private func stopPolling() {
+        pollTask?.cancel()
+        pollTask = nil
+    }
+}
+
+private struct IdentifiedURL: Identifiable {
+    let id = UUID()
+    let url: URL
 }
 
 // MARK: - Thumbnail

@@ -15,10 +15,12 @@ actor VRUsdzCache {
         self.cachesDirectory = cachesDirectory
     }
 
-    /// Returns a cached local USDZ URL. A network or filesystem failure is non-fatal.
+    /// Returns a cached local USDZ URL. Revision is keyed by remote URL so re-prepare invalidates stale files.
     func localURL(assetId: String, remoteURL: URL) async -> URL? {
         do {
-            let destination = try cacheURL(assetId: assetId)
+            let destination = try cacheURL(assetId: assetId, remoteURL: remoteURL)
+            try migrateLegacyIfNeeded(assetId: assetId, destination: destination)
+
             if fileManager.fileExists(atPath: destination.path) {
                 return destination
             }
@@ -43,7 +45,30 @@ actor VRUsdzCache {
         }
     }
 
-    private func cacheURL(assetId: String) throws -> URL {
+    /// Drop all cached revisions for an asset (e.g. after explicit prepare retry).
+    func invalidate(assetId: String) {
+        guard let dir = try? assetDirectory(assetId: assetId) else { return }
+        try? fileManager.removeItem(at: dir)
+    }
+
+    /// Stable revision token from remote URL (path + query), for tests / diagnostics.
+    static func revisionToken(for remoteURL: URL) -> String {
+        let raw = remoteURL.absoluteString
+        var hash: UInt64 = 5381
+        for byte in raw.utf8 {
+            hash = ((hash << 5) &+ hash) &+ UInt64(byte)
+        }
+        return String(hash, radix: 16)
+    }
+
+    private func cacheURL(assetId: String, remoteURL: URL) throws -> URL {
+        let rev = Self.revisionToken(for: remoteURL)
+        return try assetDirectory(assetId: assetId)
+            .appendingPathComponent(rev, isDirectory: true)
+            .appendingPathComponent("model.usdz")
+    }
+
+    private func assetDirectory(assetId: String) throws -> URL {
         let root: URL
         if let cachesDirectory {
             root = cachesDirectory
@@ -63,6 +88,14 @@ actor VRUsdzCache {
         return root
             .appendingPathComponent("gonggi-assets", isDirectory: true)
             .appendingPathComponent(safeAssetId, isDirectory: true)
-            .appendingPathComponent("model.usdz")
+    }
+
+    /// Phase 1–3 layout was `…/{assetId}/model.usdz` without revision. Remove it so it is not reused.
+    private func migrateLegacyIfNeeded(assetId: String, destination: URL) throws {
+        let legacy = try assetDirectory(assetId: assetId).appendingPathComponent("model.usdz")
+        if fileManager.fileExists(atPath: legacy.path),
+           legacy.path != destination.path {
+            try? fileManager.removeItem(at: legacy)
+        }
     }
 }

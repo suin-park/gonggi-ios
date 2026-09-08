@@ -38,6 +38,8 @@ final class AssetLibraryStore: ObservableObject {
     private let client: MobileAssetsAPIClient
     private var loadTask: Task<Void, Never>?
     private let generationStore: AssetGenerationStore
+    private var readinessPollTask: Task<Void, Never>?
+    private var readinessPollDeadline: Date?
 
     init(
         client: MobileAssetsAPIClient = MobileAssetsAPIClient(),
@@ -91,6 +93,7 @@ final class AssetLibraryStore: ObservableObject {
             assets = list
             phase = .loaded
             errorMessage = nil
+            startScopedReadinessPollIfNeeded()
         } catch let error as MobileAssetsAPIError {
             _ = await jobsRefresh
             guard !Task.isCancelled else { return }
@@ -126,6 +129,79 @@ final class AssetLibraryStore: ObservableObject {
         assets = list
         phase = .loaded
         errorMessage = nil
+        startScopedReadinessPollIfNeeded()
+    }
+
+    /// Targeted update after Detail poll / prepare (avoids full list storm).
+    func upsertAsset(_ asset: MobileAssetDTO) {
+        if let idx = assets.firstIndex(where: { $0.id == asset.id }) {
+            assets[idx] = asset
+        } else {
+            assets.insert(asset, at: 0)
+        }
+        if phase == .idle || phase == .failed {
+            phase = .loaded
+        }
+        startScopedReadinessPollIfNeeded()
+    }
+
+    // MARK: - Scoped USDZ readiness poll (PROCESSING only, capped)
+
+    private var processingAssetIds: [String] {
+        assets.filter(\.isUsdzProcessing).map(\.id)
+    }
+
+    func startScopedReadinessPollIfNeeded() {
+        let ids = processingAssetIds
+        guard !ids.isEmpty else {
+            stopScopedReadinessPoll()
+            return
+        }
+        if readinessPollDeadline == nil {
+            readinessPollDeadline = Date().addingTimeInterval(3 * 60)
+        }
+        guard readinessPollTask == nil else { return }
+        readinessPollTask = Task { [weak self] in
+            var delays: [UInt64] = [2, 3, 5, 8]
+            var delayIndex = 0
+            while !Task.isCancelled {
+                guard let self else { return }
+                if let deadline = self.readinessPollDeadline, Date() > deadline {
+                    self.stopScopedReadinessPoll()
+                    return
+                }
+                let delay = delays[min(delayIndex, delays.count - 1)]
+                try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                delayIndex = min(delayIndex + 1, delays.count - 1)
+                guard !Task.isCancelled else { return }
+                await self.pollProcessingAssetsOnce()
+                if self.processingAssetIds.isEmpty {
+                    self.stopScopedReadinessPoll()
+                    return
+                }
+            }
+        }
+    }
+
+    private func stopScopedReadinessPoll() {
+        readinessPollTask?.cancel()
+        readinessPollTask = nil
+        readinessPollDeadline = nil
+    }
+
+    private func pollProcessingAssetsOnce() async {
+        let ids = processingAssetIds
+        guard !ids.isEmpty else { return }
+        for id in ids.prefix(6) {
+            do {
+                let fresh = try await client.fetchAsset(id: id)
+                if let idx = assets.firstIndex(where: { $0.id == id }) {
+                    assets[idx] = fresh
+                }
+            } catch {
+                // Keep last known; next cycle retries.
+            }
+        }
     }
 }
 

@@ -299,13 +299,13 @@ struct MobileAssetDTO: Codable, Equatable, Identifiable, Hashable, Sendable {
     }
 }
 
-/// Phase 1 Library status — mapped only from mobile DTO fields (no GenerationJob inventing).
+/// Phase 1/4B Library status — mapped only from mobile DTO fields (no GenerationJob inventing).
 enum AssetLibraryStatusPresentation: Equatable {
     /// USDZ READY (+ typically availableForPlacement).
     case complete
     /// usdzStatus PROCESSING
     case arPreparing
-    /// GLB present, USDZ not ready
+    /// GLB present, USDZ NONE — prepare needed (legacy / auto not visible yet)
     case glbReadyArNeeded
     /// No GLB / no READY USDZ — status unknown beyond usdz NONE
     case notReady
@@ -314,11 +314,11 @@ enum AssetLibraryStatusPresentation: Equatable {
 
     var label: String {
         switch self {
-        case .complete: return "완료"
-        case .arPreparing: return "AR 준비 중"
-        case .glbReadyArNeeded: return "3D 준비 완료 · AR 준비 필요"
-        case .notReady: return "AR 미준비"
-        case .arFailed: return "AR 준비 실패"
+        case .complete: return "준비 완료"
+        case .arPreparing: return "AR/공간 배치를 준비하는 중"
+        case .glbReadyArNeeded: return "AR/공간 배치 준비 필요"
+        case .notReady: return "AR/공간 배치 준비 필요"
+        case .arFailed: return "3D는 준비됐지만 AR 준비에 실패했어요"
         }
     }
 
@@ -360,16 +360,36 @@ extension MobileAssetDTO {
         libraryStatus == .complete && !(usdzUrl ?? "").isEmpty
     }
 
+    var normalizedUsdzStatus: String {
+        (usdzStatus ?? "NONE").uppercased()
+    }
+
+    var isUsdzReady: Bool {
+        normalizedUsdzStatus == "READY" && !(usdzUrl ?? "").isEmpty
+    }
+
+    var isUsdzProcessing: Bool {
+        normalizedUsdzStatus == "PROCESSING" || availability == "processing"
+    }
+
+    var isUsdzFailed: Bool {
+        normalizedUsdzStatus == "FAILED"
+    }
+
+    var isUsdzNone: Bool {
+        normalizedUsdzStatus == "NONE" || normalizedUsdzStatus.isEmpty
+    }
+
     /// Place CTA / picker: nil when selectable.
     var placementUnavailableReason: String? {
         if availableForPlacement, !(usdzUrl ?? "").isEmpty {
             return nil
         }
-        switch (usdzStatus ?? "NONE").uppercased() {
+        switch normalizedUsdzStatus {
         case "PROCESSING":
-            return "AR/배치 준비 중"
+            return "AR/공간 배치를 준비하는 중"
         case "FAILED":
-            return "AR 준비 실패"
+            return "3D는 준비됐지만 AR 준비에 실패했어요"
         default:
             return "AR/공간 배치 준비가 필요해요"
         }

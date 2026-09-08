@@ -14,11 +14,11 @@ final class AssetLibraryPhase2Tests: XCTestCase {
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "PROCESSING").placementUnavailableReason,
-            "AR/배치 준비 중"
+            "AR/공간 배치를 준비하는 중"
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "FAILED").placementUnavailableReason,
-            "AR 준비 실패"
+            "3D는 준비됐지만 AR 준비에 실패했어요"
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "NONE").placementUnavailableReason,
