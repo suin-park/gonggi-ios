@@ -37,13 +37,23 @@ final class AssetLibraryStore: ObservableObject {
 
     private let client: MobileAssetsAPIClient
     private var loadTask: Task<Void, Never>?
+    private let generationStore: AssetGenerationStore
 
-    init(client: MobileAssetsAPIClient = MobileAssetsAPIClient()) {
+    init(
+        client: MobileAssetsAPIClient = MobileAssetsAPIClient(),
+        generationStore: AssetGenerationStore = .shared
+    ) {
         self.client = client
+        self.generationStore = generationStore
+    }
+
+    /// Assets + pending/failed generation jobs (never fake jobs as assets).
+    var libraryEntries: [AssetLibraryEntry] {
+        AssetLibraryEntryMerger.merge(assets: assets, jobs: generationStore.jobs)
     }
 
     var isTrueEmpty: Bool {
-        phase == .loaded && assets.isEmpty && errorMessage == nil
+        phase == .loaded && assets.isEmpty && generationStore.jobs.isEmpty && errorMessage == nil
     }
 
     var mayBeTruncated: Bool {
@@ -57,7 +67,7 @@ final class AssetLibraryStore: ObservableObject {
     }
 
     func performRefresh() async {
-        let hadContent = !assets.isEmpty
+        let hadContent = !assets.isEmpty || !generationStore.jobs.isEmpty
         if hadContent {
             isRefreshing = true
         } else {
@@ -73,13 +83,16 @@ final class AssetLibraryStore: ObservableObject {
             return
         }
 
+        async let jobsRefresh: Bool = generationStore.refreshActiveJobs()
         do {
             let list = try await client.fetchAssets()
+            _ = await jobsRefresh
             guard !Task.isCancelled else { return }
             assets = list
             phase = .loaded
             errorMessage = nil
         } catch let error as MobileAssetsAPIError {
+            _ = await jobsRefresh
             guard !Task.isCancelled else { return }
             if case .server(let status) = error, status == 401 {
                 assets = []
@@ -94,6 +107,7 @@ final class AssetLibraryStore: ObservableObject {
                 errorMessage = "3D 어셋을 불러오지 못했어요"
             }
         } catch {
+            _ = await jobsRefresh
             guard !Task.isCancelled else { return }
             if hadContent {
                 errorMessage = nil
@@ -112,5 +126,22 @@ final class AssetLibraryStore: ObservableObject {
         assets = list
         phase = .loaded
         errorMessage = nil
+    }
+}
+
+enum AssetLibraryEntryMerger {
+    static func merge(assets: [MobileAssetDTO], jobs: [MobileGenerationJobDTO]) -> [AssetLibraryEntry] {
+        let assetIds = Set(assets.map(\.id))
+        let jobEntries: [AssetLibraryEntry] = jobs.compactMap { job in
+            if job.isDone {
+                return nil
+            }
+            if let aid = job.assetId, assetIds.contains(aid) {
+                return nil
+            }
+            return .generation(job)
+        }
+        let assetEntries = assets.map { AssetLibraryEntry.asset($0) }
+        return jobEntries + assetEntries
     }
 }

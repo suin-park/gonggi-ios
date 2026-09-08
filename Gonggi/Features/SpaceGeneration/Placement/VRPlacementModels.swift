@@ -371,7 +371,7 @@ extension MobileAssetDTO {
         case "FAILED":
             return "AR 준비 실패"
         default:
-            return "AR/배치 준비 필요"
+            return "AR/공간 배치 준비가 필요해요"
         }
     }
 }

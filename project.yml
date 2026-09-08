@@ -80,7 +80,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleIconName: AppIcon
         UILaunchScreen: {}
-        NSCameraUsageDescription: 파노라마·공간 기록을 위해 카메라가 필요합니다.
+        NSCameraUsageDescription: 사진을 촬영해 3D 어셋을 만들기 위해 카메라 접근이 필요합니다.
         NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
         NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
         # Injected from Config/Auth.xcconfig (Debug + Release) — not hardcoded in Swift.

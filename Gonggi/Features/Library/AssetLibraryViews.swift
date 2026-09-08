@@ -1,10 +1,17 @@
 import SceneKit
 import SwiftUI
 
-/// Library tab: canonical 3D Locker assets via `GET /api/mobile/assets` (Phase 1).
+/// Library tab: canonical 3D Locker assets + GenerationJob cards (Phase 1 + 3B).
 struct AssetLibraryView: View {
     @ObservedObject var store: AssetLibraryStore
+    @ObservedObject private var generationStore = AssetGenerationStore.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedAsset: MobileAssetDTO?
+    @State private var showCreate = false
+    @State private var toastMessage: String?
+    @State private var retryJob: MobileGenerationJobDTO?
+    @State private var pendingRetryImage: UIImage?
+    @State private var pendingRetryJPEG: Data?
 
     var body: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
@@ -17,18 +24,91 @@ struct AssetLibraryView: View {
         .task {
             if store.phase == .idle || store.phase == .failed {
                 store.refresh()
+            } else {
+                await generationStore.refreshActiveJobs()
             }
         }
         .refreshable {
             await store.performRefresh()
         }
+        .onChange(of: scenePhase) { _, phase in
+            generationStore.setForeground(phase == .active)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .assetGenerationDidComplete)) { _ in
+            store.refresh(force: true)
+        }
+        .sheet(isPresented: $showCreate) {
+            CreateAssetFlowView(
+                onClose: { showCreate = false },
+                onAccepted: {
+                    toastMessage = "3D 생성을 시작했어요"
+                    store.refresh(force: true)
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .overlay(alignment: .bottom) {
+            if let toastMessage {
+                Text(toastMessage)
+                    .font(GonggiTypography.caption(14))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, GonggiSpacing.lg)
+                    .padding(.vertical, GonggiSpacing.sm)
+                    .background(GonggiColors.accentTeal.opacity(0.95))
+                    .clipShape(Capsule())
+                    .padding(.bottom, GonggiSpacing.lg)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                            withAnimation { self.toastMessage = nil }
+                        }
+                    }
+            }
+        }
+        .sheet(item: $retryJob) { job in
+            CreateAssetFlowView(
+                onClose: {
+                    retryJob = nil
+                    pendingRetryImage = nil
+                    pendingRetryJPEG = nil
+                    generationStore.removeJob(id: job.jobId)
+                },
+                onAccepted: {
+                    generationStore.removeJob(id: job.jobId)
+                    retryJob = nil
+                    pendingRetryImage = nil
+                    pendingRetryJPEG = nil
+                    toastMessage = "3D 생성을 시작했어요"
+                    store.refresh(force: true)
+                },
+                retrySourceImage: pendingRetryImage,
+                retryJPEG: pendingRetryJPEG
+            )
+            .presentationDetents([.large])
+        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("3D 어셋")
-                .font(GonggiTypography.caption(13))
-                .foregroundStyle(GonggiColors.accentTeal)
+            HStack {
+                Text("3D 어셋")
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.accentTeal)
+                Spacer()
+                Button {
+                    GonggiHaptics.light()
+                    showCreate = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(GonggiColors.accentTeal)
+                        .frame(width: 36, height: 36)
+                        .background(GonggiColors.surfaceElevated.opacity(0.8))
+                        .clipShape(Circle())
+                }
+                .accessibilityLabel("새 3D 어셋 만들기")
+            }
             Text("3D Locker의 3D 어셋을\n한곳에서 관리해요")
                 .font(GonggiTypography.headline(20))
                 .foregroundStyle(GonggiColors.textPrimary)
@@ -38,6 +118,9 @@ struct AssetLibraryView: View {
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
+            Text("앱을 닫아도 3D 생성은 계속돼요.")
+                .font(GonggiTypography.caption(12))
+                .foregroundStyle(GonggiColors.textTertiary)
         }
     }
 
@@ -52,7 +135,7 @@ struct AssetLibraryView: View {
             if store.isTrueEmpty {
                 emptyState
             } else {
-                assetList
+                entryList
             }
         }
     }
@@ -79,11 +162,15 @@ struct AssetLibraryView: View {
             Text("아직 3D 어셋이 없어요")
                 .font(GonggiTypography.headline(18))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("3D Locker에서 만든 어셋이 여기에 표시됩니다.")
+            Text("사진으로 새 3D 어셋을 만들어 보세요.")
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
+            PrimaryButton(title: "새 3D 어셋 만들기", icon: "plus") {
+                GonggiHaptics.medium()
+                showCreate = true
+            }
             Spacer(minLength: 40)
         }
         .frame(maxWidth: .infinity)
@@ -114,19 +201,115 @@ struct AssetLibraryView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var assetList: some View {
+    private var entryList: some View {
         LazyVStack(spacing: GonggiSpacing.md) {
-            ForEach(store.assets) { asset in
-                Button {
-                    GonggiHaptics.light()
-                    selectedAsset = asset
-                } label: {
-                    assetCard(asset)
+            ForEach(store.libraryEntries) { entry in
+                switch entry {
+                case .asset(let asset):
+                    Button {
+                        GonggiHaptics.light()
+                        selectedAsset = asset
+                    } label: {
+                        assetCard(asset)
+                    }
+                    .buttonStyle(GonggiPressableStyle())
+                    .accessibilityLabel("\(asset.name), 3D 어셋 상세 보기")
+                    .accessibilityHint(asset.libraryStatus.label)
+                case .generation(let job):
+                    generationCard(job)
                 }
-                .buttonStyle(GonggiPressableStyle())
-                .accessibilityLabel("\(asset.name), 3D 어셋 상세 보기")
-                .accessibilityHint(asset.libraryStatus.label)
             }
+        }
+    }
+
+    private func generationCard(_ job: MobileGenerationJobDTO) -> some View {
+        HStack(spacing: GonggiSpacing.md) {
+            generationThumb(job)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(job.statusLabel)
+                    .font(GonggiTypography.body(16))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                if job.isActive {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(GonggiColors.accentTeal)
+                        if let stage = job.stage, !stage.isEmpty {
+                            Text(stage)
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                        }
+                        // Real server progress only — never invent %.
+                        if let progress = job.progress, progress > 0, progress <= 100 {
+                            Text("\(progress)%")
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.textTertiary)
+                        }
+                    }
+                } else if job.isFailed {
+                    Button {
+                        GonggiHaptics.light()
+                        if let data = generationStore.localThumb(for: job.jobId),
+                           let image = UIImage(data: data) {
+                            retryJob = job
+                            // Sheet uses retrySource below via identified sheet content
+                            pendingRetryImage = image
+                            pendingRetryJPEG = data
+                        } else {
+                            pendingRetryImage = nil
+                            pendingRetryJPEG = nil
+                            retryJob = job
+                        }
+                    } label: {
+                        Text("다시 시도")
+                            .font(GonggiTypography.caption(13))
+                            .fontWeight(.semibold)
+                            .foregroundStyle(GonggiColors.accentTeal)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(GonggiSpacing.md)
+        .background(GonggiColors.surfaceElevated.opacity(0.75))
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+        .accessibilityLabel(job.statusLabel)
+    }
+
+    @ViewBuilder
+    private func generationThumb(_ job: MobileGenerationJobDTO) -> some View {
+        let size: CGFloat = 64
+        if let data = generationStore.localThumb(for: job.jobId),
+           let ui = UIImage(data: data) {
+            Image(uiImage: ui)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+        } else if let urlString = job.sourceThumbUrl, let url = URL(string: urlString) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                default:
+                    RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
+                        .fill(GonggiColors.surface)
+                        .overlay {
+                            Image(systemName: "cube.transparent")
+                                .foregroundStyle(GonggiColors.textTertiary)
+                        }
+                }
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+        } else {
+            RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
+                .fill(GonggiColors.surface)
+                .frame(width: size, height: size)
+                .overlay {
+                    Image(systemName: "cube.transparent")
+                        .foregroundStyle(GonggiColors.textTertiary)
+                }
         }
     }
 
@@ -477,30 +660,3 @@ struct AssetSceneKitPreviewRepresentable: UIViewRepresentable {
     }
 }
 
-/// Kept for Space Detail sheet entry points that still open create (Phase 3 will wire).
-/// Library Phase 1 does not present this flow.
-struct CreateAssetFlowView: View {
-    var onClose: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                Text("새 3D 어셋 만들기")
-                    .font(GonggiTypography.title(22))
-                    .foregroundStyle(GonggiColors.textPrimary)
-                Text("사진으로 3D를 만드는 기능은 곧 연결될 예정이에요.")
-                    .font(GonggiTypography.caption(14))
-                    .foregroundStyle(GonggiColors.textSecondary)
-                Spacer()
-            }
-            .padding(GonggiSpacing.lg)
-            .background(GonggiAmbientBackground(showGlow: false))
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("닫기") { onClose() }
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
-            }
-        }
-    }
-}

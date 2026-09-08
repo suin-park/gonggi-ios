@@ -22,7 +22,7 @@ final class AssetLibraryPhase2Tests: XCTestCase {
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "NONE").placementUnavailableReason,
-            "AR/배치 준비 필요"
+            "AR/공간 배치 준비가 필요해요"
         )
     }
 
