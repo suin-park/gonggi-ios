@@ -19,6 +19,8 @@ struct VRSphereSpaceView: View {
     /// Build 81 — freeze interactions while host runs transition.
     var spaceLinkTransitionLocked: Bool = false
     var transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary
+    /// Build 82 — stagger hotspot/asset loads until after first panorama frame.
+    var deferSecondaryLoads: Bool = false
     var onClose: () -> Void
     /// Optional: notify parent of new local texture path (do not recreate viewer — orientation preserved in-place).
     var onRepairCompleted: ((URL) -> Void)? = nil
@@ -107,6 +109,7 @@ struct VRSphereSpaceView: View {
         initialFieldOfView: Double = SpaceLinkTransitionMath.baseFOV,
         spaceLinkTransitionLocked: Bool = false,
         transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary,
+        deferSecondaryLoads: Bool = false,
         onClose: @escaping () -> Void,
         onRepairCompleted: ((URL) -> Void)? = nil,
         onNavigateToLinkedSpace: ((SpaceLink) -> Void)? = nil,
@@ -120,6 +123,7 @@ struct VRSphereSpaceView: View {
         self.initialFieldOfView = initialFieldOfView
         self.spaceLinkTransitionLocked = spaceLinkTransitionLocked
         self.transitionBridgeRole = transitionBridgeRole
+        self.deferSecondaryLoads = deferSecondaryLoads
         self.onClose = onClose
         self.onRepairCompleted = onRepairCompleted
         self.onNavigateToLinkedSpace = onNavigateToLinkedSpace
@@ -523,12 +527,24 @@ struct VRSphereSpaceView: View {
             initialFieldOfView: initialFieldOfView,
             spaceLinkTransitionLocked: spaceLinkTransitionLocked,
             transitionBridgeRole: transitionBridgeRole,
+            deferSecondaryLoads: deferSecondaryLoads,
             onViewerReady: {
                 panoramaReady = true
-                scheduleHintFlowIfNeeded()
-                loadPlacementIfNeeded()
-                loadSpaceLinksIfNeeded()
                 onViewerReady?()
+                if deferSecondaryLoads {
+                    SpaceLink82Timing.log("secondaryLoads deferred")
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 400_000_000)
+                        SpaceLink82Timing.log("secondaryLoads start")
+                        scheduleHintFlowIfNeeded()
+                        loadPlacementIfNeeded()
+                        loadSpaceLinksIfNeeded()
+                    }
+                } else {
+                    scheduleHintFlowIfNeeded()
+                    loadPlacementIfNeeded()
+                    loadSpaceLinksIfNeeded()
+                }
             },
             onLongPress: { yaw, pitch in
                 GonggiHaptics.medium()
@@ -2001,6 +2017,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var initialFieldOfView: Double = SpaceLinkTransitionMath.baseFOV
     var spaceLinkTransitionLocked: Bool = false
     var transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary
+    var deferSecondaryLoads: Bool = false
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
     var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
@@ -2025,6 +2042,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> SCNHostView {
         let host = SCNHostView()
+        let tHost = CFAbsoluteTimeGetCurrent()
+        SpaceLink82Timing.log("scnHostCreate start")
         host.onLongPressEquirect = onLongPress
         host.onMotionAvailabilityChanged = { available in
             onMotionHardwareAvailable?(available)
@@ -2036,7 +2055,12 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.onSpaceLinkDragEnded = onSpaceLinkDragEnded
         host.onSpaceLinkDraggingChanged = onSpaceLinkDraggingChanged
         host.onSpaceLinkScreenPoint = onSpaceLinkScreenPoint
-        host.configure(imageURL: imageURL)
+        let prepared = SpaceLinkPanoramaTextureCache.shared.cachedImage(for: imageURL)
+        host.configure(
+            imageURL: imageURL,
+            preparedTexture: prepared,
+            startMotion: !spaceLinkTransitionLocked && motionDesiredEnabled
+        )
         host.setFieldOfViewDegrees(initialFieldOfView)
         host.setSpaceLinkTransitionLocked(spaceLinkTransitionLocked)
         SpaceLinkTransitionBridge.shared.register(host, role: transitionBridgeRole)
@@ -2051,7 +2075,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             metadata: assetMetadata,
             modelURLs: modelURLs
         )
-        host.syncSpaceLinks(spaceLinks, selectedId: selectedSpaceLinkId, pulseInView: true)
+        // Build 82: skip hotspot sync on cold create when secondary loads are deferred
+        // (empty links until staggered load) — avoids empty→full rebuild thrash later only.
+        if !deferSecondaryLoads || !spaceLinks.isEmpty {
+            host.syncSpaceLinks(spaceLinks, selectedId: selectedSpaceLinkId, pulseInView: true)
+        }
         host.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
         host.setLightingExperiment(
             mode: resolvedLightingMode,
@@ -2073,7 +2101,10 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         context.coordinator.lastSpaceLinkFingerprint = spaceLinkFingerprint
         context.coordinator.lastInitialFOV = initialFieldOfView
         context.coordinator.lastTransitionLocked = spaceLinkTransitionLocked
-        DispatchQueue.main.async {
+        SpaceLink82Timing.log("scnHostCreate end", ["ms": SpaceLink82Timing.ms(since: tHost)])
+        Task { @MainActor in
+            await host.prepareFirstFrameReady()
+            guard !context.coordinator.didNotifyReady else { return }
             context.coordinator.didNotifyReady = true
             onViewerReady?()
         }
@@ -2113,7 +2144,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         context.coordinator.registeredHost = uiView
         if textureGeneration != context.coordinator.lastGeneration
             || imageURL != context.coordinator.lastURL {
-            uiView.reloadTexture(from: imageURL)
+            let prepared = SpaceLinkPanoramaTextureCache.shared.cachedImage(for: imageURL)
+            uiView.reloadTexture(from: imageURL, preparedTexture: prepared)
             context.coordinator.lastGeneration = textureGeneration
             context.coordinator.lastURL = imageURL
         }
@@ -2231,10 +2263,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             }
         }
         if !context.coordinator.didNotifyReady {
-            context.coordinator.didNotifyReady = true
-            DispatchQueue.main.async {
-                onViewerReady?()
-            }
+            // Build 82: ready is signaled after prepareFirstFrameReady in makeUIView Task.
         }
     }
 

@@ -4,6 +4,7 @@ import UIKit
 /// Multi-space VR cover host — A→B→C via Navigation-style stack (Build 72).
 /// Build 80 — owns space-audio fade transitions across stack changes.
 /// Build 81 — production rotate + FOV zoom + dual-view crossfade (no camera push).
+/// Build 82 — hitch forensic + predecode/prewarm + deferred source teardown (visual lock).
 struct SpaceVRNavigationHost: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
@@ -15,12 +16,15 @@ struct SpaceVRNavigationHost: View {
     @State private var isTransitioning = false
     /// While true, render last two stack sessions for source→target opacity crossfade.
     @State private var isCrossfading = false
+    /// Build 82 — keep source SCNView alive (opacity 0) briefly after crossfade to avoid teardown hitch.
+    @State private var deferSourceHold = false
     @State private var sourceOpacity: Double = 1
     @State private var targetOpacity: Double = 1
     @State private var targetEntryFOV: Double = SpaceLinkTransitionMath.baseFOV
     @State private var suppressStackAudio = false
     @State private var targetReadyWaiter: CheckedContinuation<Void, Never>?
     @State private var targetReadyPending = false
+    @State private var sourceHoldTask: Task<Void, Never>?
 
     var onClose: () -> Void
 
@@ -36,7 +40,7 @@ struct SpaceVRNavigationHost: View {
 
     private var renderSessions: [SpaceViewerSession] {
         guard let last = stack.last else { return [] }
-        if isCrossfading, stack.count >= 2 {
+        if (isCrossfading || deferSourceHold), stack.count >= 2 {
             return Array(stack.suffix(2))
         }
         return [last]
@@ -46,15 +50,16 @@ struct SpaceVRNavigationHost: View {
         ZStack {
             ForEach(renderSessions) { session in
                 let isTop = session.id == stack.last?.id
-                let isSourceDuringCrossfade = isCrossfading && !isTop
+                let isSourceDuringCrossfade = (isCrossfading || deferSourceHold) && !isTop
                 VRSphereSpaceView(
                     imageURL: session.fileURL,
                     sessionId: session.id,
                     preferredAudioURL: session.audioURL,
-                    suppressAutoAudio: suppressStackAudio || isCrossfading,
+                    suppressAutoAudio: suppressStackAudio || isCrossfading || deferSourceHold,
                     initialFieldOfView: isTop ? targetEntryFOV : SpaceLinkTransitionMath.baseFOV,
                     spaceLinkTransitionLocked: isTransitioning,
                     transitionBridgeRole: isSourceDuringCrossfade ? .overlay : .primary,
+                    deferSecondaryLoads: isTop && (isCrossfading || isTransitioning),
                     onClose: {
                         guard !isTransitioning else { return }
                         if stack.count > 1 {
@@ -72,6 +77,7 @@ struct SpaceVRNavigationHost: View {
                     },
                     onViewerReady: {
                         if isCrossfading, isTop {
+                            SpaceLink82Timing.log("targetFirstFrameReady")
                             signalTargetReady()
                         }
                     }
@@ -120,11 +126,13 @@ struct SpaceVRNavigationHost: View {
             }
         }
         .onDisappear {
+            sourceHoldTask?.cancel()
             Task { await SpaceAudioManager.shared.fadeOutAndStop() }
         }
     }
 
     private func opacity(for session: SpaceViewerSession, isTop: Bool) -> Double {
+        if deferSourceHold, !isTop { return 0 }
         guard isCrossfading, stack.count >= 2 else { return 1 }
         return isTop ? targetOpacity : sourceOpacity
     }
@@ -151,12 +159,12 @@ struct SpaceVRNavigationHost: View {
         let sourceId = stack.last?.id ?? "?"
         isTransitioning = true
         suppressStackAudio = true
+        sourceHoldTask?.cancel()
+        deferSourceHold = false
 
         let sourceHost = SpaceLinkTransitionBridge.shared.activeHost
         guard let sourceHost else {
-            #if DEBUG
-            print("[spaceLink81] fallback reason=no_active_host source=\(sourceId) target=\(targetKey)")
-            #endif
+            SpaceLink82Timing.log("fallback", ["reason": "no_active_host"])
             await navigateWithBlackFallback(targetKey: targetKey)
             return
         }
@@ -172,11 +180,13 @@ struct SpaceVRNavigationHost: View {
         sourceHost.setSpaceLinkTransitionLocked(true)
         sourceHost.pulseHotspotExit(id: link.id)
 
-        #if DEBUG
-        print(
-            "[spaceLink81] begin source=\(sourceId) target=\(targetKey) sourceYaw=\(startPose.yawDeg) sourcePitch=\(startPose.pitchDeg) hotspotYaw=\(link.yawDeg) hotspotPitch=\(link.pitchDeg) yawDelta=\(yawDelta) pitchDelta=\(pitchDelta) reduceMotion=\(reduceMotion)"
-        )
-        #endif
+        SpaceLink82Timing.log("begin", [
+            "source": sourceId,
+            "target": targetKey,
+            "yawDelta": String(format: "%.1f", yawDelta),
+            "pitchDelta": String(format: "%.1f", pitchDelta),
+            "reduceMotion": reduceMotion
+        ])
 
         async let audioFade: Void = SpaceAudioManager.shared.fadeOutAndStop(
             duration: SpaceAudioPolicy.fadeOutSeconds
@@ -190,16 +200,31 @@ struct SpaceVRNavigationHost: View {
             reduceMotion: reduceMotion
         )
 
-        let preloadStart = CFAbsoluteTimeGetCurrent()
+        let resolveStart = CFAbsoluteTimeGetCurrent()
+        SpaceLink82Timing.log("urlResolve start")
         let result = await appState.prepareSpaceViewer(jobId: targetKey)
-        let preloadMs = Int((CFAbsoluteTimeGetCurrent() - preloadStart) * 1000)
+        let resolveMs = SpaceLink82Timing.ms(since: resolveStart)
+        SpaceLink82Timing.log("urlResolve end", ["ms": resolveMs])
+
         await alignZoom
-        let alignMs = Int((CFAbsoluteTimeGetCurrent() - alignStart) * 1000)
+        let alignMs = SpaceLink82Timing.ms(since: alignStart)
         _ = await audioFade
 
         switch result {
         case .success(let url):
+            // Build 82 — background force-decode before SCNHost create / crossfade.
+            let decodeStart = CFAbsoluteTimeGetCurrent()
+            let decoded = await SpaceLinkPanoramaTextureCache.shared.predecode(url: url)
+            let decodeMs = SpaceLink82Timing.ms(since: decodeStart)
+            SpaceLink82Timing.log("predecodeGate", [
+                "ms": decodeMs,
+                "ok": decoded != nil
+            ])
+
+            let audioResolveStart = CFAbsoluteTimeGetCurrent()
             let audioURL = await SpaceAudioManager.shared.resolveAudioURL(spaceId: targetKey)
+            SpaceLink82Timing.log("audioResolve", ["ms": SpaceLink82Timing.ms(since: audioResolveStart)])
+
             let session = SpaceViewerSession(id: targetKey, fileURL: url, audioURL: audioURL)
 
             targetEntryFOV = reduceMotion
@@ -208,13 +233,14 @@ struct SpaceVRNavigationHost: View {
             sourceOpacity = 1
             targetOpacity = 0
             targetReadyPending = false
+            SpaceLink82Timing.log("stackAppend")
             isCrossfading = true
             stack.append(session)
 
-            // Wait until target SCNHost has configured texture (or timeout).
             let waitStart = CFAbsoluteTimeGetCurrent()
-            await waitForTargetViewerReady(timeoutMs: 2_500)
-            let waitMs = Int((CFAbsoluteTimeGetCurrent() - waitStart) * 1000)
+            await waitForTargetViewerReady(timeoutMs: 3_500)
+            let waitMs = SpaceLink82Timing.ms(since: waitStart)
+            SpaceLink82Timing.log("waitFirstFrame", ["ms": waitMs])
 
             let crossDur = reduceMotion
                 ? SpaceLinkTransitionMath.reduceMotionCrossfadeDuration
@@ -225,8 +251,11 @@ struct SpaceVRNavigationHost: View {
                 targetOpacity = 1
             }
             try? await Task.sleep(nanoseconds: UInt64(crossDur * 1_000_000_000))
-            let crossMs = Int((CFAbsoluteTimeGetCurrent() - crossStart) * 1000)
+            let crossMs = SpaceLink82Timing.ms(since: crossStart)
+            SpaceLink82Timing.log("crossfadeComplete", ["ms": crossMs])
 
+            // Keep source SCN alive (opacity 0) while target settles — avoid ARC/teardown hitch.
+            deferSourceHold = true
             isCrossfading = false
             sourceOpacity = 1
             targetOpacity = 1
@@ -241,38 +270,75 @@ struct SpaceVRNavigationHost: View {
                     duration: SpaceLinkTransitionMath.settleDuration,
                     easeOut: true
                 )
+                // Visual stable → next tick → re-anchor / resume motion.
+                await Task.yield()
+                SpaceLink82Timing.log("motionResume start")
                 targetHost.setSpaceLinkTransitionLocked(false)
+                SpaceLink82Timing.log("motionResume end")
             } else {
                 SpaceLinkTransitionBridge.shared.activeHost?.setFieldOfViewDegrees(
                     SpaceLinkTransitionMath.baseFOV
                 )
+                await Task.yield()
                 SpaceLinkTransitionBridge.shared.activeHost?.setSpaceLinkTransitionLocked(false)
             }
-            let settleMs = Int((CFAbsoluteTimeGetCurrent() - settleStart) * 1000)
+            let settleMs = SpaceLink82Timing.ms(since: settleStart)
 
             targetEntryFOV = SpaceLinkTransitionMath.baseFOV
             suppressStackAudio = false
-            await SpaceAudioManager.shared.playForSpace(spaceId: targetKey, preferredURL: audioURL)
-
-            let totalMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
-            #if DEBUG
-            print(
-                "[spaceLink81] done source=\(sourceId) target=\(targetKey) preloadMs=\(preloadMs) alignMs=\(alignMs) waitReadyMs=\(waitMs) crossfadeMs=\(crossMs) settleMs=\(settleMs) totalMs=\(totalMs)"
-            )
-            #endif
             isTransitioning = false
+            SpaceLink82Timing.log("interactionReady")
+
+            // Audio must not block interaction; slight delay keeps AVAudioSession off settle frame.
+            let playTarget = targetKey
+            let playURL = audioURL
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                let audioStart = CFAbsoluteTimeGetCurrent()
+                SpaceLink82Timing.log("audioPrepare start")
+                await SpaceAudioManager.shared.playForSpace(spaceId: playTarget, preferredURL: playURL)
+                SpaceLink82Timing.log("audioPrepare end", ["ms": SpaceLink82Timing.ms(since: audioStart)])
+            }
+
+            scheduleDeferredSourceRelease()
+
+            let totalMs = SpaceLink82Timing.ms(since: t0)
+            SpaceLink82Timing.log("done", [
+                "resolveMs": resolveMs,
+                "decodeMs": decodeMs,
+                "alignMs": alignMs,
+                "waitReadyMs": waitMs,
+                "crossfadeMs": crossMs,
+                "settleMs": settleMs,
+                "totalMs": totalMs
+            ])
 
         case .failure:
-            #if DEBUG
-            print("[spaceLink81] target load failure source=\(sourceId) target=\(targetKey) preloadMs=\(preloadMs)")
-            #endif
+            SpaceLink82Timing.log("targetLoadFailure", ["resolveMs": resolveMs])
             await sourceHost.restoreAfterFailedSpaceLinkTransition()
             isCrossfading = false
+            deferSourceHold = false
             targetEntryFOV = SpaceLinkTransitionMath.baseFOV
             suppressStackAudio = false
             isTransitioning = false
             navigateError = "공간을 불러오지 못했어요"
             await playAudioForTopOfStack()
+        }
+    }
+
+    @MainActor
+    private func scheduleDeferredSourceRelease() {
+        sourceHoldTask?.cancel()
+        let cleanupStart = CFAbsoluteTimeGetCurrent()
+        sourceHoldTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            SpaceLink82Timing.log("sourceCleanup start")
+            deferSourceHold = false
+            SpaceLink82Timing.log("sourceCleanup end", [
+                "holdMs": SpaceLink82Timing.ms(since: cleanupStart)
+            ])
+            SpaceLink82Timing.log("stableInteraction")
         }
     }
 
@@ -288,6 +354,7 @@ struct SpaceVRNavigationHost: View {
                 try? await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
                 if let waiter = targetReadyWaiter {
                     targetReadyWaiter = nil
+                    SpaceLink82Timing.log("waitFirstFrame timeout")
                     waiter.resume()
                 }
             }
@@ -307,6 +374,7 @@ struct SpaceVRNavigationHost: View {
         let result = await appState.prepareSpaceViewer(jobId: targetKey)
         switch result {
         case .success(let url):
+            _ = await SpaceLinkPanoramaTextureCache.shared.predecode(url: url)
             let audioURL = await SpaceAudioManager.shared.resolveAudioURL(spaceId: targetKey)
             let session = SpaceViewerSession(id: targetKey, fileURL: url, audioURL: audioURL)
             stack.append(session)
@@ -314,9 +382,11 @@ struct SpaceVRNavigationHost: View {
                 fadeOpacity = 0
             }
             suppressStackAudio = false
-            await SpaceAudioManager.shared.playForSpace(spaceId: targetKey, preferredURL: audioURL)
-            try? await Task.sleep(nanoseconds: 280_000_000)
             isTransitioning = false
+            Task {
+                await SpaceAudioManager.shared.playForSpace(spaceId: targetKey, preferredURL: audioURL)
+            }
+            try? await Task.sleep(nanoseconds: 280_000_000)
         case .failure:
             withAnimation(.easeInOut(duration: 0.2)) {
                 fadeOpacity = 0

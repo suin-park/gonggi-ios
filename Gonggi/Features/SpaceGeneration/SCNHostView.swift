@@ -193,7 +193,17 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     // MARK: - Scene
 
-    func configure(imageURL: URL) {
+    /// - Parameters:
+    ///   - imageURL: on-disk equirect (cache key / fallback).
+    ///   - preparedTexture: Build 82 predecoded bitmap; skips main-thread JPEG decode when set.
+    ///   - startMotion: false during SpaceLink transition lock so CoreMotion attach is deferred.
+    func configure(
+        imageURL: URL,
+        preparedTexture: UIImage? = nil,
+        startMotion: Bool = true
+    ) {
+        let tScene = CFAbsoluteTimeGetCurrent()
+        SpaceLink82Timing.log("sceneCreate start")
         let scene = SCNScene()
         let sphere = SCNSphere(radius: 10)
         sphere.segmentCount = 192
@@ -201,7 +211,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         let material = SCNMaterial()
         material.isDoubleSided = true
         material.lightingModel = .constant
-        applyTexture(to: material, imageURL: imageURL)
+        let tTex = CFAbsoluteTimeGetCurrent()
+        applyTexture(to: material, imageURL: imageURL, preparedTexture: preparedTexture)
+        SpaceLink82Timing.log("textureAssign", ["ms": SpaceLink82Timing.ms(since: tTex)])
         material.diffuse.wrapS = .repeat
         material.diffuse.wrapT = .clamp
         sphere.firstMaterial = material
@@ -239,16 +251,40 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         look = VRLookComposer()
         referenceAttitude = nil
         applyLookToCamera()
-        startMotionIfPossible()
+        SpaceLink82Timing.log("sceneCreate end", ["ms": SpaceLink82Timing.ms(since: tScene)])
+        if startMotion {
+            startMotionIfPossible()
+        } else {
+            SpaceLink82Timing.log("motionAttach deferred")
+        }
+    }
+
+    /// SceneKit resource warm-up before crossfade (geometry / materials / textures).
+    func prepareFirstFrameReady() async {
+        guard let root = scnView.scene?.rootNode else { return }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        SpaceLink82Timing.log("scenekitPrepare start")
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            scnView.prepare([root]) { _ in
+                SpaceLink82Timing.log("scenekitPrepare end", ["ms": SpaceLink82Timing.ms(since: t0)])
+                DispatchQueue.main.async {
+                    cont.resume()
+                }
+            }
+        }
+        // One layout/render tick so the first presented frame is not cold.
+        scnView.setNeedsDisplay()
+        scnView.layoutIfNeeded()
+        SpaceLink82Timing.log("firstFramePresented")
     }
 
     /// Reload equirect texture without resetting look composition.
-    func reloadTexture(from imageURL: URL) {
+    func reloadTexture(from imageURL: URL, preparedTexture: UIImage? = nil) {
         guard let material = sphereNode?.geometry?.firstMaterial else {
-            configure(imageURL: imageURL)
+            configure(imageURL: imageURL, preparedTexture: preparedTexture)
             return
         }
-        applyTexture(to: material, imageURL: imageURL)
+        applyTexture(to: material, imageURL: imageURL, preparedTexture: preparedTexture)
         applyLookToCamera()
     }
 
@@ -579,10 +615,18 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             applyLookToCamera()
         } else if wasFrozen, !isMotionFrozen {
             unfreezeBakeAndReanchor()
+            if motionDesiredEnabled {
+                SpaceLink82Timing.log("motionReanchor")
+                startMotionIfPossible()
+            }
         } else if !locked {
             look.bakeMotionIntoBase()
             referenceAttitude = nil
             applyLookToCamera()
+            if motionDesiredEnabled {
+                SpaceLink82Timing.log("motionReanchor")
+                startMotionIfPossible()
+            }
         }
     }
 
@@ -874,12 +918,21 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         guard force || key != lastLightingApplyKey else { return }
         lastLightingApplyKey = key
         lightingExperiment.setFloorY(placementFloorY)
+        let prepared = lightingPanoramaURL.flatMap {
+            SpaceLinkPanoramaTextureCache.shared.cachedImage(for: $0)
+        }
+        let t0 = CFAbsoluteTimeGetCurrent()
         lightingExperiment.apply(
             mode: lightingMode,
             iblIntensity: lightingIBLIntensity,
             panoramaURL: lightingPanoramaURL,
+            preparedPanorama: prepared,
             forceReestimate: force
         )
+        SpaceLink82Timing.log("lightingApply", [
+            "ms": SpaceLink82Timing.ms(since: t0),
+            "cache": prepared != nil ? "hit" : "miss"
+        ])
     }
 
     func setRepairLongPressEnabled(_ enabled: Bool) {
@@ -893,16 +946,39 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    private func applyTexture(to material: SCNMaterial, imageURL: URL) {
+    private func applyTexture(
+        to material: SCNMaterial,
+        imageURL: URL,
+        preparedTexture: UIImage? = nil
+    ) {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let prepared = preparedTexture
+            ?? SpaceLinkPanoramaTextureCache.shared.cachedImage(for: imageURL)
+        if let prepared {
+            material.diffuse.contents = prepared
+            SpaceLink82Timing.log("textureContents", [
+                "ms": SpaceLink82Timing.ms(since: t0),
+                "source": "predecoded"
+            ])
+            return
+        }
+        // Fallback: may decode on calling thread (prefer predecode path).
+        SpaceLink82Timing.log("textureDecodeFallback", ["thread": "caller"])
         let raw = UIImage(contentsOfFile: imageURL.path)
         if let raw,
-           let prepared = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
-            material.diffuse.contents = prepared
+           let ready = Quick360SphereCoordinateConvention.prepareEquirectTextureForInsideOut(uiImage: raw) {
+            SpaceLinkPanoramaTextureCache.shared.store(ready, for: imageURL)
+            material.diffuse.contents = ready
         } else if let raw, raw.cgImage != nil {
+            SpaceLinkPanoramaTextureCache.shared.store(raw, for: imageURL)
             material.diffuse.contents = raw
         } else {
             material.diffuse.contents = UIColor(white: 0.12, alpha: 1)
         }
+        SpaceLink82Timing.log("textureContents", [
+            "ms": SpaceLink82Timing.ms(since: t0),
+            "source": "file"
+        ])
     }
 
     func updateSelection(

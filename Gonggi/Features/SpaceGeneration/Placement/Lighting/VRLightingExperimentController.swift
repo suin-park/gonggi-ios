@@ -33,6 +33,7 @@ final class VRLightingExperimentController {
         mode: VRLightingExperimentMode,
         iblIntensity: Float,
         panoramaURL: URL?,
+        preparedPanorama: UIImage? = nil,
         forceReestimate: Bool = false
     ) {
         self.mode = mode
@@ -42,11 +43,20 @@ final class VRLightingExperimentController {
         if let panoramaURL {
             if forceReestimate || panoramaURL != lastPanoramaURL {
                 lastPanoramaURL = panoramaURL
-                lastEstimate = VRDominantLightEstimator.estimate(from: panoramaURL)
+                if let preparedPanorama, let cg = preparedPanorama.cgImage {
+                    lastEstimate = VRDominantLightEstimator.estimate(cgImage: cg)
+                } else {
+                    lastEstimate = VRDominantLightEstimator.estimate(from: panoramaURL)
+                }
             }
-            // JPEG → UIImage → lightingEnvironment (SceneKit treats as sRGB LDR IBL).
-            // Do not apply an extra gamma curve here.
-            scene.lightingEnvironment.contents = UIImage(contentsOfFile: panoramaURL.path)
+            // Prefer predecoded texture — avoids a second main-thread JPEG decode for IBL.
+            if let preparedPanorama {
+                scene.lightingEnvironment.contents = preparedPanorama
+            } else if let cached = SpaceLinkPanoramaTextureCache.shared.cachedImage(for: panoramaURL) {
+                scene.lightingEnvironment.contents = cached
+            } else {
+                scene.lightingEnvironment.contents = UIImage(contentsOfFile: panoramaURL.path)
+            }
         }
 
         let intensity: CGFloat
