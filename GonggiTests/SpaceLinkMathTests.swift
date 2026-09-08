@@ -177,4 +177,93 @@ final class SpaceLinkMathTests: XCTestCase {
         // Near top: panel should not go above safe margin.
         XCTAssertGreaterThan(origin.y, 40)
     }
+
+    /// Build 76: finger up/down must move projected hotspot the same screen direction.
+    func testVerticalScreenDragDirectionMatchesProjection() {
+        let size = CGSize(width: 390, height: 844)
+        let camYaw: Float = 0
+        let camPitch: Float = 0
+        let center = CGPoint(x: 195, y: 422)
+        let up = CGPoint(x: 195, y: 322) // −100pt screen Y
+        let down = CGPoint(x: 195, y: 522)
+        let right = CGPoint(x: 295, y: 422)
+        let left = CGPoint(x: 95, y: 422)
+        let upRight = CGPoint(x: 295, y: 322)
+
+        let eqUp = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: up, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        let eqDown = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: down, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        let eqRight = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: right, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        let eqLeft = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: left, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        let eqUR = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: upRight, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+
+        XCTAssertGreaterThan(eqUp.pitchDeg, eqDown.pitchDeg, "up screen → higher equirect pitch")
+        XCTAssertGreaterThan(eqRight.yawDeg, eqLeft.yawDeg, "right screen → higher yaw")
+        XCTAssertGreaterThan(eqUR.pitchDeg, 0)
+        XCTAssertGreaterThan(eqUR.yawDeg, 0)
+
+        let aspect = Float(size.width / size.height)
+        guard let uvUp = SpaceLinkMath.screenUV(
+            yawDeg: eqUp.yawDeg,
+            pitchDeg: eqUp.pitchDeg,
+            cameraYawDeg: camYaw,
+            cameraPitchDeg: camPitch,
+            verticalFOVDegrees: 70,
+            aspect: aspect
+        ),
+        let uvDown = SpaceLinkMath.screenUV(
+            yawDeg: eqDown.yawDeg,
+            pitchDeg: eqDown.pitchDeg,
+            cameraYawDeg: camYaw,
+            cameraPitchDeg: camPitch,
+            verticalFOVDegrees: 70,
+            aspect: aspect
+        ),
+        let uvRight = SpaceLinkMath.screenUV(
+            yawDeg: eqRight.yawDeg,
+            pitchDeg: eqRight.pitchDeg,
+            cameraYawDeg: camYaw,
+            cameraPitchDeg: camPitch,
+            verticalFOVDegrees: 70,
+            aspect: aspect
+        )
+        else {
+            return XCTFail("behind camera")
+        }
+
+        XCTAssertLessThan(uvUp.y, 0.5, "up pitch projects to upper half")
+        XCTAssertGreaterThan(uvDown.y, 0.5, "down pitch projects to lower half")
+        XCTAssertGreaterThan(uvRight.x, 0.5)
+
+        let upPt = abs(uvUp.y - Float(up.y / size.height)) * Float(size.height)
+        let downPt = abs(uvDown.y - Float(down.y / size.height)) * Float(size.height)
+        XCTAssertLessThan(upPt, 20, "up round-trip within ~20pt")
+        XCTAssertLessThan(downPt, 20, "down round-trip within ~20pt")
+
+        // Grab offset: began 20pt above hotspot center should not snap.
+        let hotspotScreen = CGPoint(x: 195, y: 422)
+        let grabScreen = CGPoint(x: 195, y: 402)
+        let pose = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: hotspotScreen, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        let finger0 = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: grabScreen, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        let grabPitch = pose.pitchDeg - finger0.pitchDeg
+        let finger1 = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: grabScreen, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        let held = finger1.pitchDeg + grabPitch
+        XCTAssertEqual(held, pose.pitchDeg, accuracy: 0.05)
+        _ = center
+    }
 }

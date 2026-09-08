@@ -576,19 +576,25 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     var isSpaceLinkDragInProgress: Bool { isSpaceLinkDragging }
 
-    /// Screen point → world ray (SceneKit camera presentation) → equirect yaw/pitch.
+    /// Screen point → world ray → equirect yaw/pitch (Build 76: SceneKit unproject).
+    /// Uses `scnView.unprojectPoint` so vertical screen motion matches projected hotspot Y
+    /// (VRFloorRay NDC Y disagreed with SceneKit camera projection for pitch).
     func equirectDegreesAtScreenPoint(_ point: CGPoint) -> (yawDeg: Float, pitchDeg: Float) {
-        let transform = cameraNode?.presentation.simdWorldTransform
-            ?? cameraNode?.simdWorldTransform
-            ?? matrix_identity_float4x4
-        let fov = Float(cameraNode?.camera?.fieldOfView ?? 70)
-        let worldRay = VRFloorRay.ray(
-            screenPoint: point,
-            viewportSize: viewportSize,
-            cameraTransform: transform,
-            verticalFOVDegrees: fov
-        )
-        return SpaceLinkMath.equirectDegreesFromWorldDirection(worldRay.direction)
+        let near = scnView.unprojectPoint(SCNVector3(point.x, point.y, 0))
+        let far = scnView.unprojectPoint(SCNVector3(point.x, point.y, 1))
+        var dir = SIMD3(far.x - near.x, far.y - near.y, far.z - near.z)
+        let len = simd_length(dir)
+        if len < 1e-8 {
+            // Fallback: presentation −Z
+            let transform = cameraNode?.presentation.simdWorldTransform
+                ?? cameraNode?.simdWorldTransform
+                ?? matrix_identity_float4x4
+            let f4 = transform * SIMD4(0, 0, -1, 0)
+            dir = SIMD3(f4.x, f4.y, f4.z)
+        } else {
+            dir /= len
+        }
+        return SpaceLinkMath.equirectDegreesFromWorldDirection(dir)
     }
 
     func applyEnvironmentLighting(from imageURL: URL) {

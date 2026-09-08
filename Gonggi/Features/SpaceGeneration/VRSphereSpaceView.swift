@@ -1324,6 +1324,11 @@ struct VRSphereSpaceView: View {
 
         let draft = spaceLinks[idx]
         let targetId = space.sessionId ?? space.id
+        #if DEBUG
+        print(
+            "[spaceLink76] existing link POST source=\(sessionId) target=\(targetId) localStatus=\(space.status.rawValue) remoteURL=\(space.remoteImageURL ?? space.viewerURL?.absoluteString ?? "nil") auth=\(MobileAuthTokenStore.shared.getAccessToken() != nil)"
+        )
+        #endif
         do {
             let created = try await spaceLinkStore.createLinked(
                 sourceSpaceId: sessionId,
@@ -1344,10 +1349,24 @@ struct VRSphereSpaceView: View {
             spaceLinkBusyMessage = nil
         } catch SpaceLinkStoreError.tooManyLinks {
             spaceLinkBusyMessage = "공간 연결은 최대 \(SpaceLink.maxLinksPerSource)개까지 가능해요"
+        } catch SpaceLinkStoreError.targetNotReady {
+            spaceLinkBusyMessage = "이 공간은 아직 연결할 수 없어요"
+            #if DEBUG
+            print("[spaceLink76] existing link TARGET_NOT_READY target=\(targetId)")
+            #endif
+        } catch SpaceLinkStoreError.network {
+            spaceLinkBusyMessage = "연결하려면 네트워크가 필요해요"
+        } catch let SpaceLinkStoreError.server(status, code, message) {
+            spaceLinkBusyMessage = "연결하지 못했어요"
+            #if DEBUG
+            print(
+                "[spaceLink76] existing link POST failed status=\(status) code=\(code ?? "nil") message=\(message ?? "nil") source=\(sessionId) target=\(targetId)"
+            )
+            #endif
         } catch {
             spaceLinkBusyMessage = "연결하지 못했어요"
             #if DEBUG
-            print("[spaceLink73] existing link POST failed \(error)")
+            print("[spaceLink76] existing link POST failed \(error)")
             #endif
         }
     }

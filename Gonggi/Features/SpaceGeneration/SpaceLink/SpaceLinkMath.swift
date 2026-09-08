@@ -83,23 +83,47 @@ enum SpaceLinkMath {
         return (ndcX * 0.5 + 0.5, 0.5 - ndcY * 0.5)
     }
 
-    /// Screen-center world ray under SceneKit camera euler → equirect degrees.
+    /// Screen NDC → equirect using the same projection as `screenUV` / SceneKit camera −Z.
+    /// Used by Build 76 vertical-drag round-trip tests (mirrors `SCNHostView` unproject path).
+    static func equirectDegreesFromScreenPoint(
+        point: CGPoint,
+        viewportSize: CGSize,
+        cameraYawDeg: Float,
+        cameraPitchDeg: Float,
+        verticalFOVDegrees: Float = 70
+    ) -> (yawDeg: Float, pitchDeg: Float) {
+        guard viewportSize.width > 1, viewportSize.height > 1 else {
+            return (cameraYawDeg, cameraPitchDeg)
+        }
+        let uvx = Float(point.x / viewportSize.width)
+        let uvy = Float(point.y / viewportSize.height)
+        let aspect = Float(viewportSize.width / viewportSize.height)
+        let tanHalf = tan(verticalFOVDegrees * .pi / 360)
+        // Match screenUV: uv.y = 0.5 - ndcY*0.5 → ndcY = (0.5 - uv.y)*2 (top → +ndcY)
+        let ndcX = uvx * 2 - 1
+        let ndcY = (0.5 - uvy) * 2
+        let local = simd_normalize(SIMD3(ndcX * aspect * tanHalf, ndcY * tanHalf, -1))
+        let cam = VRLookMath.cameraEulerRad(equirectYawDeg: cameraYawDeg, equirectPitchDeg: cameraPitchDeg)
+        let node = SCNNode()
+        node.eulerAngles = SCNVector3(cam.pitch, cam.yaw, 0)
+        let world4 = node.simdWorldTransform * SIMD4(local.x, local.y, local.z, 0)
+        return equirectDegreesFromWorldDirection(SIMD3(world4.x, world4.y, world4.z))
+    }
+
+    /// Screen-center → equirect degrees.
     static func equirectDegreesFromCameraCenterRay(
         cameraYawDeg: Float,
         cameraPitchDeg: Float,
         verticalFOVDegrees: Float = 70,
         viewportSize: CGSize = CGSize(width: 390, height: 844)
     ) -> (yawDeg: Float, pitchDeg: Float) {
-        let cam = VRLookMath.cameraEulerRad(equirectYawDeg: cameraYawDeg, equirectPitchDeg: cameraPitchDeg)
-        let node = SCNNode()
-        node.eulerAngles = SCNVector3(cam.pitch, cam.yaw, 0)
         let center = CGPoint(x: viewportSize.width * 0.5, y: viewportSize.height * 0.5)
-        let worldRay = VRFloorRay.ray(
-            screenPoint: center,
+        return equirectDegreesFromScreenPoint(
+            point: center,
             viewportSize: viewportSize,
-            cameraTransform: node.simdWorldTransform,
+            cameraYawDeg: cameraYawDeg,
+            cameraPitchDeg: cameraPitchDeg,
             verticalFOVDegrees: verticalFOVDegrees
         )
-        return equirectDegreesFromWorldDirection(worldRay.direction)
     }
 }

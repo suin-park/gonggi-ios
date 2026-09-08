@@ -2,8 +2,10 @@ import Foundation
 
 enum SpaceLinkStoreError: Error, Equatable {
     case invalidResponse
-    case server(status: Int, message: String?)
+    case server(status: Int, code: String?, message: String?)
     case tooManyLinks
+    case targetNotReady
+    case network
 }
 
 /// Remote SpaceLink API + Application Support cache (online authoritative).
@@ -103,7 +105,12 @@ actor SpaceLinkStore {
         request.httpBody = try JSONEncoder().encode(body)
         applyBearer(to: &request)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw SpaceLinkStoreError.network
+        }
         try validate(response, data: data)
         let decoded = try JSONDecoder().decode(SpaceLinkMutationResponse.self, from: data)
         guard let link = decoded.link?.toModel() else {
@@ -225,11 +232,20 @@ actor SpaceLinkStore {
             throw SpaceLinkStoreError.invalidResponse
         }
         guard (200..<300).contains(http.statusCode) else {
-            let msg = (try? JSONDecoder().decode(SpaceLinkMutationResponse.self, from: data))?.message
-            if http.statusCode == 400, msg?.contains("최대") == true {
+            struct ErrBody: Decodable {
+                var error: String?
+                var message: String?
+            }
+            let body = try? JSONDecoder().decode(ErrBody.self, from: data)
+            let code = body?.error
+            let msg = body?.message
+            if http.statusCode == 400, code == "TOO_MANY_LINKS" || msg?.contains("최대") == true {
                 throw SpaceLinkStoreError.tooManyLinks
             }
-            throw SpaceLinkStoreError.server(status: http.statusCode, message: msg)
+            if http.statusCode == 400, code == "TARGET_NOT_READY" {
+                throw SpaceLinkStoreError.targetNotReady
+            }
+            throw SpaceLinkStoreError.server(status: http.statusCode, code: code, message: msg)
         }
     }
 
