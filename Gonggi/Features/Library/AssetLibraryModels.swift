@@ -1,6 +1,6 @@
 import Foundation
 
-/// Library category: spaces vs 3D assets (future 3D Locker linkage).
+/// Library category: spaces vs 3D assets (canonical 3D Locker Asset via mobile API).
 enum LibraryCategory: String, CaseIterable, Identifiable {
     case spaces
     case assets
@@ -15,38 +15,94 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
     }
 }
 
-/// Shell model for 3D assets until Locker asset API is wired.
-struct AssetRecord: Identifiable, Equatable, Hashable {
-    enum Status: String {
-        case ready
-        case generating
-        case failed
-
-        var label: String {
-            switch self {
-            case .ready: return "준비됨"
-            case .generating: return "생성 중"
-            case .failed: return "실패"
-            }
-        }
-    }
-
-    var id: String
-    var name: String
-    var createdAt: Date
-    var status: Status
-    var typeLabel: String
-    var thumbnailSystemImage: String
+enum AssetLibraryLoadPhase: Equatable {
+    case idle
+    case loading
+    case loaded
+    case failed
 }
 
-/// Placeholder store — replace with 3D Locker asset API client later.
+/// Loads canonical 3D Locker assets via existing mobile Bearer API (Phase 1).
 @MainActor
 final class AssetLibraryStore: ObservableObject {
     static let shared = AssetLibraryStore()
 
-    @Published private(set) var assets: [AssetRecord] = []
+    /// Known backend `take: 40` — Phase 1 does not claim a complete catalog beyond this.
+    static let knownServerTakeLimit = 40
 
-    func refresh() {
-        // Shell: empty until account-linked asset fetch exists.
+    @Published private(set) var assets: [MobileAssetDTO] = []
+    @Published private(set) var phase: AssetLibraryLoadPhase = .idle
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var isRefreshing = false
+
+    private let client: MobileAssetsAPIClient
+    private var loadTask: Task<Void, Never>?
+
+    init(client: MobileAssetsAPIClient = MobileAssetsAPIClient()) {
+        self.client = client
+    }
+
+    var isTrueEmpty: Bool {
+        phase == .loaded && assets.isEmpty && errorMessage == nil
+    }
+
+    var mayBeTruncated: Bool {
+        assets.count >= Self.knownServerTakeLimit
+    }
+
+    func refresh(force: Bool = false) {
+        if phase == .loading, !force { return }
+        loadTask?.cancel()
+        loadTask = Task { await performRefresh() }
+    }
+
+    func performRefresh() async {
+        let hadContent = !assets.isEmpty
+        if hadContent {
+            isRefreshing = true
+        } else {
+            phase = .loading
+        }
+        errorMessage = nil
+
+        guard MobileAuthTokenStore.shared.getAccessToken() != nil else {
+            assets = []
+            phase = .failed
+            errorMessage = "로그인이 필요해요"
+            isRefreshing = false
+            return
+        }
+
+        do {
+            let list = try await client.fetchAssets()
+            guard !Task.isCancelled else { return }
+            assets = list
+            phase = .loaded
+            errorMessage = nil
+        } catch let error as MobileAssetsAPIError {
+            guard !Task.isCancelled else { return }
+            if case .server(let status) = error, status == 401 {
+                assets = []
+                phase = .failed
+                errorMessage = "로그인이 필요해요"
+            } else if hadContent {
+                // Keep stale list; surface transient error via message only on empty fail.
+                errorMessage = nil
+            } else {
+                assets = []
+                phase = .failed
+                errorMessage = "3D 어셋을 불러오지 못했어요"
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            if hadContent {
+                errorMessage = nil
+            } else {
+                assets = []
+                phase = .failed
+                errorMessage = "3D 어셋을 불러오지 못했어요"
+            }
+        }
+        isRefreshing = false
     }
 }

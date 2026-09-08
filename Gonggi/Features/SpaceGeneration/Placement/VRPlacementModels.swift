@@ -229,7 +229,7 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-struct MobileAssetDTO: Codable, Equatable, Identifiable, Sendable {
+struct MobileAssetDTO: Codable, Equatable, Identifiable, Hashable, Sendable {
     var id: String
     var name: String
     var thumbUrl: String?
@@ -241,10 +241,12 @@ struct MobileAssetDTO: Codable, Equatable, Identifiable, Sendable {
     var depthCm: Double?
     var createdAt: String?
     var availableForPlacement: Bool
+    /// Detail envelope may include `availability`: ready | processing | unavailable
+    var availability: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, name, thumbUrl, usdzStatus, usdzUrl, glbKey
-        case widthCm, heightCm, depthCm, createdAt, availableForPlacement
+        case widthCm, heightCm, depthCm, createdAt, availableForPlacement, availability
     }
 
     init(
@@ -258,7 +260,8 @@ struct MobileAssetDTO: Codable, Equatable, Identifiable, Sendable {
         heightCm: Double? = nil,
         depthCm: Double? = nil,
         createdAt: String? = nil,
-        availableForPlacement: Bool = false
+        availableForPlacement: Bool = false,
+        availability: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -271,6 +274,7 @@ struct MobileAssetDTO: Codable, Equatable, Identifiable, Sendable {
         self.depthCm = depthCm
         self.createdAt = createdAt
         self.availableForPlacement = availableForPlacement
+        self.availability = availability
     }
 
     init(from decoder: Decoder) throws {
@@ -287,5 +291,72 @@ struct MobileAssetDTO: Codable, Equatable, Identifiable, Sendable {
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
         availableForPlacement =
             try container.decodeIfPresent(Bool.self, forKey: .availableForPlacement) ?? false
+        availability = try container.decodeIfPresent(String.self, forKey: .availability)
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
+/// Phase 1 Library status — mapped only from mobile DTO fields (no GenerationJob inventing).
+enum AssetLibraryStatusPresentation: Equatable {
+    /// USDZ READY (+ typically availableForPlacement).
+    case complete
+    /// usdzStatus PROCESSING
+    case arPreparing
+    /// GLB present, USDZ not ready
+    case glbReadyArNeeded
+    /// No GLB / no READY USDZ — status unknown beyond usdz NONE
+    case notReady
+    /// usdzStatus FAILED
+    case arFailed
+
+    var label: String {
+        switch self {
+        case .complete: return "완료"
+        case .arPreparing: return "AR 준비 중"
+        case .glbReadyArNeeded: return "3D 준비 완료 · AR 준비 필요"
+        case .notReady: return "AR 미준비"
+        case .arFailed: return "AR 준비 실패"
+        }
+    }
+
+    static func from(dto: MobileAssetDTO) -> AssetLibraryStatusPresentation {
+        let usdz = (dto.usdzStatus ?? "NONE").uppercased()
+        if usdz == "READY" || dto.availableForPlacement {
+            return .complete
+        }
+        if usdz == "PROCESSING" || dto.availability == "processing" {
+            return .arPreparing
+        }
+        if usdz == "FAILED" {
+            return .arFailed
+        }
+        let hasGlb = !(dto.glbKey ?? "").isEmpty
+        if hasGlb {
+            return .glbReadyArNeeded
+        }
+        return .notReady
+    }
+}
+
+extension MobileAssetDTO {
+    var libraryStatus: AssetLibraryStatusPresentation {
+        AssetLibraryStatusPresentation.from(dto: self)
+    }
+
+    var parsedCreatedAt: Date? {
+        guard let createdAt, !createdAt.isEmpty else { return nil }
+        let withFrac = ISO8601DateFormatter()
+        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFrac.date(from: createdAt) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: createdAt)
+    }
+
+    var canPreviewUSDZ: Bool {
+        libraryStatus == .complete && !(usdzUrl ?? "").isEmpty
     }
 }

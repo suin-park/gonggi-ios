@@ -9,7 +9,6 @@ struct LibraryView: View {
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
     @State private var retryJobId: String?
-    @State private var showCreateAsset = false
 
     var body: some View {
         NavigationStack {
@@ -41,19 +40,6 @@ struct LibraryView: View {
             .background(GonggiAmbientBackground())
             .navigationTitle("보관함")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                if category == .assets {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            GonggiHaptics.light()
-                            showCreateAsset = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .accessibilityLabel("새 3D 어셋 만들기")
-                    }
-                }
-            }
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
             }
@@ -62,11 +48,6 @@ struct LibraryView: View {
                     sessions: launch.sessions,
                     onClose: { viewerLaunch = nil }
                 )
-            }
-            .sheet(isPresented: $showCreateAsset) {
-                CreateAssetFlowView(onClose: { showCreateAsset = false })
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
             }
             .overlay {
                 if isPreparingViewer {
