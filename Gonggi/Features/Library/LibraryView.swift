@@ -20,9 +20,15 @@ struct LibraryView: View {
                         spacesHeader
                         LazyVStack(spacing: GonggiSpacing.md) {
                             ForEach(appState.spaces) { space in
-                                MemoryArchiveCard(space: space) {
-                                    handleOpen(space)
-                                }
+                                MemoryArchiveCard(
+                                    space: space,
+                                    onOpenDetail: {
+                                        selectedSpace = space
+                                    },
+                                    onViewSpace: {
+                                        Task { await openViewer(jobId: space.id) }
+                                    }
+                                )
                             }
                         }
                     } else {
@@ -107,13 +113,7 @@ struct LibraryView: View {
     }
 
     private func handleOpen(_ space: SpaceRecord) {
-        switch SpaceCardTapPolicy.action(for: space.status) {
-        case .openViewer:
-            Task { await openViewer(jobId: space.id) }
-        case .openDetail, .ignore:
-            // Failed → detail only; explicit “다시 시도” in SpaceDetailView regenerates.
-            selectedSpace = space
-        }
+        selectedSpace = space
     }
 
     private func openViewer(jobId: String) async {

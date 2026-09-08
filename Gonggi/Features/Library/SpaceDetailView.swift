@@ -131,16 +131,31 @@ struct SpaceDetailView: View {
     }
 
     private var metaSection: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+        VStack(alignment: .leading, spacing: GonggiSpacing.md) {
             Text(space.name)
                 .font(GonggiTypography.title(26))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Label(
-                space.capturedAt.formatted(date: .long, time: .shortened),
-                systemImage: "calendar"
-            )
-            .font(GonggiTypography.caption(14))
-            .foregroundStyle(GonggiColors.textSecondary)
+
+            detailRow(icon: "calendar", title: "생성일", value: space.capturedAt.formatted(date: .long, time: .omitted))
+            detailRow(icon: "mappin.and.ellipse", title: "위치", value: "위치 정보 없음")
+            detailRow(icon: "circle.fill", title: "상태", value: space.statusBadgeLabel)
+        }
+    }
+
+    private func detailRow(icon: String, title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: GonggiSpacing.sm) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(GonggiColors.textTertiary)
+                .frame(width: 18)
+            Text(title)
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(GonggiColors.textTertiary)
+                .frame(width: 52, alignment: .leading)
+            Text(value)
+                .font(GonggiTypography.body(15))
+                .foregroundStyle(GonggiColors.textSecondary)
+            Spacer(minLength: 0)
         }
     }
 
@@ -161,12 +176,17 @@ struct SpaceDetailView: View {
 
     private var actionsSection: some View {
         VStack(spacing: GonggiSpacing.sm) {
-            switch space.status {
-            case .ready:
-                PrimaryButton(title: "다시 들어가기", icon: "cube.transparent") {
+            // Primary: viewer when ready
+            if space.canOpenExistingVR {
+                PrimaryButton(title: "공간 보기", icon: "cube.transparent") {
                     GonggiHaptics.light()
                     Task { await openViewer() }
                 }
+                .accessibilityLabel("공간 보기")
+            }
+
+            switch space.status {
+            case .ready:
                 SecondaryButton(title: "3D 오브젝트 추가", icon: "square.stack.3d.up") {
                     GonggiHaptics.light()
                     showAddObjectSheet = true
@@ -192,12 +212,12 @@ struct SpaceDetailView: View {
                     showViewer = true
                 }
             }
-            HStack(spacing: GonggiSpacing.sm) {
-                SecondaryButton(title: "공유", icon: "square.and.arrow.up") {}
-                SecondaryButton(title: "공간 삭제", icon: "trash") {
-                    showDeleteConfirm = true
-                }
+
+            // Danger — Build 78 soft-delete (no dead share/rename/location buttons)
+            SecondaryButton(title: "공간 삭제", icon: "trash") {
+                showDeleteConfirm = true
             }
+            .accessibilityLabel("공간 삭제")
         }
         .padding(.top, GonggiSpacing.xs)
     }

@@ -173,16 +173,8 @@ struct HomeView: View {
     }
 
     private func handleSpaceTap(_ space: SpaceRecord) {
-        switch SpaceCardTapPolicy.action(for: space.status) {
-        case .openViewer:
-            // Includes repairing / repaired / repairFailed overlays — open latest successful revision.
-            Task { await openViewer(jobId: space.id) }
-        case .openDetail:
-            // Failed: detail only — never auto-regenerate (explicit “다시 시도” only).
-            selectedSpace = space
-        case .ignore:
-            selectedSpace = space
-        }
+        // Build 79: home recent card → Detail (manage). Viewer via Library “공간 보기”.
+        selectedSpace = space
     }
 
     private func openViewer(jobId: String) async {

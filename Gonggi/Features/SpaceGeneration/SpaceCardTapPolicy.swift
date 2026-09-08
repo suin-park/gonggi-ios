@@ -35,7 +35,10 @@ enum SpaceJobErrorPresentation {
     }
 }
 
-/// Navigation policy for space cards — failed cards never auto-regenerate.
+/// Navigation policy for space cards (Build 79 split).
+///
+/// - **Card body** → always Space Detail (manage / delete / status).
+/// - **“공간 보기” CTA** → VR only when `canOpenExistingVR`.
 enum SpaceCardTapPolicy {
     enum Action: Equatable {
         case openViewer
@@ -43,16 +46,22 @@ enum SpaceCardTapPolicy {
         case ignore
     }
 
-    /// Home / library card tap. Failed → detail only (explicit “다시 시도” regenerates).
-    static func action(for status: SpaceGenerationStatus) -> Action {
+    /// Card body tap — Detail for all statuses (Build 79).
+    static func cardBodyAction(for status: SpaceGenerationStatus) -> Action {
         switch status {
-        case .ready:
-            return .openViewer
-        case .failed:
+        case .ready, .failed, .processing, .uploading, .draft:
             return .openDetail
-        case .processing, .uploading, .draft:
-            return .ignore
         }
+    }
+
+    /// Legacy single-tap policy (pre–Build 79). Prefer `cardBodyAction` + view CTA.
+    static func action(for status: SpaceGenerationStatus) -> Action {
+        cardBodyAction(for: status)
+    }
+
+    /// Whether the card’s “공간 보기” CTA should fire the viewer path.
+    static func canLaunchViewer(for space: SpaceRecord) -> Bool {
+        space.canOpenExistingVR
     }
 
     static var failedCardAutoRegenerates: Bool { false }

@@ -484,69 +484,131 @@ struct StatusStepRow: View {
 
 struct MemoryArchiveCard: View {
     let space: SpaceRecord
-    var onOpen: () -> Void
+    /// Card body (thumbnail / title / meta) → Space Detail.
+    var onOpenDetail: () -> Void
+    /// “공간 보기 →” only — VR Viewer. Nil / unused when not viewable.
+    var onViewSpace: () -> Void
 
     var body: some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 0) {
-                thumbnailHero
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: {
+                GonggiHaptics.light()
+                onOpenDetail()
+            }) {
                 VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-                    HStack {
-                        Text(space.name)
-                            .font(GonggiTypography.headline(18))
-                            .foregroundStyle(GonggiColors.textPrimary)
-                            .lineLimit(2)
-                        Spacer(minLength: 0)
-                        statusChip
-                    }
-                    Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.textTertiary)
-                    if let note = space.note, !note.isEmpty {
-                        Text(note)
+                    thumbnailHero
+                    VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+                        HStack(alignment: .top, spacing: GonggiSpacing.sm) {
+                            Text(space.name)
+                                .font(GonggiTypography.headline(18))
+                                .foregroundStyle(GonggiColors.textPrimary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                            statusChip
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(GonggiColors.textTertiary)
+                                .padding(.top, 4)
+                                .accessibilityHidden(true)
+                        }
+                        Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
                             .font(GonggiTypography.caption(13))
-                            .foregroundStyle(GonggiColors.textSecondary)
-                            .lineLimit(2)
-                            .padding(.top, 2)
+                            .foregroundStyle(GonggiColors.textTertiary)
+                        if let note = space.note, !note.isEmpty {
+                            Text(note)
+                                .font(GonggiTypography.caption(13))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                                .lineLimit(2)
+                                .padding(.top, 2)
+                        }
                     }
-                    HStack {
-                        Text(ctaTitle(for: space))
-                            .font(GonggiTypography.caption(14))
-                            .foregroundStyle(
-                                space.status == .failed
-                                    ? GonggiColors.error
-                                    : GonggiColors.accentTeal
-                            )
-                        Image(systemName: space.status == .failed ? "arrow.clockwise" : "arrow.right")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(
-                                space.status == .failed
-                                    ? GonggiColors.error
-                                    : GonggiColors.accentTeal
-                            )
-                    }
-                    .padding(.top, GonggiSpacing.xs)
+                    .padding(.horizontal, GonggiSpacing.md)
+                    .padding(.top, GonggiSpacing.md)
+                    .padding(.bottom, GonggiSpacing.xs)
                 }
-                .padding(GonggiSpacing.md)
             }
-            .background(GonggiColors.surfaceElevated)
-            .overlay(
-                RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
-                    .stroke(GonggiColors.border, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
+            .buttonStyle(GonggiPressableStyle(scale: 0.98))
+            .accessibilityLabel("\(space.name), 상세 보기")
+
+            secondaryCTA
+                .padding(.horizontal, GonggiSpacing.md)
+                .padding(.bottom, GonggiSpacing.md)
         }
-        .buttonStyle(GonggiPressableStyle(scale: 0.98))
-        .accessibilityLabel("\(space.name), \(space.capturedAt.formatted(date: .abbreviated, time: .omitted)), \(space.statusBadgeLabel)")
+        .background(GonggiColors.surfaceElevated)
+        .overlay(
+            RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
+                .stroke(GonggiColors.border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var secondaryCTA: some View {
+        if space.canOpenExistingVR {
+            Button {
+                GonggiHaptics.light()
+                onViewSpace()
+            } label: {
+                HStack(spacing: 6) {
+                    Text("공간 보기")
+                        .font(GonggiTypography.caption(14))
+                        .foregroundStyle(GonggiColors.accentTeal)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(GonggiColors.accentTeal)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("공간 보기")
+        } else if space.status == .failed {
+            Button {
+                GonggiHaptics.light()
+                onOpenDetail()
+            } label: {
+                HStack(spacing: 6) {
+                    Text("다시 시도")
+                        .font(GonggiTypography.caption(14))
+                        .foregroundStyle(GonggiColors.error)
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(GonggiColors.error)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("다시 시도")
+        } else {
+            // Generating / uploading / draft — no viewer; open Detail for status.
+            Button {
+                GonggiHaptics.light()
+                onOpenDetail()
+            } label: {
+                HStack(spacing: 6) {
+                    Text(ctaTitle(for: space))
+                        .font(GonggiTypography.caption(14))
+                        .foregroundStyle(GonggiColors.textTertiary)
+                    Spacer(minLength: 0)
+                }
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(ctaTitle(for: space))
+        }
     }
 
     private func ctaTitle(for space: SpaceRecord) -> String {
-        if space.canOpenExistingVR { return "공간 보기" }
         switch space.status {
-        case .ready: return "공간 보기"
         case .failed: return "다시 시도"
         case .processing, .uploading: return "진행 상태"
         case .draft: return "이어서 보기"
+        case .ready: return "공간 보기"
         }
     }
 
@@ -608,7 +670,11 @@ struct SpaceCard: View {
     var onMore: () -> Void
 
     var body: some View {
-        MemoryArchiveCard(space: space, onOpen: onOpen)
+        MemoryArchiveCard(
+            space: space,
+            onOpenDetail: onOpen,
+            onViewSpace: onOpen
+        )
     }
 }
 
