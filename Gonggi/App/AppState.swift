@@ -13,6 +13,8 @@ final class AppState: ObservableObject {
     @Published var pendingViewerError: String?
     /// Build 72 — open VR with optional source→target stack after Space Link finalize.
     @Published var pendingViewerLaunch: SpaceViewerLaunch?
+    /// Phase 2 — consume-once Asset Detail / Space Detail → VR Edit placement draft.
+    @Published var pendingAssetPlacement: PendingAssetPlacement?
     @Published var spaceLinkUserMessage: String?
 
     let spaceService: SpaceGenerationService
@@ -306,6 +308,22 @@ final class AppState: ObservableObject {
         SpaceJobStore.shared.jobs.first(where: {
             $0.jobId == spaceId || $0.sessionId == spaceId
         })?.audioURL.flatMap(URL.init(string:))
+    }
+
+    /// Phase 2 — peek without consuming (Edit entry timing).
+    func peekPendingAssetPlacement(matchingViewerSessionId: String) -> PendingAssetPlacement? {
+        guard let pending = pendingAssetPlacement,
+              pending.matches(viewerSessionId: matchingViewerSessionId, spaces: spaces)
+        else { return nil }
+        return pending
+    }
+
+    /// Phase 2 — consume-once when VR is ready to insert.
+    func consumePendingAssetPlacement(matchingViewerSessionId: String) -> PendingAssetPlacement? {
+        guard let pending = peekPendingAssetPlacement(matchingViewerSessionId: matchingViewerSessionId)
+        else { return nil }
+        pendingAssetPlacement = nil
+        return pending
     }
 }
 

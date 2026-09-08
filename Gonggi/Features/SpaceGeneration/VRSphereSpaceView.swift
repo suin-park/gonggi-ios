@@ -21,6 +21,8 @@ struct VRSphereSpaceView: View {
     var transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary
     /// Build 82 — stagger hotspot/asset loads until after first panorama frame.
     var deferSecondaryLoads: Bool = false
+    /// Phase 2 — open in Edit immediately (placement handoff).
+    var startInEditMode: Bool = false
     var onClose: () -> Void
     /// Optional: notify parent of new local texture path (do not recreate viewer — orientation preserved in-place).
     var onRepairCompleted: ((URL) -> Void)? = nil
@@ -66,6 +68,12 @@ struct VRSphereSpaceView: View {
     @State private var pendingPlacementAsset: MobileAssetDTO?
     @State private var didLoadPlacement = false
     @State private var placementTask: Task<Void, Never>?
+    /// Phase 2 — external pending insert consume-once + cancel rollback.
+    @State private var didApplyStartInEdit = false
+    @State private var didConsumeExternalPending = false
+    @State private var discardDraftOnExitEdit = false
+    @State private var editBaselineLayout: VRPlacementLayout?
+    @State private var placementBlockedMessage: String?
     /// DEBUG lighting panel state (Release always baseline; flag via UserDefaults only).
     @State private var lightingPoCActive = false
     @State private var lightingMode = VRLightingExperimentPrefs.mode
@@ -110,6 +118,7 @@ struct VRSphereSpaceView: View {
         spaceLinkTransitionLocked: Bool = false,
         transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary,
         deferSecondaryLoads: Bool = false,
+        startInEditMode: Bool = false,
         onClose: @escaping () -> Void,
         onRepairCompleted: ((URL) -> Void)? = nil,
         onNavigateToLinkedSpace: ((SpaceLink) -> Void)? = nil,
@@ -124,6 +133,7 @@ struct VRSphereSpaceView: View {
         self.spaceLinkTransitionLocked = spaceLinkTransitionLocked
         self.transitionBridgeRole = transitionBridgeRole
         self.deferSecondaryLoads = deferSecondaryLoads
+        self.startInEditMode = startInEditMode
         self.onClose = onClose
         self.onRepairCompleted = onRepairCompleted
         self.onNavigateToLinkedSpace = onNavigateToLinkedSpace
@@ -221,8 +231,30 @@ struct VRSphereSpaceView: View {
                 .presentationDetents([.height(220)])
             }
             .sheet(isPresented: $assetPickerPresented) {
-                assetPicker
-                    .presentationDetents([.medium, .large])
+                AssetPickerSheet(
+                    store: AssetLibraryStore.shared,
+                    title: "3D 오브젝트",
+                    showNonReadyDisabled: true,
+                    isAtCapacity: draftLayout.assets.count >= VRPlacementLayout.maxAssets,
+                    onSelect: { asset in
+                        assetMetadata[asset.id] = asset
+                        if !lockerAssets.contains(where: { $0.id == asset.id }) {
+                            lockerAssets.append(asset)
+                        }
+                        assetPickerPresented = false
+                        Task {
+                            if let value = asset.usdzUrl, let url = URL(string: value) {
+                                if let local = await usdzCache.localURL(assetId: asset.id, remoteURL: url) {
+                                    modelURLs[asset.id] = local
+                                }
+                            }
+                            pendingPlacementAsset = asset
+                            placementRequestToken += 1
+                        }
+                    },
+                    onClose: { assetPickerPresented = false }
+                )
+                .presentationDetents([.medium, .large])
             }
             .overlay {
                 if addMenuPresented {
@@ -304,6 +336,14 @@ struct VRSphereSpaceView: View {
                 Button("확인", role: .cancel) { appState.spaceLinkUserMessage = nil }
             } message: {
                 Text(appState.spaceLinkUserMessage ?? "")
+            }
+            .alert("배치할 수 없어요", isPresented: Binding(
+                get: { placementBlockedMessage != nil },
+                set: { if !$0 { placementBlockedMessage = nil } }
+            )) {
+                Button("확인", role: .cancel) { placementBlockedMessage = nil }
+            } message: {
+                Text(placementBlockedMessage ?? "")
             }
     }
 
@@ -531,6 +571,7 @@ struct VRSphereSpaceView: View {
             onViewerReady: {
                 panoramaReady = true
                 onViewerReady?()
+                applyStartInEditModeIfNeeded()
                 if deferSecondaryLoads {
                     SpaceLink82Timing.log("secondaryLoads deferred")
                     Task { @MainActor in
@@ -761,57 +802,6 @@ struct VRSphereSpaceView: View {
         .background(Color.red.opacity(0.85), in: Capsule())
     }
 
-    private var assetPicker: some View {
-        NavigationStack {
-            Group {
-                if loadingAssets {
-                    ProgressView("3D 오브젝트를 불러오는 중")
-                } else {
-                    List(lockerAssets) { asset in
-                        let available = asset.availableForPlacement
-                            && asset.usdzUrl.flatMap(URL.init(string:)) != nil
-                        Button {
-                            guard available else { return }
-                            pendingPlacementAsset = asset
-                            assetPickerPresented = false
-                            placementRequestToken += 1
-                        } label: {
-                            HStack(spacing: 12) {
-                                AsyncImage(url: asset.thumbUrl.flatMap(URL.init(string:))) { image in
-                                    image.resizable().scaledToFill()
-                                } placeholder: {
-                                    Color.gray.opacity(0.2)
-                                        .overlay(Image(systemName: "cube"))
-                                }
-                                .frame(width: 56, height: 56)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(asset.name)
-                                        .foregroundStyle(.primary)
-                                    if let createdAt = asset.createdAt {
-                                        Text(createdAt)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    if !available {
-                                        Text("3D 준비 중")
-                                            .font(.caption.weight(.medium))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                Spacer()
-                            }
-                        }
-                        .disabled(!available || draftLayout.assets.count >= VRPlacementLayout.maxAssets)
-                    }
-                }
-            }
-            .navigationTitle("3D 오브젝트")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-
     private var vrToolbar: some View {
         HStack(spacing: 8) {
             Button {
@@ -962,7 +952,7 @@ struct VRSphereSpaceView: View {
         .accessibilityLabel(VRMotionPreferences.motionHintPrimary)
     }
 
-    private func enterEditMode() {
+    private func enterEditMode(discardUnsavedOnCancel: Bool = false) {
         markSelectiveRepairHintSeenAndHide()
         hideMotionHintImmediate()
         clearRepairSelection()
@@ -970,10 +960,23 @@ struct VRSphereSpaceView: View {
         selectedPlacementId = nil
         selectedSpaceLinkId = nil
         editTool = .none
+        if discardUnsavedOnCancel, editBaselineLayout == nil {
+            editBaselineLayout = draftLayout
+            discardDraftOnExitEdit = true
+        }
         interactionMode = .edit
     }
 
     private func exitEditMode() {
+        if discardDraftOnExitEdit, let baseline = editBaselineLayout {
+            draftLayout = baseline
+            selectedPlacementId = nil
+            Task {
+                try? await placementStore.saveLocal(baseline, sessionId: sessionId)
+            }
+        }
+        discardDraftOnExitEdit = false
+        editBaselineLayout = nil
         interactionMode = .view
         selectedPlacementId = nil
         selectedSpaceLinkId = nil
@@ -984,6 +987,8 @@ struct VRSphereSpaceView: View {
     private func saveAndFinishEditing() async {
         // Build 66: keep in-memory draft + scene nodes; switch to View immediately.
         // Never wait for PUT before showing placements in View.
+        discardDraftOnExitEdit = false
+        editBaselineLayout = nil
         let snapshot = draftLayout
         let linkSnapshot = spaceLinks
         #if DEBUG
@@ -1046,13 +1051,15 @@ struct VRSphereSpaceView: View {
         guard !didLoadPlacement else { return }
         didLoadPlacement = true
         loadingAssets = true
-        placementTask = Task {
+        placementTask = Task { @MainActor in
             let local = try? await placementStore.loadLocal(sessionId: sessionId)
             let remote = try? await placementStore.fetchRemote(sessionId: sessionId)
             let merged = await placementStore.merge(local: local, remote: remote)
             guard !Task.isCancelled else { return }
             draftLayout = merged
             try? await placementStore.saveLocal(merged, sessionId: sessionId)
+            applyStartInEditModeIfNeeded()
+            await consumeExternalPendingPlacementIfNeeded()
 
             do {
                 let assets = try await assetsClient.fetchAssets()
@@ -1060,11 +1067,79 @@ struct VRSphereSpaceView: View {
                 lockerAssets = assets
                 assetMetadata = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
                 loadingAssets = false
+                AssetLibraryStore.shared.replaceIfNewer(assets)
                 await downloadModels(for: assets)
+                await consumeExternalPendingPlacementIfNeeded()
             } catch {
                 loadingAssets = false
+                await consumeExternalPendingPlacementIfNeeded()
             }
         }
+    }
+
+    private func applyStartInEditModeIfNeeded() {
+        guard startInEditMode, !didApplyStartInEdit else { return }
+        didApplyStartInEdit = true
+        // Baseline for cancel-discard is captured only after placement load + pending consume.
+        enterEditMode(discardUnsavedOnCancel: false)
+    }
+
+    private func consumeExternalPendingPlacementIfNeeded() async {
+        guard panoramaReady, didLoadPlacement else { return }
+        guard !didConsumeExternalPending else { return }
+        guard let pending = appState.consumePendingAssetPlacement(matchingViewerSessionId: sessionId)
+        else { return }
+        didConsumeExternalPending = true
+
+        applyStartInEditModeIfNeeded()
+        if interactionMode != .edit {
+            enterEditMode(discardUnsavedOnCancel: false)
+        }
+        // Capture loaded layout before insert so cancel restores prior placements only.
+        editBaselineLayout = draftLayout
+        discardDraftOnExitEdit = true
+
+        guard draftLayout.assets.count < VRPlacementLayout.maxAssets else {
+            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            return
+        }
+
+        let asset: MobileAssetDTO
+        if let snapshot = pending.assetSnapshot,
+           snapshot.id == pending.assetId,
+           snapshot.availableForPlacement {
+            asset = snapshot
+        } else if let cached = assetMetadata[pending.assetId] ?? lockerAssets.first(where: { $0.id == pending.assetId }) {
+            asset = cached
+        } else {
+            do {
+                asset = try await assetsClient.fetchAsset(id: pending.assetId)
+            } catch {
+                placementBlockedMessage = "3D 어셋을 불러오지 못했어요"
+                return
+            }
+        }
+
+        guard asset.availableForPlacement,
+              let usdz = asset.usdzUrl,
+              let remoteURL = URL(string: usdz)
+        else {
+            placementBlockedMessage = asset.placementUnavailableReason ?? "AR/배치 준비 필요"
+            return
+        }
+
+        assetMetadata[asset.id] = asset
+        if !lockerAssets.contains(where: { $0.id == asset.id }) {
+            lockerAssets.append(asset)
+        }
+        if modelURLs[asset.id] == nil {
+            if let local = await usdzCache.localURL(assetId: asset.id, remoteURL: remoteURL) {
+                modelURLs[asset.id] = local
+            }
+        }
+
+        pendingPlacementAsset = asset
+        placementRequestToken += 1
     }
 
     private func downloadModels(for assets: [MobileAssetDTO]) async {

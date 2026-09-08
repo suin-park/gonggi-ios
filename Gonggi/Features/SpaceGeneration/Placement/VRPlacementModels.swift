@@ -359,4 +359,19 @@ extension MobileAssetDTO {
     var canPreviewUSDZ: Bool {
         libraryStatus == .complete && !(usdzUrl ?? "").isEmpty
     }
+
+    /// Place CTA / picker: nil when selectable.
+    var placementUnavailableReason: String? {
+        if availableForPlacement, !(usdzUrl ?? "").isEmpty {
+            return nil
+        }
+        switch (usdzStatus ?? "NONE").uppercased() {
+        case "PROCESSING":
+            return "AR/배치 준비 중"
+        case "FAILED":
+            return "AR 준비 실패"
+        default:
+            return "AR/배치 준비 필요"
+        }
+    }
 }

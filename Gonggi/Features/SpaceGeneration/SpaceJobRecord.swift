@@ -129,4 +129,6 @@ struct SpaceViewerSession: Identifiable, Equatable {
     let fileURL: URL
     /// Build 80 — optional resolved audio URL for host-driven playback.
     var audioURL: URL? = nil
+    /// Phase 2 — open directly in Edit (Asset Detail / Space Detail placement).
+    var startInEditMode: Bool = false
 }

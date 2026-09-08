@@ -163,11 +163,19 @@ struct AssetLibraryView: View {
 struct AssetDetailView: View {
     let listSnapshot: MobileAssetDTO
 
+    @EnvironmentObject private var appState: AppState
     @State private var detail: MobileAssetDTO?
     @State private var loadError: String?
     @State private var isLoadingDetail = false
+    @State private var showSpacePicker = false
+    @State private var isLaunchingPlacement = false
+    @State private var placementMessage: String?
+    @State private var viewerLaunch: SpaceViewerLaunch?
 
     private var asset: MobileAssetDTO { detail ?? listSnapshot }
+    private var canPlace: Bool {
+        asset.availableForPlacement && !(asset.usdzUrl ?? "").isEmpty
+    }
 
     var body: some View {
         ScrollView {
@@ -177,6 +185,7 @@ struct AssetDetailView: View {
                     .font(GonggiTypography.title(24))
                     .foregroundStyle(GonggiColors.textPrimary)
                 metaRows
+                placeSection
                 if let loadError {
                     Text(loadError)
                         .font(GonggiTypography.caption(13))
@@ -189,6 +198,41 @@ struct AssetDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("3D 어셋")
         .task { await loadDetail() }
+        .sheet(isPresented: $showSpacePicker) {
+            PlaceAssetSpacePickerView(
+                spaces: appState.spaces,
+                onSelect: { space in
+                    showSpacePicker = false
+                    Task { await placeIntoSpace(space) }
+                },
+                onClose: { showSpacePicker = false }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(item: $viewerLaunch) { launch in
+            SpaceVRNavigationHost(
+                sessions: launch.sessions,
+                onClose: { viewerLaunch = nil }
+            )
+            .environmentObject(appState)
+        }
+        .overlay {
+            if isLaunchingPlacement {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    ProgressView().tint(.white).scaleEffect(1.2)
+                }
+            }
+        }
+        .alert("배치할 수 없어요", isPresented: Binding(
+            get: { placementMessage != nil },
+            set: { if !$0 { placementMessage = nil } }
+        )) {
+            Button("확인", role: .cancel) { placementMessage = nil }
+        } message: {
+            Text(placementMessage ?? "")
+        }
     }
 
     @ViewBuilder
@@ -228,13 +272,36 @@ struct AssetDetailView: View {
             )
             metaRow(
                 title: "공간 배치",
-                value: asset.availableForPlacement ? "가능 (다음 단계에서 연결)" : "USDZ 준비 후 가능"
+                value: canPlace ? "가능" : (asset.placementUnavailableReason ?? "USDZ 준비 후 가능")
             )
         }
         .padding(GonggiSpacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(GonggiColors.surfaceElevated.opacity(0.6))
         .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+    }
+
+    private var placeSection: some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            PrimaryButton(title: "공간에 배치", icon: "square.stack.3d.up") {
+                GonggiHaptics.light()
+                showSpacePicker = true
+            }
+            .disabled(!canPlace || isLaunchingPlacement)
+            .opacity(canPlace ? 1 : 0.45)
+            .accessibilityLabel("공간에 배치")
+            .accessibilityHint(canPlace ? "배치할 공간을 선택합니다" : (asset.placementUnavailableReason ?? ""))
+
+            if let reason = asset.placementUnavailableReason {
+                Text(reason)
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textSecondary)
+            } else {
+                Text("AR/배치 준비가 완료된 어셋만 사용할 수 있어요")
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textTertiary)
+            }
+        }
     }
 
     private func metaRow(title: String, value: String) -> some View {
@@ -257,6 +324,22 @@ struct AssetDetailView: View {
         case "PROCESSING": return "PROCESSING"
         case "FAILED": return "FAILED"
         default: return "NONE"
+        }
+    }
+
+    private func placeIntoSpace(_ space: SpaceRecord) async {
+        isLaunchingPlacement = true
+        defer { isLaunchingPlacement = false }
+        if let block = await AssetPlacementLaunch.open(
+            space: space,
+            asset: asset,
+            source: .assetDetail,
+            appState: appState,
+            present: { launch in
+                viewerLaunch = launch
+            }
+        ) {
+            placementMessage = block.userMessage
         }
     }
 

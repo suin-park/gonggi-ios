@@ -105,4 +105,12 @@ final class AssetLibraryStore: ObservableObject {
         }
         isRefreshing = false
     }
+
+    /// VR Edit fetch can warm the shared Library store without forcing a reload flash.
+    func replaceIfNewer(_ list: [MobileAssetDTO]) {
+        guard phase != .loading else { return }
+        assets = list
+        phase = .loaded
+        errorMessage = nil
+    }
 }

@@ -60,6 +60,7 @@ struct SpaceVRNavigationHost: View {
                     spaceLinkTransitionLocked: isTransitioning,
                     transitionBridgeRole: isSourceDuringCrossfade ? .overlay : .primary,
                     deferSecondaryLoads: isTop && (isCrossfading || isTransitioning),
+                    startInEditMode: session.startInEditMode && isTop && !isCrossfading,
                     onClose: {
                         guard !isTransitioning else { return }
                         if stack.count > 1 {

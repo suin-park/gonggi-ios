@@ -14,6 +14,7 @@ struct SpaceDetailView: View {
     @State private var viewerError: String?
     @State private var deleteError: String?
     @State private var showAddObjectSheet = false
+    @State private var placementMessage: String?
     // Build 80 — space audio
     @State private var showAudioImporter = false
     @State private var showAudioRecorder = false
@@ -119,10 +120,28 @@ struct SpaceDetailView: View {
         } message: {
             Text(audioError ?? "")
         }
+        .alert("배치할 수 없어요", isPresented: Binding(
+            get: { placementMessage != nil },
+            set: { if !$0 { placementMessage = nil } }
+        )) {
+            Button("확인", role: .cancel) { placementMessage = nil }
+        } message: {
+            Text(placementMessage ?? "")
+        }
         .sheet(isPresented: $showAddObjectSheet) {
-            AddObjectToSpaceSheet(onClose: { showAddObjectSheet = false })
-                .presentationDetents([.medium])
-                .presentationDragIndicator(.visible)
+            AssetPickerSheet(
+                store: AssetLibraryStore.shared,
+                title: "3D 오브젝트",
+                showNonReadyDisabled: true,
+                isAtCapacity: false,
+                onSelect: { asset in
+                    showAddObjectSheet = false
+                    Task { await placeAsset(asset) }
+                },
+                onClose: { showAddObjectSheet = false }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showAudioRecorder) {
             SpaceAudioRecordingSheet(
@@ -344,6 +363,22 @@ struct SpaceDetailView: View {
             )
         case .failure(let error):
             viewerError = error.userMessage
+        }
+    }
+
+    private func placeAsset(_ asset: MobileAssetDTO) async {
+        isPreparingViewer = true
+        defer { isPreparingViewer = false }
+        if let block = await AssetPlacementLaunch.open(
+            space: liveSpace,
+            asset: asset,
+            source: .spaceDetail,
+            appState: appState,
+            present: { launch in
+                viewerLaunch = launch
+            }
+        ) {
+            placementMessage = block.userMessage
         }
     }
 
