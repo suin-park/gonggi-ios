@@ -11,7 +11,7 @@ settings:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: ""
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "79"
+    CURRENT_PROJECT_VERSION: "80"
 
 configs:
   Debug: debug
@@ -61,6 +61,7 @@ targets:
         INFOPLIST_KEY_CFBundleIconName: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: 공기
         INFOPLIST_KEY_NSCameraUsageDescription: 파노라마·공간 기록을 위해 카메라가 필요합니다.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
@@ -80,6 +81,7 @@ targets:
         CFBundleIconName: AppIcon
         UILaunchScreen: {}
         NSCameraUsageDescription: 파노라마·공간 기록을 위해 카메라가 필요합니다.
+        NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
         NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
         # Injected from Config/Auth.xcconfig (Debug + Release) — not hardcoded in Swift.
         GoogleClientID: $(GOOGLE_IOS_CLIENT_ID)

@@ -10,6 +10,8 @@ struct VRSphereSpaceView: View {
     let imageURL: URL
     let sessionId: String
     var baseRevisionId: String = "rev-0-base"
+    /// Build 80 — optional preferred audio URL (host may supply).
+    var preferredAudioURL: URL? = nil
     var onClose: () -> Void
     /// Optional: notify parent of new local texture path (do not recreate viewer — orientation preserved in-place).
     var onRepairCompleted: ((URL) -> Void)? = nil
@@ -17,6 +19,7 @@ struct VRSphereSpaceView: View {
     var onNavigateToLinkedSpace: ((SpaceLink) -> Void)? = nil
 
     @StateObject private var repairController: RepairSessionController
+    @ObservedObject private var spaceAudio = SpaceAudioManager.shared
     @State private var pendingTarget: RepairTarget?
     @State private var showConfirmSheet = false
     @State private var captureTarget: RepairTarget?
@@ -90,6 +93,7 @@ struct VRSphereSpaceView: View {
         imageURL: URL,
         sessionId: String,
         baseRevisionId: String = "rev-0-base",
+        preferredAudioURL: URL? = nil,
         onClose: @escaping () -> Void,
         onRepairCompleted: ((URL) -> Void)? = nil,
         onNavigateToLinkedSpace: ((SpaceLink) -> Void)? = nil
@@ -97,6 +101,7 @@ struct VRSphereSpaceView: View {
         self.imageURL = imageURL
         self.sessionId = sessionId
         self.baseRevisionId = baseRevisionId
+        self.preferredAudioURL = preferredAudioURL
         self.onClose = onClose
         self.onRepairCompleted = onRepairCompleted
         self.onNavigateToLinkedSpace = onNavigateToLinkedSpace
@@ -137,6 +142,14 @@ struct VRSphereSpaceView: View {
                 if panoramaReady {
                     scheduleHintFlowIfNeeded()
                 }
+                // Build 80 — async non-blocking; host owns A→B transitions.
+                // onAppear covers library single-entry and stack push when preferred URL set.
+                Task {
+                    await SpaceAudioManager.shared.ensurePlaying(
+                        for: sessionId,
+                        preferredURL: preferredAudioURL
+                    )
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
                 let deletedSession = note.userInfo?["sessionId"] as? String
@@ -152,6 +165,7 @@ struct VRSphereSpaceView: View {
                 }
             }
             .onDisappear {
+                // Do not stop audio here — host owns fade/transition across stack pops.
                 cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
                 motionHintTask?.cancel()
                 motionHintTask = nil
@@ -769,6 +783,19 @@ struct VRSphereSpaceView: View {
                     .background(Color.black.opacity(0.45))
                     .clipShape(Capsule())
             }
+
+            Button {
+                GonggiHaptics.light()
+                spaceAudio.toggleMute()
+            } label: {
+                Image(systemName: spaceAudio.isMuted ? "speaker.slash" : "speaker.wave.2")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel(spaceAudio.isMuted ? "소리 켜기" : "소리 끄기")
 
             Button {
                 GonggiHaptics.light()

@@ -137,13 +137,25 @@ final class AppState: ObservableObject {
             switch (sourceResult, targetResult) {
             case (.success(let sourceURL), .success(let targetURL)):
                 pendingViewerLaunch = SpaceViewerLaunch(sessions: [
-                    SpaceViewerSession(id: pending.sourceSpaceId, fileURL: sourceURL),
-                    SpaceViewerSession(id: targetId, fileURL: targetURL),
+                    SpaceViewerSession(
+                        id: pending.sourceSpaceId,
+                        fileURL: sourceURL,
+                        audioURL: Self.preferredAudioURL(for: pending.sourceSpaceId)
+                    ),
+                    SpaceViewerSession(
+                        id: targetId,
+                        fileURL: targetURL,
+                        audioURL: Self.preferredAudioURL(for: targetId)
+                    ),
                 ])
                 pendingViewerError = nil
             case (_, .success(let targetURL)):
                 pendingViewerLaunch = SpaceViewerLaunch(
-                    single: SpaceViewerSession(id: targetId, fileURL: targetURL)
+                    single: SpaceViewerSession(
+                        id: targetId,
+                        fileURL: targetURL,
+                        audioURL: Self.preferredAudioURL(for: targetId)
+                    )
                 )
             default:
                 pendingViewerJobId = targetId
@@ -287,6 +299,13 @@ final class AppState: ObservableObject {
         } catch {
             return .failure(.network)
         }
+    }
+
+    /// Build 80 — sync preference from job store (VR entry); async GET is in SpaceAudioManager.
+    static func preferredAudioURL(for spaceId: String) -> URL? {
+        SpaceJobStore.shared.jobs.first(where: {
+            $0.jobId == spaceId || $0.sessionId == spaceId
+        })?.audioURL.flatMap(URL.init(string:))
     }
 }
 

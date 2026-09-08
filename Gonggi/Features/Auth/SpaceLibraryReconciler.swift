@@ -30,6 +30,8 @@ final class SpaceLibraryReconciler {
                 let width = row["width"] as? Int
                 let height = row["height"] as? Int
 
+                let audio = SpaceAudioMetadata.fromCatalogRow(row)
+
                 if var existing = SpaceJobStore.shared.jobs.first(where: { $0.sessionId == sessionId }) {
                     // Authoritative discovery for remote metadata; keep local lat-long path.
                     if let resultURL { existing.resultImageURL = resultURL }
@@ -44,9 +46,11 @@ final class SpaceLibraryReconciler {
                     } else if !localCompleted {
                         existing.serverStatus = status == "queued" ? "generating" : status
                     }
+                    // Build 80 — merge audio fields from catalog (including clear when remote empty).
+                    existing.applyAudio(audio)
                     SpaceJobStore.shared.upsert(existing)
                 } else {
-                    let job = SpaceJobRecord(
+                    var job = SpaceJobRecord(
                         sessionId: sessionId,
                         jobId: sessionId,
                         createdAt: ISO8601DateFormatter().date(from: row["createdAt"] as? String ?? "") ?? Date(),
@@ -58,6 +62,7 @@ final class SpaceLibraryReconciler {
                         width: width,
                         height: height
                     )
+                    job.applyAudio(audio)
                     SpaceJobStore.shared.upsert(job)
                 }
             }

@@ -236,6 +236,13 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
     var remoteImageURL: String? = nil
     /// Overlay for selective repair; base `status` stays `.ready` while repairing/failed repair.
     var repairBadge: SpaceRepairBadge = .none
+    /// Build 80 — optional space audio metadata from catalog / job store.
+    var audioURL: String? = nil
+    var audioFileName: String? = nil
+    var audioMimeType: String? = nil
+    var audioDurationSec: Double? = nil
+    var audioSource: String? = nil
+    var audioUpdatedAt: String? = nil
 
     /// Card / detail badge text.
     var statusBadgeLabel: String {
@@ -250,6 +257,13 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
     /// Ready enough to open VR (including while a repair is in flight / after repair failure).
     var canOpenExistingVR: Bool {
         status == .ready
+    }
+
+    var hasSpaceAudio: Bool {
+        guard let audioURL, !audioURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        return true
     }
 
     static let sampleArchive: [SpaceRecord] = [

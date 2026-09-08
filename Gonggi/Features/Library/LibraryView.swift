@@ -122,7 +122,13 @@ struct LibraryView: View {
         defer { isPreparingViewer = false }
         switch await appState.prepareSpaceViewer(jobId: jobId) {
         case .success(let url):
-            viewerLaunch = SpaceViewerLaunch(single: SpaceViewerSession(id: jobId, fileURL: url))
+            viewerLaunch = SpaceViewerLaunch(
+                single: SpaceViewerSession(
+                    id: jobId,
+                    fileURL: url,
+                    audioURL: AppState.preferredAudioURL(for: jobId)
+                )
+            )
         case .failure(let error):
             viewerError = error.userMessage
         }

@@ -17,6 +17,13 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var height: Int?
     /// Internal failure code (payload_too_large_local, network_error, …). Never shown raw in UI.
     var lastErrorCode: String? = nil
+    /// Build 80 — optional space audio (catalog / upload).
+    var audioURL: String? = nil
+    var audioFileName: String? = nil
+    var audioMimeType: String? = nil
+    var audioDurationSec: Double? = nil
+    var audioSource: String? = nil
+    var audioUpdatedAt: String? = nil
 
     var isTerminal: Bool {
         serverStatus == "completed" || serverStatus == "failed"
@@ -59,6 +66,26 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
         }
     }
 
+    var hasSpaceAudio: Bool {
+        guard let audioURL, !audioURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    mutating func applyAudio(_ meta: SpaceAudioMetadata) {
+        audioURL = meta.audioURL
+        audioFileName = meta.audioFileName
+        audioMimeType = meta.audioMimeType
+        audioDurationSec = meta.audioDurationSec
+        audioSource = meta.audioSource
+        audioUpdatedAt = meta.audioUpdatedAt
+    }
+
+    mutating func clearAudio() {
+        applyAudio(.empty)
+    }
+
     func asSpaceRecord() -> SpaceRecord {
         SpaceRecord(
             id: jobId,
@@ -70,7 +97,13 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
             viewerURL: resultImageURL.flatMap(URL.init(string:)),
             localLatLongPath: localLatLongPath,
             sessionId: sessionId,
-            remoteImageURL: resultImageURL
+            remoteImageURL: resultImageURL,
+            audioURL: audioURL,
+            audioFileName: audioFileName,
+            audioMimeType: audioMimeType,
+            audioDurationSec: audioDurationSec,
+            audioSource: audioSource,
+            audioUpdatedAt: audioUpdatedAt
         )
     }
 }
@@ -94,4 +127,6 @@ enum SpaceViewerError: Error, Equatable {
 struct SpaceViewerSession: Identifiable, Equatable {
     let id: String
     let fileURL: URL
+    /// Build 80 — optional resolved audio URL for host-driven playback.
+    var audioURL: URL? = nil
 }

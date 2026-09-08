@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// Multi-space VR cover host — A→B→C via Navigation-style stack (Build 72).
+/// Build 80 — owns space-audio fade transitions across stack changes.
 struct SpaceVRNavigationHost: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
     @State private var stack: [SpaceViewerSession]
     @State private var fadeOpacity: Double = 0
     @State private var navigateError: String?
@@ -26,11 +28,16 @@ struct SpaceVRNavigationHost: View {
                 VRSphereSpaceView(
                     imageURL: current.fileURL,
                     sessionId: current.id,
+                    preferredAudioURL: current.audioURL,
                     onClose: {
                         if stack.count > 1 {
                             stack.removeLast()
+                            Task { await playAudioForTopOfStack() }
                         } else {
-                            onClose()
+                            Task {
+                                await SpaceAudioManager.shared.fadeOutAndStop()
+                                onClose()
+                            }
                         }
                     },
                     onNavigateToLinkedSpace: { link in
@@ -58,8 +65,29 @@ struct SpaceVRNavigationHost: View {
             let jobId = note.userInfo?["jobId"] as? String
             stack.removeAll { $0.id == sessionId || $0.id == jobId }
             if stack.isEmpty {
-                onClose()
+                Task {
+                    await SpaceAudioManager.shared.fadeOutAndStop()
+                    onClose()
+                }
+            } else {
+                Task { await playAudioForTopOfStack() }
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                SpaceAudioManager.shared.pauseForBackground()
+            case .active:
+                SpaceAudioManager.shared.resumeFromBackground()
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
+        }
+        .onDisappear {
+            // Cover dismissed without explicit close — stop with fade.
+            Task { await SpaceAudioManager.shared.fadeOutAndStop() }
         }
     }
 
@@ -76,16 +104,21 @@ struct SpaceVRNavigationHost: View {
         withAnimation(.easeInOut(duration: 0.25)) {
             fadeOpacity = 1
         }
+        // Fade out A audio while visual fade runs.
+        async let audioFade: Void = SpaceAudioManager.shared.fadeOutAndStop()
         try? await Task.sleep(nanoseconds: 250_000_000)
+        _ = await audioFade
 
         let result = await appState.prepareSpaceViewer(jobId: targetKey)
         switch result {
         case .success(let url):
-            let session = SpaceViewerSession(id: targetKey, fileURL: url)
+            let audioURL = await SpaceAudioManager.shared.resolveAudioURL(spaceId: targetKey)
+            let session = SpaceViewerSession(id: targetKey, fileURL: url, audioURL: audioURL)
             stack.append(session)
             withAnimation(.easeInOut(duration: 0.28)) {
                 fadeOpacity = 0
             }
+            await SpaceAudioManager.shared.playForSpace(spaceId: targetKey, preferredURL: audioURL)
             try? await Task.sleep(nanoseconds: 280_000_000)
             isTransitioning = false
         case .failure:
@@ -94,7 +127,21 @@ struct SpaceVRNavigationHost: View {
             }
             isTransitioning = false
             navigateError = "공간을 불러올 수 없어요"
+            // Restore previous space audio if still on stack.
+            await playAudioForTopOfStack()
         }
+    }
+
+    @MainActor
+    private func playAudioForTopOfStack() async {
+        guard let current = stack.last else {
+            await SpaceAudioManager.shared.fadeOutAndStop()
+            return
+        }
+        await SpaceAudioManager.shared.playForSpace(
+            spaceId: current.id,
+            preferredURL: current.audioURL
+        )
     }
 }
 

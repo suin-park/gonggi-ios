@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 struct SpaceDetailView: View {
@@ -13,15 +14,32 @@ struct SpaceDetailView: View {
     @State private var viewerError: String?
     @State private var deleteError: String?
     @State private var showAddObjectSheet = false
+    // Build 80 — space audio
+    @State private var showAudioImporter = false
+    @State private var showAudioRecorder = false
+    @State private var showAudioDeleteConfirm = false
+    @State private var showAudioReplaceOptions = false
+    @State private var isUploadingAudio = false
+    @State private var audioError: String?
+    @ObservedObject private var spaceAudio = SpaceAudioManager.shared
+
+    private var liveSpace: SpaceRecord {
+        appState.spaces.first(where: { $0.id == space.id || $0.sessionId == space.id }) ?? space
+    }
+
+    private var audioSpaceKey: String {
+        liveSpace.sessionId ?? liveSpace.id
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
                 heroSection
                 metaSection
-                if let note = space.note {
+                if let note = liveSpace.note {
                     memoryNoteSection(note)
                 }
+                spaceAudioSection
                 actionsSection
             }
             .padding(GonggiSpacing.lg)
@@ -29,9 +47,9 @@ struct SpaceDetailView: View {
         }
         .background(GonggiAmbientBackground(showGlow: false))
         .navigationBarTitleDisplayMode(.inline)
-        .disabled(isDeleting)
+        .disabled(isDeleting || isUploadingAudio)
         .overlay {
-            if isDeleting {
+            if isDeleting || isUploadingAudio {
                 ZStack {
                     Color.black.opacity(0.35).ignoresSafeArea()
                     ProgressView().tint(.white).scaleEffect(1.2)
@@ -39,7 +57,7 @@ struct SpaceDetailView: View {
             }
         }
         .sheet(isPresented: $showViewer) {
-            ViewerPlaceholderView(space: space)
+            ViewerPlaceholderView(space: liveSpace)
         }
         .fullScreenCover(item: $viewerLaunch) { launch in
             SpaceVRNavigationHost(
@@ -82,10 +100,52 @@ struct SpaceDetailView: View {
         } message: {
             Text(deleteError ?? "")
         }
+        .alert("공간 오디오를 삭제할까요?", isPresented: $showAudioDeleteConfirm) {
+            Button("삭제", role: .destructive) {
+                Task { await deleteSpaceAudio() }
+            }
+            Button("취소", role: .cancel) {}
+        }
+        .confirmationDialog("오디오 교체", isPresented: $showAudioReplaceOptions, titleVisibility: .visible) {
+            Button("파일에서 선택") { showAudioImporter = true }
+            Button("직접 녹음") { showAudioRecorder = true }
+            Button("취소", role: .cancel) {}
+        }
+        .alert("오디오를 처리하지 못했어요", isPresented: Binding(
+            get: { audioError != nil },
+            set: { if !$0 { audioError = nil } }
+        )) {
+            Button("확인", role: .cancel) { audioError = nil }
+        } message: {
+            Text(audioError ?? "")
+        }
         .sheet(isPresented: $showAddObjectSheet) {
             AddObjectToSpaceSheet(onClose: { showAddObjectSheet = false })
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showAudioRecorder) {
+            SpaceAudioRecordingSheet(
+                onCancel: { showAudioRecorder = false },
+                onUse: { url, duration in
+                    showAudioRecorder = false
+                    Task { await uploadSpaceAudio(fileURL: url, source: .recording, durationSec: duration) }
+                }
+            )
+            .presentationDetents([.medium, .large])
+        }
+        .fileImporter(
+            isPresented: $showAudioImporter,
+            allowedContentTypes: SpaceAudioPolicy.importContentTypes,
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task { await importAndUpload(url) }
+            case .failure:
+                audioError = SpaceAudioAPIError.generic.userMessage
+            }
         }
     }
 
@@ -110,7 +170,7 @@ struct SpaceDetailView: View {
                 endRadius: 200
             )
             .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
-            Image(systemName: space.thumbnailSystemImage)
+            Image(systemName: liveSpace.thumbnailSystemImage)
                 .font(.system(size: 64, weight: .ultraLight))
                 .foregroundStyle(GonggiColors.textPrimary.opacity(0.9))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -127,18 +187,18 @@ struct SpaceDetailView: View {
             RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
                 .stroke(GonggiColors.border, lineWidth: 1)
         )
-        .accessibilityLabel("\(space.name) 미리보기")
+        .accessibilityLabel("\(liveSpace.name) 미리보기")
     }
 
     private var metaSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-            Text(space.name)
+            Text(liveSpace.name)
                 .font(GonggiTypography.title(26))
                 .foregroundStyle(GonggiColors.textPrimary)
 
-            detailRow(icon: "calendar", title: "생성일", value: space.capturedAt.formatted(date: .long, time: .omitted))
+            detailRow(icon: "calendar", title: "생성일", value: liveSpace.capturedAt.formatted(date: .long, time: .omitted))
             detailRow(icon: "mappin.and.ellipse", title: "위치", value: "위치 정보 없음")
-            detailRow(icon: "circle.fill", title: "상태", value: space.statusBadgeLabel)
+            detailRow(icon: "circle.fill", title: "상태", value: liveSpace.statusBadgeLabel)
         }
     }
 
@@ -174,10 +234,61 @@ struct SpaceDetailView: View {
         }
     }
 
+    private var spaceAudioSection: some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            Text("공간 오디오")
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(GonggiColors.textTertiary)
+
+            GonggiElevatedCard {
+                if liveSpace.hasSpaceAudio {
+                    VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(liveSpace.audioFileName ?? "오디오")
+                                    .font(GonggiTypography.body(15))
+                                    .foregroundStyle(GonggiColors.textPrimary)
+                                    .lineLimit(2)
+                                Text(SpaceAudioPolicy.formatDuration(liveSpace.audioDurationSec))
+                                    .font(GonggiTypography.caption(13))
+                                    .foregroundStyle(GonggiColors.textTertiary)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        HStack(spacing: GonggiSpacing.sm) {
+                            SecondaryButton(title: "재생", icon: "play.fill") {
+                                Task { await previewSpaceAudio() }
+                            }
+                            SecondaryButton(title: "교체", icon: "arrow.triangle.2.circlepath") {
+                                showAudioReplaceOptions = true
+                            }
+                        }
+                        SecondaryButton(title: "삭제", icon: "trash") {
+                            showAudioDeleteConfirm = true
+                        }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                        Text("이 공간에 소리를 함께 남겨 둘 수 있어요.")
+                            .font(GonggiTypography.body(15))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        SecondaryButton(title: "파일 추가", icon: "doc.badge.plus") {
+                            showAudioImporter = true
+                        }
+                        SecondaryButton(title: "직접 녹음", icon: "mic.fill") {
+                            showAudioRecorder = true
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var actionsSection: some View {
         VStack(spacing: GonggiSpacing.sm) {
             // Primary: viewer when ready
-            if space.canOpenExistingVR {
+            if liveSpace.canOpenExistingVR {
                 PrimaryButton(title: "공간 보기", icon: "cube.transparent") {
                     GonggiHaptics.light()
                     Task { await openViewer() }
@@ -185,7 +296,7 @@ struct SpaceDetailView: View {
                 .accessibilityLabel("공간 보기")
             }
 
-            switch space.status {
+            switch liveSpace.status {
             case .ready:
                 SecondaryButton(title: "3D 오브젝트 추가", icon: "square.stack.3d.up") {
                     GonggiHaptics.light()
@@ -194,14 +305,14 @@ struct SpaceDetailView: View {
             case .failed:
                 PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
                     GonggiHaptics.medium()
-                    appState.retrySpaceGeneration(jobId: space.id)
+                    appState.retrySpaceGeneration(jobId: liveSpace.id)
                 }
             case .processing, .uploading:
                 GonggiElevatedCard {
                     HStack(spacing: GonggiSpacing.md) {
                         ProgressView()
                             .tint(GonggiColors.accentTeal)
-                        Text(space.note ?? "공간을 만들고 있어요")
+                        Text(liveSpace.note ?? "공간을 만들고 있어요")
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
                     }
@@ -225,9 +336,12 @@ struct SpaceDetailView: View {
     private func openViewer() async {
         isPreparingViewer = true
         defer { isPreparingViewer = false }
-        switch await appState.prepareSpaceViewer(jobId: space.id) {
+        switch await appState.prepareSpaceViewer(jobId: liveSpace.id) {
         case .success(let url):
-            viewerLaunch = SpaceViewerLaunch(single: SpaceViewerSession(id: space.id, fileURL: url))
+            let audioURL = liveSpace.audioURL.flatMap(URL.init(string:))
+            viewerLaunch = SpaceViewerLaunch(
+                single: SpaceViewerSession(id: liveSpace.id, fileURL: url, audioURL: audioURL)
+            )
         case .failure(let error):
             viewerError = error.userMessage
         }
@@ -237,7 +351,7 @@ struct SpaceDetailView: View {
         isDeleting = true
         defer { isDeleting = false }
         viewerLaunch = nil
-        switch await appState.deleteSpace(jobId: space.id) {
+        switch await appState.deleteSpace(jobId: liveSpace.id) {
         case .success:
             GonggiHaptics.medium()
             dismiss()
@@ -246,15 +360,71 @@ struct SpaceDetailView: View {
         }
     }
 
+    private func importAndUpload(_ url: URL) async {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        await uploadSpaceAudio(fileURL: url, source: .upload, durationSec: nil)
+    }
+
+    private func uploadSpaceAudio(fileURL: URL, source: SpaceAudioSource, durationSec: Double?) async {
+        isUploadingAudio = true
+        defer { isUploadingAudio = false }
+        do {
+            let meta = try await SpaceAudioStore.shared.uploadFile(
+                spaceId: audioSpaceKey,
+                fileURL: fileURL,
+                source: source,
+                durationSec: durationSec
+            )
+            applyAudioToLocalJob(meta)
+            GonggiHaptics.light()
+        } catch {
+            audioError = SpaceAudioPolicy.userMessage(for: error)
+        }
+    }
+
+    private func deleteSpaceAudio() async {
+        isUploadingAudio = true
+        defer { isUploadingAudio = false }
+        do {
+            try await SpaceAudioStore.shared.deleteAudio(spaceId: audioSpaceKey)
+            applyAudioToLocalJob(.empty)
+            if spaceAudio.currentSpaceId == audioSpaceKey || spaceAudio.currentSpaceId == liveSpace.id {
+                spaceAudio.stop()
+            }
+            GonggiHaptics.light()
+        } catch {
+            audioError = SpaceAudioPolicy.userMessage(for: error)
+        }
+    }
+
+    private func previewSpaceAudio() async {
+        guard let raw = liveSpace.audioURL, let url = URL(string: raw) else {
+            audioError = SpaceAudioAPIError.generic.userMessage
+            return
+        }
+        await spaceAudio.play(url: url, spaceId: audioSpaceKey, fadeIn: true)
+    }
+
+    private func applyAudioToLocalJob(_ meta: SpaceAudioMetadata) {
+        let store = SpaceJobStore.shared
+        if let job = store.job(id: liveSpace.id)
+            ?? store.jobs.first(where: { $0.sessionId == liveSpace.id || $0.sessionId == liveSpace.sessionId })
+        {
+            store.update(jobId: job.jobId) { $0.applyAudio(meta) }
+        }
+        appState.rebuildSpaces()
+    }
+
     private var statusBadge: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(GonggiColors.statusColor(forBadge: space.repairBadge, fallback: space.status))
+                .fill(GonggiColors.statusColor(forBadge: liveSpace.repairBadge, fallback: liveSpace.status))
                 .frame(width: 7, height: 7)
-            Text(space.statusBadgeLabel)
+            Text(liveSpace.statusBadgeLabel)
         }
         .font(GonggiTypography.caption(13))
-        .foregroundStyle(GonggiColors.statusColor(forBadge: space.repairBadge, fallback: space.status))
+        .foregroundStyle(GonggiColors.statusColor(forBadge: liveSpace.repairBadge, fallback: liveSpace.status))
         .padding(.horizontal, GonggiSpacing.sm)
         .padding(.vertical, GonggiSpacing.xs)
         .background(GonggiColors.backgroundPrimary.opacity(0.65))
