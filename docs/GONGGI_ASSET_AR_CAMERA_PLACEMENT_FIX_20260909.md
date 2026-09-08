@@ -165,4 +165,4 @@ Trusted real-world meter metadata: **not available** on mobile DTO → auto band
 - build number changed: **NO**
 - archive / IPA / TestFlight / ASC: **NOT RUN**
 - backend deploy: **NO**
-- iOS SHA: _(follow-up commit after this verification)_
+- iOS SHA: `a6c7c62`
