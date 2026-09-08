@@ -25,6 +25,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var selectedPlacementID: String?
     private var selectedSpaceLinkID: String?
     private var spaceLinkPoses: [String: (yaw: Float, pitch: Float, radius: Float)] = [:]
+    /// Build 74 — grab offset so began doesn't snap hotspot to finger center.
+    private var spaceLinkGrabYawOffsetDeg: Float = 0
+    private var spaceLinkGrabPitchOffsetDeg: Float = 0
+    private var spaceLinkPoseAtDragBegan: (yaw: Float, pitch: Float, radius: Float)?
+    private var isSpaceLinkDragging = false
     private var placementFloorY = VRPlacementLayout.defaultFloorY
     private var gestureStartScale: Float = 1
     private var gestureStartRotationY: Float = 0
@@ -75,12 +80,16 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)?
     /// Edit: select · View: navigate intent.
     var onSpaceLinkTapped: ((String?) -> Void)?
-    /// Edit drag live — yaw/pitch/radius source of truth (local).
+    /// Edit drag live — optional; prefer node-only during drag (Build 74).
     var onSpaceLinkPoseChanged: ((String, Float, Float, Float) -> Void)?
-    /// Edit drag ended — persist linked pose (PATCH).
+    /// Edit drag ended — persist linked pose (PATCH) / commit draft.
     var onSpaceLinkDragEnded: ((String, Float, Float, Float) -> Void)?
+    /// true while hotspot drag active — hide floating actions.
+    var onSpaceLinkDraggingChanged: ((Bool) -> Void)?
     /// Projected screen point of selected hotspot (Edit overlay).
     var onSpaceLinkScreenPoint: ((CGPoint?) -> Void)?
+    /// PATCH fail rollback helper.
+    var onSpaceLinkPoseRollback: ((String, Float, Float, Float) -> Void)?
 
     /// Effective motion tracking (desired ∧ hardware).
     private(set) var isMotionEffectivelyEnabled = false
@@ -220,6 +229,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         let wasFrozen = isMotionFrozen
         freezeEditMode = active
         editModeActive = active
+        if active, !wasFrozen {
+            // Hold the visual look in base so spawn/drag use a stable composed pose.
+            look.bakeMotionIntoBase()
+            referenceAttitude = nil
+        }
         if !active {
             oneFingerOwner = .none
             stopSmoothingAndDisplayLink()
@@ -227,6 +241,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             selectionIndicatorNode = nil
             selectedPlacementRoot = nil
             selectedSpaceLinkID = nil
+            endSpaceLinkDraggingIfNeeded()
         }
         refreshAllHitProxies(enabled: active)
         refreshSpaceLinkHitSizes()
@@ -280,6 +295,10 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     /// Sync 공간 연결 billboards (sibling of placedAssetsRoot — never under assets).
     func syncSpaceLinks(_ links: [SpaceLink], selectedId: String?, pulseInView: Bool) {
         selectedSpaceLinkID = selectedId
+        // Build 74: never tear down nodes mid-drag (would hitch / snap).
+        if isSpaceLinkDragging {
+            return
+        }
         spaceLinkPoses = Dictionary(uniqueKeysWithValues: links.map {
             ($0.id, (yaw: $0.yawDeg, pitch: $0.pitchDeg, radius: $0.radius))
         })
@@ -497,12 +516,26 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         return .cameraPan
     }
 
-    /// Camera look at screen center → equirect degrees (공간 연결 spawn).
+    /// Current view center → equirect degrees (Build 74: screen-center world ray).
     func currentEquirectCenterDegrees() -> (yawDeg: Float, pitchDeg: Float) {
-        VRSphereEquirectBridge.equirectDegreesFromCamera(
-            cameraYawRad: look.cameraEulerRad.yaw,
-            cameraPitchRad: look.cameraEulerRad.pitch
+        let size = viewportSize
+        let center = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+        return equirectDegreesAtScreenPoint(center)
+    }
+
+    /// Screen point → world ray (SceneKit camera presentation) → equirect yaw/pitch.
+    func equirectDegreesAtScreenPoint(_ point: CGPoint) -> (yawDeg: Float, pitchDeg: Float) {
+        let transform = cameraNode?.presentation.simdWorldTransform
+            ?? cameraNode?.simdWorldTransform
+            ?? matrix_identity_float4x4
+        let fov = Float(cameraNode?.camera?.fieldOfView ?? 70)
+        let worldRay = VRFloorRay.ray(
+            screenPoint: point,
+            viewportSize: viewportSize,
+            cameraTransform: transform,
+            verticalFOVDegrees: fov
         )
+        return SpaceLinkMath.equirectDegreesFromWorldDirection(worldRay.direction)
     }
 
     func applyEnvironmentLighting(from imageURL: URL) {
@@ -1001,10 +1034,12 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
                 onPlacedAssetTapped?(nil)
                 selectedSpaceLinkID = linkId
                 onSpaceLinkTapped?(linkId)
+                beginSpaceLinkMove(linkId: linkId, screenPoint: location)
                 #if DEBUG
-                print("[vr-spaceLink72] owner=spaceLinkMove id=\(linkId)")
+                print("[vr-spaceLink74] owner=spaceLinkMove id=\(linkId)")
                 #endif
             case .assetMove(let hitId):
+                endSpaceLinkDraggingIfNeeded()
                 oneFingerOwner = .assetMove(placementId: hitId)
                 selectedSpaceLinkID = nil
                 onSpaceLinkTapped?(nil)
@@ -1016,6 +1051,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
                 print("[vr-place67] owner=assetMove id=\(hitId)")
                 #endif
             case .cameraPan, .none:
+                endSpaceLinkDraggingIfNeeded()
                 oneFingerOwner = .cameraPan
                 gesture.setTranslation(.zero, in: scnView)
                 #if DEBUG
@@ -1041,12 +1077,13 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             switch oneFingerOwner {
             case .spaceLinkMove(let id):
                 if let pose = spaceLinkPoses[id] {
-                    onSpaceLinkPoseChanged?(id, pose.yaw, pose.pitch, pose.radius)
+                    // Single commit to SwiftUI + optional PATCH.
                     onSpaceLinkDragEnded?(id, pose.yaw, pose.pitch, pose.radius)
                 }
+                endSpaceLinkDraggingIfNeeded()
                 publishSelectedSpaceLinkScreenPoint()
                 #if DEBUG
-                print("[vr-spaceLink73] move end id=\(id)")
+                print("[vr-spaceLink74] move end id=\(id)")
                 #endif
             case .assetMove(let id):
                 publishTransform(for: id)
@@ -1058,23 +1095,38 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             }
             oneFingerOwner = .none
             lastValidFloorHit = nil
+            spaceLinkPoseAtDragBegan = nil
         default:
             break
         }
     }
 
+    private func beginSpaceLinkMove(linkId: String, screenPoint: CGPoint) {
+        guard let pose = spaceLinkPoses[linkId] else { return }
+        spaceLinkPoseAtDragBegan = pose
+        let finger = equirectDegreesAtScreenPoint(screenPoint)
+        spaceLinkGrabYawOffsetDeg = VRSphereEquirectBridge.shortestDeltaDeg(
+            from: finger.yawDeg,
+            to: pose.yaw
+        )
+        spaceLinkGrabPitchOffsetDeg = pose.pitch - finger.pitchDeg
+        // Yellow selection without full sync (sync is skipped while dragging).
+        for node in spaceLinksRoot.childNodes {
+            guard let id = SpaceHotspotNodeFactory.linkID(from: node) else { continue }
+            SpaceHotspotNodeFactory.applySelected(id == linkId, on: node)
+        }
+        if !isSpaceLinkDragging {
+            isSpaceLinkDragging = true
+            onSpaceLinkDraggingChanged?(true)
+            onSpaceLinkScreenPoint?(nil) // hide floating actions during drag
+        }
+    }
+
     private func continueSpaceLinkMove(linkId: String, screenPoint: CGPoint) {
         guard var pose = spaceLinkPoses[linkId] else { return }
-        let fov = Float(cameraNode?.camera?.fieldOfView ?? 70)
-        let angles = VRSphereEquirectBridge.equirectDegreesFromScreenPoint(
-            point: screenPoint,
-            viewSize: viewportSize,
-            cameraYawRad: look.cameraEulerRad.yaw,
-            cameraPitchRad: look.cameraEulerRad.pitch,
-            fieldOfViewDeg: fov
-        )
-        pose.yaw = angles.yawDeg
-        pose.pitch = angles.pitchDeg
+        let finger = equirectDegreesAtScreenPoint(screenPoint)
+        pose.yaw = VRSphereEquirectBridge.normalizeYawDeg(finger.yawDeg + spaceLinkGrabYawOffsetDeg)
+        pose.pitch = max(-89, min(89, finger.pitchDeg + spaceLinkGrabPitchOffsetDeg))
         spaceLinkPoses[linkId] = pose
         if let node = spaceLinksRoot.childNodes.first(where: {
             SpaceHotspotNodeFactory.linkID(from: $0) == linkId
@@ -1085,9 +1137,20 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
                 pitchDeg: pose.pitch,
                 radius: pose.radius
             )
+            SpaceHotspotNodeFactory.refreshHitSize(
+                on: node,
+                distance: max(simd_length(SIMD3(node.position.x, node.position.y, node.position.z)), 0.5),
+                viewportHeight: Float(max(viewportSize.height, 1)),
+                verticalFOVDegrees: Float(cameraNode?.camera?.fieldOfView ?? 70)
+            )
         }
-        onSpaceLinkPoseChanged?(linkId, pose.yaw, pose.pitch, pose.radius)
-        publishSelectedSpaceLinkScreenPoint()
+        // Build 74: no per-frame SwiftUI pose publish (node-only).
+    }
+
+    private func endSpaceLinkDraggingIfNeeded() {
+        guard isSpaceLinkDragging else { return }
+        isSpaceLinkDragging = false
+        onSpaceLinkDraggingChanged?(false)
     }
 
     private func beginMove(id: String, screenPoint: CGPoint) {

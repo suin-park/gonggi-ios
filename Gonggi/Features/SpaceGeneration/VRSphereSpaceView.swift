@@ -72,9 +72,12 @@ struct VRSphereSpaceView: View {
     @State private var spaceLinkLabelDraft = ""
     @State private var spaceLinkBusyMessage: String?
     @State private var selectedSpaceLinkScreenPoint: CGPoint?
+    @State private var isSpaceLinkDragging = false
     @State private var didLoadSpaceLinks = false
     @State private var spaceLinkTask: Task<Void, Never>?
     @State private var spaceLinkLinking = false
+    /// Last server-confirmed pose for linked rollback.
+    @State private var linkedPoseCheckpoint: [String: (yaw: Float, pitch: Float, radius: Float)] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var appState: AppState
 
@@ -387,6 +390,7 @@ struct VRSphereSpaceView: View {
             }
 
             if interactionMode == .edit,
+               !isSpaceLinkDragging,
                let selectedSpaceLinkId,
                let link = spaceLinks.first(where: { $0.id == selectedSpaceLinkId }),
                let marker = selectedSpaceLinkScreenPoint {
@@ -523,14 +527,29 @@ struct VRSphereSpaceView: View {
             onSpaceLinkTapped: { id in
                 handleSpaceLinkTapped(id)
             },
-            onSpaceLinkPoseChanged: { id, yaw, pitch, radius in
-                updateSpaceLinkPose(id: id, yaw: yaw, pitch: pitch, radius: radius)
+            onSpaceLinkPoseChanged: { _, _, _, _ in
+                // Build 74: live drag updates SCNNode only — no SwiftUI pose publish.
             },
             onSpaceLinkDragEnded: { id, yaw, pitch, radius in
+                if let link = spaceLinks.first(where: { $0.id == id }),
+                   link.status == .linked,
+                   linkedPoseCheckpoint[id] == nil {
+                    linkedPoseCheckpoint[id] = (link.yawDeg, link.pitchDeg, link.radius)
+                }
                 updateSpaceLinkPose(id: id, yaw: yaw, pitch: pitch, radius: radius)
                 commitSpaceLinkPoseIfLinked(id: id)
             },
+            onSpaceLinkDraggingChanged: { dragging in
+                isSpaceLinkDragging = dragging
+                if dragging {
+                    selectedSpaceLinkScreenPoint = nil
+                }
+            },
             onSpaceLinkScreenPoint: { point in
+                guard !isSpaceLinkDragging else {
+                    selectedSpaceLinkScreenPoint = nil
+                    return
+                }
                 selectedSpaceLinkScreenPoint = point
             },
             onSpaceLinkSpawnResolved: { yaw, pitch in
@@ -1130,6 +1149,11 @@ struct VRSphereSpaceView: View {
                     merged.append(d)
                 }
                 spaceLinks = Array(merged.prefix(SpaceLink.maxLinksPerSource))
+                var checkpoints: [String: (yaw: Float, pitch: Float, radius: Float)] = [:]
+                for link in spaceLinks where link.status == .linked {
+                    checkpoints[link.id] = (link.yawDeg, link.pitchDeg, link.radius)
+                }
+                linkedPoseCheckpoint = checkpoints
             }
         }
     }
@@ -1179,6 +1203,7 @@ struct VRSphereSpaceView: View {
         guard let link = spaceLinks.first(where: { $0.id == id }),
               link.status == .linked
         else { return }
+        let checkpoint = linkedPoseCheckpoint[id] ?? (link.yawDeg, link.pitchDeg, link.radius)
         Task {
             do {
                 _ = try await spaceLinkStore.patchLink(
@@ -1189,9 +1214,21 @@ struct VRSphereSpaceView: View {
                     radius: link.radius,
                     label: nil
                 )
+                await MainActor.run {
+                    linkedPoseCheckpoint[id] = (link.yawDeg, link.pitchDeg, link.radius)
+                }
             } catch {
+                await MainActor.run {
+                    updateSpaceLinkPose(
+                        id: id,
+                        yaw: checkpoint.yaw,
+                        pitch: checkpoint.pitch,
+                        radius: checkpoint.radius
+                    )
+                    spaceLinkBusyMessage = "위치를 저장하지 못했어요"
+                }
                 #if DEBUG
-                print("[spaceLink73] pose PATCH failed \(error)")
+                print("[spaceLink74] pose PATCH failed \(error)")
                 #endif
             }
         }
@@ -1819,6 +1856,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var onSpaceLinkTapped: ((String?) -> Void)? = nil
     var onSpaceLinkPoseChanged: ((String, Float, Float, Float) -> Void)? = nil
     var onSpaceLinkDragEnded: ((String, Float, Float, Float) -> Void)? = nil
+    var onSpaceLinkDraggingChanged: ((Bool) -> Void)? = nil
     var onSpaceLinkScreenPoint: ((CGPoint?) -> Void)? = nil
     var onSpaceLinkSpawnResolved: ((Float, Float) -> Void)? = nil
     var onLightingDebug: ((String) -> Void)? = nil
@@ -1842,6 +1880,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.onSpaceLinkTapped = onSpaceLinkTapped
         host.onSpaceLinkPoseChanged = onSpaceLinkPoseChanged
         host.onSpaceLinkDragEnded = onSpaceLinkDragEnded
+        host.onSpaceLinkDraggingChanged = onSpaceLinkDraggingChanged
         host.onSpaceLinkScreenPoint = onSpaceLinkScreenPoint
         host.configure(imageURL: imageURL)
         host.setMotionDesiredEnabled(motionDesiredEnabled)
@@ -1882,7 +1921,18 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     }
 
     private var spaceLinkFingerprint: String {
-        spaceLinks.map { "\($0.id):\($0.status.rawValue)" }.joined(separator: ",")
+        // Include pose so drag-end / PATCH rollback rebuild nodes; exclude mid-drag
+        // (SwiftUI pose is not published during .changed).
+        spaceLinks.map {
+            String(
+                format: "%@:%@:%.3f:%.3f:%.3f",
+                $0.id,
+                $0.status.rawValue,
+                $0.yawDeg,
+                $0.pitchDeg,
+                $0.radius
+            )
+        }.joined(separator: ",")
             + "|" + (selectedSpaceLinkId ?? "")
             + "|" + (editModeActive ? "e" : "v")
     }
@@ -1897,6 +1947,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         uiView.onSpaceLinkTapped = onSpaceLinkTapped
         uiView.onSpaceLinkPoseChanged = onSpaceLinkPoseChanged
         uiView.onSpaceLinkDragEnded = onSpaceLinkDragEnded
+        uiView.onSpaceLinkDraggingChanged = onSpaceLinkDraggingChanged
         uiView.onSpaceLinkScreenPoint = onSpaceLinkScreenPoint
         if textureGeneration != context.coordinator.lastGeneration
             || imageURL != context.coordinator.lastURL {
@@ -1954,10 +2005,9 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         }
         if spaceLinkSpawnToken != context.coordinator.lastSpaceLinkSpawnToken {
             context.coordinator.lastSpaceLinkSpawnToken = spaceLinkSpawnToken
+            // Sync: sample current presentation center this frame (Build 74 — no async deferral).
             let center = uiView.currentEquirectCenterDegrees()
-            DispatchQueue.main.async {
-                onSpaceLinkSpawnResolved?(center.yawDeg, center.pitchDeg)
-            }
+            onSpaceLinkSpawnResolved?(center.yawDeg, center.pitchDeg)
         }
         if recenterToken != context.coordinator.lastRecenterToken {
             uiView.recenterKeepingVisual()

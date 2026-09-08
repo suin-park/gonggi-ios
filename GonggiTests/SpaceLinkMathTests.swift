@@ -90,6 +90,59 @@ final class SpaceLinkMathTests: XCTestCase {
         )
     }
 
+    /// Build 74: center ray → store yaw/pitch → world → screen UV ≈ center
+    /// (spawn path: SceneKit camera presentation → VRFloorRay → equirect → insideOutSpherePoint).
+    func testSpawnCenterRoundTripWithinFifteenPoints() {
+        let cases: [(yaw: Float, pitch: Float)] = [
+            (0, 0),
+            (90, 0),
+            (180, 0),
+            (-90, 0),
+            (0, 30),
+            (0, -30),
+            (45, 15),
+            (-120, -20)
+        ]
+        let aspect = Float(390.0 / 844.0)
+        for look in cases {
+            let stored = SpaceLinkMath.equirectDegreesFromCameraCenterRay(
+                cameraYawDeg: look.yaw,
+                cameraPitchDeg: look.pitch
+            )
+            let uv = SpaceLinkMath.screenUV(
+                yawDeg: stored.yawDeg,
+                pitchDeg: stored.pitchDeg,
+                cameraYawDeg: look.yaw,
+                cameraPitchDeg: look.pitch,
+                verticalFOVDegrees: 70,
+                aspect: aspect
+            )
+            XCTAssertNotNil(uv, "behind camera for look=\(look) stored=\(stored)")
+            guard let uv else { continue }
+            let dxPt = abs(uv.x - 0.5) * 390
+            let dyPt = abs(uv.y - 0.5) * 844
+            let err = sqrt(dxPt * dxPt + dyPt * dyPt)
+            XCTAssertLessThanOrEqual(
+                err,
+                15,
+                "screen error \(err)pt look=\(look) stored=\(stored) uv=\(uv)"
+            )
+        }
+    }
+
+    func testWorldDirectionInverseMatchesInsideOutPoint() {
+        let samples: [(Float, Float)] = [
+            (0, 0), (90, 0), (-90, 10), (180, -20), (45, 30)
+        ]
+        for (yaw, pitch) in samples {
+            let p = SpaceLinkMath.worldPosition(yawDeg: yaw, pitchDeg: pitch, radius: 3)
+            let back = SpaceLinkMath.equirectDegreesFromWorldDirection(p)
+            let dyaw = abs(VRSphereEquirectBridge.shortestDeltaDeg(from: back.yawDeg, to: yaw))
+            XCTAssertLessThan(dyaw, 0.5, "yaw mismatch for (\(yaw),\(pitch)) → \(back)")
+            XCTAssertEqual(back.pitchDeg, pitch, accuracy: 0.5)
+        }
+    }
+
     func testOverlayFlipsNearTopEdge() {
         let origin = SpaceLinkOverlayLayout.panelOrigin(
             marker: CGPoint(x: 200, y: 80),

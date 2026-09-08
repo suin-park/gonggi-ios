@@ -115,6 +115,45 @@ enum SpaceHotspotNodeFactory {
         root.position = SCNVector3(pos.x, pos.y, pos.z)
     }
 
+    /// Update blue/yellow + ring without recreating the root (Build 74 drag selection).
+    static func applySelected(_ selected: Bool, on root: SCNNode) {
+        if let visual = root.childNode(withName: visualName, recursively: false) {
+            visual.geometry?.firstMaterial?.diffuse.contents = makeDiscImage(
+                fill: selected ? yellowFill : blueFill,
+                stroke: selected ? yellowStroke : blueStroke
+            )
+            visual.removeAllActions()
+            visual.scale = SCNVector3(1, 1, 1)
+        }
+        root.childNode(withName: selectionName, recursively: false)?.removeFromParentNode()
+        if selected {
+            let visualD: Float = {
+                if let visual = root.childNode(withName: visualName, recursively: false),
+                   let plane = visual.geometry as? SCNPlane {
+                    return Float(plane.width)
+                }
+                return 0.22
+            }()
+            let ringPlane = SCNPlane(
+                width: CGFloat(visualD * 1.55),
+                height: CGFloat(visualD * 1.55)
+            )
+            let ringMat = SCNMaterial()
+            ringMat.lightingModel = .constant
+            ringMat.isDoubleSided = true
+            ringMat.writesToDepthBuffer = false
+            ringMat.diffuse.contents = makeRingImage()
+            ringMat.transparencyMode = .singleLayer
+            ringMat.blendMode = .alpha
+            ringPlane.firstMaterial = ringMat
+            let ring = SCNNode(geometry: ringPlane)
+            ring.name = selectionName
+            ring.categoryBitMask = VRPlacedAssetCategory.selection
+            ring.renderingOrder = 22
+            root.addChildNode(ring)
+        }
+    }
+
     static func refreshHitSize(
         on root: SCNNode,
         distance: Float,
