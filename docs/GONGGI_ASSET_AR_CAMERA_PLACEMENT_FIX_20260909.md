@@ -103,10 +103,12 @@ Per-asset Meshy vase bytes/assetId: device-side only — not captured in this Wi
 
 ## Tests
 
-- `GonggiTests/AssetARCameraPlacementTests.swift` — path, copies, scale policy, file check, READY CTA flags
+- `GonggiTests/AssetARCameraPlacementTests.swift` — path, copies, scale policy, file check, READY CTA flags (**9/9 PASS** on GHA)
 - Compile unblock: `.user(userId:)` in isolation/live-status/job-store tests; `@MainActor` on Phase1/3B store tests
-
-AR camera/plane placement itself: **real-device required** (not claimed from unit tests).
+- GHA run: https://github.com/suin-park/gonggi-ios/actions/runs/34236857813  
+  - Simulator / Release / device SDK link: **PASS**  
+  - Full suite: **528** executed, **46** failures (Build63 / DirectionCapture / other pre-existing — not AR path)  
+  - AR camera/plane placement itself: **real-device required** (not claimed from unit tests)
 
 ---
 
@@ -115,3 +117,4 @@ AR camera/plane placement itself: **real-device required** (not claimed from uni
 - build number changed: **NO**
 - archive / IPA / TestFlight / ASC: **NOT RUN**
 - backend deploy: **NO**
+- iOS SHA: `b3b1034`
