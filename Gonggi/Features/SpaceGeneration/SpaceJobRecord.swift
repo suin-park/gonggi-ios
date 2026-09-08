@@ -17,6 +17,8 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var height: Int?
     /// Internal failure code (payload_too_large_local, network_error, …). Never shown raw in UI.
     var lastErrorCode: String? = nil
+    /// Canonical `User.id` when known. Nil = anonymous / legacy unknown (never auto-assign on next login).
+    var ownerUserId: String? = nil
     /// Build 80 — optional space audio (catalog / upload).
     var audioURL: String? = nil
     var audioFileName: String? = nil

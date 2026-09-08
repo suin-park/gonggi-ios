@@ -59,10 +59,13 @@ final class AuthSessionController: ObservableObject {
 
     func restoreSession() async {
         phase = .restoring
+        // Never show device-global space catalog while auth is unresolved.
+        SpaceJobStore.shared.bind(.none)
         let storedRefresh = try? GonggiKeychain.get(service: Self.keychainService, account: Self.refreshAccount)
         let storedSession = try? GonggiKeychain.get(service: Self.keychainService, account: Self.sessionAccount)
         guard let storedRefresh, !storedRefresh.isEmpty else {
             clearLocalCredentials()
+            AccountPresentationReset.resetForSignOut()
             phase = .signedOut
             return
         }
@@ -72,6 +75,7 @@ final class AuthSessionController: ObservableObject {
             await afterSignedInSideEffects()
         } catch {
             clearLocalCredentials()
+            AccountPresentationReset.resetForSignOut()
             phase = .signedOut
             lastError = nil
         }
@@ -146,9 +150,11 @@ final class AuthSessionController: ObservableObject {
         let access = accessToken
         let refresh = refreshToken
         let sessionId = mobileSessionId
-        await api.logout(accessToken: access, refreshToken: refresh, sessionId: sessionId)
+        // Clear presentation immediately (before network logout completes).
         clearLocalCredentials()
+        AccountPresentationReset.resetForSignOut()
         phase = .signedOut
+        await api.logout(accessToken: access, refreshToken: refresh, sessionId: sessionId)
     }
 
     private func applyTokens(_ tokens: MobileAuthTokens) async throws {
@@ -173,6 +179,12 @@ final class AuthSessionController: ObservableObject {
         if let credits = user?.creditsTotal {
             enriched.creditsLabel = "\(credits)"
         }
+        // Bind empty/user partition before UI shows signed-in content from a prior account.
+        if let userId = user?.id, !userId.isEmpty {
+            AccountPresentationReset.prepareForSignedIn(userId: userId)
+        } else {
+            AccountPresentationReset.resetForSignOut()
+        }
         phase = .signedIn(enriched)
     }
 
@@ -188,9 +200,22 @@ final class AuthSessionController: ObservableObject {
 
     private func afterSignedInSideEffects() async {
         guard let access = accessToken else { return }
-        let sessionIds = SpaceJobStore.shared.jobs.map(\.sessionId)
-        try? await api.claimInstallation(accessToken: access, sessionIds: sessionIds)
-        await SpaceLibraryReconciler.shared.reconcile(accessToken: access)
+        let generation = AuthSessionGeneration.current
+        let userId = profile?.id
+        // Only anonymous / unknown-owner sessionIds — never re-claim other accounts' jobs.
+        let sessionIds = SpaceJobStore.shared.claimEligibleSessionIds()
+        if let claim = try? await api.claimInstallation(accessToken: access, sessionIds: sessionIds),
+           AuthSessionGeneration.isCurrent(generation),
+           let userId {
+            let claimed = Set(claim.sessionIds)
+            if !claimed.isEmpty {
+                SpaceJobStore.shared.absorbClaimedSessions(claimed, intoUserId: userId)
+            }
+        }
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
+        await SpaceLibraryReconciler.shared.reconcile(accessToken: access, generation: generation)
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
+        AssetLibraryStore.shared.refresh(force: true)
     }
 }
 

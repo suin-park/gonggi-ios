@@ -4,7 +4,12 @@ import XCTest
 @MainActor
 final class SpaceJobStoreTests: XCTestCase {
     func testPersistAndReload() {
-        let store = SpaceJobStore()
+        let suite = "gonggi.spaceJobStoreTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = SpaceJobStore(defaults: defaults, persistEnabled: true)
+        store.bind(.user("test-user"))
         store.remove(jobId: "job-test-1")
         let job = SpaceJobRecord(
             sessionId: "dir-test-1",
@@ -20,10 +25,16 @@ final class SpaceJobStoreTests: XCTestCase {
         )
         store.upsert(job)
         XCTAssertEqual(store.job(id: "job-test-1")?.serverStatus, "generating")
+        XCTAssertEqual(store.job(id: "job-test-1")?.ownerUserId, "test-user")
         XCTAssertTrue(store.activeJobs().contains(where: { $0.jobId == "job-test-1" }))
 
         store.update(jobId: "job-test-1") { $0.serverStatus = "completed" }
         XCTAssertEqual(store.job(id: "job-test-1")?.uiStatus, .ready)
+
+        let reloaded = SpaceJobStore(defaults: defaults, persistEnabled: true)
+        reloaded.bind(.user("test-user"))
+        XCTAssertEqual(reloaded.job(id: "job-test-1")?.serverStatus, "completed")
+
         store.remove(jobId: "job-test-1")
     }
 

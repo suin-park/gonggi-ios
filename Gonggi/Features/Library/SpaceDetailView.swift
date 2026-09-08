@@ -66,6 +66,11 @@ struct SpaceDetailView: View {
                 onClose: { viewerLaunch = nil }
             )
         }
+        .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
+            viewerLaunch = nil
+            showViewer = false
+            dismiss()
+        }
         .overlay {
             if isPreparingViewer {
                 ZStack {

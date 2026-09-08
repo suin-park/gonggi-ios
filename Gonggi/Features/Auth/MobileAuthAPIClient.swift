@@ -122,7 +122,15 @@ actor MobileAuthAPIClient {
         return parseUser(user)
     }
 
-    func claimInstallation(accessToken: String, sessionIds: [String]) async throws {
+    struct ClaimInstallationResult: Sendable {
+        var claimed: Int
+        var alreadyOwned: Int
+        var conflicts: Int
+        var sessionIds: [String]
+    }
+
+    @discardableResult
+    func claimInstallation(accessToken: String, sessionIds: [String]) async throws -> ClaimInstallationResult {
         var request = URLRequest(
             url: config.apiBaseURL.appendingPathComponent("api/gonggi/migrate/claim-installation")
         )
@@ -134,10 +142,19 @@ actor MobileAuthAPIClient {
             "sessionIds": sessionIds,
         ])
         request.timeoutInterval = 30
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
             throw MobileAuthAPIError.network
         }
+        let ids = (json["sessionIds"] as? [String]) ?? []
+        return ClaimInstallationResult(
+            claimed: json["claimed"] as? Int ?? 0,
+            alreadyOwned: json["alreadyOwned"] as? Int ?? 0,
+            conflicts: json["conflicts"] as? Int ?? 0,
+            sessionIds: ids
+        )
     }
 
     func listSpaces(accessToken: String) async throws -> [[String: Any]] {

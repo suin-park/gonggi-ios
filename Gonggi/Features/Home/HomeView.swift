@@ -36,6 +36,10 @@ struct HomeView: View {
                     onClose: { viewerLaunch = nil }
                 )
             }
+            .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
+                viewerLaunch = nil
+                selectedSpace = nil
+            }
             .overlay {
                 if isPreparingViewer {
                     ZStack {

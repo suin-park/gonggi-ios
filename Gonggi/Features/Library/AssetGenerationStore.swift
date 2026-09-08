@@ -48,11 +48,20 @@ final class AssetGenerationStore: ObservableObject {
     func setForeground(_ active: Bool) {
         isForeground = active
         if active {
-            Task { await refreshActiveJobs() }
+            Task { await refreshActiveJobs(generation: AuthSessionGeneration.current) }
             startPollingIfNeeded()
         } else {
             stopPolling()
         }
+    }
+
+    func clearForAccountChange() {
+        stopPolling()
+        jobs = []
+        localThumbJPEG.removeAll()
+        lastErrorMessage = nil
+        isRefreshing = false
+        consecutivePollFailures = 0
     }
 
     func upsertAccepted(_ response: Image3DStartResponse, sourceThumbJPEG: Data?) {
@@ -71,11 +80,17 @@ final class AssetGenerationStore: ObservableObject {
 
     @discardableResult
     func refreshActiveJobs() async -> Bool {
+        await refreshActiveJobs(generation: AuthSessionGeneration.current)
+    }
+
+    @discardableResult
+    func refreshActiveJobs(generation: UInt64) async -> Bool {
         isRefreshing = true
         defer { isRefreshing = false }
         do {
             let remote = try await api.fetchActiveJobs()
-            // Keep failed jobs that we still show until user retries / dismisses.
+            guard AuthSessionGeneration.isCurrent(generation) else { return false }
+            // Replace account jobs — do not keep prior-account failed rows across users.
             let failedKeep = jobs.filter(\.isFailed)
             let byId = Dictionary(uniqueKeysWithValues: (remote + failedKeep).map { ($0.jobId, $0) })
             jobs = byId.values.sorted { ($0.createdAt ?? "") > ($1.createdAt ?? "") }
@@ -84,6 +99,7 @@ final class AssetGenerationStore: ObservableObject {
             startPollingIfNeeded()
             return true
         } catch {
+            guard AuthSessionGeneration.isCurrent(generation) else { return false }
             consecutivePollFailures += 1
             lastErrorMessage = (error as? MobileImage3DAPIError)?.userMessage
                 ?? "생성 작업을 불러오지 못했어요"
@@ -161,6 +177,7 @@ final class AssetGenerationStore: ObservableObject {
 
     private func pollOnce() async {
         guard isForeground else { return }
+        let generation = AuthSessionGeneration.current
         let active = activeJobs
         guard !active.isEmpty else { return }
         var updated: [MobileGenerationJobDTO] = []
@@ -168,6 +185,7 @@ final class AssetGenerationStore: ObservableObject {
         for job in active {
             do {
                 let fresh = try await api.fetchJob(id: job.jobId)
+                guard AuthSessionGeneration.isCurrent(generation) else { return }
                 if fresh.isDone {
                     if let aid = fresh.assetId { completedAssetIds.append(aid) }
                     clearLocalThumb(jobId: fresh.jobId)
@@ -177,10 +195,12 @@ final class AssetGenerationStore: ObservableObject {
                 }
                 consecutivePollFailures = 0
             } catch {
+                guard AuthSessionGeneration.isCurrent(generation) else { return }
                 consecutivePollFailures += 1
                 updated.append(job)
             }
         }
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
         let failed = jobs.filter(\.isFailed)
         jobs = (updated + failed).sorted { ($0.createdAt ?? "") > ($1.createdAt ?? "") }
         if !completedAssetIds.isEmpty {

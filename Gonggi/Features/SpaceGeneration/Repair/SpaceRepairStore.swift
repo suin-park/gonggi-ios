@@ -63,6 +63,14 @@ final class SpaceRepairStore {
         notify()
     }
 
+    func clearPresentation() {
+        queue.sync {
+            jobs = []
+            persistLocked()
+        }
+        notify()
+    }
+
     private func notify() {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .gonggiSpaceRepairStoreDidChange, object: nil)

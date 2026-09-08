@@ -435,6 +435,11 @@ struct AssetDetailView: View {
             )
             .environmentObject(appState)
         }
+        .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
+            viewerLaunch = nil
+            quickLookURL = nil
+            showSpacePicker = false
+        }
         .fullScreenCover(item: $quickLookURL) { item in
             AssetARQuickLookView(localUsdzURL: item.url)
         }

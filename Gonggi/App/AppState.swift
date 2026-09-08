@@ -16,12 +16,15 @@ final class AppState: ObservableObject {
     /// Phase 2 — consume-once Asset Detail / Space Detail → VR Edit placement draft.
     @Published var pendingAssetPlacement: PendingAssetPlacement?
     @Published var spaceLinkUserMessage: String?
+    /// Bumped on account reset so views dismiss open VR covers.
+    @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
 
     let spaceService: SpaceGenerationService
     let jobStore: SpaceJobStore
     let jobRuntime: SpaceJobRuntime
     private let spaceLinkStore = SpaceLinkStore()
     private var spaceLinkFinalizeTask: Task<Void, Never>?
+    private var accountResetObserver: NSObjectProtocol?
 
     init(
         isMockMode: Bool = {
@@ -52,6 +55,13 @@ final class AppState: ObservableObject {
         ) { [weak self] _ in
             self?.rebuildSpaces()
         }
+        accountResetObserver = NotificationCenter.default.addObserver(
+            forName: .gonggiAccountPresentationDidReset,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyAccountPresentationReset()
+        }
         rebuildSpaces()
         Task {
             await SpaceRepairRuntime.shared.syncActiveRepairs()
@@ -68,6 +78,19 @@ final class AppState: ObservableObject {
             }
         }
         #endif
+    }
+
+    /// Logout / account switch — clear viewer pending + rebuild from bound (empty) store.
+    func applyAccountPresentationReset() {
+        pendingCapture = nil
+        pendingViewerJobId = nil
+        pendingViewerError = nil
+        pendingViewerLaunch = nil
+        pendingAssetPlacement = nil
+        spaceLinkUserMessage = nil
+        forceDismissViewerEpoch &+= 1
+        spaceLinkFinalizeTask?.cancel()
+        rebuildSpaces()
     }
 
     func selectTab(_ tab: AppTab) {
@@ -257,7 +280,13 @@ final class AppState: ObservableObject {
             return
         }
         #endif
-        spaces = live.isEmpty ? SpaceRecord.sampleArchive : live
+        // Account isolation: empty catalog stays empty (no foreign/sample bleed).
+        // Mock demos may still seed via isMockMode + sample when intentionally empty.
+        if isMockMode, live.isEmpty {
+            spaces = SpaceRecord.sampleArchive
+        } else {
+            spaces = live
+        }
         schedulePendingSpaceLinkFinalize()
     }
 

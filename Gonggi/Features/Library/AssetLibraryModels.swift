@@ -65,10 +65,25 @@ final class AssetLibraryStore: ObservableObject {
     func refresh(force: Bool = false) {
         if phase == .loading, !force { return }
         loadTask?.cancel()
-        loadTask = Task { await performRefresh() }
+        let generation = AuthSessionGeneration.current
+        loadTask = Task { await performRefresh(generation: generation) }
+    }
+
+    func clearForAccountChange() {
+        loadTask?.cancel()
+        loadTask = nil
+        stopScopedReadinessPoll()
+        assets = []
+        phase = .idle
+        errorMessage = nil
+        isRefreshing = false
     }
 
     func performRefresh() async {
+        await performRefresh(generation: AuthSessionGeneration.current)
+    }
+
+    func performRefresh(generation: UInt64) async {
         let hadContent = !assets.isEmpty || !generationStore.jobs.isEmpty
         if hadContent {
             isRefreshing = true
@@ -78,6 +93,7 @@ final class AssetLibraryStore: ObservableObject {
         errorMessage = nil
 
         guard MobileAuthTokenStore.shared.getAccessToken() != nil else {
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
             assets = []
             phase = .failed
             errorMessage = "로그인이 필요해요"
@@ -85,24 +101,24 @@ final class AssetLibraryStore: ObservableObject {
             return
         }
 
-        async let jobsRefresh: Bool = generationStore.refreshActiveJobs()
+        async let jobsRefresh: Bool = generationStore.refreshActiveJobs(generation: generation)
         do {
             let list = try await client.fetchAssets()
             _ = await jobsRefresh
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, AuthSessionGeneration.isCurrent(generation) else { return }
             assets = list
             phase = .loaded
             errorMessage = nil
             startScopedReadinessPollIfNeeded()
         } catch let error as MobileAssetsAPIError {
             _ = await jobsRefresh
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, AuthSessionGeneration.isCurrent(generation) else { return }
             if case .server(let status) = error, status == 401 {
                 assets = []
                 phase = .failed
                 errorMessage = "로그인이 필요해요"
             } else if hadContent {
-                // Keep stale list; surface transient error via message only on empty fail.
+                // Keep stale list only within the **same** account generation.
                 errorMessage = nil
             } else {
                 assets = []
@@ -111,7 +127,7 @@ final class AssetLibraryStore: ObservableObject {
             }
         } catch {
             _ = await jobsRefresh
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, AuthSessionGeneration.isCurrent(generation) else { return }
             if hadContent {
                 errorMessage = nil
             } else {

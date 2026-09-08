@@ -75,7 +75,8 @@ final class SpaceJobRuntime: ObservableObject {
                 resultImageURL: nil,
                 localLatLongPath: nil,
                 width: nil,
-                height: nil
+                height: nil,
+                ownerUserId: AuthSessionController.shared.profile?.id
             )
             store.upsert(pending)
             uploadTasks[result.sessionId]?.cancel()
