@@ -46,3 +46,16 @@ Marketing `1.0` / build `79`. Backend unchanged.
 ## Home
 
 - Recent row → Detail (same manage path); viewer via Library CTA / Detail CTA
+
+## Build79
+
+- iOS SHA: `97d3d6e`
+- backend SHA: `9ea215f` (unchanged)
+- version/build: `1.0` / `79`
+- workflow: https://github.com/suin-park/gonggi-ios/actions/runs/34182104675
+- Delivery UUID: `82606f17-bde6-47c7-9c80-1a4d064b0a93`
+- dSYM: `B28A30FD-CA16-3655-9BF2-C8EDA2AB3BDD`
+
+## Verdict
+
+READY_FOR_REAL_DEVICE_LIBRARY_DETAIL_VALIDATION
