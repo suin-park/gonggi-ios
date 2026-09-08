@@ -172,4 +172,5 @@ Trusted real-world meter metadata: **not available** on mobile DTO → auto band
 - build number changed: **NO**
 - archive / IPA / TestFlight / ASC: **NOT RUN**
 - backend deploy: **NO**
-- iOS SHA: `a6c7c62`
+- iOS SHA: `e126dc7` (prepareViewer dedupe + LiveStatus timing + AR hit hierarchy)
+- Re-run CI: https://github.com/suin-park/gonggi-ios/actions/runs/34243203820 — AssetAR **14/14 PASS**; LiveStatus network + Prepare B/D **PASS**; unique fails back to **19** (pre-existing only)
