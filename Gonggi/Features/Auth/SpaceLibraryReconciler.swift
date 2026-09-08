@@ -19,10 +19,11 @@ final class SpaceLibraryReconciler {
         inFlight = nil
     }
 
-    func reconcile(accessToken: String, generation: UInt64 = AuthSessionGeneration.current) async {
+    func reconcile(accessToken: String, generation: UInt64) async {
         inFlight?.cancel()
+        let generationSnapshot = generation
         let task = Task { @MainActor in
-            await self.reconcileBody(accessToken: accessToken, generation: generation)
+            await self.reconcileBody(accessToken: accessToken, generation: generationSnapshot)
         }
         inFlight = task
         await task.value

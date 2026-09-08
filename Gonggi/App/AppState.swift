@@ -54,14 +54,18 @@ final class AppState: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.rebuildSpaces()
+            Task { @MainActor in
+                self?.rebuildSpaces()
+            }
         }
         accountResetObserver = NotificationCenter.default.addObserver(
             forName: .gonggiAccountPresentationDidReset,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.applyAccountPresentationReset()
+            Task { @MainActor in
+                self?.applyAccountPresentationReset()
+            }
         }
         rebuildSpaces()
         Task {

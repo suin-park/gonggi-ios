@@ -47,7 +47,7 @@ enum AccountPresentationReset {
         AuthSessionGeneration.bump(reason: "signedIn")
         SpaceLibraryReconciler.shared.cancelInFlight()
         SpaceJobRuntimeSharedHook.cancelForAccountChange()
-        SpaceJobStore.shared.bind(.user(userId))
+        SpaceJobStore.shared.bind(.user(userId: userId))
         AssetLibraryStore.shared.clearForAccountChange()
         AssetGenerationStore.shared.clearForAccountChange()
         PendingSpaceLinkCaptureStore.shared.clear()

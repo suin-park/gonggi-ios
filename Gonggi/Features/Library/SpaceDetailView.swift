@@ -33,71 +33,29 @@ struct SpaceDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                heroSection
-                metaSection
-                if let note = liveSpace.note {
-                    memoryNoteSection(note)
+        detailChrome
+            .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
+                handleAccountForcedDismiss()
+            }
+            .alert("공간을 불러오지 못했어요", isPresented: Binding(
+                get: { viewerError != nil },
+                set: { if !$0 { viewerError = nil } }
+            )) {
+                Button("다시 불러오기") {
+                    Task { await openViewer() }
                 }
-                spaceAudioSection
-                actionsSection
+                Button("닫기", role: .cancel) { viewerError = nil }
+            } message: {
+                Text(viewerError ?? "")
             }
-            .padding(GonggiSpacing.lg)
-            .padding(.bottom, GonggiSpacing.xxl)
-        }
-        .background(GonggiAmbientBackground(showGlow: false))
-        .navigationBarTitleDisplayMode(.inline)
-        .disabled(isDeleting || isUploadingAudio)
-        .overlay {
-            if isDeleting || isUploadingAudio {
-                ZStack {
-                    Color.black.opacity(0.35).ignoresSafeArea()
-                    ProgressView().tint(.white).scaleEffect(1.2)
+            .alert("이 공간을 삭제할까요?", isPresented: $showDeleteConfirm) {
+                Button("삭제", role: .destructive) {
+                    Task { await performDelete() }
                 }
+                Button("취소", role: .cancel) {}
+            } message: {
+                Text("이 공간과 연결된 공간 이동도 함께 제거됩니다.\n다른 공간 자체는 삭제되지 않습니다.")
             }
-        }
-        .sheet(isPresented: $showViewer) {
-            ViewerPlaceholderView(space: liveSpace)
-        }
-        .fullScreenCover(item: $viewerLaunch) { launch in
-            SpaceVRNavigationHost(
-                sessions: launch.sessions,
-                onClose: { viewerLaunch = nil }
-            )
-        }
-        .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
-            viewerLaunch = nil
-            showViewer = false
-            dismiss()
-        }
-        .overlay {
-            if isPreparingViewer {
-                ZStack {
-                    Color.black.opacity(0.35).ignoresSafeArea()
-                    ProgressView().tint(.white).scaleEffect(1.2)
-                }
-            }
-        }
-        .alert("공간을 불러오지 못했어요", isPresented: Binding(
-            get: { viewerError != nil },
-            set: { if !$0 { viewerError = nil } }
-        )) {
-            Button("다시 불러오기") {
-                Task { await openViewer() }
-            }
-            Button("닫기", role: .cancel) { viewerError = nil }
-        } message: {
-            Text(viewerError ?? "")
-        }
-        .alert("이 공간을 삭제할까요?", isPresented: $showDeleteConfirm) {
-            Button("삭제", role: .destructive) {
-                Task { await performDelete() }
-            }
-            Button("취소", role: .cancel) {}
-        } message: {
-            Text("이 공간과 연결된 공간 이동도 함께 제거됩니다.\n다른 공간 자체는 삭제되지 않습니다.")
-        }
         .alert("삭제하지 못했어요", isPresented: Binding(
             get: { deleteError != nil },
             set: { if !$0 { deleteError = nil } }
@@ -169,6 +127,56 @@ struct SpaceDetailView: View {
                 Task { await importAndUpload(url) }
             case .failure:
                 audioError = SpaceAudioAPIError.generic.userMessage
+            }
+        }
+    }
+
+    private func handleAccountForcedDismiss() {
+        viewerLaunch = nil
+        showViewer = false
+        dismiss()
+    }
+
+    private var detailChrome: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+                heroSection
+                metaSection
+                if let note = liveSpace.note {
+                    memoryNoteSection(note)
+                }
+                spaceAudioSection
+                actionsSection
+            }
+            .padding(GonggiSpacing.lg)
+            .padding(.bottom, GonggiSpacing.xxl)
+        }
+        .background(GonggiAmbientBackground(showGlow: false))
+        .navigationBarTitleDisplayMode(.inline)
+        .disabled(isDeleting || isUploadingAudio)
+        .overlay {
+            if isDeleting || isUploadingAudio {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    ProgressView().tint(.white).scaleEffect(1.2)
+                }
+            }
+        }
+        .sheet(isPresented: $showViewer) {
+            ViewerPlaceholderView(space: liveSpace)
+        }
+        .fullScreenCover(item: $viewerLaunch) { launch in
+            SpaceVRNavigationHost(
+                sessions: launch.sessions,
+                onClose: { viewerLaunch = nil }
+            )
+        }
+        .overlay {
+            if isPreparingViewer {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    ProgressView().tint(.white).scaleEffect(1.2)
+                }
             }
         }
     }
