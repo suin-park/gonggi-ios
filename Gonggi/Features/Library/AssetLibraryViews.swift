@@ -1,5 +1,6 @@
 import SceneKit
 import SwiftUI
+import UIKit
 
 /// Library tab: canonical 3D Locker assets + GenerationJob cards (Phase 1 + 3B).
 struct AssetLibraryView: View {

@@ -69,14 +69,15 @@
 
 ## Feature flag
 
-- After iOS code + unit tests: set Production `GONGGI_MOBILE_IMAGE3D_ENABLED=ON` and redeploy/propagate
-- Backend code SHA unchanged if env-only
+- Production `GONGGI_MOBILE_IMAGE3D_ENABLED=1` set (env-only; backend SHA **da74041** unchanged)
+- Redeployed production alias `www.3d-locker.com` after env change (Ready)
+- Controlled smoke helper: `scripts/Invoke-Image3DProdSmoke.ps1` (Bearer via SecureString / env; no secrets logged)
 
 ## Real Meshy validation
 
-- Allowed: 1–2 controlled production smokes (not in automated unit suite)
-- Record: credit **delta** only, job/asset visibility, idempotent replay (same clientRequestId → same jobId, no second charge)
-- Do not log balances, tokens, URLs, secrets
+- Automated unit suite: **0** real Meshy calls
+- Interactive production smoke in this agent session: **NOT RUN** (no mobile Bearer available in environment)
+- Operator can run `Invoke-Image3DProdSmoke.ps1` with a small JPEG for 1 generation + idempotent replay
 
 ## Tests (iOS)
 
