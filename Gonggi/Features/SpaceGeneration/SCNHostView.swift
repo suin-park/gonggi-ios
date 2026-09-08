@@ -587,11 +587,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     func setFieldOfViewDegrees(_ fov: Double) {
-        cameraNode?.camera?.fieldOfView = fov
+        cameraNode?.camera?.fieldOfView = CGFloat(fov)
     }
 
     func currentFieldOfViewDegrees() -> Double {
-        cameraNode?.camera?.fieldOfView ?? SpaceLinkTransitionMath.baseFOV
+        Double(cameraNode?.camera?.fieldOfView ?? CGFloat(SpaceLinkTransitionMath.baseFOV))
     }
 
     /// Light exit feedback on the tapped hotspot (scale up + fade).
