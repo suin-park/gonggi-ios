@@ -73,6 +73,27 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var freezeConfirmSheet = false
     private var freezeAppBackground = false
     private var freezeEditMode = false
+    /// Build 81 — SpaceLink rotate/zoom/crossfade: hold gyro while camera animates.
+    private var freezeSpaceLinkTransition = false
+    private var spaceLinkTransitionInteractionsLocked = false
+    private var transitionDisplayLink: CADisplayLink?
+    private var transitionAnimStart: CFTimeInterval = 0
+    private var transitionAlignDuration: TimeInterval = 0
+    private var transitionZoomStartDelay: TimeInterval = 0
+    private var transitionZoomDuration: TimeInterval = 0
+    private var transitionStartYaw: Float = 0
+    private var transitionStartPitch: Float = 0
+    private var transitionEndYaw: Float = 0
+    private var transitionEndPitch: Float = 0
+    private var transitionStartFOV: Double = 70
+    private var transitionEndFOV: Double = 70
+    private var transitionCompletion: (() -> Void)?
+    private var fovOnlyDisplayLink: CADisplayLink?
+    private var fovOnlyStart: CFTimeInterval = 0
+    private var fovOnlyDuration: TimeInterval = 0
+    private var fovOnlyFrom: Double = 70
+    private var fovOnlyTo: Double = 70
+    private var fovOnlyCompletion: (() -> Void)?
 
     /// Desired motion from SwiftUI (user toggle). Hardware may still force off.
     private var motionDesiredEnabled = true
@@ -99,8 +120,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     private var isMotionFrozen: Bool {
         freezeFingerDown || freezePan || freezeLongPress || freezeConfirmSheet || freezeAppBackground
-            || freezeEditMode
+            || freezeEditMode || freezeSpaceLinkTransition
     }
+
+    /// Build 81 — true while forward SpaceLink transition owns the camera.
+    var isSpaceLinkTransitionLocked: Bool { spaceLinkTransitionInteractionsLocked }
 
     /// Camera euler used by long-press fallback (composed final look).
     var composedCameraYawRad: Float { look.cameraEulerRad.yaw }
@@ -162,6 +186,8 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     deinit {
         NotificationCenter.default.removeObserver(self)
         stopTransformDisplayLink()
+        stopTransitionDisplayLink()
+        stopFOVOnlyDisplayLink()
         stopMotionUpdates()
     }
 
@@ -538,6 +564,205 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         }
         #endif
         return fromLook
+    }
+
+    // MARK: - Build 81 SpaceLink transition (rotate + FOV zoom + settle)
+
+    func setSpaceLinkTransitionLocked(_ locked: Bool) {
+        let wasFrozen = isMotionFrozen
+        spaceLinkTransitionInteractionsLocked = locked
+        freezeSpaceLinkTransition = locked
+        if locked {
+            // Bake current visual pose so animation starts from what the user sees.
+            look.bakeAllIntoBase()
+            referenceAttitude = nil
+            applyLookToCamera()
+        } else if wasFrozen, !isMotionFrozen {
+            unfreezeBakeAndReanchor()
+        } else if !locked {
+            look.bakeMotionIntoBase()
+            referenceAttitude = nil
+            applyLookToCamera()
+        }
+    }
+
+    func setFieldOfViewDegrees(_ fov: Double) {
+        cameraNode?.camera?.fieldOfView = fov
+    }
+
+    func currentFieldOfViewDegrees() -> Double {
+        cameraNode?.camera?.fieldOfView ?? SpaceLinkTransitionMath.baseFOV
+    }
+
+    /// Light exit feedback on the tapped hotspot (scale up + fade).
+    func pulseHotspotExit(id: String) {
+        guard let root = spaceLinksRoot.childNodes.first(where: {
+            SpaceHotspotNodeFactory.linkID(from: $0) == id
+        }) else { return }
+        let visual = root.childNode(withName: SpaceHotspotNodeFactory.visualName, recursively: false)
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = SpaceLinkTransitionMath.hotspotPulseDuration
+        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        visual?.scale = SCNVector3(1.15, 1.15, 1.15)
+        root.opacity = 0
+        SCNTransaction.commit()
+    }
+
+    /// Align camera toward hotspot (shortest yaw) and zoom FOV. No camera translation.
+    func runAlignAndZoom(
+        targetYawDeg: Float,
+        targetPitchDeg: Float,
+        targetFOV: Double,
+        reduceMotion: Bool
+    ) async {
+        stopTransitionDisplayLink()
+        look.bakeAllIntoBase()
+        applyLookToCamera()
+
+        let startYaw = look.finalYawDeg
+        let startPitch = look.finalPitchDeg
+        let yawDelta = SpaceLinkTransitionMath.cappedShortestYawDelta(from: startYaw, to: targetYawDeg)
+        let endYaw = VRLookMath.normalizeYawDeg(startYaw + yawDelta)
+        let endPitch = VRLookMath.clampPitchDeg(targetPitchDeg)
+        let startFOV = currentFieldOfViewDegrees()
+
+        if reduceMotion {
+            look.baseLookYawDeg = endYaw
+            look.baseLookPitchDeg = endPitch
+            look.motionYawDeg = 0
+            look.motionPitchDeg = 0
+            look.touchYawOffsetDeg = 0
+            look.touchPitchOffsetDeg = 0
+            applyLookToCamera()
+            // Keep FOV; zoom removed under Reduce Motion.
+            return
+        }
+
+        transitionStartYaw = startYaw
+        transitionStartPitch = startPitch
+        transitionEndYaw = endYaw
+        transitionEndPitch = endPitch
+        transitionStartFOV = startFOV
+        transitionEndFOV = targetFOV
+        transitionAlignDuration = SpaceLinkTransitionMath.alignDuration(
+            forYawDeltaDeg: yawDelta,
+            reduceMotion: false
+        )
+        transitionZoomStartDelay = SpaceLinkTransitionMath.zoomStartDelay
+        transitionZoomDuration = SpaceLinkTransitionMath.zoomDuration
+
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            transitionCompletion = { cont.resume() }
+            transitionAnimStart = CACurrentMediaTime()
+            let link = CADisplayLink(target: self, selector: #selector(handleTransitionDisplayLink(_:)))
+            link.add(to: .main, forMode: .common)
+            transitionDisplayLink = link
+        }
+    }
+
+    func animateFieldOfView(to target: Double, duration: TimeInterval, easeOut: Bool) async {
+        stopFOVOnlyDisplayLink()
+        let from = currentFieldOfViewDegrees()
+        if duration <= 0.001 || abs(from - target) < 0.05 {
+            setFieldOfViewDegrees(target)
+            return
+        }
+        fovOnlyFrom = from
+        fovOnlyTo = target
+        fovOnlyDuration = duration
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            fovOnlyCompletion = {
+                // easeOut flag reserved for timing curve selection in tick
+                _ = easeOut
+                cont.resume()
+            }
+            fovOnlyStart = CACurrentMediaTime()
+            let link = CADisplayLink(target: self, selector: #selector(handleFOVOnlyDisplayLink(_:)))
+            link.add(to: .main, forMode: .common)
+            fovOnlyDisplayLink = link
+        }
+    }
+
+    /// Target load failure — restore FOV / interactions without leaving the space.
+    func restoreAfterFailedSpaceLinkTransition() async {
+        stopTransitionDisplayLink()
+        stopFOVOnlyDisplayLink()
+        await animateFieldOfView(
+            to: SpaceLinkTransitionMath.baseFOV,
+            duration: SpaceLinkTransitionMath.settleDuration,
+            easeOut: true
+        )
+        setSpaceLinkTransitionLocked(false)
+    }
+
+    @objc private func handleTransitionDisplayLink(_ link: CADisplayLink) {
+        let elapsed = CACurrentMediaTime() - transitionAnimStart
+        let alignT = SpaceLinkTransitionMath.easeInOutCubic(elapsed / max(0.001, transitionAlignDuration))
+        let yaw = transitionStartYaw
+            + Float(alignT) * VRSphereEquirectBridge.shortestDeltaDeg(
+                from: transitionStartYaw,
+                to: transitionEndYaw
+            )
+        // Pitch is not circular — lerp directly after clamp ends.
+        let pitch = transitionStartPitch + Float(alignT) * (transitionEndPitch - transitionStartPitch)
+        look.baseLookYawDeg = VRLookMath.normalizeYawDeg(yaw)
+        look.baseLookPitchDeg = VRLookMath.clampPitchDeg(pitch)
+        look.motionYawDeg = 0
+        look.motionPitchDeg = 0
+        look.touchYawOffsetDeg = 0
+        look.touchPitchOffsetDeg = 0
+        applyLookToCamera()
+
+        let zoomElapsed = elapsed - transitionZoomStartDelay
+        if zoomElapsed > 0 {
+            let zoomT = SpaceLinkTransitionMath.easeInOutCubic(zoomElapsed / max(0.001, transitionZoomDuration))
+            let fov = transitionStartFOV + (transitionEndFOV - transitionStartFOV) * zoomT
+            setFieldOfViewDegrees(fov)
+        }
+
+        let alignDone = elapsed >= transitionAlignDuration
+        let zoomDone = elapsed >= (transitionZoomStartDelay + transitionZoomDuration)
+        if alignDone && zoomDone {
+            look.baseLookYawDeg = transitionEndYaw
+            look.baseLookPitchDeg = transitionEndPitch
+            applyLookToCamera()
+            setFieldOfViewDegrees(transitionEndFOV)
+            let completion = transitionCompletion
+            transitionCompletion = nil
+            stopTransitionDisplayLink()
+            completion?()
+        }
+    }
+
+    @objc private func handleFOVOnlyDisplayLink(_ link: CADisplayLink) {
+        let elapsed = CACurrentMediaTime() - fovOnlyStart
+        let t = SpaceLinkTransitionMath.easeOutCubic(elapsed / max(0.001, fovOnlyDuration))
+        setFieldOfViewDegrees(fovOnlyFrom + (fovOnlyTo - fovOnlyFrom) * t)
+        if elapsed >= fovOnlyDuration {
+            setFieldOfViewDegrees(fovOnlyTo)
+            let completion = fovOnlyCompletion
+            fovOnlyCompletion = nil
+            stopFOVOnlyDisplayLink()
+            completion?()
+        }
+    }
+
+    private func stopTransitionDisplayLink() {
+        transitionDisplayLink?.invalidate()
+        transitionDisplayLink = nil
+        if let completion = transitionCompletion {
+            transitionCompletion = nil
+            completion()
+        }
+    }
+
+    private func stopFOVOnlyDisplayLink() {
+        fovOnlyDisplayLink?.invalidate()
+        fovOnlyDisplayLink = nil
+        if let completion = fovOnlyCompletion {
+            fovOnlyCompletion = nil
+            completion()
+        }
     }
 
     /// Attach one hotspot immediately (visible before next SwiftUI sync).
@@ -956,6 +1181,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
+        if spaceLinkTransitionInteractionsLocked { return }
         if editModeActive {
             handleEditPan(g)
             return
@@ -982,6 +1208,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard gesture.state == .ended else { return }
+        if spaceLinkTransitionInteractionsLocked { return }
         let location = gesture.location(in: scnView)
         if editModeActive {
             // Don't steal selection mid-drag.
@@ -1019,6 +1246,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        guard !spaceLinkTransitionInteractionsLocked else { return }
         guard editModeActive,
               let id = selectedPlacementID, let node = assetNode(id: id)
         else { return }
@@ -1052,6 +1280,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleRotation(_ gesture: UIRotationGestureRecognizer) {
+        guard !spaceLinkTransitionInteractionsLocked else { return }
         guard editModeActive,
               let id = selectedPlacementID, let node = assetNode(id: id)
         else { return }
@@ -1084,6 +1313,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func handleEditPan(_ gesture: UIPanGestureRecognizer) {
+        guard !spaceLinkTransitionInteractionsLocked else { return }
         let location = gesture.location(in: scnView)
         switch gesture.state {
         case .began:
@@ -1393,6 +1623,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
+        if spaceLinkTransitionInteractionsLocked { return }
         switch g.state {
         case .began:
             freezeLongPress = true

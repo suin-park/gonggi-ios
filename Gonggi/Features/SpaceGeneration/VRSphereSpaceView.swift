@@ -12,11 +12,20 @@ struct VRSphereSpaceView: View {
     var baseRevisionId: String = "rev-0-base"
     /// Build 80 — optional preferred audio URL (host may supply).
     var preferredAudioURL: URL? = nil
+    /// Build 81 — host owns A→B audio; suppress ensurePlaying during transition.
+    var suppressAutoAudio: Bool = false
+    /// Build 81 — target entry FOV (52 during zoom crossfade, else 70).
+    var initialFieldOfView: Double = SpaceLinkTransitionMath.baseFOV
+    /// Build 81 — freeze interactions while host runs transition.
+    var spaceLinkTransitionLocked: Bool = false
+    var transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary
     var onClose: () -> Void
     /// Optional: notify parent of new local texture path (do not recreate viewer — orientation preserved in-place).
     var onRepairCompleted: ((URL) -> Void)? = nil
     /// Build 72 — View tap 공간 연결 → parent fade/navigate.
     var onNavigateToLinkedSpace: ((SpaceLink) -> Void)? = nil
+    /// Build 81 — target panorama SCN ready for crossfade.
+    var onViewerReady: (() -> Void)? = nil
 
     @StateObject private var repairController: RepairSessionController
     @ObservedObject private var spaceAudio = SpaceAudioManager.shared
@@ -94,17 +103,27 @@ struct VRSphereSpaceView: View {
         sessionId: String,
         baseRevisionId: String = "rev-0-base",
         preferredAudioURL: URL? = nil,
+        suppressAutoAudio: Bool = false,
+        initialFieldOfView: Double = SpaceLinkTransitionMath.baseFOV,
+        spaceLinkTransitionLocked: Bool = false,
+        transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary,
         onClose: @escaping () -> Void,
         onRepairCompleted: ((URL) -> Void)? = nil,
-        onNavigateToLinkedSpace: ((SpaceLink) -> Void)? = nil
+        onNavigateToLinkedSpace: ((SpaceLink) -> Void)? = nil,
+        onViewerReady: (() -> Void)? = nil
     ) {
         self.imageURL = imageURL
         self.sessionId = sessionId
         self.baseRevisionId = baseRevisionId
         self.preferredAudioURL = preferredAudioURL
+        self.suppressAutoAudio = suppressAutoAudio
+        self.initialFieldOfView = initialFieldOfView
+        self.spaceLinkTransitionLocked = spaceLinkTransitionLocked
+        self.transitionBridgeRole = transitionBridgeRole
         self.onClose = onClose
         self.onRepairCompleted = onRepairCompleted
         self.onNavigateToLinkedSpace = onNavigateToLinkedSpace
+        self.onViewerReady = onViewerReady
         _textureURL = State(initialValue: imageURL)
         _repairController = StateObject(wrappedValue: RepairSessionController(sessionId: sessionId))
         _motionEnabled = State(
@@ -144,11 +163,14 @@ struct VRSphereSpaceView: View {
                 }
                 // Build 80 — async non-blocking; host owns A→B transitions.
                 // onAppear covers library single-entry and stack push when preferred URL set.
-                Task {
-                    await SpaceAudioManager.shared.ensurePlaying(
-                        for: sessionId,
-                        preferredURL: preferredAudioURL
-                    )
+                // Build 81 — suppress during rotate/zoom/crossfade so A/B audio does not overlap.
+                if !suppressAutoAudio {
+                    Task {
+                        await SpaceAudioManager.shared.ensurePlaying(
+                            for: sessionId,
+                            preferredURL: preferredAudioURL
+                        )
+                    }
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
@@ -476,11 +498,11 @@ struct VRSphereSpaceView: View {
                 ?? Double(VRSphereEquirectBridge.defaultYawRadiusDeg)),
             maskRadiusPitchDeg: Float(pendingTarget?.radiusPitchDeg
                 ?? Double(VRSphereEquirectBridge.defaultPitchRadiusDeg)),
-            motionDesiredEnabled: motionEnabled,
+            motionDesiredEnabled: motionEnabled && !spaceLinkTransitionLocked,
             confirmSheetPresented: showConfirmSheet,
             recenterToken: recenterToken,
-            editModeActive: interactionMode == .edit,
-            repairLongPressEnabled: interactionMode == .view,
+            editModeActive: interactionMode == .edit && !spaceLinkTransitionLocked,
+            repairLongPressEnabled: interactionMode == .view && !spaceLinkTransitionLocked,
             placementEntries: draftLayout.assets,
             placementFloorY: draftLayout.floorY,
             assetMetadata: assetMetadata,
@@ -498,11 +520,15 @@ struct VRSphereSpaceView: View {
             spaceLinks: spaceLinks,
             selectedSpaceLinkId: selectedSpaceLinkId,
             spaceLinkSpawnToken: spaceLinkSpawnToken,
+            initialFieldOfView: initialFieldOfView,
+            spaceLinkTransitionLocked: spaceLinkTransitionLocked,
+            transitionBridgeRole: transitionBridgeRole,
             onViewerReady: {
                 panoramaReady = true
                 scheduleHintFlowIfNeeded()
                 loadPlacementIfNeeded()
                 loadSpaceLinksIfNeeded()
+                onViewerReady?()
             },
             onLongPress: { yaw, pitch in
                 GonggiHaptics.medium()
@@ -1261,6 +1287,7 @@ struct VRSphereSpaceView: View {
     }
 
     private func handleSpaceLinkTapped(_ id: String?) {
+        if spaceLinkTransitionLocked { return }
         if interactionMode == .edit {
             selectedSpaceLinkId = id
             if id != nil {
@@ -1971,6 +1998,9 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var spaceLinks: [SpaceLink] = []
     var selectedSpaceLinkId: String? = nil
     var spaceLinkSpawnToken: Int = 0
+    var initialFieldOfView: Double = SpaceLinkTransitionMath.baseFOV
+    var spaceLinkTransitionLocked: Bool = false
+    var transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
     var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
@@ -2007,6 +2037,10 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.onSpaceLinkDraggingChanged = onSpaceLinkDraggingChanged
         host.onSpaceLinkScreenPoint = onSpaceLinkScreenPoint
         host.configure(imageURL: imageURL)
+        host.setFieldOfViewDegrees(initialFieldOfView)
+        host.setSpaceLinkTransitionLocked(spaceLinkTransitionLocked)
+        SpaceLinkTransitionBridge.shared.register(host, role: transitionBridgeRole)
+        context.coordinator.registeredHost = host
         host.setMotionDesiredEnabled(motionDesiredEnabled)
         host.setConfirmSheetPresented(confirmSheetPresented)
         host.setEditModeActive(editModeActive)
@@ -2037,6 +2071,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         context.coordinator.lastPlacementRequestToken = placementRequestToken
         context.coordinator.lastSpaceLinkSpawnToken = spaceLinkSpawnToken
         context.coordinator.lastSpaceLinkFingerprint = spaceLinkFingerprint
+        context.coordinator.lastInitialFOV = initialFieldOfView
+        context.coordinator.lastTransitionLocked = spaceLinkTransitionLocked
         DispatchQueue.main.async {
             context.coordinator.didNotifyReady = true
             onViewerReady?()
@@ -2073,6 +2109,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         uiView.onSpaceLinkDragEnded = onSpaceLinkDragEnded
         uiView.onSpaceLinkDraggingChanged = onSpaceLinkDraggingChanged
         uiView.onSpaceLinkScreenPoint = onSpaceLinkScreenPoint
+        SpaceLinkTransitionBridge.shared.register(uiView, role: transitionBridgeRole)
+        context.coordinator.registeredHost = uiView
         if textureGeneration != context.coordinator.lastGeneration
             || imageURL != context.coordinator.lastURL {
             uiView.reloadTexture(from: imageURL)
@@ -2082,6 +2120,16 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         if motionDesiredEnabled != context.coordinator.lastMotionDesired {
             uiView.setMotionDesiredEnabled(motionDesiredEnabled)
             context.coordinator.lastMotionDesired = motionDesiredEnabled
+        }
+        if spaceLinkTransitionLocked != context.coordinator.lastTransitionLocked {
+            uiView.setSpaceLinkTransitionLocked(spaceLinkTransitionLocked)
+            context.coordinator.lastTransitionLocked = spaceLinkTransitionLocked
+        }
+        // Apply entry FOV only once per host create — avoid fighting settle animation.
+        if abs(initialFieldOfView - context.coordinator.lastInitialFOV) > 0.05,
+           !uiView.isSpaceLinkTransitionLocked {
+            uiView.setFieldOfViewDegrees(initialFieldOfView)
+            context.coordinator.lastInitialFOV = initialFieldOfView
         }
         uiView.setConfirmSheetPresented(confirmSheetPresented)
         uiView.setEditModeActive(editModeActive)
@@ -2190,6 +2238,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         }
     }
 
+    static func dismantleUIView(_ uiView: SCNHostView, coordinator: Coordinator) {
+        SpaceLinkTransitionBridge.shared.unregister(uiView)
+        coordinator.registeredHost = nil
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator {
@@ -2204,5 +2257,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         var lastSupportLiveRevision: Int = 0
         var lastSpaceLinkFingerprint: String = ""
         var lastSpaceLinkSpawnToken: Int = 0
+        var lastInitialFOV: Double = SpaceLinkTransitionMath.baseFOV
+        var lastTransitionLocked: Bool = false
+        weak var registeredHost: SCNHostView?
     }
 }
