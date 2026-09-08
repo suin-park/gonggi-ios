@@ -516,12 +516,65 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         return .cameraPan
     }
 
-    /// Current view center → equirect degrees (Build 74: screen-center world ray).
+    /// Current view center → equirect degrees.
+    /// Build 75: composed look (applied to camera euler) is source of truth so stored
+    /// yaw/pitch match `SpaceLinkMath.worldPosition` / camera −Z. Presentation ray is
+    /// cross-checked in DEBUG only.
     func currentEquirectCenterDegrees() -> (yawDeg: Float, pitchDeg: Float) {
+        applyLookToCamera()
+        let fromLook = (look.finalYawDeg, look.finalPitchDeg)
+        #if DEBUG
         let size = viewportSize
         let center = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
-        return equirectDegreesAtScreenPoint(center)
+        let fromRay = equirectDegreesAtScreenPoint(center)
+        let dyaw = abs(VRSphereEquirectBridge.shortestDeltaDeg(from: fromRay.yawDeg, to: fromLook.0))
+        if dyaw > 2 || abs(fromRay.pitchDeg - fromLook.1) > 2 {
+            print(
+                "[vr-spaceLink75] spawn look vs ray lookYaw=\(fromLook.0) lookPitch=\(fromLook.1) rayYaw=\(fromRay.yawDeg) rayPitch=\(fromRay.pitchDeg)"
+            )
+        }
+        #endif
+        return fromLook
     }
+
+    /// Attach one hotspot immediately (visible before next SwiftUI sync).
+    func upsertSpaceLinkNode(_ link: SpaceLink, selected: Bool) {
+        spaceLinkPoses[link.id] = (link.yawDeg, link.pitchDeg, link.radius)
+        if let existing = spaceLinksRoot.childNodes.first(where: {
+            SpaceHotspotNodeFactory.linkID(from: $0) == link.id
+        }) {
+            existing.removeFromParentNode()
+        }
+        let node = SpaceHotspotNodeFactory.makeNode(
+            link: link,
+            selected: selected,
+            pulse: false
+        )
+        spaceLinksRoot.addChildNode(node)
+        if selected {
+            selectedSpaceLinkID = link.id
+            for other in spaceLinksRoot.childNodes {
+                guard let id = SpaceHotspotNodeFactory.linkID(from: other), id != link.id else { continue }
+                SpaceHotspotNodeFactory.applySelected(false, on: other)
+            }
+        }
+        refreshSpaceLinkHitSizes()
+        publishSelectedSpaceLinkScreenPoint()
+        #if DEBUG
+        let wp = SIMD3(node.position.x, node.position.y, node.position.z)
+        let camT = cameraWorldTransform
+        let forward4 = camT * SIMD4(0, 0, -1, 0)
+        let forward = simd_normalize(SIMD3(forward4.x, forward4.y, forward4.z))
+        let dir = simd_normalize(wp)
+        let dot = simd_dot(forward, dir)
+        let screen = projectNodeToScreen(node)
+        print(
+            "[vr-spaceLink75] upsert id=\(link.id) yaw=\(link.yawDeg) pitch=\(link.pitchDeg) wp=\(wp) lookDot=\(dot) screen=\(String(describing: screen)) children=\(spaceLinksRoot.childNodes.count)"
+        )
+        #endif
+    }
+
+    var isSpaceLinkDragInProgress: Bool { isSpaceLinkDragging }
 
     /// Screen point → world ray (SceneKit camera presentation) → equirect yaw/pitch.
     func equirectDegreesAtScreenPoint(_ point: CGPoint) -> (yawDeg: Float, pitchDeg: Float) {

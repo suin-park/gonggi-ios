@@ -171,16 +171,10 @@ struct VRSphereSpaceView: View {
                 assetPicker
                     .presentationDetents([.medium, .large])
             }
-            .confirmationDialog("추가", isPresented: $addMenuPresented, titleVisibility: .visible) {
-                Button("3D 오브젝트") {
-                    assetPickerPresented = true
+            .overlay {
+                if addMenuPresented {
+                    addMenuOverlay
                 }
-                .disabled(draftLayout.assets.count >= VRPlacementLayout.maxAssets)
-                Button("공간 연결") {
-                    spaceLinkSpawnToken += 1
-                }
-                .disabled(spaceLinks.count >= SpaceLink.maxLinksPerSource)
-                Button("취소", role: .cancel) {}
             }
             .sheet(isPresented: $showSpaceLinkCaptureIntro) {
                 spaceLinkCaptureIntroSheet
@@ -1108,6 +1102,70 @@ struct VRSphereSpaceView: View {
 
     // MARK: - Space Link (Build 72)
 
+    /// Build 75: high-contrast add menu (white labels — not app teal tint).
+    private var addMenuOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture { addMenuPresented = false }
+            VStack(spacing: 0) {
+                Text("추가")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.7))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                Divider().overlay(Color.white.opacity(0.15))
+                Button {
+                    addMenuPresented = false
+                    assetPickerPresented = true
+                } label: {
+                    Text("3D 오브젝트")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                }
+                .disabled(draftLayout.assets.count >= VRPlacementLayout.maxAssets)
+                .opacity(draftLayout.assets.count >= VRPlacementLayout.maxAssets ? 0.35 : 1)
+                Divider().overlay(Color.white.opacity(0.15))
+                Button {
+                    addMenuPresented = false
+                    spaceLinkSpawnToken += 1
+                } label: {
+                    Text("공간 연결")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                }
+                .disabled(spaceLinks.count >= SpaceLink.maxLinksPerSource)
+                .opacity(spaceLinks.count >= SpaceLink.maxLinksPerSource ? 0.35 : 1)
+                Divider().overlay(Color.white.opacity(0.15))
+                Button {
+                    addMenuPresented = false
+                } label: {
+                    Text("취소")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Color.white.opacity(0.85))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.black.opacity(0.82))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                    )
+            )
+            .padding(.horizontal, 28)
+            .frame(maxWidth: 340)
+        }
+        .transition(.opacity)
+        .zIndex(80)
+    }
+
     private var spaceLinkCaptureIntroSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("공간 연결")
@@ -1189,6 +1247,9 @@ struct VRSphereSpaceView: View {
         selectedPlacementId = nil
         selectedSpaceLinkId = draft.id
         GonggiHaptics.light()
+        #if DEBUG
+        print("[spaceLink75] spawn draft id=\(draft.id) yaw=\(draft.yawDeg) pitch=\(draft.pitchDeg)")
+        #endif
     }
 
     private func updateSpaceLinkPose(id: String, yaw: Float, pitch: Float, radius: Float) {
@@ -1977,8 +2038,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         }
         let linkFp = spaceLinkFingerprint
         if linkFp != context.coordinator.lastSpaceLinkFingerprint {
-            uiView.syncSpaceLinks(spaceLinks, selectedId: selectedSpaceLinkId, pulseInView: true)
-            context.coordinator.lastSpaceLinkFingerprint = linkFp
+            // Build 75: do not advance fingerprint when sync is skipped mid-drag.
+            if !uiView.isSpaceLinkDragInProgress {
+                uiView.syncSpaceLinks(spaceLinks, selectedId: selectedSpaceLinkId, pulseInView: true)
+                context.coordinator.lastSpaceLinkFingerprint = linkFp
+            }
         }
         uiView.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
         uiView.setLightingExperiment(
@@ -2005,9 +2069,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         }
         if spaceLinkSpawnToken != context.coordinator.lastSpaceLinkSpawnToken {
             context.coordinator.lastSpaceLinkSpawnToken = spaceLinkSpawnToken
-            // Sync: sample current presentation center this frame (Build 74 — no async deferral).
+            // Build 75: sample composed look sync (camera truth), then async state like 3D assets.
             let center = uiView.currentEquirectCenterDegrees()
-            onSpaceLinkSpawnResolved?(center.yawDeg, center.pitchDeg)
+            DispatchQueue.main.async {
+                onSpaceLinkSpawnResolved?(center.yawDeg, center.pitchDeg)
+            }
         }
         if recenterToken != context.coordinator.lastRecenterToken {
             uiView.recenterKeepingVisual()

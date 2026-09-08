@@ -1,4 +1,6 @@
+import SceneKit
 import XCTest
+import simd
 @testable import Gonggi
 
 final class SpaceLinkMathTests: XCTestCase {
@@ -9,9 +11,17 @@ final class SpaceLinkMathTests: XCTestCase {
         XCTAssertLessThan(p.z, -2.5)
     }
 
-    func testWorldPositionRightIsPositiveXArea() {
+    /// Build 75: yaw +90° matches camera look (−X), not insideOutSphere UV (+X).
+    func testWorldPositionYaw90MatchesCameraLookNegativeX() {
         let p = SpaceLinkMath.worldPosition(yawDeg: 90, pitchDeg: 0, radius: 3)
+        XCTAssertLessThan(p.x, -2.0)
+        XCTAssertEqual(p.z, 0, accuracy: 0.15)
+    }
+
+    func testWorldPositionYawMinus90MatchesCameraLookPositiveX() {
+        let p = SpaceLinkMath.worldPosition(yawDeg: -90, pitchDeg: 0, radius: 3)
         XCTAssertGreaterThan(p.x, 2.0)
+        XCTAssertEqual(p.z, 0, accuracy: 0.15)
     }
 
     func testClampRadius() {
@@ -140,6 +150,21 @@ final class SpaceLinkMathTests: XCTestCase {
             let dyaw = abs(VRSphereEquirectBridge.shortestDeltaDeg(from: back.yawDeg, to: yaw))
             XCTAssertLessThan(dyaw, 0.5, "yaw mismatch for (\(yaw),\(pitch)) → \(back)")
             XCTAssertEqual(back.pitchDeg, pitch, accuracy: 0.5)
+        }
+    }
+
+    func testLookDirectionMatchesCameraEulerNegZ() {
+        let samples: [(Float, Float)] = [(0, 0), (90, 0), (-90, 0), (0, 30), (45, -15)]
+        for (yaw, pitch) in samples {
+            let dir = SpaceLinkMath.lookDirection(yawDeg: yaw, pitchDeg: pitch)
+            let cam = VRLookMath.cameraEulerRad(equirectYawDeg: yaw, equirectPitchDeg: pitch)
+            let node = SCNNode()
+            node.eulerAngles = SCNVector3(cam.pitch, cam.yaw, 0)
+            let expected4 = node.simdWorldTransform * SIMD4(0, 0, -1, 0)
+            let expected = simd_normalize(SIMD3(expected4.x, expected4.y, expected4.z))
+            XCTAssertEqual(dir.x, expected.x, accuracy: 0.01)
+            XCTAssertEqual(dir.y, expected.y, accuracy: 0.01)
+            XCTAssertEqual(dir.z, expected.z, accuracy: 0.01)
         }
     }
 

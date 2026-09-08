@@ -2,26 +2,33 @@ import Foundation
 import SceneKit
 import UIKit
 
-/// Lightweight camera-facing billboard for 공간 연결 (Build 73 visual states).
+/// Lightweight camera-facing billboard for 공간 연결 (Build 73/75 visual states).
 enum SpaceHotspotNodeFactory {
     static let rootNamePrefix = "spaceHotspot:"
     static let visualName = "spaceHotspotVisual"
     static let hitProxyName = "spaceHotspotHitProxy"
     static let selectionName = "spaceHotspotSelection"
 
-    /// Visible disc (~28pt); hit proxy separately sized (~52pt).
-    static let visualTargetPoints: Float = 28
+    /// Visible disc (~36pt); hit proxy separately sized (~52pt).
+    static let visualTargetPoints: Float = 36
     static let hitTargetPoints: Float = 52
 
-    static let blueFill = UIColor(red: 0.20, green: 0.48, blue: 1.0, alpha: 0.92)
-    static let blueStroke = UIColor(red: 0.75, green: 0.88, blue: 1.0, alpha: 1)
-    static let yellowFill = UIColor(red: 1.0, green: 0.84, blue: 0.12, alpha: 0.95)
+    static let blueFill = UIColor(red: 0.20, green: 0.48, blue: 1.0, alpha: 1.0)
+    static let blueStroke = UIColor(red: 0.85, green: 0.92, blue: 1.0, alpha: 1)
+    static let yellowFill = UIColor(red: 1.0, green: 0.84, blue: 0.12, alpha: 1.0)
     static let yellowStroke = UIColor(red: 1.0, green: 0.95, blue: 0.55, alpha: 1)
+
+    #if DEBUG
+    /// Build 75: oversized magenta marker to separate transform vs material issues.
+    static var debugForceVisibleMarker = false
+    #endif
 
     static func makeNode(link: SpaceLink, selected: Bool, pulse: Bool) -> SCNNode {
         let root = SCNNode()
         root.name = rootNamePrefix + link.id
         root.categoryBitMask = VRPlacedAssetCategory.spaceLink
+        root.isHidden = false
+        root.opacity = 1
 
         let pos = SpaceLinkMath.worldPosition(
             yawDeg: link.yawDeg,
@@ -30,65 +37,67 @@ enum SpaceHotspotNodeFactory {
         )
         root.position = SCNVector3(pos.x, pos.y, pos.z)
 
-        let visualDiameter: Float = 0.22
+        #if DEBUG
+        let forceDebug = debugForceVisibleMarker
+        #else
+        let forceDebug = false
+        #endif
+
+        let visualDiameter: Float = forceDebug ? 0.55 : 0.32
         let plane = SCNPlane(width: CGFloat(visualDiameter), height: CGFloat(visualDiameter))
-        let mat = SCNMaterial()
-        mat.lightingModel = .constant
-        mat.isDoubleSided = true
-        mat.writesToDepthBuffer = false
-        mat.diffuse.contents = makeDiscImage(
-            fill: selected ? yellowFill : blueFill,
-            stroke: selected ? yellowStroke : blueStroke
+        let mat = makeUnlitMaterial(
+            image: forceDebug
+                ? makeDiscImage(fill: .magenta, stroke: .white)
+                : makeDiscImage(
+                    fill: selected ? yellowFill : blueFill,
+                    stroke: selected ? yellowStroke : blueStroke
+                )
         )
-        mat.transparencyMode = .singleLayer
-        mat.blendMode = .alpha
         plane.firstMaterial = mat
 
         let visual = SCNNode(geometry: plane)
         visual.name = visualName
         visual.categoryBitMask = VRPlacedAssetCategory.spaceLink
-        visual.renderingOrder = 20
+        visual.renderingOrder = forceDebug ? 200 : 100
+        visual.opacity = 1
+        visual.isHidden = false
         root.addChildNode(visual)
 
         let billboard = SCNBillboardConstraint()
         billboard.freeAxes = .all
         root.constraints = [billboard]
 
-        // Invisible hit target — larger than visual (Build 67 proxy pattern).
-        let hitRadius = CGFloat(visualDiameter * 1.15)
+        let hitRadius = CGFloat(visualDiameter * 1.2)
         let proxy = SCNNode(geometry: SCNSphere(radius: hitRadius))
         proxy.name = hitProxyName
         let proxyMat = SCNMaterial()
         proxyMat.diffuse.contents = UIColor.clear
         proxyMat.transparency = 0.02
         proxyMat.writesToDepthBuffer = false
+        proxyMat.readsFromDepthBuffer = false
         proxyMat.lightingModel = .constant
         proxy.geometry?.firstMaterial = proxyMat
         proxy.categoryBitMask = VRPlacedAssetCategory.spaceLink
-        proxy.renderingOrder = 21
+        proxy.renderingOrder = forceDebug ? 201 : 101
         root.addChildNode(proxy)
 
-        if selected {
+        if selected || forceDebug {
             let ringPlane = SCNPlane(
                 width: CGFloat(visualDiameter * 1.55),
                 height: CGFloat(visualDiameter * 1.55)
             )
-            let ringMat = SCNMaterial()
-            ringMat.lightingModel = .constant
-            ringMat.isDoubleSided = true
-            ringMat.writesToDepthBuffer = false
-            ringMat.diffuse.contents = makeRingImage()
-            ringMat.transparencyMode = .singleLayer
-            ringMat.blendMode = .alpha
+            let ringMat = makeUnlitMaterial(
+                image: forceDebug ? makeRingImage(color: .white) : makeRingImage(color: yellowStroke)
+            )
             ringPlane.firstMaterial = ringMat
             let ring = SCNNode(geometry: ringPlane)
             ring.name = selectionName
             ring.categoryBitMask = VRPlacedAssetCategory.selection
-            ring.renderingOrder = 22
+            ring.renderingOrder = forceDebug ? 202 : 102
             root.addChildNode(ring)
         }
 
-        if pulse, !selected, link.status == .linked {
+        if pulse, !selected, !forceDebug, link.status == .linked {
             let scaleUp = SCNAction.scale(to: 1.06, duration: 1.2)
             scaleUp.timingMode = .easeInEaseOut
             let scaleDown = SCNAction.scale(to: 1.0, duration: 1.2)
@@ -117,11 +126,15 @@ enum SpaceHotspotNodeFactory {
 
     /// Update blue/yellow + ring without recreating the root (Build 74 drag selection).
     static func applySelected(_ selected: Bool, on root: SCNNode) {
+        #if DEBUG
+        if debugForceVisibleMarker { return }
+        #endif
         if let visual = root.childNode(withName: visualName, recursively: false) {
             visual.geometry?.firstMaterial?.diffuse.contents = makeDiscImage(
                 fill: selected ? yellowFill : blueFill,
                 stroke: selected ? yellowStroke : blueStroke
             )
+            visual.geometry?.firstMaterial?.emission.contents = selected ? yellowFill : blueFill
             visual.removeAllActions()
             visual.scale = SCNVector3(1, 1, 1)
         }
@@ -132,24 +145,17 @@ enum SpaceHotspotNodeFactory {
                    let plane = visual.geometry as? SCNPlane {
                     return Float(plane.width)
                 }
-                return 0.22
+                return 0.32
             }()
             let ringPlane = SCNPlane(
                 width: CGFloat(visualD * 1.55),
                 height: CGFloat(visualD * 1.55)
             )
-            let ringMat = SCNMaterial()
-            ringMat.lightingModel = .constant
-            ringMat.isDoubleSided = true
-            ringMat.writesToDepthBuffer = false
-            ringMat.diffuse.contents = makeRingImage()
-            ringMat.transparencyMode = .singleLayer
-            ringMat.blendMode = .alpha
-            ringPlane.firstMaterial = ringMat
+            ringPlane.firstMaterial = makeUnlitMaterial(image: makeRingImage(color: yellowStroke))
             let ring = SCNNode(geometry: ringPlane)
             ring.name = selectionName
             ring.categoryBitMask = VRPlacedAssetCategory.selection
-            ring.renderingOrder = 22
+            ring.renderingOrder = 102
             root.addChildNode(ring)
         }
     }
@@ -160,6 +166,9 @@ enum SpaceHotspotNodeFactory {
         viewportHeight: Float,
         verticalFOVDegrees: Float
     ) {
+        #if DEBUG
+        if debugForceVisibleMarker { return }
+        #endif
         let visualD = SpaceLinkMath.billboardDiameterMeters(
             distance: distance,
             viewportHeight: viewportHeight,
@@ -188,7 +197,20 @@ enum SpaceHotspotNodeFactory {
         }
     }
 
-    // MARK: - Images
+    // MARK: - Materials / Images
+
+    private static func makeUnlitMaterial(image: UIImage) -> SCNMaterial {
+        let mat = SCNMaterial()
+        mat.lightingModel = .constant
+        mat.isDoubleSided = true
+        mat.writesToDepthBuffer = false
+        mat.readsFromDepthBuffer = false
+        mat.diffuse.contents = image
+        mat.emission.contents = image
+        mat.transparencyMode = .aOne
+        mat.blendMode = .alpha
+        return mat
+    }
 
     private static func makeDiscImage(fill: UIColor, stroke: UIColor) -> UIImage {
         let size = CGSize(width: 128, height: 128)
@@ -203,12 +225,12 @@ enum SpaceHotspotNodeFactory {
         }
     }
 
-    private static func makeRingImage() -> UIImage {
+    private static func makeRingImage(color: UIColor = yellowStroke) -> UIImage {
         let size = CGSize(width: 128, height: 128)
         let renderer = UIGraphicsImageRenderer(size: size)
         return renderer.image { ctx in
             let rect = CGRect(x: 8, y: 8, width: 112, height: 112)
-            yellowStroke.setStroke()
+            color.setStroke()
             ctx.cgContext.setLineWidth(7)
             ctx.cgContext.strokeEllipse(in: rect)
         }
