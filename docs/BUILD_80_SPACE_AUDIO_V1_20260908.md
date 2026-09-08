@@ -106,9 +106,20 @@ Bearer via `MobileAuthTokenStore`. Client: `SpaceAudioStore` actor.
 
 ## Build80
 
+- iOS SHA: `8cbdd69`
+- backend SHA: `4bcaa83` (Vercel Production Ready + migrate applied)
 - version/build: `1.0` / `80`
-- backend SHA: `4bcaa83`
+- workflow: https://github.com/suin-park/gonggi-ios/actions/runs/34183805903
+- Delivery UUID: `796ed3cc-d3d8-416d-a242-256d28755f17`
+- dSYM: `6F412B27-1DF2-3C90-8262-20CB54F09EEF`
+
+## Deferred
+
+- playlist / multi-track / spatial audio
+- trim/waveform editor
+- global autoplay preference
+- R2 physical cleanup on space soft-delete (same as Build78)
 
 ## Verdict
 
-READY_FOR_DEVICE_SPACE_AUDIO_VALIDATION
+READY_FOR_REAL_DEVICE_SPACE_AUDIO_VALIDATION
