@@ -193,10 +193,18 @@ struct SpaceVRNavigationHost: View {
         )
 
         let alignStart = CFAbsoluteTimeGetCurrent()
+        let presentationFOV = sourceHost.currentFieldOfViewDegrees()
+        let zoomTarget = reduceMotion
+            ? presentationFOV
+            : VRViewingFOVMath.transitionZoomTarget(fromCurrent: presentationFOV)
+        SpaceLink82Timing.log("transitionFOV", [
+            "presentation": String(format: "%.1f", presentationFOV),
+            "zoomTarget": String(format: "%.1f", zoomTarget)
+        ])
         async let alignZoom: Void = sourceHost.runAlignAndZoom(
             targetYawDeg: link.yawDeg,
             targetPitchDeg: link.pitchDeg,
-            targetFOV: SpaceLinkTransitionMath.zoomFOV,
+            targetFOV: zoomTarget,
             reduceMotion: reduceMotion
         )
 
@@ -227,9 +235,7 @@ struct SpaceVRNavigationHost: View {
 
             let session = SpaceViewerSession(id: targetKey, fileURL: url, audioURL: audioURL)
 
-            targetEntryFOV = reduceMotion
-                ? SpaceLinkTransitionMath.baseFOV
-                : SpaceLinkTransitionMath.zoomFOV
+            targetEntryFOV = zoomTarget
             sourceOpacity = 1
             targetOpacity = 0
             targetReadyPending = false
@@ -261,30 +267,29 @@ struct SpaceVRNavigationHost: View {
             targetOpacity = 1
 
             let settleStart = CFAbsoluteTimeGetCurrent()
-            if let targetHost = SpaceLinkTransitionBridge.shared.activeHost,
-               !reduceMotion {
+            let settleFOV = VRViewingFOVMath.defaultFOV
+            if let targetHost = SpaceLinkTransitionBridge.shared.activeHost {
                 targetHost.setSpaceLinkTransitionLocked(true)
-                targetHost.setFieldOfViewDegrees(SpaceLinkTransitionMath.zoomFOV)
-                await targetHost.animateFieldOfView(
-                    to: SpaceLinkTransitionMath.baseFOV,
-                    duration: SpaceLinkTransitionMath.settleDuration,
-                    easeOut: true
-                )
+                if !reduceMotion {
+                    targetHost.applyPresentationFOV(zoomTarget)
+                    await targetHost.animateFieldOfView(
+                        to: settleFOV,
+                        duration: SpaceLinkTransitionMath.settleDuration,
+                        easeOut: true
+                    )
+                } else {
+                    targetHost.applyPresentationFOV(settleFOV)
+                }
+                targetHost.commitUserViewingFOV(settleFOV)
                 // Visual stable → next tick → re-anchor / resume motion.
                 await Task.yield()
                 SpaceLink82Timing.log("motionResume start")
                 targetHost.setSpaceLinkTransitionLocked(false)
                 SpaceLink82Timing.log("motionResume end")
-            } else {
-                SpaceLinkTransitionBridge.shared.activeHost?.setFieldOfViewDegrees(
-                    SpaceLinkTransitionMath.baseFOV
-                )
-                await Task.yield()
-                SpaceLinkTransitionBridge.shared.activeHost?.setSpaceLinkTransitionLocked(false)
             }
             let settleMs = SpaceLink82Timing.ms(since: settleStart)
 
-            targetEntryFOV = SpaceLinkTransitionMath.baseFOV
+            targetEntryFOV = VRViewingFOVMath.defaultFOV
             suppressStackAudio = false
             isTransitioning = false
             SpaceLink82Timing.log("interactionReady")
@@ -318,7 +323,7 @@ struct SpaceVRNavigationHost: View {
             await sourceHost.restoreAfterFailedSpaceLinkTransition()
             isCrossfading = false
             deferSourceHold = false
-            targetEntryFOV = SpaceLinkTransitionMath.baseFOV
+            targetEntryFOV = VRViewingFOVMath.defaultFOV
             suppressStackAudio = false
             isTransitioning = false
             navigateError = "공간을 불러오지 못했어요"

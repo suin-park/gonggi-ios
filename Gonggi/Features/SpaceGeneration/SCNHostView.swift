@@ -60,6 +60,14 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var rotationGestureActive = false
     private var transformDisplayLink: CADisplayLink?
 
+    /// Build 83 — idle user zoom (pinch). Transition FOV animates camera without mutating this until settle commit.
+    private var userViewingFOV: Double = VRViewingFOVMath.defaultFOV
+    private var pinchStartUserFOV: Double = VRViewingFOVMath.defaultFOV
+    private var viewPinchActive = false
+    #if DEBUG
+    private var didLogViewPinchChanged = false
+    #endif
+
     private var look = VRLookComposer()
     private let motionManager = CMMotionManager()
     private let motionQueue = OperationQueue()
@@ -234,7 +242,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
-        cameraNode.camera?.fieldOfView = 70
+        cameraNode.camera?.fieldOfView = CGFloat(userViewingFOV)
         cameraNode.camera?.zNear = 0.1
         cameraNode.camera?.zFar = 100
         cameraNode.position = SCNVector3(0, 0, 0)
@@ -250,7 +258,10 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
         look = VRLookComposer()
         referenceAttitude = nil
+        userViewingFOV = VRViewingFOVMath.defaultFOV
+        viewPinchActive = false
         applyLookToCamera()
+        applyPresentationFOV(userViewingFOV)
         SpaceLink82Timing.log("sceneCreate end", ["ms": SpaceLink82Timing.ms(since: tScene)])
         if startMotion {
             startMotionIfPossible()
@@ -630,12 +641,27 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    func setFieldOfViewDegrees(_ fov: Double) {
+    /// Camera FOV only — used by SpaceLink transition animation. Does not mutate `userViewingFOV`.
+    func applyPresentationFOV(_ fov: Double) {
         cameraNode?.camera?.fieldOfView = CGFloat(fov)
+        refreshSpaceLinkHitSizes()
+    }
+
+    /// Idle user zoom source of truth + camera.
+    func commitUserViewingFOV(_ fov: Double) {
+        userViewingFOV = VRViewingFOVMath.clamp(fov)
+        applyPresentationFOV(userViewingFOV)
+    }
+
+    func userViewingFOVDegrees() -> Double { userViewingFOV }
+
+    /// Compatibility: presentation FOV write (transition / entry). Prefer `commitUserViewingFOV` for idle.
+    func setFieldOfViewDegrees(_ fov: Double) {
+        applyPresentationFOV(fov)
     }
 
     func currentFieldOfViewDegrees() -> Double {
-        Double(cameraNode?.camera?.fieldOfView ?? CGFloat(SpaceLinkTransitionMath.baseFOV))
+        Double(cameraNode?.camera?.fieldOfView ?? CGFloat(userViewingFOV))
     }
 
     /// Light exit feedback on the tapped hotspot (scale up + fade).
@@ -708,7 +734,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         stopFOVOnlyDisplayLink()
         let from = currentFieldOfViewDegrees()
         if duration <= 0.001 || abs(from - target) < 0.05 {
-            setFieldOfViewDegrees(target)
+            applyPresentationFOV(target)
             return
         }
         fovOnlyFrom = from
@@ -716,7 +742,6 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         fovOnlyDuration = duration
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             fovOnlyCompletion = {
-                // easeOut flag reserved for timing curve selection in tick
                 _ = easeOut
                 cont.resume()
             }
@@ -727,12 +752,12 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    /// Target load failure — restore FOV / interactions without leaving the space.
+    /// Target load failure — restore presentation FOV to user zoom (not forced 70).
     func restoreAfterFailedSpaceLinkTransition() async {
         stopTransitionDisplayLink()
         stopFOVOnlyDisplayLink()
         await animateFieldOfView(
-            to: SpaceLinkTransitionMath.baseFOV,
+            to: userViewingFOV,
             duration: SpaceLinkTransitionMath.settleDuration,
             easeOut: true
         )
@@ -761,7 +786,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         if zoomElapsed > 0 {
             let zoomT = SpaceLinkTransitionMath.easeInOutCubic(zoomElapsed / max(0.001, transitionZoomDuration))
             let fov = transitionStartFOV + (transitionEndFOV - transitionStartFOV) * zoomT
-            setFieldOfViewDegrees(fov)
+            applyPresentationFOV(fov)
         }
 
         let alignDone = elapsed >= transitionAlignDuration
@@ -770,7 +795,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             look.baseLookYawDeg = transitionEndYaw
             look.baseLookPitchDeg = transitionEndPitch
             applyLookToCamera()
-            setFieldOfViewDegrees(transitionEndFOV)
+            applyPresentationFOV(transitionEndFOV)
             let completion = transitionCompletion
             transitionCompletion = nil
             stopTransitionDisplayLink()
@@ -781,9 +806,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     @objc private func handleFOVOnlyDisplayLink(_ link: CADisplayLink) {
         let elapsed = CACurrentMediaTime() - fovOnlyStart
         let t = SpaceLinkTransitionMath.easeOutCubic(elapsed / max(0.001, fovOnlyDuration))
-        setFieldOfViewDegrees(fovOnlyFrom + (fovOnlyTo - fovOnlyFrom) * t)
+        applyPresentationFOV(fovOnlyFrom + (fovOnlyTo - fovOnlyFrom) * t)
         if elapsed >= fovOnlyDuration {
-            setFieldOfViewDegrees(fovOnlyTo)
+            applyPresentationFOV(fovOnlyTo)
             let completion = fovOnlyCompletion
             fovOnlyCompletion = nil
             stopFOVOnlyDisplayLink()
@@ -1250,6 +1275,13 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer is UIPinchGestureRecognizer {
+            if spaceLinkTransitionInteractionsLocked { return false }
+            if editModeActive {
+                return selectedPlacementID != nil
+            }
+            return true
+        }
         guard editModeActive, gestureRecognizer is UIPanGestureRecognizer else { return true }
         // While a two-finger transform is active, block one-finger pan ownership flips.
         if pinchGestureActive || rotationGestureActive { return false }
@@ -1257,7 +1289,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
-        if spaceLinkTransitionInteractionsLocked { return }
+        if spaceLinkTransitionInteractionsLocked || viewPinchActive { return }
         if editModeActive {
             handleEditPan(g)
             return
@@ -1284,7 +1316,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard gesture.state == .ended else { return }
-        if spaceLinkTransitionInteractionsLocked { return }
+        if spaceLinkTransitionInteractionsLocked || viewPinchActive { return }
         let location = gesture.location(in: scnView)
         if editModeActive {
             // Don't steal selection mid-drag.
@@ -1323,9 +1355,51 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
         guard !spaceLinkTransitionInteractionsLocked else { return }
-        guard editModeActive,
-              let id = selectedPlacementID, let node = assetNode(id: id)
-        else { return }
+        if editModeActive {
+            handleEditAssetPinch(gesture)
+            return
+        }
+        handleViewFOVPinch(gesture)
+    }
+
+    /// View mode: two-finger pinch → camera FOV zoom (direct SceneKit update).
+    private func handleViewFOVPinch(_ gesture: UIPinchGestureRecognizer) {
+        switch gesture.state {
+        case .began:
+            viewPinchActive = true
+            pinchStartUserFOV = userViewingFOV
+            #if DEBUG
+            didLogViewPinchChanged = false
+            print("[vrZoom83] began FOV=\(String(format: "%.1f", pinchStartUserFOV))")
+            #endif
+        case .changed:
+            let live = VRViewingFOVMath.fov(startFOV: pinchStartUserFOV, pinchScale: gesture.scale)
+            userViewingFOV = live
+            applyPresentationFOV(live)
+            #if DEBUG
+            if !didLogViewPinchChanged {
+                didLogViewPinchChanged = true
+                print(
+                    "[vrZoom83] changed scale=\(String(format: "%.3f", Double(gesture.scale))) liveFOV=\(String(format: "%.1f", live))"
+                )
+            }
+            #endif
+        case .ended, .cancelled, .failed:
+            let finalFOV = VRViewingFOVMath.fov(startFOV: pinchStartUserFOV, pinchScale: gesture.scale)
+            commitUserViewingFOV(finalFOV)
+            viewPinchActive = false
+            #if DEBUG
+            print("[vrZoom83] ended FOV=\(String(format: "%.1f", userViewingFOV))")
+            didLogViewPinchChanged = false
+            #endif
+        default:
+            break
+        }
+    }
+
+    /// Edit mode: selected asset uniform scale (Build 67).
+    private func handleEditAssetPinch(_ gesture: UIPinchGestureRecognizer) {
+        guard let id = selectedPlacementID, let node = assetNode(id: id) else { return }
         switch gesture.state {
         case .began:
             pinchGestureActive = true
@@ -1699,7 +1773,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
-        if spaceLinkTransitionInteractionsLocked { return }
+        if spaceLinkTransitionInteractionsLocked || viewPinchActive { return }
         switch g.state {
         case .began:
             freezeLongPress = true
