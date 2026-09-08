@@ -33,6 +33,7 @@ enum AccountPresentationReset {
         AuthSessionGeneration.bump(reason: "signOut")
         SpaceLibraryReconciler.shared.cancelInFlight()
         SpaceJobStore.shared.bind(.none)
+        SpaceJobRuntimeSharedHook.cancelForAccountChange()
         AssetLibraryStore.shared.clearForAccountChange()
         AssetGenerationStore.shared.clearForAccountChange()
         PendingSpaceLinkCaptureStore.shared.clear()
@@ -45,6 +46,7 @@ enum AccountPresentationReset {
     static func prepareForSignedIn(userId: String) {
         AuthSessionGeneration.bump(reason: "signedIn")
         SpaceLibraryReconciler.shared.cancelInFlight()
+        SpaceJobRuntimeSharedHook.cancelForAccountChange()
         SpaceJobStore.shared.bind(.user(userId))
         AssetLibraryStore.shared.clearForAccountChange()
         AssetGenerationStore.shared.clearForAccountChange()
@@ -52,5 +54,15 @@ enum AccountPresentationReset {
         SpaceRepairStore.shared.clearPresentation()
         SpaceAudioManager.shared.stop()
         NotificationCenter.default.post(name: .gonggiAccountPresentationDidReset, object: nil)
+    }
+}
+
+/// Bridges AccountPresentationReset → the live AppState jobRuntime without retaining AppState.
+@MainActor
+enum SpaceJobRuntimeSharedHook {
+    static weak var runtime: SpaceJobRuntime?
+
+    static func cancelForAccountChange() {
+        runtime?.cancelAllForAccountChange()
     }
 }

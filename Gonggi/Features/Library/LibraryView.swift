@@ -85,6 +85,9 @@ struct LibraryView: View {
                     selectedSpace = nil
                 }
             }
+            .onAppear {
+                appState.ensureSpaceGenerationPolling()
+            }
         }
     }
 

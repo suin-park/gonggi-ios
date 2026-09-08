@@ -94,7 +94,7 @@ final class SpaceJobStore: ObservableObject {
     }
 
     func update(jobId: String, mutate: (inout SpaceJobRecord) -> Void) {
-        guard let idx = jobs.firstIndex(where: { $0.jobId == jobId }) else { return }
+        guard let idx = jobs.firstIndex(where: { $0.jobId == jobId || $0.sessionId == jobId }) else { return }
         mutate(&jobs[idx])
         if jobs[idx].ownerUserId == nil, case .user(let userId) = boundScope {
             jobs[idx].ownerUserId = userId
@@ -104,7 +104,7 @@ final class SpaceJobStore: ObservableObject {
     }
 
     func job(id jobId: String) -> SpaceJobRecord? {
-        jobs.first(where: { $0.jobId == jobId })
+        jobs.first(where: { $0.jobId == jobId || $0.sessionId == jobId })
     }
 
     func activeJobs() -> [SpaceJobRecord] {

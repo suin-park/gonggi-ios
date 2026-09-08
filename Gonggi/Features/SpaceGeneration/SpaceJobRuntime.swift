@@ -2,16 +2,23 @@ import Foundation
 import SwiftUI
 import UIKit
 
-/// App-scoped async generation: upload once, poll only while foreground, never cancel server job.
+/// App-scoped async generation: upload once, poll active jobs while foreground.
+/// Server status is canonical — local `serverStatus` is presentation cache.
 @MainActor
 final class SpaceJobRuntime: ObservableObject {
     private let store: SpaceJobStore
     private var api: SpaceRecordAPIClienting?
     private var pollTask: Task<Void, Never>?
     private var uploadTasks: [String: Task<Void, Never>] = [:]
+    private var downloadTasks: [String: Task<Void, Never>] = [:]
     private var sourceFilesBySession: [String: [(direction: String, fileURL: URL)]] = [:]
     private var captureMetadataBySession: [String: String] = [:]
     private var isForeground = true
+    /// Snapshot at poll-loop start — discard status applies after account switch.
+    private var pollGeneration: UInt64 = 0
+
+    /// Test hook: override sleep between polls (nanoseconds). Nil = production cadence.
+    var pollIntervalOverrideNs: UInt64?
 
     init(store: SpaceJobStore = .shared) {
         self.store = store
@@ -28,12 +35,17 @@ final class SpaceJobRuntime: ObservableObject {
         api = client
     }
 
+    var isPolling: Bool { pollTask != nil }
+
     func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .active:
             isForeground = true
-            resumePolling()
-        case .inactive, .background:
+            ensurePolling()
+        case .inactive:
+            // Keep polling — sheets / Control Center briefly go inactive and must not kill status updates.
+            break
+        case .background:
             isForeground = false
             stopPolling()
         @unknown default:
@@ -56,7 +68,8 @@ final class SpaceJobRuntime: ObservableObject {
                 resultImageURL: nil,
                 localLatLongPath: nil,
                 width: nil,
-                height: nil
+                height: nil,
+                ownerUserId: AuthSessionController.shared.profile?.id
             )
             store.upsert(failed)
             return
@@ -85,7 +98,9 @@ final class SpaceJobRuntime: ObservableObject {
     }
 
     func retryFailed(jobId: String) {
-        guard var job = store.job(id: jobId), job.serverStatus == "failed" else { return }
+        guard var job = store.job(id: jobId) ?? store.jobs.first(where: { $0.sessionId == jobId }),
+              job.serverStatus == "failed"
+        else { return }
         guard let files = sourceFilesBySession[job.sessionId] ?? Self.loadFilesFromDisk(sessionId: job.sessionId) else {
             return
         }
@@ -102,11 +117,31 @@ final class SpaceJobRuntime: ObservableObject {
         }
     }
 
-    func resumePolling() {
-        pollTask?.cancel()
+    /// Idempotent — does not cancel a healthy in-flight poller.
+    func ensurePolling() {
         guard isForeground else { return }
-        guard !store.activeJobs().isEmpty else { return }
-        pollTask = Task { await self.pollLoop() }
+        guard !store.activeJobs().isEmpty else {
+            stopPolling()
+            return
+        }
+        if pollTask != nil { return }
+        pollGeneration = AuthSessionGeneration.current
+        pollTask = Task { await self.pollLoop(generation: self.pollGeneration) }
+    }
+
+    /// Force restart poller (e.g. after upload accepted).
+    func resumePolling() {
+        guard isForeground else { return }
+        guard !store.activeJobs().isEmpty else {
+            stopPolling()
+            return
+        }
+        if pollTask != nil {
+            // Already polling — do not cancel (avoids dropping in-flight status).
+            return
+        }
+        pollGeneration = AuthSessionGeneration.current
+        pollTask = Task { await self.pollLoop(generation: self.pollGeneration) }
     }
 
     func stopPolling() {
@@ -114,24 +149,37 @@ final class SpaceJobRuntime: ObservableObject {
         pollTask = nil
     }
 
+    /// Cancel all account-bound work (logout / account switch).
+    func cancelAllForAccountChange() {
+        stopPolling()
+        for (_, task) in uploadTasks { task.cancel() }
+        uploadTasks.removeAll()
+        for (_, task) in downloadTasks { task.cancel() }
+        downloadTasks.removeAll()
+        sourceFilesBySession.removeAll()
+        captureMetadataBySession.removeAll()
+    }
+
     /// Launch / foreground: sync in-flight jobs and re-cache completed textures if needed.
     func syncActiveJobsOnce() async {
+        let generation = AuthSessionGeneration.current
         for job in store.activeJobs() {
-            await refreshStatus(jobId: job.jobId)
+            await refreshStatus(jobId: job.jobId, generation: generation)
         }
         for job in store.jobs where job.serverStatus == "completed" && !job.isDeviceReadyForVR {
             _ = await prepareViewer(jobId: job.jobId)
         }
         if isForeground {
-            resumePolling()
+            ensurePolling()
         }
     }
 
     /// Resolve a durable local latlong file before opening VR. Never opens without a valid texture.
-    /// Prefer selective-repair latest revision when present; base `latlong.jpg` remains intact.
     @discardableResult
     func prepareViewer(jobId: String) async -> Result<URL, SpaceViewerError> {
-        guard var job = store.job(id: jobId) else { return .failure(.jobNotFound) }
+        guard var job = store.job(id: jobId) ?? store.jobs.first(where: { $0.sessionId == jobId }) else {
+            return .failure(.jobNotFound)
+        }
 
         if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
            SpaceLatLongStore.isValidLocalFile(at: latest.path) {
@@ -143,9 +191,10 @@ final class SpaceJobRuntime: ObservableObject {
             return .success(URL(fileURLWithPath: path))
         }
 
-        // Refresh status so we pick up result URL if missing.
-        await refreshStatus(jobId: jobId)
-        guard let refreshed = store.job(id: jobId) else { return .failure(.jobNotFound) }
+        await refreshStatus(jobId: job.jobId, generation: AuthSessionGeneration.current)
+        guard let refreshed = store.job(id: job.jobId) ?? store.jobs.first(where: { $0.sessionId == job.sessionId }) else {
+            return .failure(.jobNotFound)
+        }
         job = refreshed
 
         if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
@@ -179,6 +228,7 @@ final class SpaceJobRuntime: ObservableObject {
 
     private func uploadCreate(sessionId: String, files: [(direction: String, fileURL: URL)]) async {
         guard let api else { return }
+        let generation = AuthSessionGeneration.current
         do {
             let meta = captureMetadataBySession[sessionId] ?? Self.loadCaptureMetadataJSON(sessionId: sessionId)
             let response = try await api.create(
@@ -186,15 +236,17 @@ final class SpaceJobRuntime: ObservableObject {
                 imageFiles: files,
                 captureMetadataJSON: meta
             )
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
             store.update(jobId: sessionId) { job in
                 job.jobId = response.jobId
                 job.sessionId = response.sessionId
                 job.serverStatus = Self.normalizeStatus(response.status)
                 job.lastErrorCode = nil
             }
-            await refreshStatus(jobId: response.jobId)
-            resumePolling()
+            await refreshStatus(jobId: response.jobId, generation: generation)
+            ensurePolling()
         } catch {
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
             store.update(jobId: sessionId) { job in
                 if job.serverStatus == "uploading" {
                     job.serverStatus = "failed"
@@ -206,6 +258,7 @@ final class SpaceJobRuntime: ObservableObject {
 
     private func uploadRegenerate(sessionId: String, files: [(direction: String, fileURL: URL)]) async {
         guard let api else { return }
+        let generation = AuthSessionGeneration.current
         do {
             let meta = captureMetadataBySession[sessionId] ?? Self.loadCaptureMetadataJSON(sessionId: sessionId)
             let response = try await api.regenerate(
@@ -213,14 +266,16 @@ final class SpaceJobRuntime: ObservableObject {
                 imageFiles: files,
                 captureMetadataJSON: meta
             )
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
             store.update(jobId: sessionId) { job in
                 job.jobId = response.jobId
                 job.serverStatus = Self.normalizeStatus(response.status)
                 job.lastErrorCode = nil
             }
-            await refreshStatus(jobId: response.jobId)
-            resumePolling()
+            await refreshStatus(jobId: response.jobId, generation: generation)
+            ensurePolling()
         } catch {
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
             store.update(jobId: sessionId) { job in
                 job.serverStatus = "failed"
                 job.lastErrorCode = SpaceJobErrorPresentation.code(from: error)
@@ -228,27 +283,37 @@ final class SpaceJobRuntime: ObservableObject {
         }
     }
 
-    private func pollLoop() async {
+    private func pollLoop(generation: UInt64) async {
         var i = 0
         let intervals: [UInt64] = [
-            2_000_000_000, 2_000_000_000, 3_000_000_000, 5_000_000_000
+            2_000_000_000, 3_000_000_000, 5_000_000_000, 8_000_000_000
         ]
         while !Task.isCancelled, isForeground {
-            let active = store.activeJobs()
-            if active.isEmpty { return }
-            for job in active {
-                await refreshStatus(jobId: job.jobId)
+            guard AuthSessionGeneration.isCurrent(generation) else {
+                pollTask = nil
+                return
             }
-            let delay = intervals[min(i, intervals.count - 1)]
+            let active = store.activeJobs()
+            if active.isEmpty {
+                pollTask = nil
+                return
+            }
+            for job in active {
+                await refreshStatus(jobId: job.jobId, generation: generation)
+            }
+            let delay = pollIntervalOverrideNs ?? intervals[min(i, intervals.count - 1)]
             i += 1
             try? await Task.sleep(nanoseconds: delay)
         }
+        pollTask = nil
     }
 
-    private func refreshStatus(jobId: String) async {
+    private func refreshStatus(jobId: String, generation: UInt64) async {
         guard let api else { return }
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
         do {
             let status = try await api.fetchStatus(jobId: jobId)
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
             switch status.status {
             case "failed":
                 store.update(jobId: jobId) { job in
@@ -258,7 +323,7 @@ final class SpaceJobRuntime: ObservableObject {
                     }
                 }
             case "completed":
-                await finishCompleted(jobId: jobId, status: status)
+                await applyCompleted(jobId: jobId, status: status, generation: generation)
             default:
                 store.update(jobId: jobId) { job in
                     if !job.isTerminal {
@@ -267,13 +332,14 @@ final class SpaceJobRuntime: ObservableObject {
                 }
             }
         } catch {
-            // Transient — keep last known state.
+            // Transient network — keep processing; next poll retries.
         }
     }
 
-    private func finishCompleted(jobId: String, status: SpaceRecordStatusResponse) async {
+    /// Mark presentation completed immediately; download texture off the poll loop.
+    private func applyCompleted(jobId: String, status: SpaceRecordStatusResponse, generation: UInt64) async {
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
         guard let urlString = status.imageUrl, let remote = URL(string: urlString) else {
-            // Keep generating so a later poll can recover; do not invent failed.
             store.update(jobId: jobId) { job in
                 if !job.isTerminal {
                     job.serverStatus = "generating"
@@ -287,36 +353,38 @@ final class SpaceJobRuntime: ObservableObject {
             return
         }
 
-        // Persist remote URL even before download succeeds.
+        // UI: leave "생성 중" immediately — do not wait for panorama download.
         store.update(jobId: jobId) { job in
             job.resultImageURL = urlString
             if let w = status.width { job.width = w }
             if let h = status.height { job.height = h }
+            job.serverStatus = "completed"
+            if job.completedAt == nil { job.completedAt = Date() }
         }
 
-        if let existing = store.job(id: jobId),
-           SpaceLatLongStore.isValidLocalFile(at: existing.localLatLongPath) {
-            store.update(jobId: jobId) { job in
-                job.serverStatus = "completed"
-                if job.completedAt == nil { job.completedAt = Date() }
-            }
+        let sessionId = store.job(id: jobId)?.sessionId
+            ?? store.jobs.first(where: { $0.jobId == jobId })?.sessionId
+            ?? jobId
+
+        if SpaceLatLongStore.isValidLocalFile(at: store.job(id: jobId)?.localLatLongPath) {
             return
         }
 
-        do {
-            _ = try await downloadAndPersist(
-                sessionId: store.job(id: jobId)?.sessionId ?? jobId,
-                jobId: jobId,
-                remote: remote,
-                reportedWidth: status.width,
-                reportedHeight: status.height
-            )
-        } catch {
-            // Server completed; device not ready yet — keep resultURL, retry on next sync/tap.
-            store.update(jobId: jobId) { job in
-                job.serverStatus = "completed"
-                job.resultImageURL = urlString
-                if job.completedAt == nil { job.completedAt = Date() }
+        // Deduped background download — must not block polling.
+        if downloadTasks[jobId] != nil { return }
+        downloadTasks[jobId] = Task { [weak self] in
+            guard let self else { return }
+            defer { self.downloadTasks[jobId] = nil }
+            do {
+                _ = try await self.downloadAndPersist(
+                    sessionId: sessionId,
+                    jobId: jobId,
+                    remote: remote,
+                    reportedWidth: status.width,
+                    reportedHeight: status.height
+                )
+            } catch {
+                // Completed on server; texture retry on next prepareViewer / sync.
             }
         }
     }
@@ -379,7 +447,6 @@ final class SpaceJobRuntime: ObservableObject {
         return files.count == DirectionName.requiredCount ? files : nil
     }
 
-    /// Rebuild captureMetadata from on-disk capture_report.json when retrying after process death.
     private static func loadCaptureMetadataJSON(sessionId: String) -> String? {
         guard let dir = try? CaptureSessionStore.createDirectionCaptureDirectory(sessionId: sessionId) else {
             return nil

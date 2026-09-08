@@ -22,8 +22,12 @@ struct MainTabView: View {
                 .tag(AppTab.profile)
         }
         .tint(GonggiColors.accentTeal)
+        .onAppear {
+            appState.ensureSpaceGenerationPolling()
+        }
         .onChange(of: appState.selectedTab) { _, _ in
             GonggiHaptics.selection()
+            appState.ensureSpaceGenerationPolling()
         }
     }
 }

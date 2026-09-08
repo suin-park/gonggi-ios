@@ -44,6 +44,7 @@ final class AppState: ObservableObject {
         self.jobStore = store
         self.jobRuntime = SpaceJobRuntime(store: store)
         self.jobRuntime.configure(useMock: isMockMode)
+        SpaceJobRuntimeSharedHook.runtime = self.jobRuntime
         store.onChange = { [weak self] in
             self?.rebuildSpaces()
             self?.schedulePendingSpaceLinkFinalize()
@@ -250,6 +251,11 @@ final class AppState: ObservableObject {
                 rebuildSpaces()
             }
         }
+    }
+
+    /// Tab / Library visibility — resume status poll without full reconcile storm.
+    func ensureSpaceGenerationPolling() {
+        jobRuntime.ensurePolling()
     }
 
     func addSpace(from summary: CaptureSessionSummary, jobId: String) {
