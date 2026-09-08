@@ -180,8 +180,19 @@ DEBUG 로그: asset id 8자, hasResultThumb, phase, host+path prefix, domain/cod
 
 | 항목 | 값 |
 |------|-----|
-| **최종 구현 SHA** | _(커밋 후 기입)_ |
-| **CI 링크** | _(PR / Actions run URL)_ |
-| 신규 실패 | _(CI 후)_ |
-| 기존 실패 | 전체 스위트 중 기존 OpenCV/파노라마 등 — 이번 범위에서 미수정 |
-| 어셋 미확정 | 테스터 계정 목록 **NOT RUN**; 통계만으로 증상 해결 판정 **안 함** |
+| **최종 구현 SHA** | `765639b` (`765639bddac23372c52477bc650fe3c2d84fc9d2`) |
+| **PR** | https://github.com/suin-park/gonggi-ios/pull/1 |
+| **CI run** | https://github.com/suin-park/gonggi-ios/actions/runs/34289097515 |
+| **Compile** | **PASS** (Simulator Debug/Release + iphoneos link) |
+| **SpaceThumbnailTests** | **PASS** 11/11 (A–F 포함) |
+| **AssetThumbnailDetailFallbackTests** | **PASS** 1/1 |
+| **AccountIsolationTests** | **PASS** 7/7 |
+| **SpaceGenerationLiveStatusTests** | **PASS** |
+| **SpaceViewerPrepareTests** | **PASS** |
+| **AssetLibrary Phase1–4B** | **PASS** (해당 스위트) |
+| **전체 스위트** | 545 executed, **43 failures** — **전체 GREEN 아님** |
+| **신규 실패 (이번 변경 관련)** | **없음** (SpaceThumbnail / Asset thumb / Isolation / LiveStatus / Prepare 전부 통과) |
+| **기존 실패 (범위 외, 미수정)** | Build63PhaseLocalTests (다수), DirectionCaptureGuideTests, SpaceRecordAsyncContractTests payload, VRPlacementMathTests lerp, ServiceIATests keychain, SpaceLinkMathTests 등 |
+| **어셋 미확정** | 테스터 계정 목록 **NOT RUN**; 통계만으로 증상 해결 판정 **안 함** |
+| Archive / TestFlight / ASC | **NOT RUN** |
+| 리디자인 | **미시작** |
