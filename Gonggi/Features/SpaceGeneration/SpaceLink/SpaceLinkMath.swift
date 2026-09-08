@@ -31,14 +31,19 @@ enum SpaceLinkMath {
     }
 
     /// Inverse of `lookDirection` (unit vector → equirect degrees).
+    ///
+    /// Build 77: pitch must use `atan2(-d.y, horiz)` because `cameraEulerRad` sets
+    /// `cameraPitch = −equirectPitch`, so lookDirection(+pitch) has **negative** world Y.
+    /// Using `+atan2(d.y)` made unproject(+Y / finger-up) store +pitch then rebuild to −Y
+    /// (finger up → hotspot down). Yaw path unchanged.
     static func equirectDegreesFromWorldDirection(_ direction: SIMD3<Float>) -> (yawDeg: Float, pitchDeg: Float) {
         let len = simd_length(direction)
         guard len > 1e-8 else { return (0, 0) }
         let d = direction / len
-        // Match VRLookMath / camera −Z: yaw from (−x, −z), pitch from elevation.
+        // Match VRLookMath / camera −Z: yaw from (−x, −z); pitch negates Y (euler −pitch).
         let yawDeg = VRLookMath.normalizeYawDeg(atan2(-d.x, -d.z) * 180 / .pi)
         let horiz = max(1e-6, sqrt(d.x * d.x + d.z * d.z))
-        let pitchDeg = VRLookMath.clampPitchDeg(atan2(d.y, horiz) * 180 / .pi)
+        let pitchDeg = VRLookMath.clampPitchDeg(atan2(-d.y, horiz) * 180 / .pi)
         return (yawDeg, pitchDeg)
     }
 

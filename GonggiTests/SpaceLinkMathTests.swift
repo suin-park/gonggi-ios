@@ -178,7 +178,11 @@ final class SpaceLinkMathTests: XCTestCase {
         XCTAssertGreaterThan(origin.y, 40)
     }
 
-    /// Build 76: finger up/down must move projected hotspot the same screen direction.
+    /// Build 76/77: finger up/down must move projected hotspot the same screen direction.
+    ///
+    /// Note: with true `lookDirection` inverse, screen-up (+world Y at identity) stores
+    /// **negative** equirect pitch (cameraEuler −pitch → look Y+). Equirect “up = +”
+    /// still means sky when looking up; screen-follow uses the inverse pair.
     func testVerticalScreenDragDirectionMatchesProjection() {
         let size = CGSize(width: 390, height: 844)
         let camYaw: Float = 0
@@ -206,9 +210,10 @@ final class SpaceLinkMathTests: XCTestCase {
             point: upRight, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
         )
 
-        XCTAssertGreaterThan(eqUp.pitchDeg, eqDown.pitchDeg, "up screen → higher equirect pitch")
+        // Screen-up → world +Y → equirect pitch more negative (lookDirection inverse).
+        XCTAssertLessThan(eqUp.pitchDeg, eqDown.pitchDeg, "up screen → lower equirect pitch (look inverse)")
         XCTAssertGreaterThan(eqRight.yawDeg, eqLeft.yawDeg, "right screen → higher yaw")
-        XCTAssertGreaterThan(eqUR.pitchDeg, 0)
+        XCTAssertLessThan(eqUR.pitchDeg, 0)
         XCTAssertGreaterThan(eqUR.yawDeg, 0)
 
         let aspect = Float(size.width / size.height)
@@ -240,14 +245,20 @@ final class SpaceLinkMathTests: XCTestCase {
             return XCTFail("behind camera")
         }
 
-        XCTAssertLessThan(uvUp.y, 0.5, "up pitch projects to upper half")
-        XCTAssertGreaterThan(uvDown.y, 0.5, "down pitch projects to lower half")
+        XCTAssertLessThan(uvUp.y, 0.5, "up finger projects to upper half")
+        XCTAssertGreaterThan(uvDown.y, 0.5, "down finger projects to lower half")
         XCTAssertGreaterThan(uvRight.x, 0.5)
 
         let upPt = abs(uvUp.y - Float(up.y / size.height)) * Float(size.height)
         let downPt = abs(uvDown.y - Float(down.y / size.height)) * Float(size.height)
         XCTAssertLessThan(upPt, 20, "up round-trip within ~20pt")
         XCTAssertLessThan(downPt, 20, "down round-trip within ~20pt")
+
+        // ΔscreenY finger vs Δprojected must share sign (both negative for up).
+        let fingerDeltaY = Float(up.y - center.y) // −100
+        let projDeltaY = (uvUp.y - 0.5) * Float(size.height)
+        XCTAssertLessThan(fingerDeltaY, 0)
+        XCTAssertLessThan(projDeltaY, 0)
 
         // Grab offset: began 20pt above hotspot center should not snap.
         let hotspotScreen = CGPoint(x: 195, y: 422)
@@ -264,6 +275,48 @@ final class SpaceLinkMathTests: XCTestCase {
         )
         let held = finger1.pitchDeg + grabPitch
         XCTAssertEqual(held, pose.pitchDeg, accuracy: 0.05)
-        _ = center
+
+        // Center grab (offset ≈ 0): up still projects up.
+        let centerPose = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: center, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        let moved = SpaceLinkMath.equirectDegreesFromScreenPoint(
+            point: up, viewportSize: size, cameraYawDeg: camYaw, cameraPitchDeg: camPitch
+        )
+        XCTAssertEqual(centerPose.pitchDeg, 0, accuracy: 0.5)
+        guard let uvMoved = SpaceLinkMath.screenUV(
+            yawDeg: moved.yawDeg,
+            pitchDeg: moved.pitchDeg,
+            cameraYawDeg: camYaw,
+            cameraPitchDeg: camPitch,
+            verticalFOVDegrees: 70,
+            aspect: aspect
+        ) else {
+            return XCTFail("behind camera center-grab")
+        }
+        XCTAssertLessThan(uvMoved.y, 0.5)
+    }
+
+    /// Build 77: lookDirection ↔ equirectDegreesFromWorldDirection must be true inverses,
+    /// including the cameraEuler −pitch → world Y sign.
+    func testLookDirectionEquirectInversePitchSign() {
+        let samples: [(Float, Float)] = [
+            (0, 0), (0, 30), (0, -30), (90, 20), (-45, -15)
+        ]
+        for (yaw, pitch) in samples {
+            let dir = SpaceLinkMath.lookDirection(yawDeg: yaw, pitchDeg: pitch)
+            if abs(pitch) > 1 {
+                // equirect +pitch → cameraPitch negative → look world Y negative
+                if pitch > 0 {
+                    XCTAssertLessThan(dir.y, 0, "+\(pitch)° should look toward −Y")
+                } else {
+                    XCTAssertGreaterThan(dir.y, 0, "\(pitch)° should look toward +Y")
+                }
+            }
+            let back = SpaceLinkMath.equirectDegreesFromWorldDirection(dir)
+            let dyaw = abs(VRSphereEquirectBridge.shortestDeltaDeg(from: back.yawDeg, to: yaw))
+            XCTAssertLessThan(dyaw, 0.5, "yaw inverse (\(yaw),\(pitch)) → \(back)")
+            XCTAssertEqual(back.pitchDeg, pitch, accuracy: 0.5, "pitch inverse (\(yaw),\(pitch)) → \(back)")
+        }
     }
 }

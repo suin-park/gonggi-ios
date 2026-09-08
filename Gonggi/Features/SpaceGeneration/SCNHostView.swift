@@ -30,6 +30,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var spaceLinkGrabPitchOffsetDeg: Float = 0
     private var spaceLinkPoseAtDragBegan: (yaw: Float, pitch: Float, radius: Float)?
     private var isSpaceLinkDragging = false
+    #if DEBUG
+    private var spaceLinkDragDebugLogged = false
+    #endif
     private var placementFloorY = VRPlacementLayout.defaultFloorY
     private var gestureStartScale: Float = 1
     private var gestureStartRotationY: Float = 0
@@ -1169,6 +1172,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             to: pose.yaw
         )
         spaceLinkGrabPitchOffsetDeg = pose.pitch - finger.pitchDeg
+        #if DEBUG
+        spaceLinkDragDebugLogged = false
+        #endif
         // Yellow selection without full sync (sync is skipped while dragging).
         for node in spaceLinksRoot.childNodes {
             guard let id = SpaceHotspotNodeFactory.linkID(from: node) else { continue }
@@ -1183,6 +1189,13 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
     private func continueSpaceLinkMove(linkId: String, screenPoint: CGPoint) {
         guard var pose = spaceLinkPoses[linkId] else { return }
+        #if DEBUG
+        let near = scnView.unprojectPoint(SCNVector3(screenPoint.x, screenPoint.y, 0))
+        let far = scnView.unprojectPoint(SCNVector3(screenPoint.x, screenPoint.y, 1))
+        var rayDir = SIMD3(far.x - near.x, far.y - near.y, far.z - near.z)
+        let rayLen = simd_length(rayDir)
+        if rayLen > 1e-8 { rayDir /= rayLen }
+        #endif
         let finger = equirectDegreesAtScreenPoint(screenPoint)
         pose.yaw = VRSphereEquirectBridge.normalizeYawDeg(finger.yawDeg + spaceLinkGrabYawOffsetDeg)
         pose.pitch = max(-89, min(89, finger.pitchDeg + spaceLinkGrabPitchOffsetDeg))
@@ -1202,6 +1215,17 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
                 viewportHeight: Float(max(viewportSize.height, 1)),
                 verticalFOVDegrees: Float(cameraNode?.camera?.fieldOfView ?? 70)
             )
+            #if DEBUG
+            if !spaceLinkDragDebugLogged {
+                spaceLinkDragDebugLogged = true
+                let rebuilt = SpaceLinkMath.lookDirection(yawDeg: pose.yaw, pitchDeg: pose.pitch)
+                let wp = node.worldPosition
+                let proj = scnView.projectPoint(wp)
+                print(
+                    "[spaceLink77] dragTrace finger=(\(screenPoint.x),\(screenPoint.y)) near=(\(near.x),\(near.y),\(near.z)) far=(\(far.x),\(far.y),\(far.z)) ray=(\(rayDir.x),\(rayDir.y),\(rayDir.z)) fingerYaw=\(finger.yawDeg) fingerPitch=\(finger.pitchDeg) grabPitch=\(spaceLinkGrabPitchOffsetDeg) storedPitch=\(pose.pitch) rebuiltY=\(rebuilt.y) wp=(\(wp.x),\(wp.y),\(wp.z)) proj=(\(proj.x),\(proj.y))"
+                )
+            }
+            #endif
         }
         // Build 74: no per-frame SwiftUI pose publish (node-only).
     }
