@@ -59,10 +59,13 @@ picker / multi-point / navigation / asset / motion / repair / H12 / shadow — u
 
 | Field | Value |
 |---|---|
-| iOS SHA | _(filled after upload)_ |
+| iOS SHA | `6d9ffb2` |
 | backend SHA | `30d3475` (unchanged) |
 | version/build | `1.0` / `75` |
+| workflow | [34176775963](https://github.com/suin-park/gonggi-ios/actions/runs/34176775963) |
+| ASC Delivery UUID | `d85b7177-770f-464b-825e-45bcd31b99e8` |
+| dSYM | `2B6BE43F-9E01-3889-835A-8B9232D06E3B` (arm64) · `Gonggi-dSYM-1.0-75` |
 
 ## Verdict
 
-READY_FOR_REAL_DEVICE_HOTSPOT_VISIBILITY_VALIDATION
+**READY_FOR_REAL_DEVICE_HOTSPOT_VISIBILITY_VALIDATION**
