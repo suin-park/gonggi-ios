@@ -50,3 +50,16 @@ Marketing `1.0` / build `78`.
 
 - R2 blob retention job
 - Multi-device delete tombstone list
+
+## Build78
+
+- iOS SHA: `f432c09`
+- backend SHA: `9ea215f` (Vercel Production Ready)
+- version/build: `1.0` / `78`
+- workflow: https://github.com/suin-park/gonggi-ios/actions/runs/34181054678
+- Delivery UUID: `61d7de4d-1768-4ed4-acfe-8c6144492c92`
+- dSYM: `2C95843A-7B93-3FFE-B6CC-CA0A8498857D`
+
+## Verdict
+
+READY_FOR_REAL_DEVICE_SPACE_DELETE_VALIDATION
