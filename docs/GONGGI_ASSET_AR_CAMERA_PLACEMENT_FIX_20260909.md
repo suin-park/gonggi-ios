@@ -85,17 +85,24 @@ Per-asset Meshy vase bytes/assetId: device-side only — not captured in this Wi
 | Baseline | Result |
 |----------|--------|
 | Immediate pre-AR commit `447dc08` (run [34235109508](https://github.com/suin-park/gonggi-ios/actions/runs/34235109508)) | **비교 미실행** — unit suite did not run (compile: `.user(userId:)` / MainActor in tests) |
-| Last prior full suite before AR era `b697bf3` (run [34199299023](https://github.com/suin-park/gonggi-ios/actions/runs/34199299023)) | **461** tests, **43** failures → **19** unique failing cases |
+| Last prior full suite before LiveStatus `b697bf3` (run [34199299023](https://github.com/suin-park/gonggi-ios/actions/runs/34199299023)) | **461** tests, **43** failures → **19** unique failing cases; SpaceViewerPrepare **B/D PASS** |
 | AR fix `b3b1034` (run [34236857813](https://github.com/suin-park/gonggi-ios/actions/runs/34236857813)) | **528** tests, **46** failures → **22** unique failing cases |
+
+#### Newly observed 3 (detailed)
+
+| Test | Assertion | Expected | Actual | Introduced vs | Classification |
+|------|-----------|----------|--------|---------------|----------------|
+| `SpaceGenerationLiveStatusTests.testNetworkErrorKeepsProcessingThenCompletes` | L186 `XCTAssertEqual(serverStatus, "generating")` after 80ms | `"generating"` | `"completed"` | New in `2191dc8` (absent in prior suite) | **테스트 타이밍** — pollLoop refreshes *before* sleep; with 50ms override, completed by 80ms. Fixed: assert never `failed`, then wait for `completed`. |
+| `SpaceViewerPrepareTests.testB_CompletedRemoteOnlyDownloadsThenReady` | L140 `XCTAssertEqual(downloadCount, 1)` | `1` | `2` | **PASS** on `34199299023`; fail after `2191dc8` LiveStatus (`prepareViewer`→`refreshStatus`→`applyCompleted` bg download + second `downloadAndPersist`) | **이번(LiveStatus) 회귀** — not AR files, but product regression. Fixed: await in-flight `downloadTasks` before second download. |
+| `SpaceViewerPrepareTests.testD_InvalidLocalTriggersRedownload` | L205 `XCTAssertEqual(downloadCount, 1)` | `1` | `2` | same as B | **이번(LiveStatus) 회귀** — same dual-download path. Same fix. |
 
 | Class | Count | Notes |
 |-------|------:|-------|
-| **동일 실패** | 19 | Build63 / DirectionCapture / Keychain / SpaceLink / SpaceRecord / VRPlacementMath — unchanged vs prior suite |
-| **신규 실패** | 3 | `SpaceGenerationLiveStatusTests.testNetworkError…`, `SpaceViewerPrepareTests` B/D — **not** AssetAR / Phase4B; LiveStatus test did not exist in prior suite |
-| **AR 관련 실패** | 0 | `AssetARCameraPlacementTests` **9/9 PASS** |
+| **동일 실패** | 19 | Build63 / DirectionCapture / Keychain / SpaceLink / SpaceRecord / VRPlacementMath |
+| **AR 관련 실패** | 0 | `AssetARCameraPlacementTests` PASS |
 | **비교 미실행** | immediate `447dc08` | Cannot assert assertion-level delta vs last green-path commit |
 
-**No AR regression evidence:** AR commit files do not touch Build63/DirectionCapture; new AR suite all green; 19/19 prior unique fails still present (pre-existing). No mass fix of unrelated suites.
+**Placement tap:** `entity(at:)` child mesh → `AssetARPlacementHierarchy.belongsToPlacement` walks ancestors (not root equality alone). Unit-covered.
 
 ### 2. Initial display size policy (runtime only)
 

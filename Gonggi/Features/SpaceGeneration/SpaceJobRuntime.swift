@@ -192,6 +192,13 @@ final class SpaceJobRuntime: ObservableObject {
         }
 
         await refreshStatus(jobId: job.jobId, generation: AuthSessionGeneration.current)
+
+        // Live-status applyCompleted may already be downloading — await it so we do not
+        // start a second downloadAndPersist (SpaceViewerPrepareTests B/D regression).
+        if let inflight = downloadTasks[job.jobId] {
+            await inflight.value
+        }
+
         guard let refreshed = store.job(id: job.jobId) ?? store.jobs.first(where: { $0.sessionId == job.sessionId }) else {
             return .failure(.jobNotFound)
         }
@@ -212,6 +219,19 @@ final class SpaceJobRuntime: ObservableObject {
         }
         guard let urlString = job.resultImageURL, let remote = URL(string: urlString) else {
             return .failure(.missingResultURL)
+        }
+
+        // Another applyCompleted download may have started while we re-checked paths.
+        if let inflight = downloadTasks[job.jobId] {
+            await inflight.value
+            if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
+               SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+                return .success(latest)
+            }
+            if let path = store.job(id: job.jobId)?.localLatLongPath,
+               SpaceLatLongStore.isValidLocalFile(at: path) {
+                return .success(URL(fileURLWithPath: path))
+            }
         }
 
         do {

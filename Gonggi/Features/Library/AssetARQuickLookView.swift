@@ -45,6 +45,29 @@ enum AssetARCopy {
     static let placedHint = "손가락으로 이동·회전·크기를 조절할 수 있어요"
 }
 
+/// Pure hierarchy check for placement taps (`entity(at:)` often returns a child mesh).
+enum AssetARPlacementHierarchy {
+    static let placementRootName = "gonggi.ar.placementRoot"
+
+    /// Walk from the hit node up through parents. True if any node is the placement root/anchor.
+    static func belongsToPlacement(
+        hitName: String?,
+        hitIsPlacedRoot: Bool,
+        hitIsAnchor: Bool,
+        ancestors: [(name: String?, isPlacedRoot: Bool, isAnchor: Bool)]
+    ) -> Bool {
+        if hitIsPlacedRoot || hitIsAnchor || hitName == placementRootName {
+            return true
+        }
+        for node in ancestors {
+            if node.isPlacedRoot || node.isAnchor || node.name == placementRootName {
+                return true
+            }
+        }
+        return false
+    }
+}
+
 /// Initial **display** size policy when USDZ has no trusted real-world meter metadata.
 /// Runtime `Entity.scale` only — never rewrites the USDZ file on disk.
 ///
@@ -343,7 +366,7 @@ private struct AssetARCameraPlacementRepresentable: UIViewRepresentable {
 
                 // Wrapper root so gestures/collision apply to the whole USDZ hierarchy.
                 let root = ModelEntity()
-                root.name = "gonggi.ar.placementRoot"
+                root.name = AssetARPlacementHierarchy.placementRootName
                 root.addChild(loaded)
                 if scale != 1 {
                     root.scale = SIMD3<Float>(repeating: scale)
@@ -413,7 +436,7 @@ private struct AssetARCameraPlacementRepresentable: UIViewRepresentable {
 
             let anchor = AnchorEntity(world: hit.worldTransform)
             guard let clone = template.clone(recursive: true) as? ModelEntity else { return }
-            clone.name = "gonggi.ar.placementRoot"
+            clone.name = AssetARPlacementHierarchy.placementRootName
             clone.generateCollisionShapes(recursive: true)
             anchor.addChild(clone)
             arView.scene.addAnchor(anchor)
@@ -427,15 +450,24 @@ private struct AssetARCameraPlacementRepresentable: UIViewRepresentable {
             AssetARDiagnostics.log("placement success planeCount=\(planeCount)")
         }
 
+        /// `entity(at:)` often returns a child mesh — walk parents to the placement root/anchor.
         private func belongsToPlacement(_ entity: Entity) -> Bool {
-            var current: Entity? = entity
+            var ancestors: [(name: String?, isPlacedRoot: Bool, isAnchor: Bool)] = []
+            var current: Entity? = entity.parent
             while let node = current {
-                if node === placedRoot || node === placementAnchor || node.name == "gonggi.ar.placementRoot" {
-                    return true
-                }
+                ancestors.append((
+                    name: node.name,
+                    isPlacedRoot: node === placedRoot,
+                    isAnchor: node === placementAnchor
+                ))
                 current = node.parent
             }
-            return false
+            return AssetARPlacementHierarchy.belongsToPlacement(
+                hitName: entity.name,
+                hitIsPlacedRoot: entity === placedRoot,
+                hitIsAnchor: entity === placementAnchor,
+                ancestors: ancestors
+            )
         }
 
         func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {

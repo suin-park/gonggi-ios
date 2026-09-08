@@ -67,6 +67,44 @@ final class AssetARCameraPlacementTests: XCTestCase {
         XCTAssertEqual(AssetARPlacementScalePolicy.oversizedDisplayMaxExtentMeters, 0.35, accuracy: 0.0001)
     }
 
+    func testChildMeshHitBelongsToPlacementViaAncestor() {
+        // entity(at:) returns mesh child, not wrapper root — must still count as placed asset.
+        let ok = AssetARPlacementHierarchy.belongsToPlacement(
+            hitName: "Mesh",
+            hitIsPlacedRoot: false,
+            hitIsAnchor: false,
+            ancestors: [
+                (name: "Intermediate", isPlacedRoot: false, isAnchor: false),
+                (name: AssetARPlacementHierarchy.placementRootName, isPlacedRoot: true, isAnchor: false),
+                (name: nil, isPlacedRoot: false, isAnchor: true),
+            ]
+        )
+        XCTAssertTrue(ok)
+    }
+
+    func testUnrelatedHitDoesNotBelongToPlacement() {
+        let ok = AssetARPlacementHierarchy.belongsToPlacement(
+            hitName: "Other",
+            hitIsPlacedRoot: false,
+            hitIsAnchor: false,
+            ancestors: [
+                (name: "SceneRoot", isPlacedRoot: false, isAnchor: false),
+            ]
+        )
+        XCTAssertFalse(ok)
+    }
+
+    func testDirectPlacementRootHitBelongs() {
+        XCTAssertTrue(
+            AssetARPlacementHierarchy.belongsToPlacement(
+                hitName: AssetARPlacementHierarchy.placementRootName,
+                hitIsPlacedRoot: true,
+                hitIsAnchor: false,
+                ancestors: []
+            )
+        )
+    }
+
     func testUsdzFileCheckRequiresExtensionAndPresence() throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("gonggi-ar-check-\(UUID().uuidString)", isDirectory: true)

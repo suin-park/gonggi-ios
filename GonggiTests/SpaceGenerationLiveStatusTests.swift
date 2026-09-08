@@ -172,24 +172,20 @@ final class SpaceGenerationLiveStatusTests: XCTestCase {
                 height: 1024
             )
         )
-        // First two fetches fail.
-        // Scripted client uses networkFailUntilFetch globally — set then clear via sequential.
-        // Use enqueue of generating then completed after failures by setting fail count.
-        let client = api!
-        // Reconfigure: fail first fetch only by wrapping — use networkFailUntilFetch = 1
-        // Actor property set:
-        // We need to mutate actor — add method
-        await client.setNetworkFailUntil(1)
+        // Fail the first poll fetch; keep processing (not failed), then complete.
+        await api.setNetworkFailUntil(1)
 
         runtime.ensurePolling()
-        try? await Task.sleep(nanoseconds: 80_000_000)
-        XCTAssertEqual(store.job(id: "job-net-1")?.serverStatus, "generating")
 
         let deadline = Date().addingTimeInterval(3)
+        var sawFailed = false
         while Date() < deadline {
-            if store.job(id: "job-net-1")?.serverStatus == "completed" { break }
+            let status = store.job(id: "job-net-1")?.serverStatus
+            if status == "failed" { sawFailed = true }
+            if status == "completed" { break }
             try? await Task.sleep(nanoseconds: 40_000_000)
         }
+        XCTAssertFalse(sawFailed, "transient network must not mark the job failed")
         XCTAssertEqual(store.job(id: "job-net-1")?.serverStatus, "completed")
     }
 
