@@ -45,19 +45,32 @@ enum AssetARCopy {
     static let placedHint = "손가락으로 이동·회전·크기를 조절할 수 있어요"
 }
 
-/// Pure placement scale policy (does not rewrite the USDZ file).
+/// Initial **display** size policy when USDZ has no trusted real-world meter metadata.
+/// Runtime `Entity.scale` only — never rewrites the USDZ file on disk.
+///
+/// Bands (max of visualBounds extents, meters):
+/// - undersized: `extent < 0.04` → boost so max extent ≈ `0.18`
+/// - passthrough: `0.04 … 2.5` → scale `1` (desk objects **and** normal furniture)
+/// - oversized/unknown export: `extent > 2.5` → shrink so max extent ≈ `0.35`
+///
+/// Note: the previous `> 1.0 → 0.35` rule would incorrectly shrink chairs/tables (~1–2 m).
 enum AssetARPlacementScalePolicy {
-    /// Desk-friendly max extent after normalize (~35 cm).
-    static let targetMaxExtentMeters: Float = 0.35
-    /// Above this, treat as oversized (common Meshy export).
-    static let oversizedThresholdMeters: Float = 1.0
+    /// Desk-friendly max extent after oversized normalize (~35 cm).
+    static let oversizedDisplayMaxExtentMeters: Float = 0.35
+    /// Above this → treat as untrusted giant export (not normal furniture).
+    static let oversizedThresholdMeters: Float = 2.5
+    /// Below this → nearly invisible; boost for initial display.
     static let undersizedThresholdMeters: Float = 0.04
+    /// Undersized boost target max extent (~18 cm).
     static let undersizedTargetMeters: Float = 0.18
+
+    /// Alias kept for call sites / tests that name the oversized display target.
+    static var targetMaxExtentMeters: Float { oversizedDisplayMaxExtentMeters }
 
     static func normalizeScale(forExtent extent: Float) -> Float {
         guard extent.isFinite, extent > 0 else { return 1 }
         if extent > oversizedThresholdMeters {
-            return targetMaxExtentMeters / extent
+            return oversizedDisplayMaxExtentMeters / extent
         }
         if extent < undersizedThresholdMeters {
             return undersizedTargetMeters / extent
@@ -260,7 +273,9 @@ private struct AssetARCameraPlacementRepresentable: UIViewRepresentable {
 
         private var modelTemplate: ModelEntity?
         private var placementAnchor: AnchorEntity?
+        private var placedRoot: ModelEntity?
         private var coaching: ARCoachingOverlayView?
+        private var placementTap: UITapGestureRecognizer?
         private var planeCount = 0
         private var hasPlaced = false
         private var loadTask: Task<Void, Never>?
@@ -293,14 +308,26 @@ private struct AssetARCameraPlacementRepresentable: UIViewRepresentable {
         func teardown() {
             loadTask?.cancel()
             loadTask = nil
-            arView?.session.pause()
-            arView?.session.delegate = nil
+            if let arView {
+                if let placementAnchor {
+                    arView.scene.removeAnchor(placementAnchor)
+                }
+                if let placementTap {
+                    arView.removeGestureRecognizer(placementTap)
+                }
+                arView.session.pause()
+                arView.session.delegate = nil
+            }
+            coaching?.delegate = nil
             coaching?.session = nil
             coaching?.removeFromSuperview()
             coaching = nil
+            placementTap = nil
             placementAnchor = nil
+            placedRoot = nil
             modelTemplate = nil
             arView = nil
+            AssetARDiagnostics.log("teardown sessionPaused loadCancelled")
         }
 
         @MainActor
@@ -314,18 +341,20 @@ private struct AssetARCameraPlacementRepresentable: UIViewRepresentable {
                 let extent = max(bounds.extents.x, max(bounds.extents.y, bounds.extents.z))
                 let scale = AssetARPlacementScalePolicy.normalizeScale(forExtent: extent)
 
+                // Wrapper root so gestures/collision apply to the whole USDZ hierarchy.
                 let root = ModelEntity()
+                root.name = "gonggi.ar.placementRoot"
                 root.addChild(loaded)
                 if scale != 1 {
                     root.scale = SIMD3<Float>(repeating: scale)
                 }
-                // Sit the model on the plane (bounds min Y → 0).
+                // Sit the model on the plane (scaled visual bounds min Y → 0).
                 let scaledBounds = root.visualBounds(relativeTo: nil)
                 root.position.y = -scaledBounds.min.y
                 root.generateCollisionShapes(recursive: true)
                 modelTemplate = root
                 AssetARDiagnostics.log(
-                    "modelLoad success extent=\(extent) scale=\(scale) path=\(AssetARPresentationPath.realityKitCameraPlacement.rawValue)"
+                    "modelLoad success extent=\(extent) scale=\(scale) floorY=\(root.position.y) path=\(AssetARPresentationPath.realityKitCameraPlacement.rawValue)"
                 )
             } catch {
                 AssetARDiagnostics.log("modelLoad failure")
@@ -352,12 +381,23 @@ private struct AssetARCameraPlacementRepresentable: UIViewRepresentable {
 
         private func installTap(on view: ARView) {
             let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+            // Let RealityKit entity drag/rotate/scale recognizers receive the same touches.
+            tap.cancelsTouchesInView = false
             view.addGestureRecognizer(tap)
+            placementTap = tap
         }
 
         @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended else { return }
             guard let arView, let template = modelTemplate else { return }
             let location = gesture.location(in: arView)
+
+            // Do not treat taps/drags on the placed asset as a new plane placement.
+            if hasPlaced, let hit = arView.entity(at: location), belongsToPlacement(hit) {
+                AssetARDiagnostics.log("tap ignored on placed entity")
+                return
+            }
+
             let results = arView.raycast(from: location, allowing: .estimatedPlane, alignment: .horizontal)
             guard let hit = results.first else {
                 AssetARDiagnostics.log("placement miss planeCount=\(planeCount)")
@@ -368,19 +408,34 @@ private struct AssetARCameraPlacementRepresentable: UIViewRepresentable {
             if let existing = placementAnchor {
                 arView.scene.removeAnchor(existing)
                 placementAnchor = nil
+                placedRoot = nil
             }
 
             let anchor = AnchorEntity(world: hit.worldTransform)
             guard let clone = template.clone(recursive: true) as? ModelEntity else { return }
+            clone.name = "gonggi.ar.placementRoot"
             clone.generateCollisionShapes(recursive: true)
             anchor.addChild(clone)
             arView.scene.addAnchor(anchor)
+            // Gestures target the wrapper root → whole USDZ subtree moves/rotates/scales together.
             arView.installGestures([.translation, .rotation, .scale], for: clone)
 
             placementAnchor = anchor
+            placedRoot = clone
             hasPlaced = true
             onHintChange?(AssetARCopy.placedHint)
             AssetARDiagnostics.log("placement success planeCount=\(planeCount)")
+        }
+
+        private func belongsToPlacement(_ entity: Entity) -> Bool {
+            var current: Entity? = entity
+            while let node = current {
+                if node === placedRoot || node === placementAnchor || node.name == "gonggi.ar.placementRoot" {
+                    return true
+                }
+                current = node.parent
+            }
+            return false
         }
 
         func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {

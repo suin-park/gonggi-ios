@@ -31,13 +31,24 @@ final class AssetARCameraPlacementTests: XCTestCase {
         let scale = AssetARPlacementScalePolicy.normalizeScale(forExtent: 3.5)
         XCTAssertEqual(
             scale,
-            AssetARPlacementScalePolicy.targetMaxExtentMeters / 3.5,
+            AssetARPlacementScalePolicy.oversizedDisplayMaxExtentMeters / 3.5,
             accuracy: 0.0001
         )
     }
 
     func testScalePolicyNormalPassthrough() {
         XCTAssertEqual(AssetARPlacementScalePolicy.normalizeScale(forExtent: 0.4), 1, accuracy: 0.0001)
+    }
+
+    func testScalePolicyFurniturePassthroughNotShrunkToDesk() {
+        // Previous >1.0→0.35 rule would wrongly shrink chairs/tables; furniture stays authored.
+        XCTAssertEqual(AssetARPlacementScalePolicy.normalizeScale(forExtent: 1.2), 1, accuracy: 0.0001)
+        XCTAssertEqual(AssetARPlacementScalePolicy.normalizeScale(forExtent: 2.0), 1, accuracy: 0.0001)
+        XCTAssertEqual(
+            AssetARPlacementScalePolicy.normalizeScale(forExtent: 2.5),
+            1,
+            accuracy: 0.0001
+        )
     }
 
     func testScalePolicyUndersizedBoosted() {
@@ -47,6 +58,13 @@ final class AssetARCameraPlacementTests: XCTestCase {
             AssetARPlacementScalePolicy.undersizedTargetMeters / 0.01,
             accuracy: 0.0001
         )
+    }
+
+    func testScalePolicyBandsDocumented() {
+        XCTAssertEqual(AssetARPlacementScalePolicy.undersizedThresholdMeters, 0.04, accuracy: 0.0001)
+        XCTAssertEqual(AssetARPlacementScalePolicy.undersizedTargetMeters, 0.18, accuracy: 0.0001)
+        XCTAssertEqual(AssetARPlacementScalePolicy.oversizedThresholdMeters, 2.5, accuracy: 0.0001)
+        XCTAssertEqual(AssetARPlacementScalePolicy.oversizedDisplayMaxExtentMeters, 0.35, accuracy: 0.0001)
     }
 
     func testUsdzFileCheckRequiresExtensionAndPresence() throws {
