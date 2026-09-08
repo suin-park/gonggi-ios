@@ -1,4 +1,5 @@
 import CoreGraphics
+import SceneKit
 import XCTest
 import simd
 @testable import Gonggi

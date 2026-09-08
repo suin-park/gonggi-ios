@@ -82,6 +82,6 @@ final class VRSupportShadowBuild70Tests: XCTestCase {
         """
         let layout = try JSONDecoder().decode(VRPlacementLayout.self, from: Data(json.utf8))
         XCTAssertEqual(layout.assets.first?.supportMode, .custom)
-        XCTAssertEqual(layout.assets.first?.supportY!, -0.5, accuracy: 0.0001)
+        XCTAssertEqual(layout.assets.first!.supportY!, -0.5, accuracy: 0.0001)
     }
 }

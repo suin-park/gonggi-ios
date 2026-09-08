@@ -44,3 +44,18 @@ Result: point lagged / jumped relative to the finger; hitch from state-driven re
 
 ## Regression lock
 Picker, blue/yellow, floating actions, cap 8, linked delete confirm, navigation, motion math, VR bridge, H12, capture, 3D assets, repair, shadow — unchanged.
+
+## Build74 TestFlight
+
+| Field | Value |
+|---|---|
+| iOS SHA | `0a6670c` |
+| backend SHA | `30d3475` (unchanged) |
+| version/build | `1.0` / `74` |
+| workflow | [34173109676](https://github.com/suin-park/gonggi-ios/actions/runs/34173109676) |
+| ASC Delivery UUID | `c9bcd9a0-1585-42c0-a254-a98f2a384055` |
+| dSYM | `3D5CB0B0-7560-3608-858E-CA156993CDE5` (arm64) · `Gonggi-dSYM-1.0-74` |
+
+## Verdict
+
+**READY_FOR_REAL_DEVICE_SPACE_LINK_DRAG_VALIDATION**
