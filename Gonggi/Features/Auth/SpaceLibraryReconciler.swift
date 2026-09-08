@@ -47,6 +47,8 @@ final class SpaceLibraryReconciler {
                 let status = (row["status"] as? String) ?? "completed"
                 let title = (row["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let resultURL = row["resultImageURL"] as? String
+                let latestRevisionId = row["latestRevisionId"] as? String
+                let catalogUpdatedAt = row["updatedAt"] as? String
                 let width = row["width"] as? Int
                 let height = row["height"] as? Int
                 let audio = SpaceAudioMetadata.fromCatalogRow(row)
@@ -61,11 +63,15 @@ final class SpaceLibraryReconciler {
                     displayName: (title?.isEmpty == false ? title! : "공간"),
                     resultImageURL: resultURL,
                     localLatLongPath: nil,
+                    latestRevisionId: latestRevisionId,
+                    catalogUpdatedAt: catalogUpdatedAt,
                     width: width,
                     height: height
                 )
 
                 if let resultURL { job.resultImageURL = resultURL }
+                if let latestRevisionId { job.latestRevisionId = latestRevisionId }
+                if let catalogUpdatedAt { job.catalogUpdatedAt = catalogUpdatedAt }
                 if let width { job.width = width }
                 if let height { job.height = height }
                 if let title, !title.isEmpty { job.displayName = title }

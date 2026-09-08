@@ -61,6 +61,24 @@ enum SpaceRepairCardPresentation {
         out.repairBadge = overlay.badge
         if let path = overlay.preferredLocalLatLongPath {
             out.localLatLongPath = path
+            if let repair = store.all()
+                .filter({ $0.sessionId == sid && $0.status == "completed" })
+                .sorted(by: { $0.updatedAt > $1.updatedAt })
+                .first,
+               let url = repair.resultImageURL {
+                out.localLatLongSourceURL = url
+                out.remoteImageURL = url
+                if let rev = repair.revisionId, !rev.isEmpty {
+                    out.latestRevisionId = rev
+                    out.localLatLongRevisionId = rev
+                    let token = SpaceThumbnailCacheKey.revisionToken(
+                        latestRevisionId: rev,
+                        remoteImageURL: url,
+                        catalogUpdatedAt: nil
+                    )
+                    out.localLatLongRevisionToken = token
+                }
+            }
         }
         if let note = overlay.note {
             out.note = note

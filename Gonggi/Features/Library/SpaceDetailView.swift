@@ -183,35 +183,19 @@ struct SpaceDetailView: View {
 
     private var heroSection: some View {
         ZStack(alignment: .bottomLeading) {
-            RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            GonggiColors.backgroundElevated,
-                            GonggiColors.surface,
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(height: 240)
-            RadialGradient(
-                colors: [GonggiColors.accentTeal.opacity(0.25), .clear],
-                center: .topTrailing,
-                startRadius: 20,
-                endRadius: 200
+            SpaceThumbnailView(
+                space: liveSpace,
+                height: 240,
+                cornerRadius: GonggiRadius.xl,
+                showsActivityOverlay: true
             )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
-            Image(systemName: liveSpace.thumbnailSystemImage)
-                .font(.system(size: 64, weight: .ultraLight))
-                .foregroundStyle(GonggiColors.textPrimary.opacity(0.9))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             LinearGradient(
                 colors: [.clear, GonggiColors.backgroundPrimary.opacity(0.7)],
                 startPoint: .center,
                 endPoint: .bottom
             )
             .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
+            .allowsHitTesting(false)
             statusBadge
                 .padding(GonggiSpacing.md)
         }

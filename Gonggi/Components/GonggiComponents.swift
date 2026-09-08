@@ -613,37 +613,12 @@ struct MemoryArchiveCard: View {
     }
 
     private var thumbnailHero: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    GonggiColors.backgroundElevated,
-                    GonggiColors.surface,
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            RadialGradient(
-                colors: [GonggiColors.accentCyan.opacity(0.2), .clear],
-                center: .center,
-                startRadius: 10,
-                endRadius: 120
-            )
-            if space.showsActivityIndicator {
-                VStack(spacing: 10) {
-                    ProgressView()
-                        .tint(GonggiColors.accentTeal)
-                    Text(space.note ?? space.statusBadgeLabel)
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
-            } else {
-                Image(systemName: space.thumbnailSystemImage)
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(GonggiColors.textPrimary.opacity(0.85))
-            }
-        }
-        .frame(height: 160)
-        .frame(maxWidth: .infinity)
+        SpaceThumbnailView(
+            space: space,
+            height: 160,
+            cornerRadius: 0,
+            showsActivityOverlay: true
+        )
         .accessibilityHidden(true)
     }
 

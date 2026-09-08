@@ -13,6 +13,16 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var resultImageURL: String?
     /// Absolute path under Application Support (durable). Never Caches/tmp.
     var localLatLongPath: String?
+    /// `resultImageURL` value at the time `localLatLongPath` was written (stale-local guard).
+    var localLatLongSourceURL: String? = nil
+    /// Revision id of on-disk bytes (captured when download **started**, not when it finished).
+    var localLatLongRevisionId: String? = nil
+    /// Full revision token for on-disk bytes.
+    var localLatLongRevisionToken: String? = nil
+    /// Server catalog revision id when known.
+    var latestRevisionId: String? = nil
+    /// Catalog `updatedAt` ISO string — same-URL content invalidation when revision id missing.
+    var catalogUpdatedAt: String? = nil
     var width: Int?
     var height: Int?
     /// Internal failure code (payload_too_large_local, network_error, …). Never shown raw in UI.
@@ -100,6 +110,12 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
             localLatLongPath: localLatLongPath,
             sessionId: sessionId,
             remoteImageURL: resultImageURL,
+            latestRevisionId: latestRevisionId,
+            localLatLongSourceURL: localLatLongSourceURL,
+            localLatLongRevisionId: localLatLongRevisionId,
+            localLatLongRevisionToken: localLatLongRevisionToken,
+            catalogUpdatedAt: catalogUpdatedAt,
+            ownerUserId: ownerUserId,
             audioURL: audioURL,
             audioFileName: audioFileName,
             audioMimeType: audioMimeType,

@@ -417,21 +417,91 @@ final class SpaceJobRuntime: ObservableObject {
         reportedHeight: Int? = nil
     ) async throws -> URL {
         guard let api else { throw SpaceViewerError.downloadFailed }
+
+        // Capture request identity at start — never stamp finished bytes with a newer model revision.
+        let authGeneration = AuthSessionGeneration.current
+        let jobAtStart = store.job(id: jobId) ?? store.jobs.first(where: { $0.sessionId == sessionId })
+        let requestedURL = remote.absoluteString
+        let requestedRevisionId = jobAtStart?.latestRevisionId
+        let requestedCatalogUpdatedAt = jobAtStart?.catalogUpdatedAt
+        let requestedToken = SpaceThumbnailCacheKey.revisionToken(
+            latestRevisionId: requestedRevisionId,
+            remoteImageURL: requestedURL,
+            catalogUpdatedAt: requestedCatalogUpdatedAt
+        )
+        let accountId: String? = {
+            if case .user(let id) = store.boundScope { return id }
+            return jobAtStart?.ownerUserId
+        }()
+
         let dest = try SpaceLatLongStore.latLongURL(sessionId: sessionId)
         try await api.downloadImage(from: remote, to: dest)
+        guard !Task.isCancelled, AuthSessionGeneration.isCurrent(authGeneration) else {
+            try? FileManager.default.removeItem(at: dest)
+            SpaceLatLongStore.removeRevisionStamp(forImageAt: dest)
+            throw SpaceViewerError.downloadFailed
+        }
         guard let validated = SpaceLatLongStore.validateImage(at: dest) else {
             try? FileManager.default.removeItem(at: dest)
+            SpaceLatLongStore.removeRevisionStamp(forImageAt: dest)
             throw SpaceViewerError.invalidImage
         }
+
+        let stamp = SpaceLatLongRevisionStamp(
+            revisionId: requestedRevisionId,
+            revisionToken: requestedToken,
+            sourceURL: requestedURL,
+            accountId: accountId,
+            spaceId: jobId,
+            catalogUpdatedAt: requestedCatalogUpdatedAt
+        )
+
+        var applied = false
         store.update(jobId: jobId) { job in
+            // Stale completion: job moved to a different result — do not overwrite newer local/result.
+            let urlMoved =
+                !(job.resultImageURL ?? "").isEmpty
+                && job.resultImageURL != requestedURL
+            let revisionMoved: Bool = {
+                guard let jobRev = job.latestRevisionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !jobRev.isEmpty,
+                      let reqRev = requestedRevisionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !reqRev.isEmpty
+                else { return false }
+                return jobRev != reqRev
+            }()
+            let currentToken = SpaceThumbnailCacheKey.revisionToken(
+                latestRevisionId: job.latestRevisionId,
+                remoteImageURL: job.resultImageURL,
+                catalogUpdatedAt: job.catalogUpdatedAt
+            )
+            if urlMoved || revisionMoved || (currentToken != requestedToken && currentToken != "none") {
+                return
+            }
+
             job.serverStatus = "completed"
-            job.resultImageURL = remote.absoluteString
+            if job.resultImageURL == nil || job.resultImageURL == requestedURL {
+                job.resultImageURL = requestedURL
+            }
             job.localLatLongPath = dest.path
+            job.localLatLongSourceURL = requestedURL
+            job.localLatLongRevisionId = requestedRevisionId
+            job.localLatLongRevisionToken = requestedToken
             job.width = reportedWidth ?? validated.width
             job.height = reportedHeight ?? validated.height
             if job.completedAt == nil { job.completedAt = Date() }
+            applied = true
         }
-        return dest
+
+        if applied {
+            SpaceLatLongStore.writeRevisionStamp(stamp, forImageAt: dest)
+            return dest
+        }
+
+        // Bytes belong to an older request — discard so they cannot be mistaken for current.
+        try? FileManager.default.removeItem(at: dest)
+        SpaceLatLongStore.removeRevisionStamp(forImageAt: dest)
+        throw SpaceViewerError.downloadFailed
     }
 
     private static func normalizeStatus(_ raw: String) -> String {
