@@ -246,6 +246,67 @@ final class AppState: ObservableObject {
         spaces = live.isEmpty ? SpaceRecord.sampleArchive : live
         schedulePendingSpaceLinkFinalize()
     }
+
+    /// Build 78 — soft-delete GonggiSpace via API, then local remove. Fails without removing card.
+    func deleteSpace(jobId: String) async -> Result<Void, SpaceDeleteError> {
+        guard let job = jobStore.job(id: jobId)
+            ?? jobStore.jobs.first(where: { $0.sessionId == jobId })
+        else {
+            return .failure(.notFound)
+        }
+        let spaceKey = job.sessionId
+        guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
+            return .failure(.network)
+        }
+        do {
+            let api = MobileAuthAPIClient()
+            try await api.deleteSpace(accessToken: token, spaceId: spaceKey)
+            await spaceLinkStore.purgeCachesInvolving(spaceId: spaceKey)
+            await spaceLinkStore.purgeCachesInvolving(spaceId: job.jobId)
+            jobStore.remove(jobId: job.jobId)
+            if job.jobId != spaceKey {
+                // sessionId-keyed rows (if any)
+                jobStore.remove(jobId: spaceKey)
+            }
+            rebuildSpaces()
+            NotificationCenter.default.post(
+                name: .gonggiSpaceDidDelete,
+                object: nil,
+                userInfo: ["sessionId": spaceKey, "jobId": job.jobId]
+            )
+            return .success(())
+        } catch let err as MobileAuthAPIError {
+            switch err {
+            case .network:
+                return .failure(.network)
+            case .server(_, _, let status) where status == 401 || status == 403:
+                return .failure(.generic)
+            case .server, .invalidResponse:
+                return .failure(.generic)
+            }
+        } catch {
+            return .failure(.network)
+        }
+    }
+}
+
+enum SpaceDeleteError: Error, Equatable {
+    case network
+    case generic
+    case notFound
+
+    var userMessage: String {
+        switch self {
+        case .network:
+            return "네트워크 연결을 확인해주세요"
+        case .generic, .notFound:
+            return "공간을 삭제하지 못했어요"
+        }
+    }
+}
+
+extension Notification.Name {
+    static let gonggiSpaceDidDelete = Notification.Name("gonggi.spaceDidDelete")
 }
 
 enum AppTab: Int, CaseIterable, Identifiable {

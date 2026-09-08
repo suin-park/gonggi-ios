@@ -3,12 +3,15 @@ import WebKit
 
 struct SpaceDetailView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
     let space: SpaceRecord
     @State private var showViewer = false
     @State private var showDeleteConfirm = false
     @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
+    @State private var isDeleting = false
     @State private var viewerError: String?
+    @State private var deleteError: String?
     @State private var showAddObjectSheet = false
 
     var body: some View {
@@ -26,6 +29,15 @@ struct SpaceDetailView: View {
         }
         .background(GonggiAmbientBackground(showGlow: false))
         .navigationBarTitleDisplayMode(.inline)
+        .disabled(isDeleting)
+        .overlay {
+            if isDeleting {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                    ProgressView().tint(.white).scaleEffect(1.2)
+                }
+            }
+        }
         .sheet(isPresented: $showViewer) {
             ViewerPlaceholderView(space: space)
         }
@@ -54,11 +66,21 @@ struct SpaceDetailView: View {
         } message: {
             Text(viewerError ?? "")
         }
-        .alert("공간을 삭제할까요?", isPresented: $showDeleteConfirm) {
-            Button("삭제", role: .destructive) {}
+        .alert("이 공간을 삭제할까요?", isPresented: $showDeleteConfirm) {
+            Button("삭제", role: .destructive) {
+                Task { await performDelete() }
+            }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("삭제된 공간은 복구할 수 없습니다.")
+            Text("이 공간과 연결된 공간 이동도 함께 제거됩니다.\n다른 공간 자체는 삭제되지 않습니다.")
+        }
+        .alert("삭제하지 못했어요", isPresented: Binding(
+            get: { deleteError != nil },
+            set: { if !$0 { deleteError = nil } }
+        )) {
+            Button("확인", role: .cancel) { deleteError = nil }
+        } message: {
+            Text(deleteError ?? "")
         }
         .sheet(isPresented: $showAddObjectSheet) {
             AddObjectToSpaceSheet(onClose: { showAddObjectSheet = false })
@@ -172,7 +194,7 @@ struct SpaceDetailView: View {
             }
             HStack(spacing: GonggiSpacing.sm) {
                 SecondaryButton(title: "공유", icon: "square.and.arrow.up") {}
-                SecondaryButton(title: "삭제", icon: "trash") {
+                SecondaryButton(title: "공간 삭제", icon: "trash") {
                     showDeleteConfirm = true
                 }
             }
@@ -188,6 +210,19 @@ struct SpaceDetailView: View {
             viewerLaunch = SpaceViewerLaunch(single: SpaceViewerSession(id: space.id, fileURL: url))
         case .failure(let error):
             viewerError = error.userMessage
+        }
+    }
+
+    private func performDelete() async {
+        isDeleting = true
+        defer { isDeleting = false }
+        viewerLaunch = nil
+        switch await appState.deleteSpace(jobId: space.id) {
+        case .success:
+            GonggiHaptics.medium()
+            dismiss()
+        case .failure(let error):
+            deleteError = error.userMessage
         }
     }
 

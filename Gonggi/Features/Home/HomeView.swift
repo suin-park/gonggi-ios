@@ -79,6 +79,20 @@ struct HomeView: View {
                 viewerLaunch = launch
                 appState.pendingViewerLaunch = nil
             }
+            .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
+                let sessionId = note.userInfo?["sessionId"] as? String
+                let jobId = note.userInfo?["jobId"] as? String
+                guard let launch = viewerLaunch else { return }
+                let hit = launch.sessions.contains {
+                    $0.id == sessionId || $0.id == jobId
+                }
+                if hit {
+                    viewerLaunch = nil
+                }
+                if selectedSpace?.id == jobId || selectedSpace?.sessionId == sessionId {
+                    selectedSpace = nil
+                }
+            }
         }
     }
 

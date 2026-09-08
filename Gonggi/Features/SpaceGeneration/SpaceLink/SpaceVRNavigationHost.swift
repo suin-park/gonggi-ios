@@ -53,6 +53,14 @@ struct SpaceVRNavigationHost: View {
         } message: {
             Text(navigateError ?? "")
         }
+        .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
+            let sessionId = note.userInfo?["sessionId"] as? String
+            let jobId = note.userInfo?["jobId"] as? String
+            stack.removeAll { $0.id == sessionId || $0.id == jobId }
+            if stack.isEmpty {
+                onClose()
+            }
+        }
     }
 
     @MainActor

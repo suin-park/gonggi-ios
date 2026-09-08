@@ -83,6 +83,17 @@ struct LibraryView: View {
             } message: {
                 Text(viewerError ?? "")
             }
+            .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
+                let sessionId = note.userInfo?["sessionId"] as? String
+                let jobId = note.userInfo?["jobId"] as? String
+                if let launch = viewerLaunch,
+                   launch.sessions.contains(where: { $0.id == sessionId || $0.id == jobId }) {
+                    viewerLaunch = nil
+                }
+                if selectedSpace?.id == jobId || selectedSpace?.sessionId == sessionId {
+                    selectedSpace = nil
+                }
+            }
         }
     }
 

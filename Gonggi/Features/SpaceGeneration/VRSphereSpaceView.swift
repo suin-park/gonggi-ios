@@ -138,6 +138,19 @@ struct VRSphereSpaceView: View {
                     scheduleHintFlowIfNeeded()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
+                let deletedSession = note.userInfo?["sessionId"] as? String
+                let deletedJob = note.userInfo?["jobId"] as? String
+                spaceLinks.removeAll {
+                    $0.targetSessionId == deletedSession
+                        || $0.targetSpaceId == deletedSession
+                        || $0.targetSessionId == deletedJob
+                        || $0.targetSpaceId == deletedJob
+                }
+                if let id = selectedSpaceLinkId, !spaceLinks.contains(where: { $0.id == id }) {
+                    selectedSpaceLinkId = nil
+                }
+            }
             .onDisappear {
                 cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
                 motionHintTask?.cancel()
@@ -1194,13 +1207,16 @@ struct VRSphereSpaceView: View {
     }
 
     private func loadSpaceLinksIfNeeded() {
-        guard !didLoadSpaceLinks else { return }
-        didLoadSpaceLinks = true
+        // Build 78: refresh from server on each entry so soft-deleted targets disappear.
+        refreshSpaceLinksFromServer()
+    }
+
+    private func refreshSpaceLinksFromServer() {
+        spaceLinkTask?.cancel()
         spaceLinkTask = Task {
             let links = await spaceLinkStore.loadLinks(spaceId: sessionId)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                // Keep any local drafts not yet uploaded.
                 let drafts = spaceLinks.filter { $0.status != .linked }
                 var merged = links
                 for d in drafts where !merged.contains(where: { $0.id == d.id }) {
@@ -1212,6 +1228,7 @@ struct VRSphereSpaceView: View {
                     checkpoints[link.id] = (link.yawDeg, link.pitchDeg, link.radius)
                 }
                 linkedPoseCheckpoint = checkpoints
+                didLoadSpaceLinks = true
             }
         }
     }

@@ -208,6 +208,38 @@ actor SpaceLinkStore {
         try? saveCache(cached, spaceId: sourceSpaceId)
     }
 
+    /// Build 78 — drop local link caches that reference a soft-deleted space (source or target).
+    func purgeCachesInvolving(spaceId: String) {
+        try? fileManager.removeItem(at: cacheURL(spaceId: spaceId, createDirectory: false))
+        guard let dir = try? cacheURL(spaceId: "_", createDirectory: true).deletingLastPathComponent(),
+              let files = try? fileManager.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: nil
+              )
+        else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        for file in files where file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file),
+                  var links = try? decoder.decode([SpaceLink].self, from: data)
+            else { continue }
+            let before = links.count
+            links.removeAll {
+                $0.sourceSpaceId == spaceId
+                    || $0.targetSpaceId == spaceId
+                    || $0.targetSessionId == spaceId
+            }
+            guard links.count != before else { continue }
+            if links.isEmpty {
+                try? fileManager.removeItem(at: file)
+            } else if let out = try? encoder.encode(links) {
+                try? out.write(to: file, options: .atomic)
+            }
+        }
+    }
+
     // MARK: - Private
 
     private func linksEndpoint(spaceId: String) -> URL {

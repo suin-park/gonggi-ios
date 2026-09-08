@@ -156,6 +156,30 @@ actor MobileAuthAPIClient {
         return spaces
     }
 
+    /// Build 78 — soft-delete owned GonggiSpace (links cleaned server-side). Does not delete R2.
+    func deleteSpace(accessToken: String, spaceId: String) async throws {
+        var request = URLRequest(
+            url: config.apiBaseURL
+                .appendingPathComponent("api/gonggi/spaces")
+                .appendingPathComponent(spaceId)
+        )
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MobileAuthAPIError.network
+        }
+        if (200..<300).contains(http.statusCode) { return }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        throw MobileAuthAPIError.server(
+            code: (json?["error"] as? String) ?? "ERROR",
+            message: (json?["message"] as? String) ?? "공간을 삭제하지 못했어요",
+            status: http.statusCode
+        )
+    }
+
     private func postJSON(path: String, body: [String: Any]) async throws -> MobileAuthTokens {
         var request = URLRequest(url: config.apiBaseURL.appendingPathComponent(path))
         request.httpMethod = "POST"
