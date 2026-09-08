@@ -33,7 +33,13 @@ existing link / persistence / horizontal / picker / navigation / asset / motion 
 
 ## Build77
 
-- filled after TestFlight
+- iOS SHA: `73a116f`
+- backend SHA: unchanged (`fce287a` Production)
+- version/build: `1.0` / `77`
+- workflow: https://github.com/suin-park/gonggi-ios/actions/runs/34179644825
+- ASC: uploaded
+- Delivery UUID: `c1a29f25-d756-43b2-ae95-80b38d8abdb4`
+- dSYM: `24ACF7EF-079B-3F81-891F-33FAB25FCDD6` (artifact `Gonggi-dSYM-1.0-77`)
 
 ## Verdict
 
