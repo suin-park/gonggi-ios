@@ -542,7 +542,7 @@ struct AssetDetailView: View {
                 .disabled(!canOpenAR)
                 .opacity(canOpenAR ? 1 : 0.45)
                 .accessibilityLabel("AR로 보기")
-                .accessibilityHint("Quick Look으로 3D를 봅니다")
+                .accessibilityHint("카메라로 실제 공간에 3D 어셋을 배치합니다")
 
                 SecondaryButton(title: "공간에 배치", icon: "square.stack.3d.up") {
                     GonggiHaptics.light()

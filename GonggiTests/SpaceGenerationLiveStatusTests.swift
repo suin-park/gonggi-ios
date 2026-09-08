@@ -75,7 +75,7 @@ final class SpaceGenerationLiveStatusTests: XCTestCase {
         suiteName = "gonggi.liveStatus.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
         store = SpaceJobStore(defaults: defaults, persistEnabled: true)
-        store.bind(.user("user_live_status"))
+        store.bind(.user(userId: "user_live_status"))
         runtime = SpaceJobRuntime(store: store)
         runtime.pollIntervalOverrideNs = 50_000_000 // 50ms
         api = ScriptedSpaceRecordAPIClient()
@@ -243,7 +243,7 @@ final class SpaceGenerationLiveStatusTests: XCTestCase {
         // Switch account generation + clear store presentation.
         _ = AuthSessionGeneration.bump(reason: "accountSwitch")
         runtime.cancelAllForAccountChange()
-        store.bind(.user("user_b"))
+        store.bind(.user(userId: "user_b"))
         XCTAssertTrue(store.jobs.isEmpty)
 
         // Late status would have applied to old job — ensure B store still empty.

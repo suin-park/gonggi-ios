@@ -1,6 +1,7 @@
 import XCTest
 @testable import Gonggi
 
+@MainActor
 final class AssetLibraryPhase1Tests: XCTestCase {
     func testStatusReadyMapsComplete() {
         let dto = MobileAssetDTO(

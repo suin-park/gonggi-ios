@@ -9,7 +9,7 @@ final class SpaceJobStoreTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let store = SpaceJobStore(defaults: defaults, persistEnabled: true)
-        store.bind(.user("test-user"))
+        store.bind(.user(userId: "test-user"))
         store.remove(jobId: "job-test-1")
         let job = SpaceJobRecord(
             sessionId: "dir-test-1",
@@ -32,7 +32,7 @@ final class SpaceJobStoreTests: XCTestCase {
         XCTAssertEqual(store.job(id: "job-test-1")?.uiStatus, .ready)
 
         let reloaded = SpaceJobStore(defaults: defaults, persistEnabled: true)
-        reloaded.bind(.user("test-user"))
+        reloaded.bind(.user(userId: "test-user"))
         XCTAssertEqual(reloaded.job(id: "job-test-1")?.serverStatus, "completed")
 
         store.remove(jobId: "job-test-1")

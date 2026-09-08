@@ -41,7 +41,7 @@ final class AccountIsolationTests: XCTestCase {
         SpaceJobStore.migrateLegacyV1ToAnonymousIfNeeded(defaults: defaults, installationId: installId)
 
         let store = SpaceJobStore(defaults: defaults, persistEnabled: true)
-        store.bind(.user("user_a"))
+        store.bind(.user(userId: "user_a"))
         XCTAssertTrue(store.jobs.isEmpty, "user partition must not auto-absorb legacy v1")
 
         let eligible = store.claimEligibleSessionIds(installationId: installId)
@@ -50,7 +50,7 @@ final class AccountIsolationTests: XCTestCase {
 
     func testUserPartitionsAreIsolated() {
         let store = SpaceJobStore(defaults: defaults, persistEnabled: true)
-        store.bind(.user("user_a"))
+        store.bind(.user(userId: "user_a"))
         store.upsert(
             SpaceJobRecord(
                 sessionId: "a1",
@@ -68,7 +68,7 @@ final class AccountIsolationTests: XCTestCase {
         )
         XCTAssertEqual(store.jobs.count, 1)
 
-        store.bind(.user("user_b"))
+        store.bind(.user(userId: "user_b"))
         XCTAssertTrue(store.jobs.isEmpty)
         store.upsert(
             SpaceJobRecord(
@@ -87,14 +87,14 @@ final class AccountIsolationTests: XCTestCase {
         )
         XCTAssertEqual(store.jobs.map(\.sessionId), ["b1"])
 
-        store.bind(.user("user_a"))
+        store.bind(.user(userId: "user_a"))
         XCTAssertEqual(store.jobs.map(\.sessionId), ["a1"])
         XCTAssertFalse(store.jobs.contains(where: { $0.sessionId == "b1" }))
     }
 
     func testBindNoneClearsPresentation() {
         let store = SpaceJobStore(defaults: defaults, persistEnabled: true)
-        store.bind(.user("user_a"))
+        store.bind(.user(userId: "user_a"))
         store.upsert(
             SpaceJobRecord(
                 sessionId: "a1",
@@ -115,7 +115,7 @@ final class AccountIsolationTests: XCTestCase {
 
     func testReplaceCatalogDropsRemoteAbsentCompleted() {
         let store = SpaceJobStore(defaults: defaults, persistEnabled: true)
-        store.bind(.user("user_a"))
+        store.bind(.user(userId: "user_a"))
         store.upsert(
             SpaceJobRecord(
                 sessionId: "gone",
@@ -205,7 +205,7 @@ final class AccountIsolationTests: XCTestCase {
                 ownerUserId: nil
             )
         )
-        store.bind(.user("user_a"))
+        store.bind(.user(userId: "user_a"))
         store.upsert(
             SpaceJobRecord(
                 sessionId: "owned-1",

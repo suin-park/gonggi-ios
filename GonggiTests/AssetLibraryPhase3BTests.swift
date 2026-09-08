@@ -2,6 +2,7 @@ import XCTest
 @testable import Gonggi
 import UIKit
 
+@MainActor
 final class AssetLibraryPhase3BTests: XCTestCase {
     func testLibraryEntryMergerKeepsJobsSeparateFromAssets() {
         let asset = MobileAssetDTO(id: "a1", name: "Chair", usdzStatus: "READY", availableForPlacement: true)

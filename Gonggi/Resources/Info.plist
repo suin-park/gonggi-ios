@@ -21,7 +21,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>사진을 촬영해 3D 어셋을 만들기 위해 카메라 접근이 필요합니다.</string>
+	<string>파노라마·공간 기록, 사진으로 3D 만들기, AR로 3D 어셋 배치를 위해 카메라가 필요합니다.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.</string>
 	<key>GoogleClientID</key>

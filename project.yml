@@ -60,7 +60,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleIconName: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: 공기
-        INFOPLIST_KEY_NSCameraUsageDescription: 파노라마·공간 기록을 위해 카메라가 필요합니다.
+        INFOPLIST_KEY_NSCameraUsageDescription: 파노라마·공간 기록과 AR로 3D 어셋을 배치하기 위해 카메라가 필요합니다.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -80,7 +80,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleIconName: AppIcon
         UILaunchScreen: {}
-        NSCameraUsageDescription: 사진을 촬영해 3D 어셋을 만들기 위해 카메라 접근이 필요합니다.
+        NSCameraUsageDescription: 파노라마·공간 기록, 사진으로 3D 만들기, AR로 3D 어셋 배치를 위해 카메라가 필요합니다.
         NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
         NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
         # Injected from Config/Auth.xcconfig (Debug + Release) — not hardcoded in Swift.
