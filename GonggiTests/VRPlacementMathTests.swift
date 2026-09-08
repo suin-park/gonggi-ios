@@ -218,7 +218,7 @@ final class VRPlacementMathTests: XCTestCase {
             floorY: -1
         )
         XCTAssertNotNil(hit)
-        XCTAssertEqual(hit?.y, -1, accuracy: 0.001)
+        XCTAssertEqual(hit!.y, -1, accuracy: 0.001)
     }
 
     func testQ_GrabOffsetPreservesRelativeFingerOffset() {
@@ -325,7 +325,7 @@ final class VRPlacementMathTests: XCTestCase {
         #endif
     }
 
-    func testX_ProxyRefreshUsesCachedBoundsWithoutSelectionInflation() {
+    func testX_ProxyRefreshUsesCachedBoundsWithoutSelectionInflation() throws {
         let root = SCNNode()
         let content = SCNNode(geometry: SCNBox(width: 0.2, height: 0.2, length: 0.2, chamferRadius: 0))
         content.categoryBitMask = VRPlacedAssetCategory.asset
