@@ -11,7 +11,7 @@
 | Start | `213fbe4` |
 | Icon full-bleed | `c25484d` |
 | Capture harden | `cf6e167` |
-| Docs / SpringBoard sync | `32b40e8` |
+| Docs / SpringBoard sync | `32b40e8` (tip `ebfddd7`) |
 
 Branch: `design/brand-redesign-v1`  
 CI capture: [run 34302805637](https://github.com/suin-park/gonggi-ios/actions/runs/34302805637) on `cf6e167`
