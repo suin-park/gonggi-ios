@@ -221,70 +221,146 @@ final class AuthSessionController: ObservableObject {
 
 // MARK: - Auth shell UI
 
+/// Welcome decoration mode. Production default is street panorama sample.
+enum AuthWelcomeDecoration: Equatable {
+    case wireframeSphere
+    case spaceLight
+    case panoramaSample
+}
+
 struct AuthShellView: View {
     @ObservedObject var session: AuthSessionController
+    /// Production Welcome uses official 360° street sample; legacy decorations remain for DEBUG fixtures.
+    var decoration: AuthWelcomeDecoration = .panoramaSample
     @StateObject private var appleCoordinator = AppleSignInCoordinator()
     @State private var googleBusy = false
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.sizeCategory) private var sizeCategory
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// Keep logo compact so sample card + three auth actions stay visible on compact height.
+    private var welcomeLogoWidth: CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return 120 }
+        if sizeCategory >= .extraExtraLarge { return 132 }
+        return 148
+    }
+
+    private var decorationHeight: CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return 132 }
+        if sizeCategory >= .extraExtraLarge { return 156 }
+        return 180
+    }
+
+    private var sphereDiameter: CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return 100 }
+        if sizeCategory >= .extraExtraLarge { return 120 }
+        return 140
+    }
+
+    /// Top flexible inset scales with usable height (~50–80pt on tall phones; compresses first on short).
+    private func welcomeTopMin(for usableHeight: CGFloat) -> CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return GonggiSpacing.sm }
+        let proposed = usableHeight * 0.078
+        return min(80, max(GonggiSpacing.md, proposed))
+    }
+
+    private var welcomeBottomMin: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? GonggiSpacing.md : GonggiSpacing.lg
+    }
 
     var body: some View {
         ZStack {
             GonggiAmbientBackground()
-            VStack(spacing: GonggiSpacing.xl) {
-                Spacer()
-                VStack(spacing: GonggiSpacing.sm) {
-                    Text("공기")
-                        .font(GonggiTypography.title(36))
-                        .foregroundStyle(GonggiColors.textPrimary)
-                    Text("공간을 기록하고 기억하다")
-                        .font(GonggiTypography.body(16))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
+            GeometryReader { geo in
+                let usableHeight = geo.size.height
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: welcomeTopMin(for: usableHeight))
 
-                VStack(spacing: GonggiSpacing.sm) {
-                    authButton(title: "Google로 계속하기", icon: "g.circle") {
-                        Task { await startGoogle() }
-                    }
-                    .disabled(googleBusy)
+                        // Independent centered logo header (does not force form centering).
+                        GonggiLogoView(variant: .white, width: welcomeLogoWidth)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, GonggiSpacing.xs)
 
-                    authButton(title: "Apple로 계속하기", icon: "apple.logo") {
-                        appleCoordinator.beginSignIn { result in
-                            Task { @MainActor in
-                                switch result {
-                                case .success(let payload):
-                                    await session.signInWithApple(
-                                        identityToken: payload.identityToken,
-                                        nonce: payload.nonce,
-                                        fullName: payload.fullName,
-                                        email: payload.email
-                                    )
-                                case .failure(let err):
-                                    session.lastError = err.errorDescription ?? "Apple 로그인에 실패했습니다."
+                        welcomeDecoration
+                            .frame(height: decorationHeight)
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                            .padding(.vertical, GonggiSpacing.xs)
+
+                        VStack(spacing: GonggiSpacing.sm) {
+                            Text(WelcomePanoramaSampleAsset.headline)
+                                .font(GonggiTypography.title(22))
+                                .foregroundStyle(GonggiColors.textPrimary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.85)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(WelcomePanoramaSampleAsset.subtitle)
+                                .font(GonggiTypography.body(15))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.9)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, GonggiSpacing.lg)
+                        .padding(.top, GonggiSpacing.sm)
+                        .padding(.bottom, GonggiSpacing.md)
+
+                        VStack(spacing: GonggiSpacing.sm) {
+                            authButton(title: "Google로 계속하기", icon: "g.circle") {
+                                Task { await startGoogle() }
+                            }
+                            .disabled(googleBusy)
+
+                            authButton(title: "Apple로 계속하기", icon: "apple.logo") {
+                                appleCoordinator.beginSignIn { result in
+                                    Task { @MainActor in
+                                        switch result {
+                                        case .success(let payload):
+                                            await session.signInWithApple(
+                                                identityToken: payload.identityToken,
+                                                nonce: payload.nonce,
+                                                fullName: payload.fullName,
+                                                email: payload.email
+                                            )
+                                        case .failure(let err):
+                                            session.lastError = err.errorDescription ?? "Apple 로그인에 실패했습니다."
+                                        }
+                                    }
                                 }
                             }
+
+                            authButton(title: "이메일로 계속하기", icon: "envelope") {
+                                session.emailSheetPresented = true
+                            }
                         }
-                    }
-
-                    authButton(title: "이메일로 계속하기", icon: "envelope") {
-                        session.emailSheetPresented = true
-                    }
-                }
-                .padding(.horizontal, GonggiSpacing.lg)
-
-                Text("하나의 계정으로 공기와 3D Locker를 함께 이용할 수 있어요.")
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, GonggiSpacing.xl)
-
-                if let err = session.lastError {
-                    Text(err)
-                        .font(GonggiTypography.caption(12))
-                        .foregroundStyle(GonggiColors.error)
-                        .multilineTextAlignment(.center)
                         .padding(.horizontal, GonggiSpacing.lg)
-                }
 
-                Spacer()
+                        Text(WelcomePanoramaSampleAsset.accountFootnote)
+                            .font(GonggiTypography.caption(13))
+                            .foregroundStyle(GonggiColors.textTertiary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, GonggiSpacing.xl)
+                            .padding(.top, GonggiSpacing.sm)
+                            .padding(.bottom, GonggiSpacing.sm)
+
+                        if let err = session.lastError {
+                            Text(err)
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.error)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, GonggiSpacing.lg)
+                                .padding(.bottom, GonggiSpacing.sm)
+                        }
+
+                        Spacer(minLength: welcomeBottomMin)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: usableHeight, alignment: .top)
+                }
             }
         }
         .sheet(isPresented: $session.emailSheetPresented) {
@@ -292,6 +368,34 @@ struct AuthShellView: View {
         }
         .onAppear {
             appleCoordinator.prepare()
+        }
+    }
+
+    @ViewBuilder
+    private var welcomeDecoration: some View {
+        GeometryReader { geo in
+            let w = max(200, geo.size.width)
+            switch decoration {
+            case .wireframeSphere:
+                GonggiWireframeSphereView(
+                    diameter: min(sphereDiameter, w * 0.55),
+                    isAnimating: scenePhase == .active
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            case .spaceLight:
+                GonggiSpaceLightStoryView(
+                    size: CGSize(width: min(300, w), height: decorationHeight),
+                    isAnimating: scenePhase == .active
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            case .panoramaSample:
+                WelcomePanoramaSampleView(isActive: scenePhase == .active)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 
@@ -313,13 +417,19 @@ struct AuthShellView: View {
             action()
         } label: {
             HStack(spacing: 10) {
+                // Cap SF Symbol growth under accessibility Dynamic Type.
                 Image(systemName: icon)
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 22, height: 22)
                 Text(title)
                     .font(GonggiTypography.body(16))
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .foregroundStyle(GonggiColors.textPrimary)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: GonggiSpacing.touchTarget + 8)
+            .padding(.horizontal, GonggiSpacing.md)
+            .padding(.vertical, 12)
             .background(GonggiColors.surfaceElevated)
             .overlay(
                 RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
@@ -328,16 +438,21 @@ struct AuthShellView: View {
             .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
         }
         .buttonStyle(GonggiPressableStyle())
+        .accessibilityLabel(title)
     }
 }
 
 struct EmailContinueView: View {
     @ObservedObject var session: AuthSessionController
+    var autofocusEmail: Bool = false
     @Environment(\.dismiss) private var dismiss
     @State private var email = ""
     @State private var password = ""
     @State private var busy = false
     @State private var mode: Mode = .login
+    @FocusState private var focusedField: Field?
+
+    enum Field { case email, password }
 
     enum Mode: String, CaseIterable {
         case login = "로그인"
@@ -345,57 +460,102 @@ struct EmailContinueView: View {
         case resetHint = "비밀번호 재설정"
     }
 
+    /// Prior square canvas 140pt ≈94pt ink; +25% visual ≈118pt on cropped asset.
+    private let emailLogoWidth: CGFloat = 120
+
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("이메일", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                    SecureField("비밀번호", text: $password)
-                }
-                Section {
-                    Picker("방식", selection: $mode) {
-                        ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                }
-                Section {
-                    switch mode {
-                    case .login:
-                        Button(busy ? "로그인 중…" : "계속하기") {
-                            busy = true
-                            Task {
-                                await session.signInWithEmail(email: email, password: password)
-                                busy = false
-                                if session.isSignedIn { dismiss() }
+            ZStack {
+                GonggiAmbientBackground(showGlow: false)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                        GonggiLogoView(variant: .white, width: emailLogoWidth)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, GonggiSpacing.xs)
+                            .padding(.bottom, GonggiSpacing.xs)
+
+                        Text("이메일로 계속하기")
+                            .font(GonggiTypography.title(22))
+                            .foregroundStyle(GonggiColors.textPrimary)
+
+                        VStack(spacing: GonggiSpacing.sm) {
+                            TextField("이메일", text: $email)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.emailAddress)
+                                .textContentType(.emailAddress)
+                                .focused($focusedField, equals: .email)
+                                .padding(GonggiSpacing.md)
+                                .background(GonggiColors.surfaceElevated)
+                                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+                            SecureField("비밀번호", text: $password)
+                                .textContentType(.password)
+                                .focused($focusedField, equals: .password)
+                                .padding(GonggiSpacing.md)
+                                .background(GonggiColors.surfaceElevated)
+                                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+                        }
+                        .foregroundStyle(GonggiColors.textPrimary)
+
+                        Picker("방식", selection: $mode) {
+                            ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+
+                        switch mode {
+                        case .login:
+                            PrimaryButton(title: busy ? "로그인 중…" : "계속하기") {
+                                busy = true
+                                Task {
+                                    await session.signInWithEmail(email: email, password: password)
+                                    busy = false
+                                    if session.isSignedIn { dismiss() }
+                                }
+                            }
+                            .disabled(busy || email.isEmpty || password.isEmpty)
+                        case .registerHint:
+                            Text("회원가입·이메일 인증은 3D Locker 웹과 동일합니다. www.3d-locker.com 에서 가입한 뒤 여기서 로그인하세요.")
+                                .font(GonggiTypography.body(14))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let url = URL(string: "https://www.3d-locker.com") {
+                                Link("3D Locker에서 가입하기", destination: url)
+                                    .foregroundStyle(GonggiColors.brandCyan)
+                            }
+                        case .resetHint:
+                            Text("비밀번호 재설정도 3D Locker 웹에서 진행합니다.")
+                                .font(GonggiTypography.body(14))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let url = URL(string: "https://www.3d-locker.com") {
+                                Link("비밀번호 재설정 열기", destination: url)
+                                    .foregroundStyle(GonggiColors.brandCyan)
                             }
                         }
-                        .disabled(busy || email.isEmpty || password.isEmpty)
-                    case .registerHint:
-                        Text("회원가입·이메일 인증은 3D Locker 웹과 동일합니다. www.3d-locker.com 에서 가입한 뒤 여기서 로그인하세요.")
-                            .font(.footnote)
-                        if let url = URL(string: "https://www.3d-locker.com") {
-                            Link("3D Locker에서 가입하기", destination: url)
-                        }
-                    case .resetHint:
-                        Text("비밀번호 재설정도 3D Locker 웹에서 진행합니다.")
-                            .font(.footnote)
-                        if let url = URL(string: "https://www.3d-locker.com") {
-                            Link("비밀번호 재설정 열기", destination: url)
+
+                        if let err = session.lastError {
+                            Text(err)
+                                .font(GonggiTypography.caption(13))
+                                .foregroundStyle(GonggiColors.error)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                    .padding(GonggiSpacing.lg)
+                    .padding(.bottom, GonggiSpacing.xxl)
                 }
-                if let err = session.lastError {
-                    Section {
-                        Text(err).foregroundStyle(.red)
-                    }
-                }
+                .scrollDismissesKeyboard(.interactively)
             }
-            .navigationTitle("이메일로 계속하기")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("닫기") { dismiss() }
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+            }
+            .onAppear {
+                if autofocusEmail {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        focusedField = .email
+                    }
                 }
             }
         }

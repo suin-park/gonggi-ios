@@ -54,7 +54,12 @@ struct AssetPickerSheet: View {
                                 onSelect(asset)
                             } label: {
                                 HStack(spacing: GonggiSpacing.md) {
-                                    AssetThumbnailView(urlString: asset.thumbUrl, size: 56)
+                                    AssetThumbnailView(
+                                        urlString: asset.thumbUrl,
+                                        size: 56,
+                                        showsMissingCaption: false,
+                                        debugAssetId: asset.id
+                                    )
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(asset.name)
                                             .font(GonggiTypography.body(16))

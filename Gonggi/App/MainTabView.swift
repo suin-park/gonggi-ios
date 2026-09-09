@@ -21,7 +21,7 @@ struct MainTabView: View {
                 .tabItem { Label(AppTab.profile.title, systemImage: AppTab.profile.icon) }
                 .tag(AppTab.profile)
         }
-        .tint(GonggiColors.accentTeal)
+        .tint(GonggiColors.brandCyan)
         .onAppear {
             appState.ensureSpaceGenerationPolling()
         }

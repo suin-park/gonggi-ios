@@ -10,6 +10,10 @@ enum SpaceJobErrorPresentation {
             return "사진을 업로드하지 못했어요."
         case "network_error":
             return "네트워크에 연결할 수 없습니다."
+        case "download_failed":
+            return "공간을 불러오지 못했어요. 다시 시도해 주세요."
+        case "invalid_image":
+            return "공간 파일이 올바르지 않아요. 다시 시도해 주세요."
         case "generation_failed":
             return "생성 실패"
         default:

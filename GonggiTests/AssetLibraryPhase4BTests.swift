@@ -13,11 +13,11 @@ final class AssetLibraryPhase4BTests: XCTestCase {
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "NONE", glbKey: "g.glb").libraryStatus.label,
-            "AR/공간 배치 준비 필요"
+            "AR 준비가 필요해요"
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "FAILED").libraryStatus.label,
-            "3D는 준비됐지만 AR 준비에 실패했어요"
+            "AR 준비가 필요해요"
         )
     }
 

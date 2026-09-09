@@ -21,16 +21,10 @@ struct PrimaryButton: View {
                     .font(GonggiTypography.headline(17))
             }
             .frame(maxWidth: .infinity, minHeight: GonggiSpacing.touchTarget + 8)
-            .foregroundStyle(GonggiColors.backgroundPrimary)
-            .background(
-                LinearGradient(
-                    colors: [GonggiColors.accentTeal, GonggiColors.accentCyan.opacity(0.85)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-            .shadow(color: GonggiColors.accentTeal.opacity(0.25), radius: 12, y: 4)
+            .foregroundStyle(GonggiColors.textOnAccent)
+            .background(GonggiColors.primaryButtonGradient)
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+            .shadow(color: GonggiColors.brandCyan.opacity(0.28), radius: 14, y: 5)
         }
         .buttonStyle(GonggiPressableStyle())
         .accessibilityLabel(title)
@@ -53,10 +47,10 @@ struct SecondaryButton: View {
             .foregroundStyle(GonggiColors.textPrimary)
             .background(GonggiColors.surfaceElevated)
             .overlay(
-                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
                     .stroke(GonggiColors.border, lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
         }
         .buttonStyle(GonggiPressableStyle())
         .accessibilityLabel(title)
@@ -486,7 +480,7 @@ struct MemoryArchiveCard: View {
     let space: SpaceRecord
     /// Card body (thumbnail / title / meta) → Space Detail.
     var onOpenDetail: () -> Void
-    /// “공간 보기 →” only — VR Viewer. Nil / unused when not viewable.
+    /// “360° 보기 →” only — VR Viewer. Nil / unused when not viewable.
     var onViewSpace: () -> Void
 
     var body: some View {
@@ -551,19 +545,19 @@ struct MemoryArchiveCard: View {
                 onViewSpace()
             } label: {
                 HStack(spacing: 6) {
-                    Text("공간 보기")
+                    Text("360° 보기")
                         .font(GonggiTypography.caption(14))
-                        .foregroundStyle(GonggiColors.accentTeal)
+                        .foregroundStyle(GonggiColors.brandCyan)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(GonggiColors.accentTeal)
+                        .foregroundStyle(GonggiColors.brandCyan)
                     Spacer(minLength: 0)
                 }
                 .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("공간 보기")
+            .accessibilityLabel("360° 보기")
         } else if space.status == .failed {
             Button {
                 GonggiHaptics.light()
@@ -608,42 +602,17 @@ struct MemoryArchiveCard: View {
         case .failed: return "다시 시도"
         case .processing, .uploading: return "진행 상태"
         case .draft: return "이어서 보기"
-        case .ready: return "공간 보기"
+        case .ready: return "360° 보기"
         }
     }
 
     private var thumbnailHero: some View {
-        ZStack {
-            LinearGradient(
-                colors: [
-                    GonggiColors.backgroundElevated,
-                    GonggiColors.surface,
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            RadialGradient(
-                colors: [GonggiColors.accentCyan.opacity(0.2), .clear],
-                center: .center,
-                startRadius: 10,
-                endRadius: 120
-            )
-            if space.showsActivityIndicator {
-                VStack(spacing: 10) {
-                    ProgressView()
-                        .tint(GonggiColors.accentTeal)
-                    Text(space.note ?? space.statusBadgeLabel)
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
-            } else {
-                Image(systemName: space.thumbnailSystemImage)
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(GonggiColors.textPrimary.opacity(0.85))
-            }
-        }
-        .frame(height: 160)
-        .frame(maxWidth: .infinity)
+        SpaceThumbnailView(
+            space: space,
+            height: 160,
+            cornerRadius: 0,
+            showsActivityOverlay: true
+        )
         .accessibilityHidden(true)
     }
 

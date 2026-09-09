@@ -246,8 +246,12 @@ struct CaptureContainerView: View {
                     .foregroundStyle(GonggiColors.textTertiary)
             }
             .padding(GonggiSpacing.md)
-            .background(GonggiColors.surfaceElevated.opacity(0.7))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .background(GonggiColors.surfaceElevated)
+            .overlay(
+                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                    .stroke(GonggiColors.borderSubtle, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
         }
         .buttonStyle(.plain)
     }

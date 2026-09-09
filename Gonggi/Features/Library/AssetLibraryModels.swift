@@ -10,7 +10,7 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .spaces: return "공간"
-        case .assets: return "3D 어셋"
+        case .assets: return "3D 자산"
         }
     }
 }
@@ -123,7 +123,7 @@ final class AssetLibraryStore: ObservableObject {
             } else {
                 assets = []
                 phase = .failed
-                errorMessage = "3D 어셋을 불러오지 못했어요"
+                errorMessage = "3D 자산을 불러오지 못했어요"
             }
         } catch {
             _ = await jobsRefresh
@@ -133,7 +133,7 @@ final class AssetLibraryStore: ObservableObject {
             } else {
                 assets = []
                 phase = .failed
-                errorMessage = "3D 어셋을 불러오지 못했어요"
+                errorMessage = "3D 자산을 불러오지 못했어요"
             }
         }
         isRefreshing = false

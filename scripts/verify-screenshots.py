@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify Gonggi UI screenshot artifacts are present and not blank."""
+"""Verify Gonggi redesign V1 screenshot artifacts are present and not blank."""
 from __future__ import annotations
 
 import sys
@@ -11,26 +11,34 @@ except ImportError:
     print("Pillow is required: pip install Pillow")
     sys.exit(1)
 
-EXPECTED = [
-    "01_home.png",
-    "02_capture_30.png",
-    "03_capture_68.png",
-    "04_capture_90.png",
-    "05_capture_fast_movement.png",
-    "06_capture_tracking_limited.png",
-    "07_capture_low_texture.png",
-    "08_capture_summary.png",
-    "09_processing.png",
-    "10_library.png",
-    "11_space_detail.png",
-    "12_profile.png",
+REQUIRED = [
+    "00_welcome_after.png",
+    "01_home_after.png",
+    "01_record_mode_after.png",
+    "02_library_spaces_after.png",
+    "02_library_spaces_loading.png",
+    "02_library_spaces_empty.png",
+    "02_library_spaces_error.png",
+    "03_library_assets_thumb.png",
+    "03_library_assets_no_thumb.png",
+    "03_library_assets_generating.png",
+    "04_space_detail_after.png",
+    "05_asset_detail_need_prepare.png",
+    "05_asset_detail_ready.png",
+    "05_asset_detail_failed.png",
+    "06_space_picker_after.png",
+    "06_asset_picker_after.png",
+    "07_profile_after.png",
+    "08_vr_edit_menu_after.png",
+    "09_ar_camera_denied.png",
+    "10_app_icon_preview.png",
 ]
 
 MIN_MEAN_LUMINANCE = 8.0
 screenshots_dir = Path(sys.argv[1] if len(sys.argv) > 1 else "screenshots")
 
 failed = False
-for name in EXPECTED:
+for name in REQUIRED:
     path = screenshots_dir / name
     if not path.is_file():
         print(f"FAIL missing: {name}")
@@ -53,4 +61,4 @@ for name in EXPECTED:
 
 if failed:
     sys.exit(1)
-print(f"Verified {len(EXPECTED)} screenshots")
+print(f"Verified {len(REQUIRED)} required screenshots")

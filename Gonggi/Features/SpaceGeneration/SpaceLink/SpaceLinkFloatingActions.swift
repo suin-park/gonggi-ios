@@ -5,6 +5,7 @@ struct SpaceLinkFloatingActions: View {
     let isDraft: Bool
     var onCapture: () -> Void
     var onLinkExisting: () -> Void
+    var onEditMetadata: (() -> Void)? = nil
     var onDelete: () -> Void
 
     var body: some View {
@@ -12,6 +13,8 @@ struct SpaceLinkFloatingActions: View {
             if isDraft {
                 actionButton(title: "촬영", systemImage: "camera.fill", prominent: true, action: onCapture)
                 actionButton(title: "기존 공간 연결", systemImage: "link", prominent: false, action: onLinkExisting)
+            } else if let onEditMetadata {
+                actionButton(title: "핫스팟 편집", systemImage: "pencil", prominent: true, action: onEditMetadata)
             }
             actionButton(title: "삭제", systemImage: "trash", prominent: false, destructive: true, action: onDelete)
         }

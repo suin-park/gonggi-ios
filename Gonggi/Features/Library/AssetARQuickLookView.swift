@@ -197,7 +197,7 @@ struct AssetARQuickLookView: View {
                     UIApplication.shared.open(url)
                 }
                 .font(GonggiTypography.body(15))
-                .foregroundStyle(GonggiColors.accentTeal)
+                .foregroundStyle(GonggiColors.brandCyan)
             }
         }
     }

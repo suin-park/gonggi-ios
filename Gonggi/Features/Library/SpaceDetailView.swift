@@ -1,6 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct SpaceDetailView: View {
     @EnvironmentObject private var appState: AppState
@@ -13,8 +16,8 @@ struct SpaceDetailView: View {
     @State private var isDeleting = false
     @State private var viewerError: String?
     @State private var deleteError: String?
-    @State private var showAddObjectSheet = false
-    @State private var placementMessage: String?
+    @State private var showEditSheet = false
+    @State private var showShareSheet = false
     // Build 80 — space audio
     @State private var showAudioImporter = false
     @State private var showAudioRecorder = false
@@ -48,13 +51,11 @@ struct SpaceDetailView: View {
             } message: {
                 Text(viewerError ?? "")
             }
-            .alert("이 공간을 삭제할까요?", isPresented: $showDeleteConfirm) {
+            .confirmationDialog("이 공간을 삭제할까요?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
                 Button("삭제", role: .destructive) {
                     Task { await performDelete() }
                 }
                 Button("취소", role: .cancel) {}
-            } message: {
-                Text("이 공간과 연결된 공간 이동도 함께 제거됩니다.\n다른 공간 자체는 삭제되지 않습니다.")
             }
         .alert("삭제하지 못했어요", isPresented: Binding(
             get: { deleteError != nil },
@@ -83,27 +84,19 @@ struct SpaceDetailView: View {
         } message: {
             Text(audioError ?? "")
         }
-        .alert("배치할 수 없어요", isPresented: Binding(
-            get: { placementMessage != nil },
-            set: { if !$0 { placementMessage = nil } }
-        )) {
-            Button("확인", role: .cancel) { placementMessage = nil }
-        } message: {
-            Text(placementMessage ?? "")
-        }
-        .sheet(isPresented: $showAddObjectSheet) {
-            AssetPickerSheet(
-                store: AssetLibraryStore.shared,
-                title: "3D 오브젝트",
-                showNonReadyDisabled: true,
-                isAtCapacity: false,
-                onSelect: { asset in
-                    showAddObjectSheet = false
-                    Task { await placeAsset(asset) }
-                },
-                onClose: { showAddObjectSheet = false }
+        .sheet(isPresented: $showShareSheet) {
+            SpaceShareSheet(
+                spaceId: liveSpace.sessionId ?? liveSpace.id,
+                spaceName: liveSpace.name,
+                onClose: { showShareSheet = false }
             )
             .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showEditSheet) {
+            SpaceDetailEditView(space: liveSpace)
+                .environmentObject(appState)
+                .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showAudioRecorder) {
@@ -138,21 +131,56 @@ struct SpaceDetailView: View {
     }
 
     private var detailChrome: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                heroSection
-                metaSection
-                if let note = liveSpace.note {
-                    memoryNoteSection(note)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+                    heroSection
+                    metaSection
+                    memoryNoteSection
+                    spaceAudioSection
+                    actionsSection
+                        .id("space-detail-actions")
                 }
-                spaceAudioSection
-                actionsSection
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, GonggiSpacing.lg)
+                .padding(.top, GonggiSpacing.lg)
+                // Bottom: stay clear of TabView chrome without double safe-area stacking.
+                .padding(.bottom, GonggiSpacing.xxl)
             }
-            .padding(GonggiSpacing.lg)
-            .padding(.bottom, GonggiSpacing.xxl)
+            .contentMargins(.bottom, GonggiSpacing.md, for: .scrollContent)
+            #if DEBUG
+            .onAppear {
+                guard ScreenshotLaunchConfig.screen == .spaceDetailScrolled else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo("space-detail-actions", anchor: .bottom)
+                    }
+                }
+            }
+            #endif
         }
-        .background(GonggiAmbientBackground(showGlow: false))
+        // Keep chrome background edge-to-edge without expanding ScrollView into tab/home unsafe areas.
+        .background {
+            GonggiAmbientBackground(showGlow: false)
+                .ignoresSafeArea()
+        }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Menu {
+                    Button("공간 삭제", systemImage: "trash", role: .destructive) {
+                        showDeleteConfirm = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                Button("편집") {
+                    showEditSheet = true
+                }
+            }
+        }
         .disabled(isDeleting || isUploadingAudio)
         .overlay {
             if isDeleting || isUploadingAudio {
@@ -183,38 +211,24 @@ struct SpaceDetailView: View {
 
     private var heroSection: some View {
         ZStack(alignment: .bottomLeading) {
-            RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            GonggiColors.backgroundElevated,
-                            GonggiColors.surface,
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(height: 240)
-            RadialGradient(
-                colors: [GonggiColors.accentTeal.opacity(0.25), .clear],
-                center: .topTrailing,
-                startRadius: 20,
-                endRadius: 200
+            SpaceThumbnailView(
+                space: liveSpace,
+                height: 240,
+                cornerRadius: GonggiRadius.xl,
+                showsActivityOverlay: true
             )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
-            Image(systemName: liveSpace.thumbnailSystemImage)
-                .font(.system(size: 64, weight: .ultraLight))
-                .foregroundStyle(GonggiColors.textPrimary.opacity(0.9))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             LinearGradient(
                 colors: [.clear, GonggiColors.backgroundPrimary.opacity(0.7)],
                 startPoint: .center,
                 endPoint: .bottom
             )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
+            .allowsHitTesting(false)
             statusBadge
                 .padding(GonggiSpacing.md)
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: 240)
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
                 .stroke(GonggiColors.border, lineWidth: 1)
@@ -227,11 +241,21 @@ struct SpaceDetailView: View {
             Text(liveSpace.name)
                 .font(GonggiTypography.title(26))
                 .foregroundStyle(GonggiColors.textPrimary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            detailRow(icon: "calendar", title: "생성일", value: liveSpace.capturedAt.formatted(date: .long, time: .omitted))
-            detailRow(icon: "mappin.and.ellipse", title: "위치", value: "위치 정보 없음")
+            detailRow(
+                icon: "calendar",
+                title: "생성일",
+                value: liveSpace.capturedAt.formatted(
+                    .dateTime.year().month().day().locale(Locale(identifier: "ko_KR"))
+                )
+            )
+            detailRow(icon: "mappin.and.ellipse", title: "위치", value: liveSpace.locationDisplayLabel)
             detailRow(icon: "circle.fill", title: "상태", value: liveSpace.statusBadgeLabel)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func detailRow(icon: String, title: String, value: String) -> some View {
@@ -247,19 +271,27 @@ struct SpaceDetailView: View {
             Text(value)
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func memoryNoteSection(_ note: String) -> some View {
+    private var memoryNoteSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("기억 메모")
+            Text("메모")
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
             GonggiElevatedCard {
-                Text(note)
+                Text(liveSpace.memo?.isEmpty == false
+                    ? liveSpace.memo!
+                    : "이 공간에 대한 메모를 남겨보세요.")
                     .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
+                    .foregroundStyle(
+                        liveSpace.memo?.isEmpty == false
+                            ? GonggiColors.textSecondary
+                            : GonggiColors.textTertiary
+                    )
                     .lineSpacing(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -321,18 +353,35 @@ struct SpaceDetailView: View {
         VStack(spacing: GonggiSpacing.sm) {
             // Primary: viewer when ready
             if liveSpace.canOpenExistingVR {
-                PrimaryButton(title: "공간 보기", icon: "cube.transparent") {
+                PrimaryButton(title: "360° 보기", icon: "cube.transparent") {
                     GonggiHaptics.light()
                     Task { await openViewer() }
                 }
-                .accessibilityLabel("공간 보기")
+                .accessibilityLabel("360° 보기")
             }
 
             switch liveSpace.status {
             case .ready:
-                SecondaryButton(title: "3D 오브젝트 추가", icon: "square.stack.3d.up") {
-                    GonggiHaptics.light()
-                    showAddObjectSheet = true
+                if let note = liveSpace.note, !note.isEmpty {
+                    GonggiElevatedCard {
+                        HStack(spacing: GonggiSpacing.md) {
+                            if liveSpace.note == "공간을 불러오는 중…" {
+                                ProgressView()
+                                    .tint(GonggiColors.accentTeal)
+                            }
+                            Text(note)
+                                .font(GonggiTypography.body(15))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                            Spacer(minLength: 0)
+                            if liveSpace.note != "공간을 불러오는 중…" {
+                                Button("다시 시도") {
+                                    Task { await openViewer() }
+                                }
+                                .font(GonggiTypography.caption(13))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             case .failed:
                 PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
@@ -356,11 +405,11 @@ struct SpaceDetailView: View {
                 }
             }
 
-            // Danger — Build 78 soft-delete (no dead share/rename/location buttons)
-            SecondaryButton(title: "공간 삭제", icon: "trash") {
-                showDeleteConfirm = true
+            SecondaryButton(title: "공유", icon: "square.and.arrow.up") {
+                showShareSheet = true
             }
-            .accessibilityLabel("공간 삭제")
+            .accessibilityLabel("공유")
+            .disabled(liveSpace.status != .ready)
         }
         .padding(.top, GonggiSpacing.xs)
     }
@@ -376,22 +425,6 @@ struct SpaceDetailView: View {
             )
         case .failure(let error):
             viewerError = error.userMessage
-        }
-    }
-
-    private func placeAsset(_ asset: MobileAssetDTO) async {
-        isPreparingViewer = true
-        defer { isPreparingViewer = false }
-        if let block = await AssetPlacementLaunch.open(
-            space: liveSpace,
-            asset: asset,
-            source: .spaceDetail,
-            appState: appState,
-            present: { launch in
-                viewerLaunch = launch
-            }
-        ) {
-            placementMessage = block.userMessage
         }
     }
 
@@ -480,87 +513,6 @@ struct SpaceDetailView: View {
     }
 }
 
-/// Space → place 3D object navigation shell (picker / create wired in later phases).
-struct AddObjectToSpaceSheet: View {
-    var onClose: () -> Void
-    @State private var showCreate = false
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                Text("3D 오브젝트 추가")
-                    .font(GonggiTypography.title(22))
-                    .foregroundStyle(GonggiColors.textPrimary)
-                Text("이 공간에 배치할 어셋을 고르거나 새로 만들 수 있어요.")
-                    .font(GonggiTypography.caption(14))
-                    .foregroundStyle(GonggiColors.textSecondary)
-
-                optionRow(
-                    title: "내 3D 어셋",
-                    subtitle: "3D Locker에 있는 어셋에서 선택",
-                    icon: "square.grid.2x2"
-                ) {
-                    // Phase D: asset picker linked to Locker library.
-                }
-                optionRow(
-                    title: "새로 만들기",
-                    subtitle: "사진으로 3D 어셋 생성 후 배치",
-                    icon: "plus.circle"
-                ) {
-                    showCreate = true
-                }
-                Spacer()
-            }
-            .padding(GonggiSpacing.lg)
-            .background(GonggiAmbientBackground(showGlow: false))
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("닫기") { onClose() }
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
-            }
-            .sheet(isPresented: $showCreate) {
-                CreateAssetFlowView(onClose: { showCreate = false })
-                    .presentationDetents([.medium, .large])
-            }
-        }
-    }
-
-    private func optionRow(
-        title: String,
-        subtitle: String,
-        icon: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button {
-            GonggiHaptics.medium()
-            action()
-        } label: {
-            HStack(spacing: GonggiSpacing.md) {
-                Image(systemName: icon)
-                    .font(.system(size: 22, weight: .light))
-                    .foregroundStyle(GonggiColors.accentTeal)
-                    .frame(width: 40)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(GonggiTypography.body(16))
-                        .foregroundStyle(GonggiColors.textPrimary)
-                    Text(subtitle)
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(GonggiColors.textTertiary)
-            }
-            .padding(GonggiSpacing.md)
-            .background(GonggiColors.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 struct ViewerPlaceholderView: View {
     let space: SpaceRecord
     @Environment(\.dismiss) private var dismiss
@@ -578,7 +530,7 @@ struct ViewerPlaceholderView: View {
                         Text("3D 공간 뷰어")
                             .font(GonggiTypography.headline(20))
                             .foregroundStyle(GonggiColors.textPrimary)
-                        Text("곧 이곳에서 기록한 공간을\n다시 걸어 다닐 수 있어요.")
+                        Text("이 공간은 아직 뷰어를 열 수 없어요.")
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
                             .multilineTextAlignment(.center)

@@ -2,16 +2,18 @@ import Foundation
 import SceneKit
 import UIKit
 
-/// Lightweight camera-facing billboard for 공간 연결 (Build 73/75 visual states).
+/// Lightweight camera-facing billboard for 공간 연결 (Build 73/75 visual states + metadata caption).
 enum SpaceHotspotNodeFactory {
     static let rootNamePrefix = "spaceHotspot:"
     static let visualName = "spaceHotspotVisual"
     static let hitProxyName = "spaceHotspotHitProxy"
     static let selectionName = "spaceHotspotSelection"
+    static let captionName = "spaceHotspotCaption"
 
     /// Visible disc (~36pt); hit proxy separately sized (~52pt).
     static let visualTargetPoints: Float = 36
     static let hitTargetPoints: Float = 52
+    static let captionTargetPoints: Float = 52
 
     static let blueFill = UIColor(red: 0.20, green: 0.48, blue: 1.0, alpha: 1.0)
     static let blueStroke = UIColor(red: 0.85, green: 0.92, blue: 1.0, alpha: 1)
@@ -23,7 +25,12 @@ enum SpaceHotspotNodeFactory {
     static var debugForceVisibleMarker = false
     #endif
 
-    static func makeNode(link: SpaceLink, selected: Bool, pulse: Bool) -> SCNNode {
+    static func makeNode(
+        link: SpaceLink,
+        selected: Bool,
+        pulse: Bool,
+        targetSpaceName: String? = nil
+    ) -> SCNNode {
         let root = SCNNode()
         root.name = rootNamePrefix + link.id
         root.categoryBitMask = VRPlacedAssetCategory.spaceLink
@@ -95,6 +102,19 @@ enum SpaceHotspotNodeFactory {
             ring.categoryBitMask = VRPlacedAssetCategory.selection
             ring.renderingOrder = forceDebug ? 202 : 102
             root.addChildNode(ring)
+        }
+
+        if let caption = SpaceLinkExternalURL.hotspotCaption(
+            displayName: link.label,
+            externalUrl: link.externalUrl,
+            targetSpaceName: targetSpaceName
+        ), !forceDebug {
+            attachCaption(
+                caption,
+                size: link.labelSize ?? .default,
+                to: root,
+                above: visualDiameter
+            )
         }
 
         if pulse, !selected, !forceDebug, link.status == .linked {
@@ -181,6 +201,14 @@ enum SpaceHotspotNodeFactory {
             verticalFOVDegrees: verticalFOVDegrees,
             targetPoints: hitTargetPoints
         )
+        let captionH = SpaceLinkMath.billboardDiameterMeters(
+            distance: distance,
+            viewportHeight: viewportHeight,
+            verticalFOVDegrees: verticalFOVDegrees,
+            targetPoints: captionTargetPoints
+        )
+        // Clamp caption scale so distant labels stay readable and near ones don't dominate.
+        let clampedCaptionH = min(max(captionH * 0.85, 0.12), 0.42)
         if let visual = root.childNode(withName: visualName, recursively: false),
            let plane = visual.geometry as? SCNPlane {
             plane.width = CGFloat(visualD)
@@ -195,9 +223,36 @@ enum SpaceHotspotNodeFactory {
             plane.width = CGFloat(visualD * 1.55)
             plane.height = CGFloat(visualD * 1.55)
         }
+        if let caption = root.childNode(withName: captionName, recursively: false),
+           let plane = caption.geometry as? SCNPlane {
+            let aspect = Float(plane.width / max(plane.height, 0.001))
+            plane.height = CGFloat(clampedCaptionH)
+            plane.width = CGFloat(clampedCaptionH * aspect)
+            caption.position = SCNVector3(0, visualD * 0.72 + clampedCaptionH * 0.55, 0)
+        }
     }
 
     // MARK: - Materials / Images
+
+    private static func attachCaption(
+        _ text: String,
+        size: SpaceLinkLabelSize,
+        to root: SCNNode,
+        above visualDiameter: Float
+    ) {
+        let image = makeCaptionImage(text: text, size: size)
+        let aspect = image.size.width / max(image.size.height, 1)
+        let height: Float = min(max(0.22 * Float(size.captionScale), 0.16), 0.30)
+        let width = height * Float(aspect)
+        let plane = SCNPlane(width: CGFloat(width), height: CGFloat(height))
+        plane.firstMaterial = makeUnlitMaterial(image: image)
+        let node = SCNNode(geometry: plane)
+        node.name = captionName
+        node.categoryBitMask = VRPlacedAssetCategory.spaceLink
+        node.renderingOrder = 103
+        node.position = SCNVector3(0, visualDiameter * 0.72 + height * 0.55, 0)
+        root.addChildNode(node)
+    }
 
     private static func makeUnlitMaterial(image: UIImage) -> SCNMaterial {
         let mat = SCNMaterial()
@@ -233,6 +288,53 @@ enum SpaceHotspotNodeFactory {
             color.setStroke()
             ctx.cgContext.setLineWidth(7)
             ctx.cgContext.strokeEllipse(in: rect)
+        }
+    }
+
+    /// Compact navy / translucent caption with Gonggi cyan accent — max 2 lines, truncated.
+    private static func makeCaptionImage(text: String, size: SpaceLinkLabelSize) -> UIImage {
+        let scale = CGFloat(size.captionScale)
+        let maxWidth: CGFloat = min(max(280 * scale, 224), 320)
+        let font = UIFont.systemFont(ofSize: 22 * scale, weight: .semibold)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.lineBreakMode = .byTruncatingTail
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.white,
+            .paragraphStyle: paragraph,
+        ]
+        let ns = text as NSString
+        let bound = ns.boundingRect(
+            with: CGSize(width: maxWidth - 28, height: 72),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attrs,
+            context: nil
+        )
+        let textSize = CGSize(
+            width: min(maxWidth - 28, ceil(bound.width)),
+            height: min(72 * scale, max(24 * scale, ceil(bound.height)))
+        )
+        let imageSize = CGSize(
+            width: min(max(textSize.width + 28 * scale, 92), 340),
+            height: min(max(textSize.height + 16 * scale, 36), 108)
+        )
+        let renderer = UIGraphicsImageRenderer(size: imageSize)
+        return renderer.image { ctx in
+            let rect = CGRect(origin: .zero, size: imageSize)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: 12)
+            UIColor(red: 14 / 255, green: 35 / 255, blue: 62 / 255, alpha: 0.78).setFill()
+            path.fill()
+            UIColor(red: 63 / 255, green: 207 / 255, blue: 228 / 255, alpha: 0.85).setStroke()
+            path.lineWidth = 2
+            path.stroke()
+            let textRect = CGRect(
+                x: 14 * scale,
+                y: 8 * scale,
+                width: imageSize.width - 28 * scale,
+                height: imageSize.height - 16 * scale
+            )
+            ns.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attrs, context: nil)
         }
     }
 }

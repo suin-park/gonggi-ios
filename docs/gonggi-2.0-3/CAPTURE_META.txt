@@ -1,0 +1,3 @@
+CAPTURE_SHA=9b0527948069c3d40933557b2d6d5ad15386ba2b
+DEBUG_FIXTURE=yes (-mock -screenshot-screen)
+VERSION=2.0 (3)

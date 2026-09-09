@@ -1,0 +1,1 @@
+﻿Device video deferred — capture on Mac simulator/device.

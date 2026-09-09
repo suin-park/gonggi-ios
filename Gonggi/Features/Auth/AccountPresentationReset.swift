@@ -34,6 +34,8 @@ enum AccountPresentationReset {
         SpaceLibraryReconciler.shared.cancelInFlight()
         SpaceJobStore.shared.bind(.none)
         SpaceJobRuntimeSharedHook.cancelForAccountChange()
+        SpaceThumbnailCache.shared.clearAll(includingDisk: true)
+        Task { await SpaceThumbnailLoader.shared.cancelAll() }
         AssetLibraryStore.shared.clearForAccountChange()
         AssetGenerationStore.shared.clearForAccountChange()
         PendingSpaceLinkCaptureStore.shared.clear()
@@ -48,6 +50,8 @@ enum AccountPresentationReset {
         SpaceLibraryReconciler.shared.cancelInFlight()
         SpaceJobRuntimeSharedHook.cancelForAccountChange()
         SpaceJobStore.shared.bind(.user(userId: userId))
+        SpaceThumbnailCache.shared.clearAll(includingDisk: true)
+        Task { await SpaceThumbnailLoader.shared.cancelAll() }
         AssetLibraryStore.shared.clearForAccountChange()
         AssetGenerationStore.shared.clearForAccountChange()
         PendingSpaceLinkCaptureStore.shared.clear()

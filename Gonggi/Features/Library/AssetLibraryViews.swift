@@ -93,10 +93,7 @@ struct AssetLibraryView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
             HStack {
-                Text("3D 어셋")
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.accentTeal)
-                Spacer()
+                Spacer(minLength: 0)
                 Button {
                     GonggiHaptics.light()
                     showCreate = true
@@ -108,20 +105,13 @@ struct AssetLibraryView: View {
                         .background(GonggiColors.surfaceElevated.opacity(0.8))
                         .clipShape(Circle())
                 }
-                .accessibilityLabel("새 3D 어셋 만들기")
+                .accessibilityLabel("새 3D 자산 만들기")
             }
-            Text("3D Locker의 3D 어셋을\n한곳에서 관리해요")
-                .font(GonggiTypography.headline(20))
-                .foregroundStyle(GonggiColors.textPrimary)
-                .lineSpacing(2)
             if store.mayBeTruncated {
                 Text("최근 \(AssetLibraryStore.knownServerTakeLimit)개까지 표시돼요")
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
-            Text("앱을 닫아도 3D 생성은 계속돼요.")
-                .font(GonggiTypography.caption(12))
-                .foregroundStyle(GonggiColors.textTertiary)
         }
     }
 
@@ -145,7 +135,7 @@ struct AssetLibraryView: View {
         VStack(spacing: GonggiSpacing.md) {
             ProgressView()
                 .tint(GonggiColors.accentTeal)
-            Text("3D 어셋을 불러오는 중…")
+            Text("3D 자산을 불러오는 중…")
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
         }
@@ -160,15 +150,15 @@ struct AssetLibraryView: View {
                 .font(.system(size: 48, weight: .ultraLight))
                 .foregroundStyle(GonggiColors.accentTeal.opacity(0.8))
                 .accessibilityHidden(true)
-            Text("아직 3D 어셋이 없어요")
+            Text("아직 3D 자산이 없어요")
                 .font(GonggiTypography.headline(18))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("사진으로 새 3D 어셋을 만들어 보세요.")
+            Text("사진으로 새 3D 자산을 만들어 보세요.")
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
-            PrimaryButton(title: "새 3D 어셋 만들기", icon: "plus") {
+            PrimaryButton(title: "새 3D 자산 만들기", icon: "plus") {
                 GonggiHaptics.medium()
                 showCreate = true
             }
@@ -184,7 +174,7 @@ struct AssetLibraryView: View {
                 .font(.system(size: 40, weight: .ultraLight))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .accessibilityHidden(true)
-            Text(store.errorMessage ?? "3D 어셋을 불러오지 못했어요")
+            Text(store.errorMessage ?? "3D 자산을 불러오지 못했어요")
                 .font(GonggiTypography.headline(18))
                 .foregroundStyle(GonggiColors.textPrimary)
                 .multilineTextAlignment(.center)
@@ -316,7 +306,12 @@ struct AssetLibraryView: View {
 
     private func assetCard(_ asset: MobileAssetDTO) -> some View {
         HStack(spacing: GonggiSpacing.md) {
-            AssetThumbnailView(urlString: asset.thumbUrl, size: 64)
+            AssetThumbnailView(
+                urlString: asset.thumbUrl,
+                size: 64,
+                showsMissingCaption: false,
+                debugAssetId: asset.id
+            )
             VStack(alignment: .leading, spacing: 4) {
                 Text(asset.name)
                     .font(GonggiTypography.body(16))
@@ -404,7 +399,7 @@ struct AssetDetailView: View {
         }
         .background(GonggiAmbientBackground(showGlow: false))
         .navigationBarTitleDisplayMode(.inline)
-        .navigationTitle("3D 어셋")
+        .navigationTitle("3D 자산")
         .task {
             await loadDetail()
             syncPolling()
@@ -492,11 +487,16 @@ struct AssetDetailView: View {
                 .fill(GonggiColors.surface)
                 .frame(height: 260)
             if asset.canPreviewUSDZ, let urlString = asset.usdzUrl, let url = URL(string: urlString) {
-                AssetUSDZPreviewHost(assetId: asset.id, remoteURL: url)
+                AssetUSDZPreviewHost(assetId: asset.id, remoteURL: url, thumbUrl: asset.thumbUrl)
                     .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
                     .frame(height: 260)
             } else {
-                AssetThumbnailView(urlString: asset.thumbUrl, size: 120)
+                AssetThumbnailView(
+                    urlString: asset.thumbUrl,
+                    size: 120,
+                    showsMissingCaption: true,
+                    debugAssetId: asset.id
+                )
             }
         }
         .frame(maxWidth: .infinity)
@@ -599,8 +599,8 @@ struct AssetDetailView: View {
         switch (raw ?? "NONE").uppercased() {
         case "READY": return "준비됨"
         case "PROCESSING": return "준비 중"
-        case "FAILED": return "실패"
-        default: return "미준비"
+        case "FAILED": return "준비되지 않음"
+        default: return "준비되지 않음"
         }
     }
 
@@ -667,9 +667,10 @@ struct AssetDetailView: View {
             }
             syncPolling()
         } catch let error as MobilePrepareARError {
-            actionError = error.userMessage
+            actionError = "AR 파일을 준비하지 못했어요. 다시 시도해주세요."
+            _ = error
         } catch {
-            actionError = "AR 준비에 실패했어요"
+            actionError = "AR 파일을 준비하지 못했어요. 다시 시도해주세요."
         }
     }
 
@@ -736,46 +737,199 @@ private struct IdentifiedURL: Identifiable {
 
 // MARK: - Thumbnail
 
+enum AssetThumbnailLoadPhase: Equatable {
+    case noURL
+    case loading
+    case success
+    case networkFailure(status: Int?)
+    case decodeFailure
+}
+
 struct AssetThumbnailView: View {
     let urlString: String?
     var size: CGFloat = 64
+    /// When true and there is no result thumb, show a small "미리보기 없음" caption under the icon.
+    var showsMissingCaption: Bool = false
+    /// Optional asset id prefix for DEBUG diagnostics only (never shown in UI).
+    var debugAssetId: String? = nil
+    /// Explicitly labeled input-photo fallback (not a result thumb). Nil = do not use input photo.
+    var inputPhotoURLString: String? = nil
+    var inputPhotoCaption: String = "입력 사진"
+
+    @State private var phase: AssetThumbnailLoadPhase = .noURL
+    @State private var image: UIImage?
+    @State private var showingInputPhoto = false
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
-                .fill(GonggiColors.surface)
-                .frame(width: size, height: size)
-            if let urlString, let url = URL(string: urlString) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
+        VStack(spacing: 4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
+                    .fill(GonggiColors.surface)
+                    .frame(width: size, height: size)
+                switch phase {
+                case .success:
+                    if let image {
+                        Image(uiImage: image)
                             .resizable()
                             .scaledToFill()
-                    case .failure:
-                        placeholderIcon
-                    case .empty:
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    @unknown default:
+                            .frame(width: size, height: size)
+                            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+                            .accessibilityHidden(true)
+                    } else {
                         placeholderIcon
                     }
+                case .loading:
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(GonggiColors.accentTeal)
+                case .noURL, .networkFailure, .decodeFailure:
+                    placeholderIcon
+                        .accessibilityHidden(true)
                 }
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
-                .accessibilityHidden(true)
-            } else {
-                placeholderIcon
-                    .accessibilityHidden(true)
+            }
+            .frame(width: size, height: size)
+
+            if showingInputPhoto, phase == .success {
+                Text(inputPhotoCaption)
+                    .font(GonggiTypography.caption(10))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                    .lineLimit(1)
+            } else if showsMissingCaption, phase == .noURL || isFailurePhase {
+                Text("미리보기 없음")
+                    .font(GonggiTypography.caption(10))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                    .lineLimit(1)
             }
         }
-        .frame(width: size, height: size)
+        .task(id: "\(urlString ?? "")|\(inputPhotoURLString ?? "")") {
+            await load()
+        }
+    }
+
+    private var isFailurePhase: Bool {
+        switch phase {
+        case .networkFailure, .decodeFailure: return true
+        default: return false
+        }
     }
 
     private var placeholderIcon: some View {
         Image(systemName: "cube.transparent")
             .font(.system(size: size * 0.35, weight: .light))
             .foregroundStyle(GonggiColors.accentTeal)
+    }
+
+    @MainActor
+    private func load() async {
+        image = nil
+        showingInputPhoto = false
+        let authGen = AuthSessionGeneration.current
+
+        if let urlString, let url = URL(string: urlString), !urlString.isEmpty {
+            phase = .loading
+            let result = await AssetThumbnailFetcher.fetch(url: url)
+            guard AuthSessionGeneration.isCurrent(authGen) else { return }
+            apply(result, asInputPhoto: false)
+            #if DEBUG
+            logDebug(preferredURL: urlString, result: result)
+            #endif
+            if phase == .success { return }
+        }
+
+        // Result thumb missing/failed — optional labeled input photo only (never silent backfill).
+        if let input = inputPhotoURLString, let url = URL(string: input), !input.isEmpty {
+            phase = .loading
+            let result = await AssetThumbnailFetcher.fetch(url: url)
+            guard AuthSessionGeneration.isCurrent(authGen) else { return }
+            apply(result, asInputPhoto: true)
+            #if DEBUG
+            logDebug(preferredURL: input, result: result)
+            #endif
+            return
+        }
+
+        if urlString == nil || urlString?.isEmpty == true {
+            phase = .noURL
+        }
+    }
+
+    private func apply(_ result: AssetThumbnailFetcher.Result, asInputPhoto: Bool) {
+        switch result {
+        case .success(let img):
+            image = img
+            phase = .success
+            showingInputPhoto = asInputPhoto
+        case .networkFailure(let status):
+            phase = .networkFailure(status: status)
+            showingInputPhoto = false
+        case .decodeFailure:
+            phase = .decodeFailure
+            showingInputPhoto = false
+        }
+    }
+
+    #if DEBUG
+    private func logDebug(preferredURL: String, result: AssetThumbnailFetcher.Result) {
+        let idPart: String
+        if let debugAssetId, debugAssetId.count >= 8 {
+            idPart = String(debugAssetId.prefix(8))
+        } else {
+            idPart = debugAssetId ?? "-"
+        }
+        let hasURL = !(urlString ?? "").isEmpty
+        let status: String
+        switch result {
+        case .success:
+            status = "success"
+        case .networkFailure(let code):
+            status = "networkFailure status=\(code.map(String.init) ?? "nil")"
+        case .decodeFailure:
+            status = "decodeFailure"
+        }
+        // Never log full signed URLs / tokens — host + path prefix only.
+        let hostPath: String
+        if let u = URL(string: preferredURL) {
+            hostPath = "\(u.host ?? "?")\(String(u.path.prefix(48)))"
+        } else {
+            hostPath = "unparseable"
+        }
+        print(
+            "[AssetThumbDBG] id=\(idPart) hasResultThumb=\(hasURL) phase=\(status) url=\(hostPath) inputPhoto=\(showingInputPhoto)"
+        )
+    }
+    #endif
+}
+
+enum AssetThumbnailFetcher {
+    enum Result: Sendable {
+        case success(UIImage)
+        case networkFailure(status: Int?)
+        case decodeFailure
+    }
+
+    static func fetch(url: URL) async -> Result {
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            let status = (response as? HTTPURLResponse)?.statusCode
+            if let status, !(200 ... 299).contains(status) {
+                return .networkFailure(status: status)
+            }
+            if let head = String(data: data.prefix(64), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               head.hasPrefix("<") || head.hasPrefix("{") || head.hasPrefix("[") {
+                return .decodeFailure
+            }
+            guard let image = UIImage(data: data) else {
+                return .decodeFailure
+            }
+            return .success(image)
+        } catch {
+            #if DEBUG
+            let ns = error as NSError
+            print("[AssetThumbDBG] fetchError domain=\(ns.domain) code=\(ns.code)")
+            #endif
+            return .networkFailure(status: nil)
+        }
     }
 }
 
@@ -784,6 +938,7 @@ struct AssetThumbnailView: View {
 struct AssetUSDZPreviewHost: View {
     let assetId: String
     let remoteURL: URL
+    var thumbUrl: String? = nil
 
     @State private var localURL: URL?
     @State private var failed = false
@@ -793,7 +948,12 @@ struct AssetUSDZPreviewHost: View {
             if let localURL {
                 AssetSceneKitPreviewRepresentable(modelURL: localURL)
             } else if failed {
-                AssetThumbnailView(urlString: nil, size: 80)
+                AssetThumbnailView(
+                    urlString: thumbUrl,
+                    size: 80,
+                    showsMissingCaption: true,
+                    debugAssetId: assetId
+                )
             } else {
                 ProgressView()
                     .tint(GonggiColors.accentTeal)

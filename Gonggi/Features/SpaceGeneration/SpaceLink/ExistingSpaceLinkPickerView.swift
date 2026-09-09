@@ -47,14 +47,13 @@ struct ExistingSpaceLinkPickerView: View {
                             select(space)
                         } label: {
                             HStack(spacing: 12) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(Color.secondary.opacity(0.15))
-                                        .frame(width: 56, height: 56)
-                                    Image(systemName: space.thumbnailSystemImage)
-                                        .font(.system(size: 22, weight: .light))
-                                        .foregroundStyle(.secondary)
-                                }
+                                SpaceThumbnailView(
+                                    space: space,
+                                    height: 56,
+                                    width: 56,
+                                    cornerRadius: 10,
+                                    showsActivityOverlay: false
+                                )
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(space.name)
                                         .font(.body.weight(.semibold))

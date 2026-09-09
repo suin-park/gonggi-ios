@@ -32,14 +32,13 @@ struct PlaceAssetSpacePickerView: View {
                             onSelect(space)
                         } label: {
                             HStack(spacing: GonggiSpacing.md) {
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
-                                        .fill(GonggiColors.surface)
-                                        .frame(width: 56, height: 56)
-                                    Image(systemName: space.thumbnailSystemImage)
-                                        .font(.system(size: 22, weight: .light))
-                                        .foregroundStyle(GonggiColors.accentTeal)
-                                }
+                                SpaceThumbnailView(
+                                    space: space,
+                                    height: 56,
+                                    width: 56,
+                                    cornerRadius: GonggiRadius.sm,
+                                    showsActivityOverlay: false
+                                )
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(space.name)
                                         .font(GonggiTypography.body(16))
@@ -64,6 +63,9 @@ struct PlaceAssetSpacePickerView: View {
             }
             .navigationTitle("배치할 공간 선택")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(GonggiColors.backgroundPrimary, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .background(GonggiColors.backgroundPrimary)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("취소") { onClose() }

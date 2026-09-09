@@ -12,7 +12,7 @@ xcuserdata/
 .swiftpm/
 .build/
 
-# Generated project (optional — remove if committing .xcodeproj)
+# Generated project (optional ??remove if committing .xcodeproj)
 # Gonggi.xcodeproj/
 Gonggi.xcodeproj/
 *.xcworkspace/
@@ -21,9 +21,21 @@ xcshareddata/
 # CI artifacts
 TestResults.xcresult/
 screenshots/
+!docs/gonggi-redesign-v1/screenshots/
+!docs/gonggi-redesign-v1/screenshots/**
+!docs/gonggi-redesign-v1/videos/
+!docs/gonggi-redesign-v1/videos/**
+!docs/gonggi-space-detail-service-v1/screenshots/
+!docs/gonggi-space-detail-service-v1/screenshots/**
+!docs/gonggi-space-detail-service-v1/videos/
+!docs/gonggi-space-detail-service-v1/videos/**
+!docs/gonggi-vr-exit-to-library-v1/screenshots/
+!docs/gonggi-vr-exit-to-library-v1/screenshots/**
+!docs/gonggi-vr-exit-to-library-v1/videos/
+!docs/gonggi-vr-exit-to-library-v1/videos/**
 export/
 
-# Apple signing — never commit
+# Apple signing ??never commit
 *.p8
 *.p12
 *.mobileprovision
@@ -35,7 +47,7 @@ AuthKey_*.p8
 # Local signing scratch (if any)
 .private_keys/
 
-# OpenCV (large binary — build/cache via scripts/ensure_opencv_xcframework.sh)
+# OpenCV (large binary ??build/cache via scripts/ensure_opencv_xcframework.sh)
 Vendor/OpenCV/opencv2.xcframework/
 Vendor/OpenCV/BUILD_INFO.txt
 .opencv-build/

@@ -167,6 +167,11 @@ final class SpaceJobRuntime: ObservableObject {
             await refreshStatus(jobId: job.jobId, generation: generation)
         }
         for job in store.jobs where job.serverStatus == "completed" && !job.isDeviceReadyForVR {
+            // Do not loop forever on a known download failure — user retries via viewer open.
+            if job.lastErrorCode == "download_failed" || job.lastErrorCode == "invalid_image" {
+                continue
+            }
+            if job.isDownloadingLatLong { continue }
             _ = await prepareViewer(jobId: job.jobId)
         }
         if isForeground {
@@ -234,14 +239,65 @@ final class SpaceJobRuntime: ObservableObject {
             }
         }
 
-        do {
-            let local = try await downloadAndPersist(sessionId: job.sessionId, jobId: job.jobId, remote: remote)
-            return .success(local)
-        } catch let err as SpaceViewerError {
-            return .failure(err)
-        } catch {
-            return .failure(.downloadFailed)
+        let trackedJobId = job.jobId
+        let trackedSessionId = job.sessionId
+        store.update(jobId: trackedJobId) { job in
+            job.isDownloadingLatLong = true
+            if job.lastErrorCode == "download_failed" || job.lastErrorCode == "invalid_image" {
+                job.lastErrorCode = nil
+            }
         }
+
+        if downloadTasks[trackedJobId] == nil {
+            downloadTasks[trackedJobId] = Task { [weak self] in
+                guard let self else { return }
+                defer {
+                    self.store.update(jobId: trackedJobId) { $0.isDownloadingLatLong = false }
+                    self.downloadTasks[trackedJobId] = nil
+                }
+                do {
+                    _ = try await self.downloadAndPersist(
+                        sessionId: trackedSessionId,
+                        jobId: trackedJobId,
+                        remote: remote
+                    )
+                    self.store.update(jobId: trackedJobId) { $0.lastErrorCode = nil }
+                } catch {
+                    let code: String = {
+                        if let viewer = error as? SpaceViewerError {
+                            switch viewer {
+                            case .invalidImage: return "invalid_image"
+                            default: return "download_failed"
+                            }
+                        }
+                        return "download_failed"
+                    }()
+                    self.store.update(jobId: trackedJobId) { job in
+                        if job.serverStatus == "completed" {
+                            job.lastErrorCode = code
+                        }
+                    }
+                }
+            }
+        }
+
+        if let inflight = downloadTasks[trackedJobId] {
+            await inflight.value
+        }
+
+        if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: trackedSessionId),
+           SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+            return .success(latest)
+        }
+        if let path = store.job(id: trackedJobId)?.localLatLongPath,
+           SpaceLatLongStore.isValidLocalFile(at: path) {
+            return .success(URL(fileURLWithPath: path))
+        }
+        let failCode = store.job(id: trackedJobId)?.lastErrorCode
+        if failCode == "invalid_image" {
+            return .failure(.invalidImage)
+        }
+        return .failure(.downloadFailed)
     }
 
     // MARK: - Private
@@ -265,6 +321,11 @@ final class SpaceJobRuntime: ObservableObject {
             }
             await refreshStatus(jobId: response.jobId, generation: generation)
             ensurePolling()
+            await attachAutoCaptureLocationIfNeeded(
+                spaceId: response.sessionId,
+                jobId: response.jobId,
+                generation: generation
+            )
         } catch {
             guard AuthSessionGeneration.isCurrent(generation) else { return }
             store.update(jobId: sessionId) { job in
@@ -392,9 +453,18 @@ final class SpaceJobRuntime: ObservableObject {
 
         // Deduped background download — must not block polling.
         if downloadTasks[jobId] != nil { return }
+        store.update(jobId: jobId) { job in
+            job.isDownloadingLatLong = true
+            if job.lastErrorCode == "download_failed" || job.lastErrorCode == "invalid_image" {
+                job.lastErrorCode = nil
+            }
+        }
         downloadTasks[jobId] = Task { [weak self] in
             guard let self else { return }
-            defer { self.downloadTasks[jobId] = nil }
+            defer {
+                self.store.update(jobId: jobId) { $0.isDownloadingLatLong = false }
+                self.downloadTasks[jobId] = nil
+            }
             do {
                 _ = try await self.downloadAndPersist(
                     sessionId: sessionId,
@@ -403,8 +473,23 @@ final class SpaceJobRuntime: ObservableObject {
                     reportedWidth: status.width,
                     reportedHeight: status.height
                 )
+                self.store.update(jobId: jobId) { $0.lastErrorCode = nil }
             } catch {
-                // Completed on server; texture retry on next prepareViewer / sync.
+                let code: String = {
+                    if let viewer = error as? SpaceViewerError {
+                        switch viewer {
+                        case .invalidImage: return "invalid_image"
+                        default: return "download_failed"
+                        }
+                    }
+                    return "download_failed"
+                }()
+                self.store.update(jobId: jobId) { job in
+                    // Keep server completed; surface download failure separately.
+                    if job.serverStatus == "completed" {
+                        job.lastErrorCode = code
+                    }
+                }
             }
         }
     }
@@ -417,21 +502,142 @@ final class SpaceJobRuntime: ObservableObject {
         reportedHeight: Int? = nil
     ) async throws -> URL {
         guard let api else { throw SpaceViewerError.downloadFailed }
+
+        // Capture request identity at start — never stamp finished bytes with a newer model revision.
+        let authGeneration = AuthSessionGeneration.current
+        let jobAtStart = store.job(id: jobId) ?? store.jobs.first(where: { $0.sessionId == sessionId })
+        let requestedURL = remote.absoluteString
+        let requestedRevisionId = jobAtStart?.latestRevisionId
+        let requestedCatalogUpdatedAt = jobAtStart?.catalogUpdatedAt
+        let requestedToken = SpaceThumbnailCacheKey.revisionToken(
+            latestRevisionId: requestedRevisionId,
+            remoteImageURL: requestedURL,
+            catalogUpdatedAt: requestedCatalogUpdatedAt
+        )
+        let accountId: String? = {
+            if case .user(let id) = store.boundScope { return id }
+            return jobAtStart?.ownerUserId
+        }()
+
         let dest = try SpaceLatLongStore.latLongURL(sessionId: sessionId)
         try await api.downloadImage(from: remote, to: dest)
+        guard !Task.isCancelled, AuthSessionGeneration.isCurrent(authGeneration) else {
+            try? FileManager.default.removeItem(at: dest)
+            SpaceLatLongStore.removeRevisionStamp(forImageAt: dest)
+            throw SpaceViewerError.downloadFailed
+        }
         guard let validated = SpaceLatLongStore.validateImage(at: dest) else {
             try? FileManager.default.removeItem(at: dest)
+            SpaceLatLongStore.removeRevisionStamp(forImageAt: dest)
             throw SpaceViewerError.invalidImage
         }
+
+        let stamp = SpaceLatLongRevisionStamp(
+            revisionId: requestedRevisionId,
+            revisionToken: requestedToken,
+            sourceURL: requestedURL,
+            accountId: accountId,
+            spaceId: jobId,
+            catalogUpdatedAt: requestedCatalogUpdatedAt
+        )
+
+        var applied = false
         store.update(jobId: jobId) { job in
+            // Stale completion: job moved to a different result — do not overwrite newer local/result.
+            let urlMoved =
+                !(job.resultImageURL ?? "").isEmpty
+                && job.resultImageURL != requestedURL
+            let revisionMoved: Bool = {
+                guard let jobRev = job.latestRevisionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !jobRev.isEmpty,
+                      let reqRev = requestedRevisionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !reqRev.isEmpty
+                else { return false }
+                return jobRev != reqRev
+            }()
+            let currentToken = SpaceThumbnailCacheKey.revisionToken(
+                latestRevisionId: job.latestRevisionId,
+                remoteImageURL: job.resultImageURL,
+                catalogUpdatedAt: job.catalogUpdatedAt
+            )
+            if urlMoved || revisionMoved || (currentToken != requestedToken && currentToken != "none") {
+                return
+            }
+
             job.serverStatus = "completed"
-            job.resultImageURL = remote.absoluteString
+            if job.resultImageURL == nil || job.resultImageURL == requestedURL {
+                job.resultImageURL = requestedURL
+            }
             job.localLatLongPath = dest.path
+            job.localLatLongSourceURL = requestedURL
+            job.localLatLongRevisionId = requestedRevisionId
+            job.localLatLongRevisionToken = requestedToken
             job.width = reportedWidth ?? validated.width
             job.height = reportedHeight ?? validated.height
             if job.completedAt == nil { job.completedAt = Date() }
+            applied = true
         }
-        return dest
+
+        if applied {
+            SpaceLatLongStore.writeRevisionStamp(stamp, forImageAt: dest)
+            return dest
+        }
+
+        // Bytes belong to an older request — discard so they cannot be mistaken for current.
+        try? FileManager.default.removeItem(at: dest)
+        SpaceLatLongStore.removeRevisionStamp(forImageAt: dest)
+        throw SpaceViewerError.downloadFailed
+    }
+
+    /// One-shot capture location when Profile toggle is ON. Never blocks upload/generation.
+    private func attachAutoCaptureLocationIfNeeded(
+        spaceId: String,
+        jobId: String,
+        generation: UInt64
+    ) async {
+        let userId = AuthSessionController.shared.profile?.id
+        guard SpaceCaptureLocationPreferences.isEnabled(userId: userId) else { return }
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
+        guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else { return }
+
+        let location: SpaceOneShotLocationResult
+        do {
+            location = try await SpaceOneShotLocation().request()
+        } catch {
+            // Location failure must not affect capture or job lifecycle.
+            return
+        }
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
+
+        let body: [String: Any] = [
+            "latitude": location.latitude,
+            "longitude": location.longitude,
+            "locationSource": "AUTO",
+            "locationName": "현재 위치",
+            "locationCapturedAt": SpaceMetadataDateParser.string(location.capturedAt),
+        ]
+        do {
+            let response = try await MobileAuthAPIClient().patchSpace(
+                accessToken: token,
+                spaceId: spaceId,
+                body: body
+            )
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
+            store.update(jobId: jobId) { job in
+                job.locationName = (response["locationName"] as? String) ?? "현재 위치"
+                job.latitude = (response["latitude"] as? NSNumber)?.doubleValue
+                    ?? (response["latitude"] as? String).flatMap(Double.init)
+                    ?? location.latitude
+                job.longitude = (response["longitude"] as? NSNumber)?.doubleValue
+                    ?? (response["longitude"] as? String).flatMap(Double.init)
+                    ?? location.longitude
+                job.locationSource = (response["locationSource"] as? String) ?? "AUTO"
+                job.locationCapturedAt = (response["locationCapturedAt"] as? String)
+                    ?? SpaceMetadataDateParser.string(location.capturedAt)
+            }
+        } catch {
+            // Soft-fail: space already exists without location.
+        }
     }
 
     private static func normalizeStatus(_ raw: String) -> String {

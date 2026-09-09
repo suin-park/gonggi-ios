@@ -1,5 +1,6 @@
 #if DEBUG
 import SwiftUI
+import UIKit
 
 /// DEBUG-only entry for CI simulator screenshots. Does not affect production builds.
 struct ScreenshotRootView: View {
@@ -9,8 +10,72 @@ struct ScreenshotRootView: View {
     var body: some View {
         Group {
             switch screen {
-            case .home, .library, .profile:
+            case .welcome, .welcomeCompact:
+                AuthShellView(session: AuthSessionController.shared, decoration: .panoramaSample)
+            case .welcomeReduceMotion:
+                AuthShellView(session: AuthSessionController.shared, decoration: .panoramaSample)
+            case .welcomeDynamicType:
+                AuthShellView(session: AuthSessionController.shared, decoration: .panoramaSample)
+                    .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
+            case .welcomeSpaceLight, .welcomeSpaceLightCompact:
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
+            case .welcomeSpaceLightReduceMotion:
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
+            case .welcomeSpaceLightDynamicType:
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
+                    .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
+            case .spaceLightStoryboard:
+                GonggiSpaceLightStoryboardView()
+            case .loginEmail:
+                EmailContinueView(session: AuthSessionController.shared)
+            case .loginEmailKeyboard:
+                EmailContinueView(session: AuthSessionController.shared, autofocusEmail: true)
+            case .home, .profile:
                 MainTabView()
+                    .onAppear {
+                        if screen == .profile {
+                            appState.selectTab(.profile)
+                        } else {
+                            appState.selectTab(.home)
+                        }
+                    }
+            case .recordMode:
+                CaptureContainerView()
+            case .librarySpaces:
+                MainTabView()
+                    .onAppear { appState.selectTab(.library) }
+            case .librarySpacesLoading:
+                ScreenshotLibraryStateView(
+                    title: "공간 보관함",
+                    subtitle: "불러오는 중",
+                    content: { ProgressView().tint(GonggiColors.brandCyan) }
+                )
+            case .librarySpacesEmpty:
+                ScreenshotLibraryStateView(
+                    title: "공간 보관함",
+                    subtitle: "아직 기록한 공간이 없어요",
+                    content: {
+                        Text("새 공간 기록하기에서 첫 공간을 남겨보세요.")
+                            .font(GonggiTypography.body(15))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+                )
+            case .librarySpacesError:
+                ScreenshotLibraryStateView(
+                    title: "공간 보관함",
+                    subtitle: "공간을 불러오지 못했어요",
+                    content: {
+                        VStack(spacing: GonggiSpacing.sm) {
+                            Text("잠시 후 다시 시도해 주세요.")
+                                .font(GonggiTypography.body(15))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                            SecondaryButton(title: "다시 시도", icon: "arrow.clockwise") {}
+                        }
+                    }
+                )
+            case .libraryAssetsThumb, .libraryAssetsNoThumb, .libraryAssetsGenerating:
+                ScreenshotAssetLibraryFixtureView(kind: screen)
             case .capture30, .capture68, .capture90, .fastMovement, .trackingLimited, .lowTexture:
                 captureScreenshot(for: screen)
             case .captureSummary:
@@ -28,10 +93,29 @@ struct ScreenshotRootView: View {
                     onComplete: { _, _ in },
                     onDismiss: {}
                 )
-            case .spaceDetail:
-                NavigationStack {
-                    SpaceDetailView(space: SpaceRecord.sampleArchive[0])
-                }
+            case .spaceDetail, .spaceDetailScrolled:
+                ScreenshotSpaceDetailHost(space: SpaceDetailLayoutFixture.makeSpace())
+            case .spaceDetailCompact:
+                ScreenshotSpaceDetailHost(space: SpaceDetailLayoutFixture.makeSpace())
+            case .spaceDetailDynamicType:
+                ScreenshotSpaceDetailHost(space: SpaceDetailLayoutFixture.makeSpace())
+                .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
+            case .assetDetailNeedPrepare, .assetDetailProcessing, .assetDetailReady, .assetDetailFailed:
+                ScreenshotAssetDetailFixtureView(kind: screen)
+            case .spacePicker:
+                PlaceAssetSpacePickerView(
+                    spaces: SpaceRecord.sampleArchive,
+                    onSelect: { _ in },
+                    onClose: {}
+                )
+            case .assetPicker:
+                ScreenshotAssetPickerFixture()
+            case .vrEditMenu:
+                ScreenshotVREditMenuFixture()
+            case .arCameraDenied:
+                ScreenshotARDeniedFixture()
+            case .appIconPreview:
+                ScreenshotAppIconPreview()
             }
         }
         .preferredColorScheme(.dark)
@@ -52,6 +136,334 @@ struct ScreenshotRootView: View {
             )
         }
         .ignoresSafeArea()
+    }
+}
+
+private struct ScreenshotLibraryStateView<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ZStack {
+            GonggiAmbientBackground()
+            VStack(spacing: GonggiSpacing.lg) {
+                Text(title)
+                    .font(GonggiTypography.title(24))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                Text(subtitle)
+                    .font(GonggiTypography.headline(17))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                content()
+            }
+            .padding(GonggiSpacing.xl)
+        }
+    }
+}
+
+private struct ScreenshotAssetLibraryFixtureView: View {
+    let kind: ScreenshotScreen
+
+    var body: some View {
+        ZStack {
+            GonggiAmbientBackground()
+            VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                Text("3D 어셋")
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.brandCyan)
+                Text(title)
+                    .font(GonggiTypography.headline(20))
+                    .foregroundStyle(GonggiColors.textPrimary)
+
+                HStack(spacing: GonggiSpacing.md) {
+                    thumb
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(name)
+                            .font(GonggiTypography.headline(16))
+                            .foregroundStyle(GonggiColors.textPrimary)
+                        Text(status)
+                            .font(GonggiTypography.caption(12))
+                            .foregroundStyle(GonggiColors.textTertiary)
+                    }
+                    Spacer()
+                }
+                .padding(GonggiSpacing.md)
+                .background(GonggiColors.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+            }
+            .padding(GonggiSpacing.lg)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var title: String {
+        switch kind {
+        case .libraryAssetsThumb: return "썸네일 있음"
+        case .libraryAssetsNoThumb: return "썸네일 없음"
+        default: return "생성 중"
+        }
+    }
+
+    private var name: String {
+        switch kind {
+        case .libraryAssetsThumb: return "의자 샘플"
+        case .libraryAssetsNoThumb: return "이름 없는 어셋"
+        default: return "새 어셋 생성"
+        }
+    }
+
+    private var status: String {
+        switch kind {
+        case .libraryAssetsGenerating: return "생성 중…"
+        case .libraryAssetsNoThumb: return "이미지 없음"
+        default: return "준비됨"
+        }
+    }
+
+    @ViewBuilder
+    private var thumb: some View {
+        RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
+            .fill(GonggiColors.surface)
+            .frame(width: 64, height: 64)
+            .overlay {
+                switch kind {
+                case .libraryAssetsThumb:
+                    Image(systemName: "cube.fill")
+                        .foregroundStyle(GonggiColors.brandCyan)
+                case .libraryAssetsGenerating:
+                    ProgressView().tint(GonggiColors.brandCyan)
+                default:
+                    Image(systemName: "photo")
+                        .foregroundStyle(GonggiColors.textTertiary)
+                }
+            }
+    }
+}
+
+private struct ScreenshotAssetDetailFixtureView: View {
+    let kind: ScreenshotScreen
+
+    var body: some View {
+        ZStack {
+            GonggiAmbientBackground()
+            VStack(spacing: GonggiSpacing.lg) {
+                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                    .fill(GonggiColors.surfaceElevated)
+                    .frame(height: 220)
+                    .overlay {
+                        Image(systemName: "cube.transparent")
+                            .font(.system(size: 48, weight: .ultraLight))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                    }
+                Text(title)
+                    .font(GonggiTypography.title(22))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                Text(subtitle)
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                if kind == .assetDetailNeedPrepare {
+                    PrimaryButton(title: "AR/공간 배치 준비하기", icon: "sparkles") {}
+                } else if kind == .assetDetailProcessing {
+                    ProgressView("AR/공간 배치 준비 중…")
+                        .tint(GonggiColors.brandCyan)
+                        .foregroundStyle(GonggiColors.textSecondary)
+                } else if kind == .assetDetailReady {
+                    PrimaryButton(title: "AR로 보기", icon: "arkit") {}
+                    SecondaryButton(title: "공간에 배치", icon: "square.and.arrow.down") {}
+                } else {
+                    Text("준비를 다시 시도해 주세요.")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.error)
+                    PrimaryButton(title: "AR 다시 준비하기", icon: "arrow.clockwise") {}
+                }
+            }
+            .padding(GonggiSpacing.lg)
+        }
+    }
+
+    private var title: String {
+        switch kind {
+        case .assetDetailNeedPrepare: return "준비 필요"
+        case .assetDetailProcessing: return "처리 중"
+        case .assetDetailReady: return "준비 완료"
+        default: return "준비 실패"
+        }
+    }
+
+    private var subtitle: String {
+        switch kind {
+        case .assetDetailNeedPrepare: return "AR과 공간 배치를 사용하려면 준비가 필요해요."
+        case .assetDetailProcessing: return "파일을 준비하는 중이에요."
+        case .assetDetailReady: return "AR 보기와 공간 배치를 사용할 수 있어요."
+        default: return "AR 파일을 준비하지 못했어요."
+        }
+    }
+}
+
+private struct ScreenshotAssetPickerFixture: View {
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                GonggiAmbientBackground(showGlow: false)
+                VStack(spacing: GonggiSpacing.md) {
+                    ForEach(0 ..< 3, id: \.self) { idx in
+                        HStack(spacing: GonggiSpacing.md) {
+                            RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
+                                .fill(GonggiColors.surfaceElevated)
+                                .frame(width: 56, height: 56)
+                                .overlay {
+                                    Image(systemName: idx == 2 ? "photo" : "cube.fill")
+                                        .foregroundStyle(idx == 2 ? GonggiColors.textTertiary : GonggiColors.brandCyan)
+                                }
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(idx == 2 ? "준비 중 어셋" : "배치 가능 어셋 \(idx + 1)")
+                                    .font(GonggiTypography.body(16))
+                                    .foregroundStyle(GonggiColors.textPrimary)
+                                Text(idx == 2 ? "준비 필요" : "준비됨")
+                                    .font(GonggiTypography.caption(12))
+                                    .foregroundStyle(GonggiColors.textTertiary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(GonggiColors.textTertiary)
+                        }
+                        .padding(GonggiSpacing.md)
+                        .background(GonggiColors.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                        .opacity(idx == 2 ? 0.55 : 1)
+                    }
+                    Spacer()
+                }
+                .padding(GonggiSpacing.lg)
+            }
+            .navigationTitle("3D 오브젝트")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Text("닫기").foregroundStyle(GonggiColors.textSecondary)
+                }
+            }
+        }
+    }
+}
+
+private struct ScreenshotVREditMenuFixture: View {
+    var body: some View {
+        ZStack {
+            GonggiColors.backgroundPrimary.ignoresSafeArea()
+            LinearGradient(
+                colors: [GonggiColors.brandCyan.opacity(0.12), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            VStack {
+                HStack(spacing: 8) {
+                    capsule("완료")
+                    capsule("오브젝트 추가")
+                    capsule("연결")
+                    Spacer()
+                    circle("xmark")
+                }
+                .padding()
+                Spacer()
+                HStack(spacing: 8) {
+                    capsule("이동")
+                    capsule("회전")
+                    capsule("크기")
+                    capsule("높이")
+                }
+                .padding()
+            }
+        }
+    }
+
+    private func capsule(_ title: String) -> some View {
+        Text(title)
+            .font(GonggiTypography.caption(14))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .background(Color.black.opacity(0.45), in: Capsule())
+    }
+
+    private func circle(_ system: String) -> some View {
+        Image(systemName: system)
+            .foregroundStyle(.white)
+            .frame(width: 40, height: 40)
+            .background(Color.black.opacity(0.45), in: Circle())
+    }
+}
+
+private struct ScreenshotARDeniedFixture: View {
+    var body: some View {
+        ZStack {
+            GonggiAmbientBackground(showGlow: false)
+            VStack(spacing: GonggiSpacing.lg) {
+                Spacer()
+                VStack(spacing: GonggiSpacing.md) {
+                    Image(systemName: "arkit")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(GonggiColors.brandCyan)
+                    Text(AssetARCopy.cameraNeeded)
+                        .font(GonggiTypography.body(16))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, GonggiSpacing.lg)
+                    Text("설정에서 카메라 접근을 허용한 뒤 다시 시도해 주세요.")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, GonggiSpacing.lg)
+                    SecondaryButton(title: "설정 열기", icon: "gear") {}
+                        .padding(.horizontal, GonggiSpacing.xl)
+                }
+                .padding(GonggiSpacing.lg)
+                .background(GonggiColors.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                .padding(.horizontal, GonggiSpacing.lg)
+                Spacer()
+            }
+            VStack {
+                HStack {
+                    Spacer()
+                    Text("닫기")
+                        .font(GonggiTypography.body(16))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, GonggiSpacing.md)
+                        .padding(.vertical, GonggiSpacing.sm)
+                        .background(GonggiColors.surfaceElevated, in: Capsule())
+                }
+                .padding()
+                Spacer()
+            }
+        }
+    }
+}
+
+private struct ScreenshotAppIconPreview: View {
+    var body: some View {
+        ZStack {
+            GonggiAmbientBackground()
+            VStack(spacing: GonggiSpacing.lg) {
+                Image("GonggiAppIconPreview")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 180, height: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 40, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 40, style: .continuous)
+                            .stroke(GonggiColors.border, lineWidth: 1)
+                    )
+                Text("앱 아이콘")
+                    .font(GonggiTypography.headline(18))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                Text("원본 로고 기반 · 네이비 배경")
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textSecondary)
+            }
+        }
     }
 }
 
@@ -124,6 +536,78 @@ enum ScreenshotHarness {
             estimatedMinutesRemaining: 5,
             overallProgress: 0.58
         )
+    }
+}
+
+/// Tab bar + long title + wide local latlong — reproduces detail overflow / tab overlap.
+private struct ScreenshotSpaceDetailHost: View {
+    let space: SpaceRecord
+
+    var body: some View {
+        TabView {
+            NavigationStack {
+                SpaceDetailView(space: space)
+            }
+            .tabItem { Label("보관함", systemImage: "books.vertical") }
+
+            Text("기록")
+                .tabItem { Label("기록", systemImage: "record.circle") }
+
+            Text("홈")
+                .tabItem { Label("홈", systemImage: "house") }
+        }
+        .tint(GonggiColors.brandCyan)
+        .preferredColorScheme(.dark)
+    }
+}
+
+enum SpaceDetailLayoutFixture {
+    static func makeSpace() -> SpaceRecord {
+        let path = ensureWideLatLongJPEG()
+        return SpaceRecord(
+            id: "layout-fixture-1",
+            name: "어릴 적 우리 집 거실·안방·복도까지 길게 남긴 공간",
+            capturedAt: Calendar.current.date(byAdding: .month, value: -3, to: Date())!,
+            status: .ready,
+            thumbnailSystemImage: "house.fill",
+            note: "거실과 안방을 중심으로 촬영한 긴 메모입니다. 좌우 잘림이 없는지 확인합니다.",
+            viewerURL: URL(string: "https://www.3d-locker.com/spaces/example"),
+            localLatLongPath: path,
+            remoteImageURL: "https://example.invalid/layout-fixture.jpg",
+            localLatLongRevisionToken: "rev:layout-fixture"
+        )
+    }
+
+    /// 2:1 equirect-like JPEG that previously expanded ScrollView width via scaledToFill.
+    private static func ensureWideLatLongJPEG() -> String {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GonggiScreenshotFixtures", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("space-detail-wide-latlong.jpg")
+        if FileManager.default.fileExists(atPath: url.path) {
+            return url.path
+        }
+        let width = 2048
+        let height = 1024
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { ctx in
+            let cg = ctx.cgContext
+            for x in 0..<width {
+                let t = CGFloat(x) / CGFloat(width)
+                UIColor(
+                    red: 0.05 + 0.15 * t,
+                    green: 0.25 + 0.45 * (1 - abs(t - 0.5) * 2),
+                    blue: 0.55 + 0.35 * t,
+                    alpha: 1
+                ).setFill()
+                cg.fill(CGRect(x: x, y: 0, width: 1, height: height))
+            }
+        }
+        if let data = image.jpegData(compressionQuality: 0.85) {
+            try? data.write(to: url, options: .atomic)
+        }
+        return url.path
     }
 }
 #endif
