@@ -10,11 +10,11 @@ struct ScreenshotRootView: View {
         Group {
             switch screen {
             case .welcome, .welcomeCompact:
-                AuthShellView(session: AuthSessionController.shared, decoration: .wireframeSphere)
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
             case .welcomeReduceMotion:
-                AuthShellView(session: AuthSessionController.shared, decoration: .wireframeSphere)
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
             case .welcomeDynamicType:
-                AuthShellView(session: AuthSessionController.shared, decoration: .wireframeSphere)
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
                     .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
             case .welcomeSpaceLight, .welcomeSpaceLightCompact:
                 AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)

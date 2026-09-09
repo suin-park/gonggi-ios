@@ -221,7 +221,7 @@ final class AuthSessionController: ObservableObject {
 
 // MARK: - Auth shell UI
 
-/// Welcome decoration mode. Production uses wireframe sphere; space-light is DEBUG review until approved.
+/// Welcome decoration mode. Production default is space-light (“빛으로 그려지는 공간”).
 enum AuthWelcomeDecoration: Equatable {
     case wireframeSphere
     case spaceLight
@@ -229,8 +229,8 @@ enum AuthWelcomeDecoration: Equatable {
 
 struct AuthShellView: View {
     @ObservedObject var session: AuthSessionController
-    /// Production default remains the wireframe sphere until space-light is approved.
-    var decoration: AuthWelcomeDecoration = .wireframeSphere
+    /// Production Welcome uses space-light; wireframe remains available for DEBUG fixtures.
+    var decoration: AuthWelcomeDecoration = .spaceLight
     @StateObject private var appleCoordinator = AppleSignInCoordinator()
     @State private var googleBusy = false
     @Environment(\.scenePhase) private var scenePhase

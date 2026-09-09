@@ -91,7 +91,8 @@ enum ScreenshotScreen: String, CaseIterable {
 
     var usesSpaceLightDecoration: Bool {
         switch self {
-        case .welcomeSpaceLight, .welcomeSpaceLightDynamicType, .welcomeSpaceLightCompact, .welcomeSpaceLightReduceMotion:
+        case .welcome, .welcomeCompact, .welcomeDynamicType, .welcomeReduceMotion,
+             .welcomeSpaceLight, .welcomeSpaceLightDynamicType, .welcomeSpaceLightCompact, .welcomeSpaceLightReduceMotion:
             return true
         default:
             return false
