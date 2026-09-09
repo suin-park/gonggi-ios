@@ -44,7 +44,7 @@ struct VRSphereSpaceView: View {
     @State private var panoramaReady = false
     @State private var showSelectiveRepairHint = false
     @State private var selectiveRepairHintOpacity: Double = 0
-    /// True only after fade-in has started and markSeen ran for this presentation.
+    /// True after persistent guidance fade-in began (or was reopened from menu).
     @State private var selectiveRepairHintBecameVisible = false
     @State private var selectiveRepairHintTask: Task<Void, Never>?
     @State private var motionEnabled: Bool = true
@@ -110,6 +110,7 @@ struct VRSphereSpaceView: View {
     @State private var linkedPoseCheckpoint: [String: (yaw: Float, pitch: Float, radius: Float)] = [:]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var authSession = AuthSessionController.shared
 
     private let placementStore = VRPlacementLayoutStore()
     private let spaceLinkStore = SpaceLinkStore()
@@ -224,6 +225,8 @@ struct VRSphereSpaceView: View {
                 spaceLinkBusyMessage = nil
                 spaceLinkTask?.cancel()
                 spaceLinkTask = nil
+                hideRepairGuidancePresentation()
+                selectiveRepairHintBecameVisible = false
             }
             .onDisappear {
                 // Do not stop audio here — host owns fade/transition across stack pops.
@@ -460,14 +463,12 @@ struct VRSphereSpaceView: View {
             }
 
             if showSelectiveRepairHint {
-                SelectiveRepairHintPill()
+                SelectiveRepairHintPill(onDismiss: dismissRepairGuidanceByUser)
                     .opacity(selectiveRepairHintOpacity)
-                    .padding(.horizontal, 64)
-                    .padding(.top, 14)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 58)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(selectiveRepairHintOpacity < 0.05)
-                    .zIndex(1)
+                    .zIndex(2)
             }
 
             #if DEBUG
@@ -700,7 +701,7 @@ struct VRSphereSpaceView: View {
             },
             onLongPress: { yaw, pitch in
                 GonggiHaptics.medium()
-                markSelectiveRepairHintSeenAndHide()
+                // Persistent guidance stays until × — repair start must not dismiss it.
                 hideMotionHintImmediate()
                 let target = RepairTarget.make(
                     sessionId: sessionId,
@@ -974,6 +975,22 @@ struct VRSphereSpaceView: View {
                     }
             }
             .accessibilityLabel(motionEnabled ? "모션 끄기" : "모션 켜기")
+
+            Menu {
+                Button {
+                    reopenRepairGuidanceFromMenu()
+                } label: {
+                    Label(SelectiveRepairHintPreferences.reopenMenuTitle, systemImage: "hand.tap")
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.45))
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("더보기")
         }
     }
 
@@ -1064,7 +1081,7 @@ struct VRSphereSpaceView: View {
     }
 
     private func enterEditMode(discardUnsavedOnCancel: Bool = false) {
-        markSelectiveRepairHintSeenAndHide()
+        hideRepairGuidancePresentation()
         hideMotionHintImmediate()
         clearRepairSelection()
         saveError = nil
@@ -1093,6 +1110,7 @@ struct VRSphereSpaceView: View {
         selectedSpaceLinkId = nil
         editTool = .none
         saveError = nil
+        scheduleHintFlowIfNeeded()
     }
 
     private func saveAndFinishEditing() async {
@@ -1792,10 +1810,14 @@ struct VRSphereSpaceView: View {
         }
     }
 
-    /// Motion hint first (optional), then Selective Repair one-time hint. Never stacked.
+    /// Motion hint first (optional), then persistent repair guidance. Never stacked.
     private func scheduleHintFlowIfNeeded() {
         guard panoramaReady else { return }
-        guard motionHintTask == nil, selectiveRepairHintTask == nil else { return }
+        guard interactionMode == .view else { return }
+        guard motionHintTask == nil else { return }
+        // If guidance already visible, do not reschedule.
+        if showSelectiveRepairHint { return }
+        guard selectiveRepairHintTask == nil else { return }
 
         let shouldMotionHint =
             motionEnabled
@@ -1830,14 +1852,27 @@ struct VRSphereSpaceView: View {
         motionHintOpacity = 0
     }
 
-    /// Gate (user-global, any VR entry via this view):
-    /// panorama ready → 0.5s delay → fade in → markSeen → 4.5s hold → fade out.
-    /// Does not check whether the space is new; only `hintSeen`.
+    private var signedInUserId: String? {
+        if case .signedIn(let shell) = authSession.phase {
+            return shell.userId
+        }
+        return nil
+    }
+
+    private var repairGestureAvailable: Bool {
+        interactionMode == .view && !spaceLinkTransitionLocked && panoramaReady
+    }
+
+    /// Persistent card: panorama ready → delay → fade in. No auto timeout.
     private func scheduleSelectiveRepairHintIfNeeded() {
-        guard panoramaReady else { return }
-        guard !SelectiveRepairHintPreferences.hasSeen else { return }
+        guard SelectiveRepairHintPreferences.shouldAutoPresent(
+            userId: signedInUserId,
+            panoramaReady: panoramaReady,
+            repairGestureAvailable: repairGestureAvailable
+        ) else { return }
         guard selectiveRepairHintTask == nil else { return }
         guard !showMotionHint else { return }
+        guard !showSelectiveRepairHint else { return }
 
         selectiveRepairHintBecameVisible = false
         showSelectiveRepairHint = false
@@ -1847,7 +1882,11 @@ struct VRSphereSpaceView: View {
             let delayNs = UInt64(SelectiveRepairHintPreferences.postReadyDelaySeconds * 1_000_000_000)
             try? await Task.sleep(nanoseconds: delayNs)
             guard !Task.isCancelled else { return }
-            guard !SelectiveRepairHintPreferences.hasSeen else { return }
+            guard SelectiveRepairHintPreferences.shouldAutoPresent(
+                userId: signedInUserId,
+                panoramaReady: panoramaReady,
+                repairGestureAvailable: repairGestureAvailable
+            ) else { return }
             guard !showMotionHint else { return }
 
             showSelectiveRepairHint = true
@@ -1855,22 +1894,9 @@ struct VRSphereSpaceView: View {
             withAnimation(.easeIn(duration: SelectiveRepairHintPreferences.fadeInDurationSeconds)) {
                 selectiveRepairHintOpacity = 1
             }
-            // Persist only once the fade-in has begun (hint is on-screen).
-            SelectiveRepairHintPreferences.markSeen()
             selectiveRepairHintBecameVisible = true
-
-            let holdNs = UInt64(SelectiveRepairHintPreferences.displayDurationSeconds * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: holdNs)
-            guard !Task.isCancelled else { return }
-
-            withAnimation(.easeOut(duration: SelectiveRepairHintPreferences.fadeOutDurationSeconds)) {
-                selectiveRepairHintOpacity = 0
-            }
-            let fadeNs = UInt64(SelectiveRepairHintPreferences.fadeOutDurationSeconds * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: fadeNs)
-            guard !Task.isCancelled else { return }
-            showSelectiveRepairHint = false
             selectiveRepairHintTask = nil
+            // Stays until × — no hold / fade-out.
         }
     }
 
@@ -1878,22 +1904,36 @@ struct VRSphereSpaceView: View {
         selectiveRepairHintTask?.cancel()
         selectiveRepairHintTask = nil
         if resetIfNotYetVisible, !selectiveRepairHintBecameVisible {
-            // Dismissed before visible → keep seen=false; allow reschedule on next entry.
             showSelectiveRepairHint = false
             selectiveRepairHintOpacity = 0
         }
     }
 
-    private func markSelectiveRepairHintSeenAndHide() {
-        SelectiveRepairHintPreferences.markSeen()
-        selectiveRepairHintBecameVisible = true
+    /// Hide presentation only (Edit mode / account switch). Does not persist dismiss.
+    private func hideRepairGuidancePresentation() {
         selectiveRepairHintTask?.cancel()
         selectiveRepairHintTask = nil
-        if showSelectiveRepairHint {
-            withAnimation(.easeOut(duration: 0.2)) {
-                selectiveRepairHintOpacity = 0
-            }
-            showSelectiveRepairHint = false
+        showSelectiveRepairHint = false
+        selectiveRepairHintOpacity = 0
+    }
+
+    private func dismissRepairGuidanceByUser() {
+        GonggiHaptics.light()
+        SelectiveRepairHintPreferences.markDismissed(userId: signedInUserId)
+        selectiveRepairHintBecameVisible = true
+        hideRepairGuidancePresentation()
+    }
+
+    private func reopenRepairGuidanceFromMenu() {
+        GonggiHaptics.light()
+        SelectiveRepairHintPreferences.clearDismissed(userId: signedInUserId)
+        guard repairGestureAvailable || interactionMode == .view else { return }
+        selectiveRepairHintTask?.cancel()
+        selectiveRepairHintTask = nil
+        showSelectiveRepairHint = true
+        selectiveRepairHintBecameVisible = true
+        withAnimation(.easeIn(duration: SelectiveRepairHintPreferences.fadeInDurationSeconds)) {
+            selectiveRepairHintOpacity = 1
         }
     }
 

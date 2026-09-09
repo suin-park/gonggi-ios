@@ -1,0 +1,2 @@
+PLACEHOLDER — Mac simulator capture required.
+Verify: no auto-dismiss, drag OK, × only, menu reopen, long-press repair.
