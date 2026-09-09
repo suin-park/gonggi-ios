@@ -1,6 +1,6 @@
 # Gonggi Brand Redesign V1 — Report
 
-**Status:** `IN_PROGRESS` → target `READY_FOR_REDESIGN_VISUAL_REVIEW`  
+**Status:** `READY_FOR_REDESIGN_VISUAL_REVIEW`  
 **Version lock:** MARKETING_VERSION `2.0` / CURRENT_PROJECT_VERSION `2` (unchanged)  
 **Archive / IPA / TestFlight / ASC / Backend deploy:** NOT RUN
 
@@ -10,7 +10,11 @@
 |---|---|
 | Redesign start (branch base) | `8466862` (`docs: record thumbnail revision CI results for 765639b`) |
 | Thumbnail implementation preserved | `765639b` |
-| Completion SHA | _(filled after final commit)_ |
+| Visual capture SHA | `a336363` |
+| Completion SHA | _(this docs commit)_ |
+
+Branch: `design/brand-redesign-v1`  
+Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
 
 ## Brand sources
 
@@ -27,98 +31,102 @@
 
 ### Logo conversion
 - SVG → PDF via svglib/reportlab (vector for Asset Catalog)
-- SVG → PNG via resvg (`@resvg/resvg-js`) for raster/AppIcon composites
+- SVG → PNG via resvg for AppIcon composites
 - iOS assets:
-  - `Gonggi/Resources/Assets.xcassets/GonggiLogoWhite.imageset/` (PDF + PNG)
-  - `Gonggi/Resources/Assets.xcassets/GonggiLogoBlue.imageset/`
-  - `Gonggi/Resources/Assets.xcassets/AppIcon.appiconset/` (navy + blue logo)
-  - `Gonggi/Resources/Assets.xcassets/GonggiAppIconPreview.imageset/`
+  - `GonggiLogoWhite.imageset` / `GonggiLogoBlue.imageset` (PDF, preserves-vector)
+  - `AppIcon.appiconset` (navy + blue logo)
+  - `GonggiAppIconPreview.imageset`
 
-## Design tokens (`Gonggi/DesignSystem/GonggiTokens.swift`)
+## Design tokens (`GonggiTokens.swift`)
 
 | Token | Value / note |
 |---|---|
 | Brand cyan | `#3FCFE4` |
 | Brand navy | `#0E233E` |
-| CTA | Cyan fill + **navy** label (`textOnAccent`) — avoid white-on-cyan |
+| CTA | Cyan fill + **navy** label (`textOnAccent`) |
 | Background | Deep navy dark-first |
-| Spacing | 8 / 16 / 24 / 32 / 48 (+ 4 / 12 touch helpers) |
+| Spacing | 8 / 16 / 24 / 32 / 48 |
 | Radius | control 12 / card 16 |
-| Typography | System + Dynamic Type (logo type never re-typeset) |
+| Typography | System + Dynamic Type |
 | Welcome sphere period | ~24s / revolution |
 
 ## Welcome animation
 
 | Item | Behavior |
 |---|---|
-| Renderer | SwiftUI `Canvas` lat/long wireframe (`GonggiWireframeSphereView`) |
+| Renderer | SwiftUI `Canvas` lat/long wireframe |
 | ARSession / camera | **Not** used |
 | Glow | Soft cyan radial |
-| Loop | Continuous yaw; no hard cut at period boundary |
+| Loop | Continuous yaw |
 | Background / inactive | Stops via `scenePhase` |
-| Reduce Motion | Static tilted sphere |
-| Hit testing | `allowsHitTesting(false)` + VoiceOver hidden |
-| Login | Never blocked by animation |
+| Reduce Motion | Static tilted sphere (+ screenshot harness force) |
+| Hit testing | Disabled + VoiceOver hidden |
+| Login | Never blocked |
 
 ## Screens applied vs skipped
 
-### Applied (chrome / tokens / logo / copy)
+### Applied
 - Welcome / Auth shell + email continue
-- Home (logo mark, hero sphere, CTAs)
-- Record mode selection
-- Library spaces header + card CTA accent
-- Asset library header accent
-- Space / asset pickers (background polish)
-- Profile (existing tokens + ambient)
-- Processing / capture overlays (shared tokens / PrimaryButton)
-- AR denial chrome (brand cyan link)
-- VR edit menu (screenshot fixture; live chrome already dark translucent)
+- Home (official logo, hero sphere, CTAs)
+- Record mode selection (BETA retained)
+- Library spaces / asset headers + card CTA accent
+- Space / asset pickers polish
+- Profile ambient tokens
+- Processing / capture chrome via shared PrimaryButton tokens
+- AR denial chrome (brand cyan)
+- VR edit menu (fixture for review; live chrome already dark translucent)
 
-### Intentionally light-touch / not redesigned for algorithms
-- Capture / AR / VR rendering pipelines
-- SpaceThumbnailView revision cache path (`765639b`)
+### Preserved (not redesigned as algorithms)
+- SpaceThumbnailView revision cache (`765639b`)
 - LiveStatus / prepareViewer / account isolation
-- 3DGS BETA badge retained on record mode card
+- Capture / AR RealityKit / VR pipelines
+- Card tap → Detail vs “공간 보기” → VR
 
-### Skipped / NOT RUN on Simulator
+### Skipped / NOT RUN
 - Real-device AR camera placement performance
 - Real panorama / H12 capture quality
-- Backend deploy / paid Meshy generation
-
-## Navigation contracts preserved
-- Library card / thumbnail tap → Space Detail
-- “공간 보기” → VR prepareViewer
-- List thumbs do **not** call prepareViewer
-- USDZ failure does not clear asset `thumbUrl`
+- Backend deploy / paid generation
 
 ## Visual review assets
 
 | Path | Notes |
 |---|---|
-| `docs/gonggi-redesign-v1/screenshots/` | Individual PNGs (CI Simulator) |
+| `docs/gonggi-redesign-v1/screenshots/` | Individual PNGs |
 | `docs/gonggi-redesign-v1/screenshots/contact_sheet.png` | Labeled grid |
-| `docs/gonggi-redesign-v1/videos/00_welcome_after.mp4` | ~12s welcome rotation |
+| `docs/gonggi-redesign-v1/screenshots/*_before.png` | Prior main CI captures where available |
+| `docs/gonggi-redesign-v1/videos/00_welcome_after.mp4` | ~12s welcome rotation (~21 MB) |
 
-Capture device / OS / resolution / fixture SHA: filled after CI artifact download.
+### Capture environment
+- Device: iPhone Simulator (CI `gonggi-ios-screenshots`, macos-15)
+- Resolution observed: `1179×2556`
+- Fixture: DEBUG `-mock -screenshot-screen …`
+- Capture SHA: `a336363`
 
 ## Tests
 
 | Suite | Result |
 |---|---|
-| Thumbnail revision (A–F) + related regression | Previously passed on `765639b` CI — must remain green |
-| Full unit suite | **Not claimed GREEN** — pre-existing failures (~43 on prior CI) preserved as baseline |
-| Redesign-specific unit tests | None added (visual/token work) |
-| Swift compile | Via macOS CI screenshot build |
+| Simulator Debug build | PASS (screenshot workflow) |
+| Screenshot verify | PASS (required set) |
+| Thumbnail revision (A–F) + related | Previously passed on `765639b` — not re-run as full suite this pass |
+| Full unit suite | **Not claimed GREEN** — baseline ~43 failures from prior CI remain the baseline |
+| Redesign-specific unit tests | None added |
 
-Baseline failures file: see prior CI notes under thumbnail docs (`8466862`). New failures after redesign must be listed separately once CI runs.
+New redesign-caused test failures: none identified in screenshot compile path. Full-suite delta not re-measured in this pass (Windows host; CI screenshot job only).
 
 ## Build policy checklist
 
 - [x] Version 2.0 (2) unchanged
-- [ ] Simulator screenshots (CI)
-- [ ] Welcome MP4 (CI)
+- [x] Simulator screenshots (CI)
+- [x] Welcome MP4 (CI)
 - [x] Archive NOT RUN
 - [x] IPA NOT RUN
 - [x] TestFlight NOT RUN
 - [x] ASC NOT RUN
 - [x] Backend deploy NOT RUN
+
+## Remaining / follow-ups for visual review
+
+- Welcome on physical small device (SE) not separately captured (compact screen enum exists; not in CI matrix)
+- Live VR edit chrome / live AR camera feed still device-only (fixtures used for review)
+- After visual OK → decide whether to ship **2.0 (3)**
