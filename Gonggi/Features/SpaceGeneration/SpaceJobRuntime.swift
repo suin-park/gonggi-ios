@@ -265,6 +265,11 @@ final class SpaceJobRuntime: ObservableObject {
             }
             await refreshStatus(jobId: response.jobId, generation: generation)
             ensurePolling()
+            await attachAutoCaptureLocationIfNeeded(
+                spaceId: response.sessionId,
+                jobId: response.jobId,
+                generation: generation
+            )
         } catch {
             guard AuthSessionGeneration.isCurrent(generation) else { return }
             store.update(jobId: sessionId) { job in
@@ -502,6 +507,57 @@ final class SpaceJobRuntime: ObservableObject {
         try? FileManager.default.removeItem(at: dest)
         SpaceLatLongStore.removeRevisionStamp(forImageAt: dest)
         throw SpaceViewerError.downloadFailed
+    }
+
+    /// One-shot capture location when Profile toggle is ON. Never blocks upload/generation.
+    private func attachAutoCaptureLocationIfNeeded(
+        spaceId: String,
+        jobId: String,
+        generation: UInt64
+    ) async {
+        let userId = AuthSessionController.shared.profile?.id
+        guard SpaceCaptureLocationPreferences.isEnabled(userId: userId) else { return }
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
+        guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else { return }
+
+        let location: SpaceOneShotLocationResult
+        do {
+            location = try await SpaceOneShotLocation().request()
+        } catch {
+            // Location failure must not affect capture or job lifecycle.
+            return
+        }
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
+
+        let body: [String: Any] = [
+            "latitude": location.latitude,
+            "longitude": location.longitude,
+            "locationSource": "AUTO",
+            "locationName": "현재 위치",
+            "locationCapturedAt": SpaceMetadataDateParser.string(location.capturedAt),
+        ]
+        do {
+            let response = try await MobileAuthAPIClient().patchSpace(
+                accessToken: token,
+                spaceId: spaceId,
+                body: body
+            )
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
+            store.update(jobId: jobId) { job in
+                job.locationName = (response["locationName"] as? String) ?? "현재 위치"
+                job.latitude = (response["latitude"] as? NSNumber)?.doubleValue
+                    ?? (response["latitude"] as? String).flatMap(Double.init)
+                    ?? location.latitude
+                job.longitude = (response["longitude"] as? NSNumber)?.doubleValue
+                    ?? (response["longitude"] as? String).flatMap(Double.init)
+                    ?? location.longitude
+                job.locationSource = (response["locationSource"] as? String) ?? "AUTO"
+                job.locationCapturedAt = (response["locationCapturedAt"] as? String)
+                    ?? SpaceMetadataDateParser.string(location.capturedAt)
+            }
+        } catch {
+            // Soft-fail: space already exists without location.
+        }
     }
 
     private static func normalizeStatus(_ raw: String) -> String {

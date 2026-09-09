@@ -25,8 +25,8 @@
 
 ### Location
 - setting: Profile 「촬영 위치 자동 기록」 account-scoped default OFF
-- permission: NSLocationWhenInUseUsageDescription
-- one-shot capture: SpaceOneShotLocation (edit 「현재 위치 사용」)
+- permission: NSLocationWhenInUseUsageDescription; requested when toggle turns ON
+- one-shot capture: SpaceOneShotLocation — edit 「현재 위치 사용」 + post-create soft attach when prefs ON
 - reverse geocoding: deferred (label 「현재 위치」 for AUTO)
 - manual: locationName only
 - privacy: owner catalog only; public-safe DTO omits coords; debt for share consent 2.0.6

@@ -202,6 +202,10 @@ struct SettingsPlaceholderView: View {
             Toggle("촬영 위치 자동 기록", isOn: $captureLocationEnabled)
                 .onChange(of: captureLocationEnabled) { _, enabled in
                     SpaceCaptureLocationPreferences.setEnabled(enabled, userId: userId)
+                    if enabled {
+                        // Request permission only after the user turns the setting ON.
+                        Task { _ = try? await SpaceOneShotLocation().request() }
+                    }
                 }
                 .disabled(userId == nil)
             Toggle("촬영 가이드 힌트", isOn: .constant(true))
