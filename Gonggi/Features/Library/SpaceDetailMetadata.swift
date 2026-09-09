@@ -98,8 +98,7 @@ enum SpaceOneShotLocationError: Error {
 }
 
 /// Foreground-only, single-request Core Location helper.
-@MainActor
-final class SpaceOneShotLocation: NSObject, CLLocationManagerDelegate {
+final class SpaceOneShotLocation: NSObject, @preconcurrency CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<SpaceOneShotLocationResult, Error>?
     private var timeoutTask: Task<Void, Never>?
@@ -110,6 +109,7 @@ final class SpaceOneShotLocation: NSObject, CLLocationManagerDelegate {
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
     }
 
+    @MainActor
     func request() async throws -> SpaceOneShotLocationResult {
         guard continuation == nil else { throw SpaceOneShotLocationError.unavailable }
         return try await withCheckedThrowingContinuation { continuation in
@@ -117,7 +117,9 @@ final class SpaceOneShotLocation: NSObject, CLLocationManagerDelegate {
             timeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(15))
                 guard !Task.isCancelled else { return }
-                self?.finish(.failure(SpaceOneShotLocationError.unavailable))
+                await MainActor.run {
+                    self?.finish(.failure(SpaceOneShotLocationError.unavailable))
+                }
             }
             switch manager.authorizationStatus {
             case .notDetermined:

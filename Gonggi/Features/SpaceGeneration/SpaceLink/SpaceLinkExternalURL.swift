@@ -5,7 +5,7 @@ enum SpaceLinkExternalURL {
     static let maxLength = 2048
     static let maxDisplayNameLength = 40
 
-    enum NormalizeError: Equatable {
+    enum NormalizeError: Error, Equatable {
         case invalid
         case scheme
         case credentials

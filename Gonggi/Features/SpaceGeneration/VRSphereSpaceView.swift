@@ -2441,21 +2441,24 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     private var spaceLinkFingerprint: String {
         // Include pose so drag-end / PATCH rollback rebuild nodes; exclude mid-drag
         // (SwiftUI pose is not published during .changed).
-        spaceLinks.map {
-            String(
+        let linkParts: [String] = spaceLinks.map { link in
+            let label = link.label ?? ""
+            let external = link.externalUrl ?? ""
+            return String(
                 format: "%@:%@:%.3f:%.3f:%.3f:%@:%@",
-                $0.id,
-                $0.status.rawValue,
-                $0.yawDeg,
-                $0.pitchDeg,
-                $0.radius,
-                $0.label ?? "",
-                $0.externalUrl ?? ""
+                link.id,
+                link.status.rawValue,
+                link.yawDeg,
+                link.pitchDeg,
+                link.radius,
+                label,
+                external
             )
-        }.joined(separator: ",")
-            + "|" + (selectedSpaceLinkId ?? "")
-            + "|" + (editModeActive ? "e" : "v")
-            + "|" + spaceLinkTargetNames.values.sorted().joined(separator: ",")
+        }
+        let selected = selectedSpaceLinkId ?? ""
+        let mode = editModeActive ? "e" : "v"
+        let names = spaceLinkTargetNames.values.sorted().joined(separator: ",")
+        return linkParts.joined(separator: ",") + "|" + selected + "|" + mode + "|" + names
     }
 
     func updateUIView(_ uiView: SCNHostView, context: Context) {
