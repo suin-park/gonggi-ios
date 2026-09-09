@@ -63,6 +63,9 @@ struct PlaceAssetSpacePickerView: View {
             }
             .navigationTitle("배치할 공간 선택")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(GonggiColors.backgroundPrimary, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .background(GonggiColors.backgroundPrimary)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("취소") { onClose() }

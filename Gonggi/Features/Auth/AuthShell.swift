@@ -225,20 +225,40 @@ struct AuthShellView: View {
     @ObservedObject var session: AuthSessionController
     @StateObject private var appleCoordinator = AppleSignInCoordinator()
     @State private var googleBusy = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
             GonggiAmbientBackground()
-            VStack(spacing: GonggiSpacing.xl) {
-                Spacer()
+            VStack(spacing: 0) {
+                Spacer(minLength: GonggiSpacing.md)
+
+                GonggiLogoView(variant: .white, width: 196)
+                    .padding(.top, GonggiSpacing.lg)
+                    .padding(.bottom, GonggiSpacing.md)
+
+                GonggiWireframeSphereView(
+                    diameter: 210,
+                    isAnimating: scenePhase == .active
+                )
+                .padding(.vertical, GonggiSpacing.sm)
+
                 VStack(spacing: GonggiSpacing.sm) {
-                    Text("공기")
-                        .font(GonggiTypography.title(36))
+                    Text(GonggiBrandCopy.welcomeHeadline)
+                        .font(GonggiTypography.title(26))
                         .foregroundStyle(GonggiColors.textPrimary)
-                    Text("공간을 기록하고 기억하다")
-                        .font(GonggiTypography.body(16))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(GonggiBrandCopy.welcomeSupport)
+                        .font(GonggiTypography.body(15))
                         .foregroundStyle(GonggiColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.horizontal, GonggiSpacing.lg)
+                .padding(.top, GonggiSpacing.md)
+
+                Spacer(minLength: GonggiSpacing.md)
 
                 VStack(spacing: GonggiSpacing.sm) {
                     authButton(title: "Google로 계속하기", icon: "g.circle") {
@@ -275,6 +295,8 @@ struct AuthShellView: View {
                     .foregroundStyle(GonggiColors.textTertiary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, GonggiSpacing.xl)
+                    .padding(.top, GonggiSpacing.sm)
+                    .padding(.bottom, GonggiSpacing.lg)
 
                 if let err = session.lastError {
                     Text(err)
@@ -282,9 +304,8 @@ struct AuthShellView: View {
                         .foregroundStyle(GonggiColors.error)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, GonggiSpacing.lg)
+                        .padding(.bottom, GonggiSpacing.md)
                 }
-
-                Spacer()
             }
         }
         .sheet(isPresented: $session.emailSheetPresented) {
@@ -347,55 +368,78 @@ struct EmailContinueView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("이메일", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                    SecureField("비밀번호", text: $password)
-                }
-                Section {
-                    Picker("방식", selection: $mode) {
-                        ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                }
-                Section {
-                    switch mode {
-                    case .login:
-                        Button(busy ? "로그인 중…" : "계속하기") {
-                            busy = true
-                            Task {
-                                await session.signInWithEmail(email: email, password: password)
-                                busy = false
-                                if session.isSignedIn { dismiss() }
+            ZStack {
+                GonggiAmbientBackground(showGlow: false)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+                        GonggiLogoView(variant: .white, width: 140)
+                        Text("이메일로 계속하기")
+                            .font(GonggiTypography.title(22))
+                            .foregroundStyle(GonggiColors.textPrimary)
+
+                        VStack(spacing: GonggiSpacing.sm) {
+                            TextField("이메일", text: $email)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.emailAddress)
+                                .padding(GonggiSpacing.md)
+                                .background(GonggiColors.surfaceElevated)
+                                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+                            SecureField("비밀번호", text: $password)
+                                .padding(GonggiSpacing.md)
+                                .background(GonggiColors.surfaceElevated)
+                                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+                        }
+                        .foregroundStyle(GonggiColors.textPrimary)
+
+                        Picker("방식", selection: $mode) {
+                            ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+
+                        switch mode {
+                        case .login:
+                            PrimaryButton(title: busy ? "로그인 중…" : "계속하기") {
+                                busy = true
+                                Task {
+                                    await session.signInWithEmail(email: email, password: password)
+                                    busy = false
+                                    if session.isSignedIn { dismiss() }
+                                }
+                            }
+                            .disabled(busy || email.isEmpty || password.isEmpty)
+                        case .registerHint:
+                            Text("회원가입·이메일 인증은 3D Locker 웹과 동일합니다. www.3d-locker.com 에서 가입한 뒤 여기서 로그인하세요.")
+                                .font(GonggiTypography.body(14))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                            if let url = URL(string: "https://www.3d-locker.com") {
+                                Link("3D Locker에서 가입하기", destination: url)
+                                    .foregroundStyle(GonggiColors.brandCyan)
+                            }
+                        case .resetHint:
+                            Text("비밀번호 재설정도 3D Locker 웹에서 진행합니다.")
+                                .font(GonggiTypography.body(14))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                            if let url = URL(string: "https://www.3d-locker.com") {
+                                Link("비밀번호 재설정 열기", destination: url)
+                                    .foregroundStyle(GonggiColors.brandCyan)
                             }
                         }
-                        .disabled(busy || email.isEmpty || password.isEmpty)
-                    case .registerHint:
-                        Text("회원가입·이메일 인증은 3D Locker 웹과 동일합니다. www.3d-locker.com 에서 가입한 뒤 여기서 로그인하세요.")
-                            .font(.footnote)
-                        if let url = URL(string: "https://www.3d-locker.com") {
-                            Link("3D Locker에서 가입하기", destination: url)
-                        }
-                    case .resetHint:
-                        Text("비밀번호 재설정도 3D Locker 웹에서 진행합니다.")
-                            .font(.footnote)
-                        if let url = URL(string: "https://www.3d-locker.com") {
-                            Link("비밀번호 재설정 열기", destination: url)
+
+                        if let err = session.lastError {
+                            Text(err)
+                                .font(GonggiTypography.caption(13))
+                                .foregroundStyle(GonggiColors.error)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                }
-                if let err = session.lastError {
-                    Section {
-                        Text(err).foregroundStyle(.red)
-                    }
+                    .padding(GonggiSpacing.lg)
                 }
             }
-            .navigationTitle("이메일로 계속하기")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("닫기") { dismiss() }
+                        .foregroundStyle(GonggiColors.textSecondary)
                 }
             }
         }

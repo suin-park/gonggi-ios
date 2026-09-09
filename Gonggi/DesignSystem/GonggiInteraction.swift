@@ -56,36 +56,17 @@ struct GonggiBrandMark: View {
     enum BrandSize {
         case large, compact
 
-        var titleFont: Font {
+        var logoWidth: CGFloat {
             switch self {
-            case .large: return GonggiTypography.display(36)
-            case .compact: return GonggiTypography.title(22)
-            }
-        }
-
-        var subtitleFont: Font {
-            switch self {
-            case .large: return GonggiTypography.body(16)
-            case .compact: return GonggiTypography.caption(13)
+            case .large: return 168
+            case .compact: return 120
             }
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            HStack(spacing: GonggiSpacing.sm) {
-                Image(systemName: "wind")
-                    .font(.system(size: size == .large ? 28 : 20, weight: .light))
-                    .foregroundStyle(GonggiColors.accentTeal)
-                Text("공기")
-                    .font(size.titleFont)
-                    .foregroundStyle(GonggiColors.textPrimary)
-            }
-            Text("공간을 기록하고 기억하다")
-                .font(size.subtitleFont)
-                .foregroundStyle(GonggiColors.textSecondary)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("공기. 공간을 기록하고 기억하다")
+        // Official wordmark includes “공간을 기록하다” — do not re-typeset beside it.
+        GonggiLogoView(variant: .white, width: size.logoWidth)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

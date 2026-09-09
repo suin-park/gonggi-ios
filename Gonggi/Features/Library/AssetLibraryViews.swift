@@ -95,7 +95,7 @@ struct AssetLibraryView: View {
             HStack {
                 Text("3D 어셋")
                     .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.accentTeal)
+                    .foregroundStyle(GonggiColors.brandCyan)
                 Spacer()
                 Button {
                     GonggiHaptics.light()

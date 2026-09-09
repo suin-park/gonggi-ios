@@ -132,34 +132,42 @@ jobs:
           echo "VIRTUAL_ENV=${{ github.workspace }}/.venv" >> "$GITHUB_ENV"
           echo "${{ github.workspace }}/.venv/bin" >> "$GITHUB_PATH"
 
-      - name: Capture screenshots
+      - name: Capture screenshots + welcome video
         env:
           UDID: ${{ steps.sim.outputs.udid }}
+          SCREENSHOT_DIR: docs/gonggi-redesign-v1/screenshots
+          VIDEO_DIR: docs/gonggi-redesign-v1/videos
         run: |
           set -euo pipefail
+          mkdir -p "${SCREENSHOT_DIR}" "${VIDEO_DIR}"
           chmod +x scripts/capture-gonggi-screenshots.sh
           scripts/capture-gonggi-screenshots.sh
 
       - name: Create contact sheet
-        run: python3 scripts/make-contact-sheet.py screenshots screenshots/contact-sheet.png
+        run: |
+          python3 scripts/make-contact-sheet.py \
+            docs/gonggi-redesign-v1/screenshots \
+            docs/gonggi-redesign-v1/screenshots/contact_sheet.png
 
       - name: Verify screenshots
-        run: python3 scripts/verify-screenshots.py screenshots
+        run: python3 scripts/verify-screenshots.py docs/gonggi-redesign-v1/screenshots
 
       - name: Upload screenshot artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gonggi-ui-v1-screenshots
+          name: gonggi-redesign-v1-visual
           path: |
-            screenshots/*.png
+            docs/gonggi-redesign-v1/screenshots/**
+            docs/gonggi-redesign-v1/videos/**
           if-no-files-found: error
 
       - name: Summary
         run: |
-          echo "## Gonggi UI V1 Screenshots" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Gonggi Brand Redesign V1 Screenshots" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Device:** ${{ steps.sim.outputs.device_name }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Runtime:** ${{ steps.sim.outputs.runtime }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Artifact:** \`gonggi-ui-v1-screenshots\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Screenshots:** 12 PNG + contact-sheet.png" >> "$GITHUB_STEP_SUMMARY"
-          ls -la screenshots/
+          echo "- **Artifact:** \`gonggi-redesign-v1-visual\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **SHA:** $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          ls -la docs/gonggi-redesign-v1/screenshots/ || true
+          ls -la docs/gonggi-redesign-v1/videos/ || true

@@ -104,25 +104,30 @@ struct HomeView: View {
         ZStack(alignment: .bottomLeading) {
             RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
                 .fill(GonggiColors.heroGradient)
-                .frame(height: 200)
-            PortalIllustration()
-                .padding(GonggiSpacing.lg)
+                .frame(height: 220)
+            HStack {
+                Spacer(minLength: 0)
+                GonggiWireframeSphereView(diameter: 148, isAnimating: true)
+                    .opacity(0.9)
+                    .padding(.trailing, GonggiSpacing.md)
+            }
+            .padding(.top, GonggiSpacing.sm)
             LinearGradient(
-                colors: [.clear, GonggiColors.backgroundPrimary.opacity(0.55)],
+                colors: [.clear, GonggiColors.backgroundPrimary.opacity(0.72)],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
-            Text("소중한 공간을\n오래도록 기억하세요")
+            Text(GonggiBrandCopy.welcomeHeadline)
                 .font(GonggiTypography.headline(18))
-                .foregroundStyle(GonggiColors.textPrimary.opacity(0.92))
+                .foregroundStyle(GonggiColors.textPrimary.opacity(0.94))
                 .padding(GonggiSpacing.lg)
         }
         .overlay(
             RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
                 .stroke(GonggiColors.border, lineWidth: 1)
         )
-        .accessibilityLabel("공간을 기록하는 일러스트")
+        .accessibilityLabel("공간을 다시 둘러보는 소개")
     }
 
     private func recentSection(_ space: SpaceRecord) -> some View {
@@ -200,48 +205,6 @@ struct HomeView: View {
             }
             SecondaryButton(title: "보관함 보기", icon: "archivebox") {
                 appState.selectTab(.library)
-            }
-        }
-    }
-}
-
-private struct PortalIllustration: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var glow = false
-
-    var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let h = geo.size.height
-            ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [
-                                GonggiColors.accentCyan.opacity(glow ? 0.32 : 0.22),
-                                GonggiColors.accentTeal.opacity(0.06),
-                                .clear,
-                            ],
-                            center: .center,
-                            startRadius: 8,
-                            endRadius: min(w, h) * 0.48
-                        )
-                    )
-                    .frame(width: w * 0.75, height: w * 0.75)
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(GonggiColors.accentCyan.opacity(0.4), lineWidth: 1.5)
-                    .frame(width: w * 0.38, height: h * 0.52)
-                    .rotationEffect(.degrees(-6))
-                Image(systemName: "cube.transparent")
-                    .font(.system(size: 40, weight: .ultraLight))
-                    .foregroundStyle(GonggiColors.textPrimary.opacity(0.8))
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 3).repeatForever(autoreverses: true)) {
-                glow = true
             }
         }
     }

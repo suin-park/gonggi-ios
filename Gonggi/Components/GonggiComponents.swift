@@ -21,16 +21,10 @@ struct PrimaryButton: View {
                     .font(GonggiTypography.headline(17))
             }
             .frame(maxWidth: .infinity, minHeight: GonggiSpacing.touchTarget + 8)
-            .foregroundStyle(GonggiColors.backgroundPrimary)
-            .background(
-                LinearGradient(
-                    colors: [GonggiColors.accentTeal, GonggiColors.accentCyan.opacity(0.85)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-            .shadow(color: GonggiColors.accentTeal.opacity(0.25), radius: 12, y: 4)
+            .foregroundStyle(GonggiColors.textOnAccent)
+            .background(GonggiColors.primaryButtonGradient)
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+            .shadow(color: GonggiColors.brandCyan.opacity(0.28), radius: 14, y: 5)
         }
         .buttonStyle(GonggiPressableStyle())
         .accessibilityLabel(title)
@@ -53,10 +47,10 @@ struct SecondaryButton: View {
             .foregroundStyle(GonggiColors.textPrimary)
             .background(GonggiColors.surfaceElevated)
             .overlay(
-                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
                     .stroke(GonggiColors.border, lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
         }
         .buttonStyle(GonggiPressableStyle())
         .accessibilityLabel(title)
@@ -553,10 +547,10 @@ struct MemoryArchiveCard: View {
                 HStack(spacing: 6) {
                     Text("공간 보기")
                         .font(GonggiTypography.caption(14))
-                        .foregroundStyle(GonggiColors.accentTeal)
+                        .foregroundStyle(GonggiColors.brandCyan)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(GonggiColors.accentTeal)
+                        .foregroundStyle(GonggiColors.brandCyan)
                     Spacer(minLength: 0)
                 }
                 .frame(minHeight: 44)

@@ -124,10 +124,10 @@ struct LibraryView: View {
 
     private var spacesHeader: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("기억의 아카이브")
+            Text("공간 보관함")
                 .font(GonggiTypography.caption(13))
-                .foregroundStyle(GonggiColors.accentTeal)
-            Text("기록한 공간을\n다시 방문해보세요")
+                .foregroundStyle(GonggiColors.brandCyan)
+            Text("기록한 공간을\n다시 둘러보세요")
                 .font(GonggiTypography.headline(20))
                 .foregroundStyle(GonggiColors.textPrimary)
                 .lineSpacing(2)
