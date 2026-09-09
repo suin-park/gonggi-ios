@@ -58,7 +58,7 @@
 
 ### iOS
 - base SHA: 8fb0faf4e1b6b5ecbc18a4ee5f7bdb5ee35e83cd
-- final SHA: a055f97503a7e61a358cdd74f05af29efd93aa9f
+- final SHA: 930aecc4e1b6b5ecbc18a4ee5f7bdb5ee35e83cd503a7e61a358cdd74f05af29efd93aa9f
 - MARKETING_VERSION: 2.0
 - CURRENT_PROJECT_VERSION: 5
 - version changed: NO
