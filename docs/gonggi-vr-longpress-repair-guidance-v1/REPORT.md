@@ -1,47 +1,47 @@
 ## VR Long Press Repair Guidance
 
 ### Forensic
-- classification: **R1** ??fully implemented and connected to production VR viewer
-- production viewer: `SpaceDetailView` / Library / Home ??`SpaceVRNavigationHost` ??`VRSphereSpaceView`
+- classification: **R1** ? fully implemented and connected to production VR viewer
+- production viewer: `SpaceDetailView` / Library / Home ? `SpaceVRNavigationHost` ? `VRSphereSpaceView`
 - gesture: `SCNHostView` `UILongPressGestureRecognizer` **minimumPressDuration = 0.45s**; enabled only in `.view` (disabled in Edit / Space Link transition)
-- coordinate mapping: sphere hitTest ??texture UV ??`VRSphereEquirectBridge.equirectDegreesFromTextureUV` (fallback screen?’equirect)
-- repair flow: marker + `RepairConfirmSheet` ??`RepairManualCaptureView` ??`POST /api/gonggi/space/repair` ??poll ??latlong refresh in-place
+- coordinate mapping: sphere hitTest ? texture UV ? `VRSphereEquirectBridge.equirectDegreesFromTextureUV` (fallback screen?equirect)
+- repair flow: marker + `RepairConfirmSheet` ? `RepairManualCaptureView` ? `POST /api/gonggi/space/repair` ? poll ? latlong refresh in-place
 - backend: existing `src/app/api/gonggi/space/repair` (+ status); **not modified this round**
 - owner authorization: iOS library is account-partitioned; API Bearer ownership; no separate public VR viewer
-- shared viewer: **no iOS public/shared VR Space Link viewer** ??guidance gated on signed-in `userId` + repair gesture available
+- shared viewer: **no iOS public/shared VR Space Link viewer** ? guidance gated on signed-in `userId` + repair gesture available
 
 ### Guidance
 - eligibility: signed-in userId, panorama ready, view-mode repair gesture available, guide v1 not dismissed for that user
-- title: ?Œì˜ëª?ë§Œë“¤?´ì§„ ë¶€ë¶„ì´ ?ˆë‚˜????
-- body: ?Œìˆ˜?•í•  ?„ì¹˜ë¥?ê¸¸ê²Œ ?„ë¥´ë©??¤ì‹œ ì´¬ì˜?????ˆì–´????
-- position: top safe area below toolbar (~58pt), navy translucent card + cyan accent + Ã—
+- title: ??? ???? ??? ?????
+- body: ???? ??? ?? ??? ?? ??? ? ???.?
+- position: top safe area below toolbar (~58pt), navy translucent card + cyan accent + ×
 - automatic timeout: **NO**
-- dismiss action: Ã— only (`SelectiveRepairHintPreferences.markDismissed`)
-- gesture interference: only Ã— hit-tests; card body `allowsHitTesting(false)`; panorama drag / long-press unchanged; repair start does **not** dismiss
+- dismiss action: × only (`SelectiveRepairHintPreferences.markDismissed`)
+- gesture interference: only × hit-tests; card body `allowsHitTesting(false)`; panorama drag / long-press unchanged; repair start does **not** dismiss
 
 ### Persistence
 - storage: UserDefaults `gonggi.viewerRepairHint.dismissed.v1.{userId}`
-- account scope: per-userId (A dismiss ??B)
-- guide version: `v1` (future copy/UX ??`v2`)
+- account scope: per-userId (A dismiss ? B)
+- guide version: `v1` (future copy/UX ? `v2`)
 - account switch: presentation cleared via `.gonggiAccountPresentationDidReset`; prefs stay partitioned by userId
-- reopen path: toolbar ??menu ???Œë‹¤??ì´¬ì˜ ?ˆë‚´??(`clearDismissed` + show card)
+- reopen path: toolbar ? menu ? ??? ?? ??? (`clearDismissed` + show card)
 
 ### Repair flow
 - long press duration: **0.45s** (unchanged)
 - feedback: existing haptic + yellow/pink selection marker (unchanged)
-- confirmation: ?Œì´ ë¶€ë¶„ì„ ?¤ì‹œ ê¸°ë¡? ê¹Œ????/ ì·¨ì†Œ / ?¤ì‹œ ì´¬ì˜ (unchanged)
+- confirmation: ?? ??? ?? ??????? / ?? / ?? ?? (unchanged)
 - recapture: `RepairOneShotCaptureEngine` (unchanged)
 - upload: multipart repair API (unchanged)
 - panorama refresh: `RepairSessionController` / `applyCompletedTexture` (unchanged)
 
 ### Tests
-- total: `SelectiveRepairHintPreferencesTests` ??8 cases (preferences / account scope / eligibility)
+- total: `SelectiveRepairHintPreferencesTests` ? 8 cases (preferences / account scope / eligibility)
 - pass: written for targeted XCTest (not executed on Windows host)
 - fail: 0 known
 - full suite: NOT RUN
 
 ### Captures
-- screenshots: `docs/gonggi-vr-longpress-repair-guidance-v1/screenshots/00??9_*.png` (Windows layout mocks)
+- screenshots: `docs/gonggi-vr-longpress-repair-guidance-v1/screenshots/00?09_*.png` (Windows layout mocks)
 - contact sheet: `screenshots/contact_sheet.png`
 - videos: `videos/*.mp4.NOTE.txt` placeholders (Mac simulator required)
 
@@ -52,7 +52,7 @@
 - deployed: NO
 
 ### iOS
-- SHA: 61c4f418eede9e8fef96b8fb28a71f4112ae5ee4
+- SHA: `61c4f418eede9e8fef96b8fb28a71f4112ae5ee4`
 - version before: 2.0 (4)
 - version after: 2.0 (4)
 - version changed: NO
