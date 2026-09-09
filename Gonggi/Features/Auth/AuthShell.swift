@@ -257,94 +257,110 @@ struct AuthShellView: View {
         return 140
     }
 
+    /// Top flexible inset scales with usable height (~50–80pt on tall phones; compresses first on short).
+    private func welcomeTopMin(for usableHeight: CGFloat) -> CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return GonggiSpacing.sm }
+        let proposed = usableHeight * 0.078
+        return min(80, max(GonggiSpacing.md, proposed))
+    }
+
+    private var welcomeBottomMin: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? GonggiSpacing.md : GonggiSpacing.lg
+    }
+
     var body: some View {
         ZStack {
             GonggiAmbientBackground()
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    // Independent centered logo header (does not force form centering).
-                    GonggiLogoView(variant: .white, width: welcomeLogoWidth)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, GonggiSpacing.md)
-                        .padding(.bottom, GonggiSpacing.xs)
+            GeometryReader { geo in
+                let usableHeight = geo.size.height
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: welcomeTopMin(for: usableHeight))
 
-                    welcomeDecoration
-                        .frame(height: decorationHeight)
-                        .frame(maxWidth: .infinity)
-                        .clipped()
-                        .padding(.vertical, GonggiSpacing.xs)
+                        // Independent centered logo header (does not force form centering).
+                        GonggiLogoView(variant: .white, width: welcomeLogoWidth)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, GonggiSpacing.xs)
 
-                    VStack(spacing: GonggiSpacing.sm) {
-                        Text(WelcomePanoramaSampleAsset.headline)
-                            .font(GonggiTypography.title(22))
-                            .foregroundStyle(GonggiColors.textPrimary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.85)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(WelcomePanoramaSampleAsset.subtitle)
-                            .font(GonggiTypography.body(15))
-                            .foregroundStyle(GonggiColors.textSecondary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.9)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.horizontal, GonggiSpacing.lg)
-                    .padding(.top, GonggiSpacing.sm)
-                    .padding(.bottom, GonggiSpacing.md)
+                        welcomeDecoration
+                            .frame(height: decorationHeight)
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                            .padding(.vertical, GonggiSpacing.xs)
 
-                    VStack(spacing: GonggiSpacing.sm) {
-                        authButton(title: "Google로 계속하기", icon: "g.circle") {
-                            Task { await startGoogle() }
+                        VStack(spacing: GonggiSpacing.sm) {
+                            Text(WelcomePanoramaSampleAsset.headline)
+                                .font(GonggiTypography.title(22))
+                                .foregroundStyle(GonggiColors.textPrimary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.85)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(WelcomePanoramaSampleAsset.subtitle)
+                                .font(GonggiTypography.body(15))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.9)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .disabled(googleBusy)
+                        .padding(.horizontal, GonggiSpacing.lg)
+                        .padding(.top, GonggiSpacing.sm)
+                        .padding(.bottom, GonggiSpacing.md)
 
-                        authButton(title: "Apple로 계속하기", icon: "apple.logo") {
-                            appleCoordinator.beginSignIn { result in
-                                Task { @MainActor in
-                                    switch result {
-                                    case .success(let payload):
-                                        await session.signInWithApple(
-                                            identityToken: payload.identityToken,
-                                            nonce: payload.nonce,
-                                            fullName: payload.fullName,
-                                            email: payload.email
-                                        )
-                                    case .failure(let err):
-                                        session.lastError = err.errorDescription ?? "Apple 로그인에 실패했습니다."
+                        VStack(spacing: GonggiSpacing.sm) {
+                            authButton(title: "Google로 계속하기", icon: "g.circle") {
+                                Task { await startGoogle() }
+                            }
+                            .disabled(googleBusy)
+
+                            authButton(title: "Apple로 계속하기", icon: "apple.logo") {
+                                appleCoordinator.beginSignIn { result in
+                                    Task { @MainActor in
+                                        switch result {
+                                        case .success(let payload):
+                                            await session.signInWithApple(
+                                                identityToken: payload.identityToken,
+                                                nonce: payload.nonce,
+                                                fullName: payload.fullName,
+                                                email: payload.email
+                                            )
+                                        case .failure(let err):
+                                            session.lastError = err.errorDescription ?? "Apple 로그인에 실패했습니다."
+                                        }
                                     }
                                 }
                             }
+
+                            authButton(title: "이메일로 계속하기", icon: "envelope") {
+                                session.emailSheetPresented = true
+                            }
                         }
+                        .padding(.horizontal, GonggiSpacing.lg)
 
-                        authButton(title: "이메일로 계속하기", icon: "envelope") {
-                            session.emailSheetPresented = true
-                        }
-                    }
-                    .padding(.horizontal, GonggiSpacing.lg)
-
-                    Text(WelcomePanoramaSampleAsset.accountFootnote)
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.textTertiary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, GonggiSpacing.xl)
-                        .padding(.top, GonggiSpacing.sm)
-                        .padding(.bottom, GonggiSpacing.lg)
-
-                    if let err = session.lastError {
-                        Text(err)
-                            .font(GonggiTypography.caption(12))
-                            .foregroundStyle(GonggiColors.error)
+                        Text(WelcomePanoramaSampleAsset.accountFootnote)
+                            .font(GonggiTypography.caption(13))
+                            .foregroundStyle(GonggiColors.textTertiary)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, GonggiSpacing.lg)
-                            .padding(.bottom, GonggiSpacing.md)
+                            .padding(.horizontal, GonggiSpacing.xl)
+                            .padding(.top, GonggiSpacing.sm)
+                            .padding(.bottom, GonggiSpacing.sm)
+
+                        if let err = session.lastError {
+                            Text(err)
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.error)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, GonggiSpacing.lg)
+                                .padding(.bottom, GonggiSpacing.sm)
+                        }
+
+                        Spacer(minLength: welcomeBottomMin)
                     }
+                    .frame(maxWidth: .infinity, minHeight: usableHeight, alignment: .top)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, GonggiSpacing.md)
             }
         }
         .sheet(isPresented: $session.emailSheetPresented) {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedSpace: SpaceRecord?
     @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
@@ -11,16 +12,50 @@ struct HomeView: View {
         Array(appState.spaces.prefix(5))
     }
 
+    /// Top padding scales with usable height (~24–48pt extra on tall phones).
+    private func homeTopPadding(for usableHeight: CGFloat) -> CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return GonggiSpacing.md }
+        let extra = usableHeight * 0.045
+        return GonggiSpacing.lg + min(48, max(24, extra))
+    }
+
+    /// Mid gap between CTAs and recent work when the list is empty or short.
+    private func homeMidMin(for usableHeight: CGFloat) -> CGFloat {
+        if dynamicTypeSize.isAccessibilitySize { return GonggiSpacing.md }
+        return min(80, max(GonggiSpacing.lg, usableHeight * 0.07))
+    }
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: GonggiSpacing.xl) {
-                    header
-                    actions
-                    recentSection
+            GeometryReader { geo in
+                let usableHeight = geo.size.height
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        header
+                            .padding(.bottom, GonggiSpacing.lg)
+
+                        actions
+                            .padding(.bottom, GonggiSpacing.md)
+
+                        if recentSpaces.count <= 1 {
+                            Spacer(minLength: homeMidMin(for: usableHeight))
+                        } else {
+                            // Fixed gap only — do not expand leftover (list should continue naturally).
+                            Color.clear.frame(height: GonggiSpacing.xl)
+                        }
+
+                        recentSection
+                    }
+                    .padding(.horizontal, GonggiSpacing.lg)
+                    .padding(.top, homeTopPadding(for: usableHeight))
+                    .padding(.bottom, GonggiSpacing.xxl)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: recentSpaces.count <= 1 ? usableHeight : nil,
+                        alignment: .top
+                    )
                 }
-                .padding(GonggiSpacing.lg)
-                .padding(.bottom, GonggiSpacing.xxl)
+                .contentMargins(.bottom, GonggiSpacing.lg, for: .scrollContent)
             }
             .background(GonggiAmbientBackground())
             .navigationBarTitleDisplayMode(.inline)
@@ -98,7 +133,7 @@ struct HomeView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+        VStack(alignment: .leading, spacing: GonggiSpacing.md) {
             GonggiBrandMark()
             Text("무엇을 시작할까요?")
                 .font(GonggiTypography.title(24))
