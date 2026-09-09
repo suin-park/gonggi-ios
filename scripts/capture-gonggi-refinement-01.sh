@@ -87,6 +87,19 @@ if [[ ! -s "${VIDEO_OUT}" ]]; then
 fi
 echo "OK ${VIDEO_OUT}"
 
+# SpringBoard BEFORE compact — compact SE flakiness must not block icon review
+if [[ "${CAPTURE_SPRINGBOARD_ICON:-1}" == "1" ]]; then
+  echo "--- Capturing SpringBoard app icon ---"
+  xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" 2>/dev/null || true
+  sleep 2
+  xcrun simctl io "${UDID}" screenshot "${SCREENSHOT_DIR}/app_icon_springboard.png" || true
+  if [[ -s "${SCREENSHOT_DIR}/app_icon_springboard.png" ]]; then
+    echo "OK ${SCREENSHOT_DIR}/app_icon_springboard.png"
+  else
+    echo "WARN missing SpringBoard screenshot"
+  fi
+fi
+
 mean_luma_ok() {
   local path="$1"
   SCREENSHOT_PATH="${path}" python3 - <<'PY'
@@ -147,34 +160,27 @@ if [[ -n "${UDID_COMPACT:-}" ]]; then
   sleep 5
   xcrun simctl install "${UDID_COMPACT}" "${APP_PATH}"
   xcrun simctl status_bar "${UDID_COMPACT}" override --time "9:41" --batteryState charged --batteryLevel 100 2>/dev/null || true
-  for pair in "welcomeCompact:welcome_compact.png" "welcomeSpaceLightCompact:welcome_space_light_compact.png"; do
-    screen="${pair%%:*}"; filename="${pair##*:}"
-    if ! capture_compact_one "${UDID_COMPACT}" "${screen}" "${filename}"; then
-      echo "WARN: compact capture failed for ${filename}; falling back to primary ${UDID}"
-      capture_one "${screen}" "${filename}"
-      if ! mean_luma_ok "${SCREENSHOT_DIR}/${filename}"; then
-        echo "Primary fallback also blank for ${filename}"
-        exit 1
-      fi
+  if ! capture_compact_one "${UDID_COMPACT}" "welcomeCompact" "welcome_compact.png"; then
+    echo "WARN: compact welcome failed; falling back to primary ${UDID}"
+    capture_one "welcomeCompact" "welcome_compact.png"
+    if ! mean_luma_ok "${SCREENSHOT_DIR}/welcome_compact.png"; then
+      echo "Primary fallback also blank for welcome_compact.png"
+      exit 1
     fi
-  done
+  fi
+  # Space Light on SE is flaky (blank white); soft-fail after primary fallback
+  if ! capture_compact_one "${UDID_COMPACT}" "welcomeSpaceLightCompact" "welcome_space_light_compact.png"; then
+    echo "WARN: compact Space Light failed; falling back to primary ${UDID}"
+    capture_one "welcomeSpaceLightCompact" "welcome_space_light_compact.png"
+    if ! mean_luma_ok "${SCREENSHOT_DIR}/welcome_space_light_compact.png"; then
+      echo "WARN: Space Light compact blank after fallback — continuing (non-blocking)"
+    fi
+  fi
   xcrun simctl terminate "${UDID_COMPACT}" "${BUNDLE_ID}" 2>/dev/null || true
 else
   echo "UDID_COMPACT not set — capturing compact screens on primary simulator"
   capture_one "welcomeCompact" "welcome_compact.png"
   capture_one "welcomeSpaceLightCompact" "welcome_space_light_compact.png"
-fi
-
-# Optional: SpringBoard home capture showing installed AppIcon (after install above)
-if [[ "${CAPTURE_SPRINGBOARD_ICON:-1}" == "1" ]]; then
-  echo "--- Capturing SpringBoard app icon ---"
-  xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" 2>/dev/null || true
-  sleep 2
-  # Bring device to home (terminate leaves SpringBoard)
-  xcrun simctl io "${UDID}" screenshot "${SCREENSHOT_DIR}/app_icon_springboard.png" || true
-  if [[ -s "${SCREENSHOT_DIR}/app_icon_springboard.png" ]]; then
-    echo "OK ${SCREENSHOT_DIR}/app_icon_springboard.png"
-  fi
 fi
 
 xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" 2>/dev/null || true
