@@ -229,7 +229,14 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
     var capturedAt: Date
     var status: SpaceGenerationStatus
     var thumbnailSystemImage: String
+    /// Generation/status copy only. User-authored notes live in `memo`.
     var note: String?
+    var memo: String? = nil
+    var locationName: String? = nil
+    var latitude: Double? = nil
+    var longitude: Double? = nil
+    var locationSource: String? = nil
+    var locationCapturedAt: Date? = nil
     var viewerURL: URL?
     var localLatLongPath: String? = nil
     var sessionId: String? = nil
@@ -278,6 +285,13 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
         return true
     }
 
+    var locationDisplayLabel: String {
+        guard let label = locationName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !label.isEmpty
+        else { return "위치 정보 없음" }
+        return label
+    }
+
     static let sampleArchive: [SpaceRecord] = [
         SpaceRecord(
             id: "sample-1",
@@ -285,7 +299,8 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
             capturedAt: Calendar.current.date(byAdding: .month, value: -3, to: Date())!,
             status: .ready,
             thumbnailSystemImage: "house.fill",
-            note: "거실과 안방을 중심으로 촬영",
+            note: nil,
+            memo: "거실과 안방을 중심으로 촬영",
             viewerURL: URL(string: "https://www.3d-locker.com/spaces/example")
         ),
         SpaceRecord(
@@ -312,7 +327,8 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
             capturedAt: Calendar.current.date(byAdding: .day, value: -2, to: Date())!,
             status: .ready,
             thumbnailSystemImage: "heart.fill",
-            note: "주방·거실 포함",
+            note: nil,
+            memo: "주방·거실 포함",
             viewerURL: nil
         ),
     ]

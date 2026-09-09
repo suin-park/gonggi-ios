@@ -10,6 +10,13 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     /// Local/server-aligned status string: uploading | queued | uploaded | preprocessing | generating | completed | failed
     var serverStatus: String
     var displayName: String
+    var memo: String? = nil
+    var locationName: String? = nil
+    var latitude: Double? = nil
+    var longitude: Double? = nil
+    var locationSource: String? = nil
+    /// ISO-8601 value supplied by the catalog/API.
+    var locationCapturedAt: String? = nil
     var resultImageURL: String?
     /// Absolute path under Application Support (durable). Never Caches/tmp.
     var localLatLongPath: String?
@@ -106,6 +113,12 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
             status: uiStatus,
             thumbnailSystemImage: uiStatus == .ready ? "cube.transparent" : "sparkles",
             note: statusNote,
+            memo: memo,
+            locationName: locationName,
+            latitude: latitude,
+            longitude: longitude,
+            locationSource: locationSource,
+            locationCapturedAt: locationCapturedAt.flatMap(SpaceMetadataDateParser.date),
             viewerURL: resultImageURL.flatMap(URL.init(string:)),
             localLatLongPath: localLatLongPath,
             sessionId: sessionId,

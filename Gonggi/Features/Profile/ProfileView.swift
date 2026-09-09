@@ -38,7 +38,7 @@ struct ProfileView: View {
                     }
                     sectionCard(title: "설정") {
                         NavigationLink {
-                            SettingsPlaceholderView()
+                            SettingsPlaceholderView(userId: user.userId)
                         } label: {
                             settingsRow(title: "알림 · 앱 설정", icon: "gearshape")
                         }
@@ -187,8 +187,23 @@ struct ProfileView: View {
 }
 
 struct SettingsPlaceholderView: View {
+    let userId: String?
+    @State private var captureLocationEnabled: Bool
+
+    init(userId: String?) {
+        self.userId = userId
+        _captureLocationEnabled = State(
+            initialValue: SpaceCaptureLocationPreferences.isEnabled(userId: userId)
+        )
+    }
+
     var body: some View {
         List {
+            Toggle("촬영 위치 자동 기록", isOn: $captureLocationEnabled)
+                .onChange(of: captureLocationEnabled) { _, enabled in
+                    SpaceCaptureLocationPreferences.setEnabled(enabled, userId: userId)
+                }
+                .disabled(userId == nil)
             Toggle("촬영 가이드 힌트", isOn: .constant(true))
             Toggle("업로드 Wi‑Fi 전용", isOn: .constant(false))
             Toggle("알림", isOn: .constant(true))

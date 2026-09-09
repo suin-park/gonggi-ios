@@ -343,6 +343,84 @@ final class AppState: ObservableObject {
         }
     }
 
+    func updateSpaceMetadata(
+        jobId: String,
+        title: String,
+        memo: String?,
+        locationName: String?,
+        latitude: Double?,
+        longitude: Double?,
+        locationSource: String?,
+        locationCapturedAt: Date?,
+        clearLocation: Bool
+    ) async throws {
+        guard let job = jobStore.job(id: jobId) else {
+            throw SpaceMetadataUpdateError.notFound
+        }
+        guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
+            throw SpaceMetadataUpdateError.notAuthenticated
+        }
+
+        var body: [String: Any] = [
+            "title": title,
+            "memo": memo ?? "",
+        ]
+        if clearLocation {
+            body["clearLocation"] = true
+        } else {
+            if let locationName { body["locationName"] = locationName }
+            if let latitude { body["latitude"] = latitude }
+            if let longitude { body["longitude"] = longitude }
+            if let locationSource { body["locationSource"] = locationSource }
+            if let locationCapturedAt {
+                body["locationCapturedAt"] = SpaceMetadataDateParser.string(locationCapturedAt)
+            }
+        }
+
+        let generation = AuthSessionGeneration.current
+        let response: [String: Any]
+        do {
+            response = try await MobileAuthAPIClient().patchSpace(
+                accessToken: token,
+                spaceId: job.sessionId,
+                body: body
+            )
+        } catch let error as MobileAuthAPIError {
+            throw SpaceMetadataUpdateError.api(error)
+        } catch {
+            throw SpaceMetadataUpdateError.network
+        }
+
+        guard AuthSessionGeneration.isCurrent(generation) else {
+            throw SpaceMetadataUpdateError.sessionChanged
+        }
+
+        jobStore.update(jobId: job.jobId) { stored in
+            let responseTitle = (response["title"] as? String) ?? (response["name"] as? String)
+            stored.displayName = responseTitle ?? title
+            stored.memo = (response["memo"] as? String) ?? memo
+            if clearLocation {
+                stored.locationName = nil
+                stored.latitude = nil
+                stored.longitude = nil
+                stored.locationSource = nil
+                stored.locationCapturedAt = nil
+            } else {
+                stored.locationName = (response["locationName"] as? String) ?? locationName
+                stored.latitude = (response["latitude"] as? NSNumber)?.doubleValue
+                    ?? (response["latitude"] as? String).flatMap(Double.init)
+                    ?? latitude
+                stored.longitude = (response["longitude"] as? NSNumber)?.doubleValue
+                    ?? (response["longitude"] as? String).flatMap(Double.init)
+                    ?? longitude
+                stored.locationSource = (response["locationSource"] as? String) ?? locationSource
+                stored.locationCapturedAt = (response["locationCapturedAt"] as? String)
+                    ?? locationCapturedAt.map(SpaceMetadataDateParser.string)
+            }
+        }
+        rebuildSpaces()
+    }
+
     /// Build 80 — sync preference from job store (VR entry); async GET is in SpaceAudioManager.
     static func preferredAudioURL(for spaceId: String) -> URL? {
         SpaceJobStore.shared.jobs.first(where: {
@@ -378,6 +456,28 @@ enum SpaceDeleteError: Error, Equatable {
             return "네트워크 연결을 확인해주세요"
         case .generic, .notFound:
             return "공간을 삭제하지 못했어요"
+        }
+    }
+}
+
+enum SpaceMetadataUpdateError: Error {
+    case notFound
+    case notAuthenticated
+    case sessionChanged
+    case network
+    case api(MobileAuthAPIError)
+
+    var userMessage: String {
+        switch self {
+        case .notFound:
+            return "공간을 찾을 수 없어요."
+        case .notAuthenticated, .sessionChanged:
+            return "로그인 상태를 확인한 뒤 다시 시도해주세요."
+        case .network:
+            return "네트워크 연결을 확인해주세요."
+        case .api(let error):
+            if case .server(_, let message, _) = error { return message }
+            return "공간 정보를 저장하지 못했어요."
         }
     }
 }

@@ -51,6 +51,14 @@ final class SpaceLibraryReconciler {
                 let catalogUpdatedAt = row["updatedAt"] as? String
                 let width = row["width"] as? Int
                 let height = row["height"] as? Int
+                let memo = row["memo"] as? String
+                let locationName = row["locationName"] as? String
+                let latitude = (row["latitude"] as? NSNumber)?.doubleValue
+                    ?? (row["latitude"] as? String).flatMap(Double.init)
+                let longitude = (row["longitude"] as? NSNumber)?.doubleValue
+                    ?? (row["longitude"] as? String).flatMap(Double.init)
+                let locationSource = row["locationSource"] as? String
+                let locationCapturedAt = row["locationCapturedAt"] as? String
                 let audio = SpaceAudioMetadata.fromCatalogRow(row)
                 let existing = previousBySession[sessionId]
 
@@ -75,6 +83,12 @@ final class SpaceLibraryReconciler {
                 if let width { job.width = width }
                 if let height { job.height = height }
                 if let title, !title.isEmpty { job.displayName = title }
+                job.memo = memo
+                job.locationName = locationName
+                job.latitude = latitude
+                job.longitude = longitude
+                job.locationSource = locationSource
+                job.locationCapturedAt = locationCapturedAt
                 let remoteCompleted = status == "completed" || status == "ready"
                 let localCompleted = job.serverStatus == "completed"
                 if remoteCompleted {

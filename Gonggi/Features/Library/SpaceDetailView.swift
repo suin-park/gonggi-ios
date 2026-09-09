@@ -16,8 +16,8 @@ struct SpaceDetailView: View {
     @State private var isDeleting = false
     @State private var viewerError: String?
     @State private var deleteError: String?
-    @State private var showAddObjectSheet = false
-    @State private var placementMessage: String?
+    @State private var showEditSheet = false
+    @State private var showShareAlert = false
     // Build 80 — space audio
     @State private var showAudioImporter = false
     @State private var showAudioRecorder = false
@@ -51,13 +51,11 @@ struct SpaceDetailView: View {
             } message: {
                 Text(viewerError ?? "")
             }
-            .alert("이 공간을 삭제할까요?", isPresented: $showDeleteConfirm) {
+            .confirmationDialog("이 공간을 삭제할까요?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
                 Button("삭제", role: .destructive) {
                     Task { await performDelete() }
                 }
                 Button("취소", role: .cancel) {}
-            } message: {
-                Text("이 공간과 연결된 공간 이동도 함께 제거됩니다.\n다른 공간 자체는 삭제되지 않습니다.")
             }
         .alert("삭제하지 못했어요", isPresented: Binding(
             get: { deleteError != nil },
@@ -86,27 +84,15 @@ struct SpaceDetailView: View {
         } message: {
             Text(audioError ?? "")
         }
-        .alert("배치할 수 없어요", isPresented: Binding(
-            get: { placementMessage != nil },
-            set: { if !$0 { placementMessage = nil } }
-        )) {
-            Button("확인", role: .cancel) { placementMessage = nil }
+        .alert("공간 공유", isPresented: $showShareAlert) {
+            Button("확인", role: .cancel) {}
         } message: {
-            Text(placementMessage ?? "")
+            Text("공간 공유 기능은 다음 업데이트에서 사용할 수 있어요.")
         }
-        .sheet(isPresented: $showAddObjectSheet) {
-            AssetPickerSheet(
-                store: AssetLibraryStore.shared,
-                title: "3D 오브젝트",
-                showNonReadyDisabled: true,
-                isAtCapacity: false,
-                onSelect: { asset in
-                    showAddObjectSheet = false
-                    Task { await placeAsset(asset) }
-                },
-                onClose: { showAddObjectSheet = false }
-            )
-            .presentationDetents([.medium, .large])
+        .sheet(isPresented: $showEditSheet) {
+            SpaceDetailEditView(space: liveSpace)
+                .environmentObject(appState)
+                .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showAudioRecorder) {
@@ -146,9 +132,7 @@ struct SpaceDetailView: View {
                 VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
                     heroSection
                     metaSection
-                    if let note = liveSpace.note {
-                        memoryNoteSection(note)
-                    }
+                    memoryNoteSection
                     spaceAudioSection
                     actionsSection
                         .id("space-detail-actions")
@@ -179,6 +163,20 @@ struct SpaceDetailView: View {
                 .ignoresSafeArea()
         }
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Menu {
+                    Button("공간 삭제", systemImage: "trash", role: .destructive) {
+                        showDeleteConfirm = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                Button("편집") {
+                    showEditSheet = true
+                }
+            }
+        }
         .disabled(isDeleting || isUploadingAudio)
         .overlay {
             if isDeleting || isUploadingAudio {
@@ -243,8 +241,14 @@ struct SpaceDetailView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            detailRow(icon: "calendar", title: "생성일", value: liveSpace.capturedAt.formatted(date: .long, time: .omitted))
-            detailRow(icon: "mappin.and.ellipse", title: "위치", value: "위치 정보 없음")
+            detailRow(
+                icon: "calendar",
+                title: "생성일",
+                value: liveSpace.capturedAt.formatted(
+                    .dateTime.year().month().day().locale(Locale(identifier: "ko_KR"))
+                )
+            )
+            detailRow(icon: "mappin.and.ellipse", title: "위치", value: liveSpace.locationDisplayLabel)
             detailRow(icon: "circle.fill", title: "상태", value: liveSpace.statusBadgeLabel)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -269,15 +273,21 @@ struct SpaceDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func memoryNoteSection(_ note: String) -> some View {
+    private var memoryNoteSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("기억 메모")
+            Text("메모")
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
             GonggiElevatedCard {
-                Text(note)
+                Text(liveSpace.memo?.isEmpty == false
+                    ? liveSpace.memo!
+                    : "이 공간에 대한 메모를 남겨보세요。")
                     .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
+                    .foregroundStyle(
+                        liveSpace.memo?.isEmpty == false
+                            ? GonggiColors.textSecondary
+                            : GonggiColors.textTertiary
+                    )
                     .lineSpacing(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -348,10 +358,7 @@ struct SpaceDetailView: View {
 
             switch liveSpace.status {
             case .ready:
-                SecondaryButton(title: "3D 오브젝트 추가", icon: "square.stack.3d.up") {
-                    GonggiHaptics.light()
-                    showAddObjectSheet = true
-                }
+                EmptyView()
             case .failed:
                 PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
                     GonggiHaptics.medium()
@@ -374,11 +381,10 @@ struct SpaceDetailView: View {
                 }
             }
 
-            // Danger — Build 78 soft-delete (no dead share/rename/location buttons)
-            SecondaryButton(title: "공간 삭제", icon: "trash") {
-                showDeleteConfirm = true
+            SecondaryButton(title: "공유", icon: "square.and.arrow.up") {
+                showShareAlert = true
             }
-            .accessibilityLabel("공간 삭제")
+            .accessibilityLabel("공유, 준비 중")
         }
         .padding(.top, GonggiSpacing.xs)
     }
@@ -394,22 +400,6 @@ struct SpaceDetailView: View {
             )
         case .failure(let error):
             viewerError = error.userMessage
-        }
-    }
-
-    private func placeAsset(_ asset: MobileAssetDTO) async {
-        isPreparingViewer = true
-        defer { isPreparingViewer = false }
-        if let block = await AssetPlacementLaunch.open(
-            space: liveSpace,
-            asset: asset,
-            source: .spaceDetail,
-            appState: appState,
-            present: { launch in
-                viewerLaunch = launch
-            }
-        ) {
-            placementMessage = block.userMessage
         }
     }
 
@@ -495,87 +485,6 @@ struct SpaceDetailView: View {
         .padding(.vertical, GonggiSpacing.xs)
         .background(GonggiColors.backgroundPrimary.opacity(0.65))
         .clipShape(Capsule())
-    }
-}
-
-/// Space → place 3D object navigation shell (picker / create wired in later phases).
-struct AddObjectToSpaceSheet: View {
-    var onClose: () -> Void
-    @State private var showCreate = false
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                Text("3D 오브젝트 추가")
-                    .font(GonggiTypography.title(22))
-                    .foregroundStyle(GonggiColors.textPrimary)
-                Text("이 공간에 배치할 어셋을 고르거나 새로 만들 수 있어요.")
-                    .font(GonggiTypography.caption(14))
-                    .foregroundStyle(GonggiColors.textSecondary)
-
-                optionRow(
-                    title: "내 3D 어셋",
-                    subtitle: "3D Locker에 있는 어셋에서 선택",
-                    icon: "square.grid.2x2"
-                ) {
-                    // Phase D: asset picker linked to Locker library.
-                }
-                optionRow(
-                    title: "새로 만들기",
-                    subtitle: "사진으로 3D 어셋 생성 후 배치",
-                    icon: "plus.circle"
-                ) {
-                    showCreate = true
-                }
-                Spacer()
-            }
-            .padding(GonggiSpacing.lg)
-            .background(GonggiAmbientBackground(showGlow: false))
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("닫기") { onClose() }
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
-            }
-            .sheet(isPresented: $showCreate) {
-                CreateAssetFlowView(onClose: { showCreate = false })
-                    .presentationDetents([.medium, .large])
-            }
-        }
-    }
-
-    private func optionRow(
-        title: String,
-        subtitle: String,
-        icon: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button {
-            GonggiHaptics.medium()
-            action()
-        } label: {
-            HStack(spacing: GonggiSpacing.md) {
-                Image(systemName: icon)
-                    .font(.system(size: 22, weight: .light))
-                    .foregroundStyle(GonggiColors.accentTeal)
-                    .frame(width: 40)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(GonggiTypography.body(16))
-                        .foregroundStyle(GonggiColors.textPrimary)
-                    Text(subtitle)
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(GonggiColors.textTertiary)
-            }
-            .padding(GonggiSpacing.md)
-            .background(GonggiColors.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-        }
-        .buttonStyle(.plain)
     }
 }
 

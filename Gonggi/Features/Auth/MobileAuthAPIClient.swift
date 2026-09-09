@@ -173,6 +173,53 @@ actor MobileAuthAPIClient {
         return spaces
     }
 
+    func patchSpace(
+        accessToken: String,
+        spaceId: String,
+        body: [String: Any]
+    ) async throws -> [String: Any] {
+        var request = URLRequest(
+            url: config.apiBaseURL
+                .appendingPathComponent("api/gonggi/spaces")
+                .appendingPathComponent(spaceId)
+        )
+        request.httpMethod = "PATCH"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 30
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw MobileAuthAPIError.network
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw MobileAuthAPIError.network
+        }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard (200..<300).contains(http.statusCode) else {
+            let fallback: String
+            switch http.statusCode {
+            case 400: fallback = "입력한 공간 정보를 확인해주세요."
+            case 404: fallback = "공간을 찾을 수 없어요."
+            default: fallback = "공간 정보를 저장하지 못했어요."
+            }
+            throw MobileAuthAPIError.server(
+                code: (json?["error"] as? String) ?? "ERROR",
+                message: (json?["message"] as? String) ?? fallback,
+                status: http.statusCode
+            )
+        }
+        guard let json else { throw MobileAuthAPIError.invalidResponse }
+        if let space = json["space"] as? [String: Any] {
+            return space
+        }
+        return json
+    }
+
     /// Build 78 — soft-delete owned GonggiSpace (links cleaned server-side). Does not delete R2.
     func deleteSpace(accessToken: String, spaceId: String) async throws {
         var request = URLRequest(
