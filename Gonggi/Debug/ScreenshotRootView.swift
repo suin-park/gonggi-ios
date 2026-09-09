@@ -288,6 +288,53 @@ private struct ScreenshotAssetDetailFixtureView: View {
     }
 }
 
+private struct ScreenshotAssetPickerFixture: View {
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                GonggiAmbientBackground(showGlow: false)
+                VStack(spacing: GonggiSpacing.md) {
+                    ForEach(0 ..< 3, id: \.self) { idx in
+                        HStack(spacing: GonggiSpacing.md) {
+                            RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
+                                .fill(GonggiColors.surfaceElevated)
+                                .frame(width: 56, height: 56)
+                                .overlay {
+                                    Image(systemName: idx == 2 ? "photo" : "cube.fill")
+                                        .foregroundStyle(idx == 2 ? GonggiColors.textTertiary : GonggiColors.brandCyan)
+                                }
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(idx == 2 ? "준비 중 어셋" : "배치 가능 어셋 \(idx + 1)")
+                                    .font(GonggiTypography.body(16))
+                                    .foregroundStyle(GonggiColors.textPrimary)
+                                Text(idx == 2 ? "준비 필요" : "준비됨")
+                                    .font(GonggiTypography.caption(12))
+                                    .foregroundStyle(GonggiColors.textTertiary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(GonggiColors.textTertiary)
+                        }
+                        .padding(GonggiSpacing.md)
+                        .background(GonggiColors.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                        .opacity(idx == 2 ? 0.55 : 1)
+                    }
+                    Spacer()
+                }
+                .padding(GonggiSpacing.lg)
+            }
+            .navigationTitle("3D 오브젝트")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Text("닫기").foregroundStyle(GonggiColors.textSecondary)
+                }
+            }
+        }
+    }
+}
+
 private struct ScreenshotVREditMenuFixture: View {
     var body: some View {
         ZStack {
@@ -339,19 +386,31 @@ private struct ScreenshotVREditMenuFixture: View {
 private struct ScreenshotARDeniedFixture: View {
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: GonggiSpacing.md) {
-                Image(systemName: "arkit")
-                    .font(.system(size: 36, weight: .light))
-                    .foregroundStyle(.white.opacity(0.85))
-                Text(AssetARCopy.cameraNeeded)
-                    .font(GonggiTypography.body(16))
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, GonggiSpacing.lg)
-                Button("설정 열기") {}
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.brandCyan)
+            GonggiAmbientBackground(showGlow: false)
+            VStack(spacing: GonggiSpacing.lg) {
+                Spacer()
+                VStack(spacing: GonggiSpacing.md) {
+                    Image(systemName: "arkit")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(GonggiColors.brandCyan)
+                    Text(AssetARCopy.cameraNeeded)
+                        .font(GonggiTypography.body(16))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, GonggiSpacing.lg)
+                    Text("설정에서 카메라 접근을 허용한 뒤 다시 시도해 주세요.")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, GonggiSpacing.lg)
+                    SecondaryButton(title: "설정 열기", icon: "gear") {}
+                        .padding(.horizontal, GonggiSpacing.xl)
+                }
+                .padding(GonggiSpacing.lg)
+                .background(GonggiColors.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                .padding(.horizontal, GonggiSpacing.lg)
+                Spacer()
             }
             VStack {
                 HStack {
@@ -361,7 +420,7 @@ private struct ScreenshotARDeniedFixture: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, GonggiSpacing.md)
                         .padding(.vertical, GonggiSpacing.sm)
-                        .background(.black.opacity(0.45), in: Capsule())
+                        .background(GonggiColors.surfaceElevated, in: Capsule())
                 }
                 .padding()
                 Spacer()
