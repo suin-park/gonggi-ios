@@ -12,7 +12,7 @@
 | Icon full-bleed | `c25484d` |
 | Capture harden | `cf6e167` |
 | Docs / captures sync | `32b40e8` |
-| Completion tip | `be2f3f8` |
+| Completion tip | `58256bc` |
 
 Branch: `design/brand-redesign-v1`  
 CI capture: [run 34302805637](https://github.com/suin-park/gonggi-ios/actions/runs/34302805637) on `cf6e167`  
