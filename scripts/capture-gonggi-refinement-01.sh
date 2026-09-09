@@ -83,24 +83,17 @@ if [[ -n "${UDID_COMPACT:-}" ]]; then
     xcrun simctl terminate "${UDID_COMPACT}" "${BUNDLE_ID}" 2>/dev/null || true
     sleep 1
     xcrun simctl launch "${UDID_COMPACT}" "${BUNDLE_ID}" -mock "-screenshot-screen" "${screen}"
-    # SE / mini needs longer settle; verify process is up
     sleep 8
-    if ! xcrun simctl spawn "${UDID_COMPACT}" launchctl print system 2>/dev/null | grep -q "${BUNDLE_ID}"; then
-      echo "WARN: ${BUNDLE_ID} may not be running on compact; relaunching"
-      xcrun simctl launch "${UDID_COMPACT}" "${BUNDLE_ID}" -mock "-screenshot-screen" "${screen}" || true
-      sleep 6
-    fi
     xcrun simctl io "${UDID_COMPACT}" screenshot "${out}"
-    # Reject near-blank white captures
-    python3 - <<PY
+    SCREENSHOT_PATH="${out}" python3 - <<'PY'
 from PIL import Image
-from pathlib import Path
-p = Path(${out@Q} if False else r"""${out}""")
+import os, sys
+p = os.environ["SCREENSHOT_PATH"]
 im = Image.open(p).convert("L")
 mean = sum(im.getdata()) / (im.width * im.height)
 print(f"compact mean_luma={mean:.1f} size={im.size}")
 if mean > 240:
-    raise SystemExit(f"compact screenshot looks blank white: {p}")
+    sys.exit(f"compact screenshot looks blank white: {p}")
 PY
     echo "OK ${out}"
   done
@@ -128,6 +121,18 @@ if [[ ! -s "${VIDEO_OUT}" ]]; then
   exit 1
 fi
 echo "OK ${VIDEO_OUT}"
+
+# Optional: SpringBoard home capture showing installed AppIcon (after install above)
+if [[ "${CAPTURE_SPRINGBOARD_ICON:-1}" == "1" ]]; then
+  echo "--- Capturing SpringBoard app icon ---"
+  xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" 2>/dev/null || true
+  sleep 2
+  # Bring device to home (terminate leaves SpringBoard)
+  xcrun simctl io "${UDID}" screenshot "${SCREENSHOT_DIR}/app_icon_springboard.png" || true
+  if [[ -s "${SCREENSHOT_DIR}/app_icon_springboard.png" ]]; then
+    echo "OK ${SCREENSHOT_DIR}/app_icon_springboard.png"
+  fi
+fi
 
 xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" 2>/dev/null || true
 echo "Refinement-01 captures in ${SCREENSHOT_DIR}"
