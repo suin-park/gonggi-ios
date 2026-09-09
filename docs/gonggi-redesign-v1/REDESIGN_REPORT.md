@@ -1,4 +1,4 @@
-# Gonggi Brand Redesign V1 — Report
+# Gonggi Brand Redesign V1 ??Report
 
 **Status:** `READY_FOR_REDESIGN_VISUAL_REVIEW`  
 **Version lock:** MARKETING_VERSION `2.0` / CURRENT_PROJECT_VERSION `2` (unchanged)  
@@ -11,7 +11,7 @@
 | Redesign start (branch base) | `8466862` (`docs: record thumbnail revision CI results for 765639b`) |
 | Thumbnail implementation preserved | `765639b` |
 | Visual capture SHA | `a336363` |
-| Completion SHA | _(this docs commit)_ |
+| Completion SHA | _60b42f8_ |
 
 Branch: `design/brand-redesign-v1`  
 Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
@@ -30,8 +30,8 @@ Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
 | `C:\projects\whik\apps\cloud\public\gonggi\gonggi_app_logo_white.svg` | `docs/gonggi-redesign-v1/brand/logos/gonggi_app_logo_white.svg` |
 
 ### Logo conversion
-- SVG → PDF via svglib/reportlab (vector for Asset Catalog)
-- SVG → PNG via resvg for AppIcon composites
+- SVG ??PDF via svglib/reportlab (vector for Asset Catalog)
+- SVG ??PNG via resvg for AppIcon composites
 - iOS assets:
   - `GonggiLogoWhite.imageset` / `GonggiLogoBlue.imageset` (PDF, preserves-vector)
   - `AppIcon.appiconset` (navy + blue logo)
@@ -80,7 +80,7 @@ Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
 - SpaceThumbnailView revision cache (`765639b`)
 - LiveStatus / prepareViewer / account isolation
 - Capture / AR RealityKit / VR pipelines
-- Card tap → Detail vs “공간 보기” → VR
+- Card tap ??Detail vs ?�공�?보기????VR
 
 ### Skipped / NOT RUN
 - Real-device AR camera placement performance
@@ -99,7 +99,7 @@ Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
 ### Capture environment
 - Device: iPhone Simulator (CI `gonggi-ios-screenshots`, macos-15)
 - Resolution observed: `1179×2556`
-- Fixture: DEBUG `-mock -screenshot-screen …`
+- Fixture: DEBUG `-mock -screenshot-screen ??
 - Capture SHA: `a336363`
 
 ## Tests
@@ -108,8 +108,8 @@ Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
 |---|---|
 | Simulator Debug build | PASS (screenshot workflow) |
 | Screenshot verify | PASS (required set) |
-| Thumbnail revision (A–F) + related | Previously passed on `765639b` — not re-run as full suite this pass |
-| Full unit suite | **Not claimed GREEN** — baseline ~43 failures from prior CI remain the baseline |
+| Thumbnail revision (A?�F) + related | Previously passed on `765639b` ??not re-run as full suite this pass |
+| Full unit suite | **Not claimed GREEN** ??baseline ~43 failures from prior CI remain the baseline |
 | Redesign-specific unit tests | None added |
 
 New redesign-caused test failures: none identified in screenshot compile path. Full-suite delta not re-measured in this pass (Windows host; CI screenshot job only).
@@ -129,4 +129,4 @@ New redesign-caused test failures: none identified in screenshot compile path. F
 
 - Welcome on physical small device (SE) not separately captured (compact screen enum exists; not in CI matrix)
 - Live VR edit chrome / live AR camera feed still device-only (fixtures used for review)
-- After visual OK → decide whether to ship **2.0 (3)**
+- After visual OK ??decide whether to ship **2.0 (3)**
