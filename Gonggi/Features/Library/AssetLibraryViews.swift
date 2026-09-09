@@ -599,8 +599,8 @@ struct AssetDetailView: View {
         switch (raw ?? "NONE").uppercased() {
         case "READY": return "준비됨"
         case "PROCESSING": return "준비 중"
-        case "FAILED": return "실패"
-        default: return "미준비"
+        case "FAILED": return "준비되지 않음"
+        default: return "준비되지 않음"
         }
     }
 
@@ -667,9 +667,10 @@ struct AssetDetailView: View {
             }
             syncPolling()
         } catch let error as MobilePrepareARError {
-            actionError = error.userMessage
+            actionError = "AR 파일을 준비하지 못했어요. 다시 시도해주세요."
+            _ = error
         } catch {
-            actionError = "AR 준비에 실패했어요"
+            actionError = "AR 파일을 준비하지 못했어요. 다시 시도해주세요."
         }
     }
 

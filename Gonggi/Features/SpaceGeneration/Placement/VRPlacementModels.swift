@@ -316,9 +316,9 @@ enum AssetLibraryStatusPresentation: Equatable {
         switch self {
         case .complete: return "준비 완료"
         case .arPreparing: return "AR/공간 배치를 준비하는 중"
-        case .glbReadyArNeeded: return "AR/공간 배치 준비 필요"
-        case .notReady: return "AR/공간 배치 준비 필요"
-        case .arFailed: return "3D는 준비됐지만 AR 준비에 실패했어요"
+        case .glbReadyArNeeded: return "AR 준비가 필요해요"
+        case .notReady: return "AR 준비가 필요해요"
+        case .arFailed: return "AR 준비가 필요해요"
         }
     }
 
@@ -380,7 +380,7 @@ extension MobileAssetDTO {
         normalizedUsdzStatus == "NONE" || normalizedUsdzStatus.isEmpty
     }
 
-    /// Place CTA / picker: nil when selectable.
+    /// Place CTA / picker: nil when selectable. Failed detail omits under-button copy.
     var placementUnavailableReason: String? {
         if availableForPlacement, !(usdzUrl ?? "").isEmpty {
             return nil
@@ -389,9 +389,9 @@ extension MobileAssetDTO {
         case "PROCESSING":
             return "AR/공간 배치를 준비하는 중"
         case "FAILED":
-            return "3D는 준비됐지만 AR 준비에 실패했어요"
+            return nil
         default:
-            return "AR/공간 배치 준비가 필요해요"
+            return "AR 준비가 필요해요"
         }
     }
 }
