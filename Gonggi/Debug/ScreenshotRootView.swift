@@ -573,8 +573,8 @@ enum SpaceDetailLayoutFixture {
             note: "거실과 안방을 중심으로 촬영한 긴 메모입니다. 좌우 잘림이 없는지 확인합니다.",
             viewerURL: URL(string: "https://www.3d-locker.com/spaces/example"),
             localLatLongPath: path,
-            localLatLongRevisionToken: "rev:layout-fixture",
-            remoteImageURL: "https://example.invalid/layout-fixture.jpg"
+            remoteImageURL: "https://example.invalid/layout-fixture.jpg",
+            localLatLongRevisionToken: "rev:layout-fixture"
         )
     }
 
