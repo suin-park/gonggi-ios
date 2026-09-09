@@ -96,14 +96,7 @@ struct ScreenshotRootView: View {
                     onClose: {}
                 )
             case .assetPicker:
-                AssetPickerSheet(
-                    store: AssetLibraryStore.shared,
-                    title: "3D 오브젝트",
-                    showNonReadyDisabled: true,
-                    isAtCapacity: false,
-                    onSelect: { _ in },
-                    onClose: {}
-                )
+                ScreenshotAssetPickerFixture()
             case .vrEditMenu:
                 ScreenshotVREditMenuFixture()
             case .arCameraDenied:

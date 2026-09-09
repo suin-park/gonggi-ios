@@ -153,13 +153,14 @@ jobs:
         run: python3 scripts/verify-screenshots.py docs/gonggi-redesign-v1/screenshots
 
       - name: Upload screenshot artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gonggi-redesign-v1-visual
           path: |
             docs/gonggi-redesign-v1/screenshots/**
             docs/gonggi-redesign-v1/videos/**
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Summary
         run: |
