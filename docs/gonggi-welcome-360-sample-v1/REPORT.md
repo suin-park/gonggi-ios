@@ -70,7 +70,7 @@
 
 ### Git
 - branch: `design/brand-redesign-v1`
-- SHA: (see commit after this change)
+- SHA: `8e53935` (feature) + docs screenshots follow-up
 
 ### Verdict
 **READY_FOR_WELCOME_360_SAMPLE_VISUAL_REVIEW**
