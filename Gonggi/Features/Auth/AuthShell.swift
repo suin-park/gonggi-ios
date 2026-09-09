@@ -237,22 +237,23 @@ struct AuthShellView: View {
     @Environment(\.sizeCategory) private var sizeCategory
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    /// Cropped artwork width — ~45% larger visual than prior square-canvas 196pt display (~132pt content).
+    /// Cropped artwork width. Prior square canvas at 196pt showed ≈132pt of ink;
+    /// +45% visual target ≈191pt — keep room for sphere + three auth actions.
     private var welcomeLogoWidth: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 220 }
-        return 280
+        if dynamicTypeSize.isAccessibilitySize { return 168 }
+        return 200
     }
 
     private var decorationHeight: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 120 }
-        if sizeCategory >= .extraExtraLarge { return 150 }
-        return 180
+        if dynamicTypeSize.isAccessibilitySize { return 100 }
+        if sizeCategory >= .extraExtraLarge { return 120 }
+        return 140
     }
 
     private var sphereDiameter: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 120 }
-        if sizeCategory >= .extraExtraLarge { return 150 }
-        return 168
+        if dynamicTypeSize.isAccessibilitySize { return 100 }
+        if sizeCategory >= .extraExtraLarge { return 120 }
+        return 140
     }
 
     var body: some View {
@@ -430,8 +431,8 @@ struct EmailContinueView: View {
         case resetHint = "비밀번호 재설정"
     }
 
-    /// ~25% larger than prior visual (~140pt square ≈ 94pt content → ~176pt cropped).
-    private let emailLogoWidth: CGFloat = 176
+    /// Prior square canvas 140pt ≈94pt ink; +25% visual ≈118pt on cropped asset.
+    private let emailLogoWidth: CGFloat = 120
 
     var body: some View {
         NavigationStack {

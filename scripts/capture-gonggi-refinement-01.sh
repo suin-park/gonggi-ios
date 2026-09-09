@@ -83,8 +83,25 @@ if [[ -n "${UDID_COMPACT:-}" ]]; then
     xcrun simctl terminate "${UDID_COMPACT}" "${BUNDLE_ID}" 2>/dev/null || true
     sleep 1
     xcrun simctl launch "${UDID_COMPACT}" "${BUNDLE_ID}" -mock "-screenshot-screen" "${screen}"
-    sleep "${SETTLE_SEC}"
+    # SE / mini needs longer settle; verify process is up
+    sleep 8
+    if ! xcrun simctl spawn "${UDID_COMPACT}" launchctl print system 2>/dev/null | grep -q "${BUNDLE_ID}"; then
+      echo "WARN: ${BUNDLE_ID} may not be running on compact; relaunching"
+      xcrun simctl launch "${UDID_COMPACT}" "${BUNDLE_ID}" -mock "-screenshot-screen" "${screen}" || true
+      sleep 6
+    fi
     xcrun simctl io "${UDID_COMPACT}" screenshot "${out}"
+    # Reject near-blank white captures
+    python3 - <<PY
+from PIL import Image
+from pathlib import Path
+p = Path(${out@Q} if False else r"""${out}""")
+im = Image.open(p).convert("L")
+mean = sum(im.getdata()) / (im.width * im.height)
+print(f"compact mean_luma={mean:.1f} size={im.size}")
+if mean > 240:
+    raise SystemExit(f"compact screenshot looks blank white: {p}")
+PY
     echo "OK ${out}"
   done
   xcrun simctl terminate "${UDID_COMPACT}" "${BUNDLE_ID}" 2>/dev/null || true
