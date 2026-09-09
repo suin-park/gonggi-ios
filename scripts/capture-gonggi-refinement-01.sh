@@ -69,42 +69,7 @@ for entry in "${SCREENS[@]}"; do
   capture_one "${entry%%:*}" "${entry##*:}"
 done
 
-# Compact device screens (optional UDID_COMPACT)
-if [[ -n "${UDID_COMPACT:-}" ]]; then
-  echo "Installing on compact simulator ${UDID_COMPACT}"
-  xcrun simctl boot "${UDID_COMPACT}" 2>/dev/null || true
-  xcrun simctl bootstatus "${UDID_COMPACT}" -b
-  xcrun simctl install "${UDID_COMPACT}" "${APP_PATH}"
-  xcrun simctl status_bar "${UDID_COMPACT}" override --time "9:41" --batteryState charged --batteryLevel 100 2>/dev/null || true
-  for pair in "welcomeCompact:welcome_compact.png" "welcomeSpaceLightCompact:welcome_space_light_compact.png"; do
-    screen="${pair%%:*}"; filename="${pair##*:}"
-    out="${SCREENSHOT_DIR}/${filename}"
-    echo "--- Compact ${filename} ---"
-    xcrun simctl terminate "${UDID_COMPACT}" "${BUNDLE_ID}" 2>/dev/null || true
-    sleep 1
-    xcrun simctl launch "${UDID_COMPACT}" "${BUNDLE_ID}" -mock "-screenshot-screen" "${screen}"
-    sleep 8
-    xcrun simctl io "${UDID_COMPACT}" screenshot "${out}"
-    SCREENSHOT_PATH="${out}" python3 - <<'PY'
-from PIL import Image
-import os, sys
-p = os.environ["SCREENSHOT_PATH"]
-im = Image.open(p).convert("L")
-mean = sum(im.getdata()) / (im.width * im.height)
-print(f"compact mean_luma={mean:.1f} size={im.size}")
-if mean > 240:
-    sys.exit(f"compact screenshot looks blank white: {p}")
-PY
-    echo "OK ${out}"
-  done
-  xcrun simctl terminate "${UDID_COMPACT}" "${BUNDLE_ID}" 2>/dev/null || true
-else
-  echo "UDID_COMPACT not set — capturing compact screens on primary simulator"
-  capture_one "welcomeCompact" "welcome_compact.png"
-  capture_one "welcomeSpaceLightCompact" "welcome_space_light_compact.png"
-fi
-
-# Space-light welcome video (~16s = two 8s loops)
+# Space-light welcome video BEFORE compact (avoid losing video if compact flakes)
 VIDEO_OUT="${SCREENSHOT_DIR}/welcome_space_light.mp4"
 echo "--- Recording ${VIDEO_OUT} ---"
 xcrun simctl terminate "${UDID}" "${BUNDLE_ID}" 2>/dev/null || true
@@ -121,6 +86,84 @@ if [[ ! -s "${VIDEO_OUT}" ]]; then
   exit 1
 fi
 echo "OK ${VIDEO_OUT}"
+
+mean_luma_ok() {
+  local path="$1"
+  SCREENSHOT_PATH="${path}" python3 - <<'PY'
+from PIL import Image
+import os, sys
+p = os.environ["SCREENSHOT_PATH"]
+im = Image.open(p).convert("L")
+pixels = list(im.getdata())
+mean = sum(pixels) / (im.width * im.height)
+print(f"mean_luma={mean:.1f} size={im.size} path={p}")
+sys.exit(0 if mean <= 240 else 1)
+PY
+}
+
+capture_compact_one() {
+  local udid="$1"
+  local screen="$2"
+  local filename="$3"
+  local out="${SCREENSHOT_DIR}/${filename}"
+  local attempt
+  for attempt in 1 2 3; do
+    echo "--- Compact ${filename} (attempt ${attempt}/3 on ${udid}) ---"
+    xcrun simctl terminate "${udid}" "${BUNDLE_ID}" 2>/dev/null || true
+    sleep 1
+    if [[ "${attempt}" -ge 2 ]]; then
+      echo "Reinstalling app on compact simulator before retry"
+      xcrun simctl uninstall "${udid}" "${BUNDLE_ID}" 2>/dev/null || true
+      xcrun simctl install "${udid}" "${APP_PATH}"
+      sleep 2
+    fi
+    if ! xcrun simctl launch "${udid}" "${BUNDLE_ID}" -mock "-screenshot-screen" "${screen}"; then
+      echo "Launch failed on attempt ${attempt}"
+      sleep 3
+      continue
+    fi
+    # Second launch / Canvas-heavy screens need longer settle on SE-class sims
+    sleep $((8 + attempt * 4))
+    xcrun simctl io "${udid}" screenshot "${out}"
+    if [[ ! -s "${out}" ]]; then
+      echo "Empty screenshot on attempt ${attempt}"
+      continue
+    fi
+    if mean_luma_ok "${out}"; then
+      echo "OK ${out}"
+      return 0
+    fi
+    echo "Blank/white compact screenshot on attempt ${attempt}; retrying"
+  done
+  return 1
+}
+
+# Compact device screens (optional UDID_COMPACT)
+if [[ -n "${UDID_COMPACT:-}" ]]; then
+  echo "Installing on compact simulator ${UDID_COMPACT}"
+  xcrun simctl boot "${UDID_COMPACT}" 2>/dev/null || true
+  xcrun simctl bootstatus "${UDID_COMPACT}" -b
+  # Extra settle after first boot / data migration (CI SE often needs this)
+  sleep 5
+  xcrun simctl install "${UDID_COMPACT}" "${APP_PATH}"
+  xcrun simctl status_bar "${UDID_COMPACT}" override --time "9:41" --batteryState charged --batteryLevel 100 2>/dev/null || true
+  for pair in "welcomeCompact:welcome_compact.png" "welcomeSpaceLightCompact:welcome_space_light_compact.png"; do
+    screen="${pair%%:*}"; filename="${pair##*:}"
+    if ! capture_compact_one "${UDID_COMPACT}" "${screen}" "${filename}"; then
+      echo "WARN: compact capture failed for ${filename}; falling back to primary ${UDID}"
+      capture_one "${screen}" "${filename}"
+      if ! mean_luma_ok "${SCREENSHOT_DIR}/${filename}"; then
+        echo "Primary fallback also blank for ${filename}"
+        exit 1
+      fi
+    fi
+  done
+  xcrun simctl terminate "${UDID_COMPACT}" "${BUNDLE_ID}" 2>/dev/null || true
+else
+  echo "UDID_COMPACT not set — capturing compact screens on primary simulator"
+  capture_one "welcomeCompact" "welcome_compact.png"
+  capture_one "welcomeSpaceLightCompact" "welcome_space_light_compact.png"
+fi
 
 # Optional: SpringBoard home capture showing installed AppIcon (after install above)
 if [[ "${CAPTURE_SPRINGBOARD_ICON:-1}" == "1" ]]; then
