@@ -42,7 +42,7 @@
 - files: SpaceDetailView/EditView/Metadata, SpaceJobRecord, CaptureModels, reconciler, AppState, ProfileView, project.yml
 - tests: SpaceDetailMetadataTests.swift
 - screenshots: docs/gonggi-space-detail-service-v1/screenshots (Windows mocks)
-- SHA: (pending commit)
+- SHA: 84ed69b1393f77e999f573aa1fe1f01f68a0ae8e
 
 ### Verdict
 READY_FOR_GONGGI_2_0_5_INTEGRATION
