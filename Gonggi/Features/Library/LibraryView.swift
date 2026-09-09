@@ -53,6 +53,15 @@ struct LibraryView: View {
                 viewerLaunch = nil
                 selectedSpace = nil
             }
+            .onChange(of: appState.preferredLibraryCategory) { _, category in
+                guard let category else { return }
+                self.category = category
+                appState.preferredLibraryCategory = nil
+            }
+            .onChange(of: appState.libraryRefreshEpoch) { _, _ in
+                category = .spaces
+                appState.ensureSpaceGenerationPolling()
+            }
             .overlay {
                 if isPreparingViewer {
                     ZStack {

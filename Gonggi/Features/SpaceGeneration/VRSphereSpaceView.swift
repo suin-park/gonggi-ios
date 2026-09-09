@@ -73,6 +73,8 @@ struct VRSphereSpaceView: View {
     @State private var didConsumeExternalPending = false
     @State private var discardDraftOnExitEdit = false
     @State private var editBaselineLayout: VRPlacementLayout?
+    @State private var showExitEditConfirm = false
+    @State private var isExitingToLibrary = false
     @State private var placementBlockedMessage: String?
     /// DEBUG lighting panel state (Release always baseline; flag via UserDefaults only).
     @State private var lightingPoCActive = false
@@ -227,6 +229,8 @@ struct VRSphereSpaceView: View {
                 spaceLinkTask = nil
                 hideRepairGuidancePresentation()
                 selectiveRepairHintBecameVisible = false
+                isExitingToLibrary = false
+                showExitEditConfirm = false
             }
             .onDisappear {
                 // Do not stop audio here — host owns fade/transition across stack pops.
@@ -435,7 +439,7 @@ struct VRSphereSpaceView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(true)
 
-            backButton
+            topLeadingControls
                 .padding(.leading, 16)
                 .padding(.top, 12)
                 .zIndex(2)
@@ -625,6 +629,33 @@ struct VRSphereSpaceView: View {
         }
     }
 
+    private var topLeadingControls: some View {
+        HStack(spacing: 8) {
+            backButton
+            if showsLibraryExitButton {
+                libraryExitButton
+            }
+        }
+        .confirmationDialog(
+            "편집을 종료할까요?",
+            isPresented: $showExitEditConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("계속 편집", role: .cancel) {}
+            Button("변경사항 버리고 나가기", role: .destructive) {
+                exitEditMode()
+                performExitToLibrary()
+            }
+        } message: {
+            Text("저장하지 않은 변경사항이 사라질 수 있어요.")
+        }
+    }
+
+    private var showsLibraryExitButton: Bool {
+        // Authenticated app viewer only — Welcome sample / public share use other chrome.
+        authSession.isSignedIn
+    }
+
     private var backButton: some View {
         Button {
             GonggiHaptics.light()
@@ -634,13 +665,68 @@ struct VRSphereSpaceView: View {
                 onClose()
             }
         } label: {
-            Image(systemName: "chevron.backward")
+            Image(systemName: "chevron.left")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 40, height: 40)
                 .background(Color.black.opacity(0.45))
                 .clipShape(Circle())
         }
+        .accessibilityLabel("이전 공간으로 돌아가기")
+        .disabled(spaceLinkTransitionLocked || isExitingToLibrary)
+    }
+
+    private var libraryExitButton: some View {
+        Button {
+            GonggiHaptics.light()
+            requestExitToLibrary()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "archivebox")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("보관함")
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .background(Color.black.opacity(0.45))
+            .clipShape(Capsule())
+        }
+        .accessibilityLabel("VR을 닫고 보관함으로 이동")
+        .disabled(spaceLinkTransitionLocked || isExitingToLibrary || spaceLinkLinking)
+    }
+
+    private func requestExitToLibrary() {
+        guard !isExitingToLibrary else { return }
+        guard !spaceLinkTransitionLocked else { return }
+        if interactionMode == .edit, discardDraftOnExitEdit {
+            showExitEditConfirm = true
+            return
+        }
+        if interactionMode == .edit {
+            exitEditMode()
+        }
+        performExitToLibrary()
+    }
+
+    private func performExitToLibrary() {
+        guard !isExitingToLibrary else { return }
+        isExitingToLibrary = true
+        showConfirmSheet = false
+        captureTarget = nil
+        actionCardLink = nil
+        safariURL = nil
+        placementTask?.cancel()
+        placementTask = nil
+        spaceLinkTask?.cancel()
+        spaceLinkTask = nil
+        cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
+        motionHintTask?.cancel()
+        motionHintTask = nil
+        appState.exitVRToLibrary()
     }
 
     private var panoramaHost: some View {

@@ -130,6 +130,16 @@ struct SpaceVRNavigationHost: View {
             sourceHoldTask?.cancel()
             Task { await SpaceAudioManager.shared.fadeOutAndStop() }
         }
+        .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
+            // Root exit / account reset — drop hotspot stack without stepwise pop animation.
+            sourceHoldTask?.cancel()
+            sourceHoldTask = nil
+            isTransitioning = false
+            isCrossfading = false
+            deferSourceHold = false
+            stack.removeAll()
+            Task { await SpaceAudioManager.shared.fadeOutAndStop() }
+        }
     }
 
     private func opacity(for session: SpaceViewerSession, isTop: Bool) -> Double {

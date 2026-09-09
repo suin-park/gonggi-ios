@@ -18,6 +18,12 @@ final class AppState: ObservableObject {
     @Published var spaceLinkUserMessage: String?
     /// Bumped on account reset so views dismiss open VR covers.
     @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
+    /// One-shot Library segment preference after `exitVRToLibrary()` (consumed by LibraryView).
+    @Published var preferredLibraryCategory: LibraryCategory?
+    /// Soft Library refresh signal — does not block tab transition.
+    @Published private(set) var libraryRefreshEpoch: UInt64 = 0
+    /// Debounce repeated 「보관함」 taps while covers tear down.
+    private var isExitingVRToLibrary = false
 
     let spaceService: SpaceGenerationService
     let jobStore: SpaceJobStore
@@ -93,6 +99,8 @@ final class AppState: ObservableObject {
         pendingViewerLaunch = nil
         pendingAssetPlacement = nil
         spaceLinkUserMessage = nil
+        preferredLibraryCategory = nil
+        isExitingVRToLibrary = false
         forceDismissViewerEpoch &+= 1
         spaceLinkFinalizeTask?.cancel()
         rebuildSpaces()
@@ -100,6 +108,42 @@ final class AppState: ObservableObject {
 
     func selectTab(_ tab: AppTab) {
         selectedTab = tab
+    }
+
+    /// One-tap VR exit: clear viewer presentation + hotspot stack (via cover dismiss),
+    /// select Library → 공간, then soft refresh. Does not call nested `dismiss()` loops.
+    func exitVRToLibrary() {
+        guard !isExitingVRToLibrary else { return }
+        isExitingVRToLibrary = true
+        let generation = AuthSessionGeneration.current
+
+        pendingViewerJobId = nil
+        pendingViewerError = nil
+        pendingViewerLaunch = nil
+        preferredLibraryCategory = .spaces
+        selectedTab = .library
+        forceDismissViewerEpoch &+= 1
+        libraryRefreshEpoch &+= 1
+
+        ensureSpaceGenerationPolling()
+        Task { @MainActor in
+            defer {
+                if AuthSessionGeneration.isCurrent(generation) {
+                    isExitingVRToLibrary = false
+                }
+            }
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
+            guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
+                rebuildSpaces()
+                return
+            }
+            await SpaceLibraryReconciler.shared.reconcile(
+                accessToken: token,
+                generation: generation
+            )
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
+            rebuildSpaces()
+        }
     }
 
     func startSpaceGeneration(from result: DirectionCaptureResult) {
