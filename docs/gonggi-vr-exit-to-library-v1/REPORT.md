@@ -1,27 +1,27 @@
-## VR One-Tap Exit to Library
+﻿## VR One-Tap Exit to Library
 
 ### Root cause
 - classification: **VNE1** (primary) + **VNE5** (back pops one) + **VNE3** (Detail remains after cover dismiss)
 - current navigation:
-  - Library/Home → `SpaceDetailView` via `NavigationStack.navigationDestination`
-  - VR via single `fullScreenCover(item: $viewerLaunch)` → `SpaceVRNavigationHost`
+  - Library/Home ??`SpaceDetailView` via `NavigationStack.navigationDestination`
+  - VR via single `fullScreenCover(item: $viewerLaunch)` ??`SpaceVRNavigationHost`
   - Hotspot hops append `@State stack: [SpaceViewerSession]` inside host (not NavigationStack path)
 - why repeated back was required:
-  - `chevron` → `onClose` → host `removeLast()` one hop at a time
+  - `chevron` ??`onClose` ??host `removeLast()` one hop at a time
   - only when `stack.count == 1` does cover dismiss
   - Detail may still sit on the outer NavigationStack
 
 ### UI
-- previous button: `chevron.left` circle — pops previous hotspot space (unchanged semantics)
-- library button: `archivebox` + 「보관함」 capsule (signed-in only)
+- previous button: `chevron.left` circle ??pops previous hotspot space (unchanged semantics)
+- library button: `archivebox` + ?뚮낫愿?ⓦ?capsule (signed-in only)
 - placement: top-leading HStack under safe area, beside back; trailing toolbar unchanged
 - accessibility:
-  - back: 「이전 공간으로 돌아가기」
-  - library: 「VR을 닫고 보관함으로 이동」
+  - back: ?뚯씠??怨듦컙?쇰줈 ?뚯븘媛湲겹?
+  - library: ?똙R???リ퀬 蹂닿??⑥쑝濡??대룞??
 
 ### Navigation
 - router action: `AppState.exitVRToLibrary()`
-- viewer history reset: host clears `stack` on `forceDismissViewerEpoch`; cover binding → `nil`
+- viewer history reset: host clears `stack` on `forceDismissViewerEpoch`; cover binding ??`nil`
 - navigation path reset: Home/Library clear `selectedSpace`; Detail `dismiss()` via existing epoch handler
 - selected tab: `.library`
 - library section: `preferredLibraryCategory = .spaces` (consumed by `LibraryView`)
@@ -35,10 +35,10 @@
 - observers: account reset clears exit flags; epoch dismisses all covers
 
 ### Edge cases
-- unsaved edit: confirm only when `discardDraftOnExitEdit` (pending placement rollback path); normal edit uses local autosave — no fake warning
+- unsaved edit: confirm only when `discardDraftOnExitEdit` (pending placement rollback path); normal edit uses local autosave ??no fake warning
 - pending request: disabled during `spaceLinkTransitionLocked` / linking; exit debounced
-- public viewer: no in-app public VR chrome — N/A; button gated by `authSession.isSignedIn`
-- Welcome sample: separate `WelcomePanoramaSampleView` 「닫기」 only — no 보관함
+- public viewer: no in-app public VR chrome ??N/A; button gated by `authSession.isSignedIn`
+- Welcome sample: separate `WelcomePanoramaSampleView` ?뚮떕湲겹?only ??no 蹂닿???
 - account switch: `applyAccountPresentationReset` clears preferred category + bumps epoch
 
 ### Tests
@@ -58,7 +58,7 @@
 
 ### iOS
 - base SHA: 8fb0faf4e1b6b5ecbc18a4ee5f7bdb5ee35e83cd
-- final SHA: (pin after commit)
+- final SHA: a055f97503a7e61a358cdd74f05af29efd93aa9f
 - MARKETING_VERSION: 2.0
 - CURRENT_PROJECT_VERSION: 5
 - version changed: NO
@@ -71,3 +71,4 @@
 
 ### Verdict
 READY_FOR_VR_EXIT_TO_LIBRARY_VISUAL_REVIEW
+
