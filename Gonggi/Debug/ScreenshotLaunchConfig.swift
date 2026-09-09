@@ -8,7 +8,13 @@ enum ScreenshotScreen: String, CaseIterable {
     case welcomeReduceMotion
     case welcomeDynamicType
     case welcomeCompact
+    case welcomeSpaceLight
+    case welcomeSpaceLightDynamicType
+    case welcomeSpaceLightCompact
+    case welcomeSpaceLightReduceMotion
+    case spaceLightStoryboard
     case loginEmail
+    case loginEmailKeyboard
     case home
     case recordMode
     case capture30
@@ -38,14 +44,20 @@ enum ScreenshotScreen: String, CaseIterable {
     case arCameraDenied
     case appIconPreview
 
-    /// Artifact filename (without directory) — redesign V1 naming.
+    /// Artifact filename (without directory).
     var artifactFilename: String {
         switch self {
-        case .welcome: return "00_welcome_after.png"
-        case .welcomeReduceMotion: return "00_welcome_reduce_motion.png"
-        case .welcomeDynamicType: return "00_welcome_dynamic_type.png"
-        case .welcomeCompact: return "00_welcome_compact.png"
-        case .loginEmail: return "00_login_email_after.png"
+        case .welcome: return "welcome_logo_refined.png"
+        case .welcomeReduceMotion: return "welcome_reduce_motion.png"
+        case .welcomeDynamicType: return "welcome_dynamic_type.png"
+        case .welcomeCompact: return "welcome_compact.png"
+        case .welcomeSpaceLight: return "welcome_space_light.png"
+        case .welcomeSpaceLightDynamicType: return "welcome_space_light_dynamic_type.png"
+        case .welcomeSpaceLightCompact: return "welcome_space_light_compact.png"
+        case .welcomeSpaceLightReduceMotion: return "welcome_space_light_reduce_motion.png"
+        case .spaceLightStoryboard: return "space_light_storyboard.png"
+        case .loginEmail: return "login_email.png"
+        case .loginEmailKeyboard: return "login_email_keyboard.png"
         case .home: return "01_home_after.png"
         case .recordMode: return "01_record_mode_after.png"
         case .capture30: return "02_capture_30.png"
@@ -76,6 +88,15 @@ enum ScreenshotScreen: String, CaseIterable {
         case .appIconPreview: return "10_app_icon_preview.png"
         }
     }
+
+    var usesSpaceLightDecoration: Bool {
+        switch self {
+        case .welcomeSpaceLight, .welcomeSpaceLightDynamicType, .welcomeSpaceLightCompact, .welcomeSpaceLightReduceMotion:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 enum ScreenshotLaunchConfig {
@@ -92,6 +113,12 @@ enum ScreenshotLaunchConfig {
     static var forceReduceMotion: Bool {
         ProcessInfo.processInfo.arguments.contains("-screenshot-reduce-motion")
             || screen == .welcomeReduceMotion
+            || screen == .welcomeSpaceLightReduceMotion
+    }
+
+    static var authDecoration: AuthWelcomeDecoration {
+        if screen?.usesSpaceLightDecoration == true { return .spaceLight }
+        return .wireframeSphere
     }
 }
 #endif

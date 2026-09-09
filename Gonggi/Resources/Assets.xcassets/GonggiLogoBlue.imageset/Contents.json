@@ -1,8 +1,19 @@
 {
   "images": [
     {
-      "filename": "gonggi_app_logo_blue.pdf",
-      "idiom": "universal"
+      "filename": "gonggi_app_logo_blue.png",
+      "idiom": "universal",
+      "scale": "1x"
+    },
+    {
+      "filename": "gonggi_app_logo_blue@2x.png",
+      "idiom": "universal",
+      "scale": "2x"
+    },
+    {
+      "filename": "gonggi_app_logo_blue@3x.png",
+      "idiom": "universal",
+      "scale": "3x"
     }
   ],
   "info": {
@@ -10,7 +21,6 @@
     "version": 1
   },
   "properties": {
-    "preserves-vector-representation": true,
     "template-rendering-intent": "original"
   }
 }

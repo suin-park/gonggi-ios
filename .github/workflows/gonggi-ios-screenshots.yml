@@ -3,6 +3,15 @@ name: Gonggi iOS Screenshots
 # Manual only — do not run on every push (macOS runner cost).
 on:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: "Capture profile"
+        required: true
+        default: refinement-01
+        type: choice
+        options:
+          - refinement-01
+          - redesign-v1-full
 
 concurrency:
   group: gonggi-ios-screenshots
@@ -77,6 +86,7 @@ jobs:
           data = json.loads(out)
           runtimes = sorted([k for k in data.get("devices", {}) if "iOS" in k], reverse=True)
           chosen = None
+          compact = None
           for rt in runtimes:
               devices = data["devices"][rt]
               iphones = [d for d in devices if d.get("isAvailable") and "iPhone" in d.get("name", "")]
@@ -91,7 +101,12 @@ jobs:
               if not chosen and iphones:
                   d = iphones[0]
                   chosen = (d["udid"], d["name"], rt)
-              if chosen:
+              for d in iphones:
+                  name = d.get("name", "")
+                  if "SE" in name or "mini" in name.lower():
+                      compact = (d["udid"], name, rt)
+                      break
+              if chosen and compact:
                   break
           if not chosen:
               sys.exit("No iPhone simulator found")
@@ -99,10 +114,17 @@ jobs:
           print(f"device_name={name}")
           print(f"runtime={runtime}")
           print(f"udid={udid}")
+          if compact:
+              print(f"compact_udid={compact[0]}")
+              print(f"compact_name={compact[1]}")
           PY
           echo "device_name=$(grep '^device_name=' sim-info.txt | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
           echo "runtime=$(grep '^runtime=' sim-info.txt | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
           echo "udid=$(grep '^udid=' sim-info.txt | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+          if grep -q '^compact_udid=' sim-info.txt; then
+            echo "compact_udid=$(grep '^compact_udid=' sim-info.txt | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+            echo "compact_name=$(grep '^compact_name=' sim-info.txt | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Boot simulator
         run: |
@@ -132,7 +154,23 @@ jobs:
           echo "VIRTUAL_ENV=${{ github.workspace }}/.venv" >> "$GITHUB_ENV"
           echo "${{ github.workspace }}/.venv/bin" >> "$GITHUB_PATH"
 
-      - name: Capture screenshots + welcome video
+      - name: Capture refinement-01
+        if: ${{ github.event.inputs.profile == 'refinement-01' || github.event.inputs.profile == '' || github.event.inputs.profile == null }}
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          UDID_COMPACT: ${{ steps.sim.outputs.compact_udid }}
+          SCREENSHOT_DIR: docs/gonggi-redesign-v1/refinement-01
+        run: |
+          set -euo pipefail
+          mkdir -p "${SCREENSHOT_DIR}"
+          chmod +x scripts/capture-gonggi-refinement-01.sh
+          scripts/capture-gonggi-refinement-01.sh
+          python3 scripts/make-refinement-01-contact-sheet.py \
+            docs/gonggi-redesign-v1/refinement-01 \
+            docs/gonggi-redesign-v1/refinement-01/contact_sheet.png
+
+      - name: Capture redesign-v1-full
+        if: ${{ github.event.inputs.profile == 'redesign-v1-full' }}
         env:
           UDID: ${{ steps.sim.outputs.udid }}
           SCREENSHOT_DIR: docs/gonggi-redesign-v1/screenshots
@@ -142,15 +180,10 @@ jobs:
           mkdir -p "${SCREENSHOT_DIR}" "${VIDEO_DIR}"
           chmod +x scripts/capture-gonggi-screenshots.sh
           scripts/capture-gonggi-screenshots.sh
-
-      - name: Create contact sheet
-        run: |
           python3 scripts/make-contact-sheet.py \
             docs/gonggi-redesign-v1/screenshots \
             docs/gonggi-redesign-v1/screenshots/contact_sheet.png
-
-      - name: Verify screenshots
-        run: python3 scripts/verify-screenshots.py docs/gonggi-redesign-v1/screenshots
+          python3 scripts/verify-screenshots.py docs/gonggi-redesign-v1/screenshots
 
       - name: Upload screenshot artifact
         if: always()
@@ -160,15 +193,14 @@ jobs:
           path: |
             docs/gonggi-redesign-v1/screenshots/**
             docs/gonggi-redesign-v1/videos/**
+            docs/gonggi-redesign-v1/refinement-01/**
           if-no-files-found: warn
 
       - name: Summary
         run: |
-          echo "## Gonggi Brand Redesign V1 Screenshots" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Gonggi Screenshots (${{ github.event.inputs.profile }})" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Device:** ${{ steps.sim.outputs.device_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Compact:** ${{ steps.sim.outputs.compact_name }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Runtime:** ${{ steps.sim.outputs.runtime }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Artifact:** \`gonggi-redesign-v1-visual\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **SHA:** $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
-          ls -la docs/gonggi-redesign-v1/screenshots/ || true
-          ls -la docs/gonggi-redesign-v1/videos/ || true
+          ls -la docs/gonggi-redesign-v1/refinement-01/ || true

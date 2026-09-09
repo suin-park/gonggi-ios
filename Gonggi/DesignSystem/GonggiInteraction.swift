@@ -58,8 +58,10 @@ struct GonggiBrandMark: View {
 
         var logoWidth: CGFloat {
             switch self {
-            case .large: return 168
-            case .compact: return 120
+            // Cropped assets make the same point width read larger than the old
+            // square-canvas PDF. Keep home mark close to prior visual mass.
+            case .large: return 132
+            case .compact: return 96
             }
         }
     }

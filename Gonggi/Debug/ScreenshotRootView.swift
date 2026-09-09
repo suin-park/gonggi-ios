@@ -10,16 +10,25 @@ struct ScreenshotRootView: View {
         Group {
             switch screen {
             case .welcome, .welcomeCompact:
-                AuthShellView(session: AuthSessionController.shared)
+                AuthShellView(session: AuthSessionController.shared, decoration: .wireframeSphere)
             case .welcomeReduceMotion:
-                // Reduce Motion is forced inside GonggiWireframeSphereView via screenshot screen id
-                // (accessibilityReduceMotion env key is not writable on all SDKs).
-                AuthShellView(session: AuthSessionController.shared)
+                AuthShellView(session: AuthSessionController.shared, decoration: .wireframeSphere)
             case .welcomeDynamicType:
-                AuthShellView(session: AuthSessionController.shared)
+                AuthShellView(session: AuthSessionController.shared, decoration: .wireframeSphere)
                     .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
+            case .welcomeSpaceLight, .welcomeSpaceLightCompact:
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
+            case .welcomeSpaceLightReduceMotion:
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
+            case .welcomeSpaceLightDynamicType:
+                AuthShellView(session: AuthSessionController.shared, decoration: .spaceLight)
+                    .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
+            case .spaceLightStoryboard:
+                GonggiSpaceLightStoryboardView()
             case .loginEmail:
                 EmailContinueView(session: AuthSessionController.shared)
+            case .loginEmailKeyboard:
+                EmailContinueView(session: AuthSessionController.shared, autofocusEmail: true)
             case .home, .profile:
                 MainTabView()
                     .onAppear {
