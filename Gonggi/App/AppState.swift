@@ -77,7 +77,7 @@ final class AppState: ObservableObject {
         if let screen = ScreenshotLaunchConfig.screen {
             switch screen {
             case .home: selectedTab = .home
-            case .library: selectedTab = .library
+            case .librarySpaces: selectedTab = .library
             case .profile: selectedTab = .profile
             default: break
             }
