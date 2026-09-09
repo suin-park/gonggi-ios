@@ -71,11 +71,15 @@ struct SpaceThumbnailView: View {
     @ViewBuilder
     private var content: some View {
         if let image {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: width, height: height)
-                .frame(maxWidth: width == nil ? .infinity : width)
+            // Overlay so equirect / wide bitmaps cannot expand parent width
+            // (scaledToFill ideal size previously widened ScrollView content and clipped leading text).
+            Color.clear
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .overlay {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                }
                 .clipped()
                 .accessibilityHidden(true)
         } else if showsActivityOverlay, space.showsActivityIndicator {

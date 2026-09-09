@@ -1,6 +1,9 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct SpaceDetailView: View {
     @EnvironmentObject private var appState: AppState
@@ -138,20 +141,43 @@ struct SpaceDetailView: View {
     }
 
     private var detailChrome: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                heroSection
-                metaSection
-                if let note = liveSpace.note {
-                    memoryNoteSection(note)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+                    heroSection
+                    metaSection
+                    if let note = liveSpace.note {
+                        memoryNoteSection(note)
+                    }
+                    spaceAudioSection
+                    actionsSection
+                        .id("space-detail-actions")
                 }
-                spaceAudioSection
-                actionsSection
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, GonggiSpacing.lg)
+                .padding(.top, GonggiSpacing.lg)
+                // Bottom: stay clear of TabView chrome without double safe-area stacking.
+                .padding(.bottom, GonggiSpacing.xxl)
             }
-            .padding(GonggiSpacing.lg)
-            .padding(.bottom, GonggiSpacing.xxl)
+            .contentMargins(.bottom, GonggiSpacing.md, for: .scrollContent)
+            #if DEBUG
+            .onAppear {
+                guard ScreenshotLaunchConfig.screen == .spaceDetailScrolled else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo("space-detail-actions", anchor: .bottom)
+                    }
+                }
+            }
+            #endif
         }
-        .background(GonggiAmbientBackground(showGlow: false))
+        // Keep chrome background edge-to-edge without expanding ScrollView into tab/home unsafe areas.
+        .background {
+            GonggiAmbientBackground(showGlow: false)
+                .ignoresSafeArea()
+        }
         .navigationBarTitleDisplayMode(.inline)
         .disabled(isDeleting || isUploadingAudio)
         .overlay {
@@ -194,11 +220,13 @@ struct SpaceDetailView: View {
                 startPoint: .center,
                 endPoint: .bottom
             )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
             .allowsHitTesting(false)
             statusBadge
                 .padding(GonggiSpacing.md)
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: 240)
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
                 .stroke(GonggiColors.border, lineWidth: 1)
@@ -211,11 +239,15 @@ struct SpaceDetailView: View {
             Text(liveSpace.name)
                 .font(GonggiTypography.title(26))
                 .foregroundStyle(GonggiColors.textPrimary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             detailRow(icon: "calendar", title: "생성일", value: liveSpace.capturedAt.formatted(date: .long, time: .omitted))
             detailRow(icon: "mappin.and.ellipse", title: "위치", value: "위치 정보 없음")
             detailRow(icon: "circle.fill", title: "상태", value: liveSpace.statusBadgeLabel)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func detailRow(icon: String, title: String, value: String) -> some View {
@@ -231,8 +263,10 @@ struct SpaceDetailView: View {
             Text(value)
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func memoryNoteSection(_ note: String) -> some View {

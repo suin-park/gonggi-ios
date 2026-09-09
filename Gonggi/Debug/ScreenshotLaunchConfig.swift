@@ -33,6 +33,9 @@ enum ScreenshotScreen: String, CaseIterable {
     case libraryAssetsNoThumb
     case libraryAssetsGenerating
     case spaceDetail
+    case spaceDetailScrolled
+    case spaceDetailCompact
+    case spaceDetailDynamicType
     case assetDetailNeedPrepare
     case assetDetailProcessing
     case assetDetailReady
@@ -76,6 +79,9 @@ enum ScreenshotScreen: String, CaseIterable {
         case .libraryAssetsNoThumb: return "03_library_assets_no_thumb.png"
         case .libraryAssetsGenerating: return "03_library_assets_generating.png"
         case .spaceDetail: return "04_space_detail_after.png"
+        case .spaceDetailScrolled: return "space_detail_bottom.png"
+        case .spaceDetailCompact: return "space_detail_compact.png"
+        case .spaceDetailDynamicType: return "space_detail_dynamic_type.png"
         case .assetDetailNeedPrepare: return "05_asset_detail_need_prepare.png"
         case .assetDetailProcessing: return "05_asset_detail_processing.png"
         case .assetDetailReady: return "05_asset_detail_ready.png"

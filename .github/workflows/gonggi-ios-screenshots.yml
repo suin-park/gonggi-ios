@@ -7,9 +7,10 @@ on:
       profile:
         description: "Capture profile"
         required: true
-        default: release-2-0-3
+        default: space-detail-layout
         type: choice
         options:
+          - space-detail-layout
           - release-2-0-3
           - refinement-01
           - redesign-v1-full
@@ -156,7 +157,7 @@ jobs:
           echo "${{ github.workspace }}/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Targeted unit tests (2.0.3 gate)
-        if: ${{ github.event.inputs.profile == 'release-2-0-3' || github.event.inputs.profile == '' || github.event.inputs.profile == null }}
+        if: ${{ github.event.inputs.profile == 'release-2-0-3' }}
         run: |
           set -euo pipefail
           xcodebuild test \
@@ -179,8 +180,32 @@ jobs:
             -only-testing:GonggiTests/AssetLibraryPhase4BTests \
             -only-testing:GonggiTests/AssetARCameraPlacementTests
 
+      - name: Capture space-detail-layout
+        if: ${{ github.event.inputs.profile == 'space-detail-layout' || github.event.inputs.profile == '' || github.event.inputs.profile == null }}
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          UDID_COMPACT: ${{ steps.sim.outputs.compact_udid }}
+          SCREENSHOT_DIR: docs/gonggi-space-detail-layout-fix
+        run: |
+          set -euo pipefail
+          mkdir -p "${SCREENSHOT_DIR}"
+          chmod +x scripts/capture-gonggi-space-detail-layout.sh
+          scripts/capture-gonggi-space-detail-layout.sh
+          # Thumbnail regression smoke (same suites touched by SpaceThumbnailView layout)
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath "${{ env.DERIVED_DATA }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -only-testing:GonggiTests/SpaceThumbnailTests \
+            -only-testing:GonggiTests/AssetThumbnailDetailFallbackTests
+
       - name: Capture release-2-0-3
-        if: ${{ github.event.inputs.profile == 'release-2-0-3' || github.event.inputs.profile == '' || github.event.inputs.profile == null }}
+        if: ${{ github.event.inputs.profile == 'release-2-0-3' }}
         env:
           UDID: ${{ steps.sim.outputs.udid }}
           UDID_COMPACT: ${{ steps.sim.outputs.compact_udid }}
@@ -229,8 +254,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gonggi-2.0-3-visual
+          name: gonggi-space-detail-layout-fix
           path: |
+            docs/gonggi-space-detail-layout-fix/**
             docs/gonggi-2.0-3/**
             docs/gonggi-redesign-v1/screenshots/**
             docs/gonggi-redesign-v1/videos/**
@@ -244,5 +270,6 @@ jobs:
           echo "- **Compact:** ${{ steps.sim.outputs.compact_name }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- **Runtime:** ${{ steps.sim.outputs.runtime }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- **SHA:** $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          ls -la docs/gonggi-space-detail-layout-fix/ || true
           ls -la docs/gonggi-2.0-3/ || true
           ls -la docs/gonggi-redesign-v1/refinement-01/ || true

@@ -1,5 +1,6 @@
 #if DEBUG
 import SwiftUI
+import UIKit
 
 /// DEBUG-only entry for CI simulator screenshots. Does not affect production builds.
 struct ScreenshotRootView: View {
@@ -92,10 +93,13 @@ struct ScreenshotRootView: View {
                     onComplete: { _, _ in },
                     onDismiss: {}
                 )
-            case .spaceDetail:
-                NavigationStack {
-                    SpaceDetailView(space: SpaceRecord.sampleArchive[0])
-                }
+            case .spaceDetail, .spaceDetailScrolled:
+                ScreenshotSpaceDetailHost(space: SpaceDetailLayoutFixture.makeSpace())
+            case .spaceDetailCompact:
+                ScreenshotSpaceDetailHost(space: SpaceDetailLayoutFixture.makeSpace())
+            case .spaceDetailDynamicType:
+                ScreenshotSpaceDetailHost(space: SpaceDetailLayoutFixture.makeSpace())
+                .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
             case .assetDetailNeedPrepare, .assetDetailProcessing, .assetDetailReady, .assetDetailFailed:
                 ScreenshotAssetDetailFixtureView(kind: screen)
             case .spacePicker:
@@ -532,6 +536,78 @@ enum ScreenshotHarness {
             estimatedMinutesRemaining: 5,
             overallProgress: 0.58
         )
+    }
+}
+
+/// Tab bar + long title + wide local latlong — reproduces detail overflow / tab overlap.
+private struct ScreenshotSpaceDetailHost: View {
+    let space: SpaceRecord
+
+    var body: some View {
+        TabView {
+            NavigationStack {
+                SpaceDetailView(space: space)
+            }
+            .tabItem { Label("보관함", systemImage: "books.vertical") }
+
+            Text("기록")
+                .tabItem { Label("기록", systemImage: "record.circle") }
+
+            Text("홈")
+                .tabItem { Label("홈", systemImage: "house") }
+        }
+        .tint(GonggiColors.brandCyan)
+        .preferredColorScheme(.dark)
+    }
+}
+
+enum SpaceDetailLayoutFixture {
+    static func makeSpace() -> SpaceRecord {
+        let path = ensureWideLatLongJPEG()
+        return SpaceRecord(
+            id: "layout-fixture-1",
+            name: "어릴 적 우리 집 거실·안방·복도까지 길게 남긴 공간",
+            capturedAt: Calendar.current.date(byAdding: .month, value: -3, to: Date())!,
+            status: .ready,
+            thumbnailSystemImage: "house.fill",
+            note: "거실과 안방을 중심으로 촬영한 긴 메모입니다. 좌우 잘림이 없는지 확인합니다.",
+            viewerURL: URL(string: "https://www.3d-locker.com/spaces/example"),
+            localLatLongPath: path,
+            localLatLongRevisionToken: "rev:layout-fixture",
+            remoteImageURL: "https://example.invalid/layout-fixture.jpg"
+        )
+    }
+
+    /// 2:1 equirect-like JPEG that previously expanded ScrollView width via scaledToFill.
+    private static func ensureWideLatLongJPEG() -> String {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GonggiScreenshotFixtures", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("space-detail-wide-latlong.jpg")
+        if FileManager.default.fileExists(atPath: url.path) {
+            return url.path
+        }
+        let width = 2048
+        let height = 1024
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format).image { ctx in
+            let cg = ctx.cgContext
+            for x in 0..<width {
+                let t = CGFloat(x) / CGFloat(width)
+                UIColor(
+                    red: 0.05 + 0.15 * t,
+                    green: 0.25 + 0.45 * (1 - abs(t - 0.5) * 2),
+                    blue: 0.55 + 0.35 * t,
+                    alpha: 1
+                ).setFill()
+                cg.fill(CGRect(x: x, y: 0, width: 1, height: height))
+            }
+        }
+        if let data = image.jpegData(compressionQuality: 0.85) {
+            try? data.write(to: url, options: .atomic)
+        }
+        return url.path
     }
 }
 #endif
