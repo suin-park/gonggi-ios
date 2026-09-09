@@ -28,98 +28,49 @@ enum WelcomePanoramaSampleAsset {
     static let accountFootnote = "공간과 3D 자산을 하나의 계정으로 관리하세요."
 }
 
-/// Welcome-only equirect sample card + fullscreen. Does not touch Space Viewer / jobs / auth.
+/// Welcome-only equirect sample card (inline only — no fullscreen presentation).
 struct WelcomePanoramaSampleView: View {
     var isActive: Bool = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var fullscreenPresented = false
 
     private var previewAnimating: Bool {
-        isActive && scenePhase == .active && !reduceMotion && !fullscreenPresented
+        isActive && scenePhase == .active && !reduceMotion
     }
 
     var body: some View {
-        Button {
-            GonggiHaptics.light()
-            fullscreenPresented = true
-        } label: {
-            ZStack(alignment: .topLeading) {
-                WelcomePanoramaSceneRepresentable(
-                    mode: .previewAutoYaw,
-                    isAnimating: previewAnimating,
-                    allowsUserGestures: false
-                )
-                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-
-                Text("360° 샘플")
-                    .font(GonggiTypography.caption(11))
-                    .fontWeight(.semibold)
-                    .foregroundStyle(Color.white.opacity(0.95))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.45), in: Capsule())
-                    .padding(10)
-                    .accessibilityHidden(true)
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
-                    .stroke(GonggiColors.brandCyan.opacity(0.35), lineWidth: 1)
-            )
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-            .frame(maxWidth: 360)
-            .frame(maxWidth: .infinity)
-            .clipped()
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("360도 공간 샘플 둘러보기")
-        .accessibilityAddTraits(.isButton)
-        .fullScreenCover(isPresented: $fullscreenPresented) {
-            WelcomePanoramaFullscreenView(isPresented: $fullscreenPresented)
-        }
-    }
-}
-
-private struct WelcomePanoramaFullscreenView: View {
-    @Binding var isPresented: Bool
-    @Environment(\.scenePhase) private var scenePhase
-
-    var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.ignoresSafeArea()
+        ZStack(alignment: .topLeading) {
             WelcomePanoramaSceneRepresentable(
-                mode: .interactive,
-                isAnimating: false,
+                mode: .previewAutoYaw,
+                isAnimating: previewAnimating,
                 allowsUserGestures: true
             )
-            .ignoresSafeArea()
-            .opacity(scenePhase == .active ? 1 : 1)
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+            .allowsHitTesting(true)
 
-            HStack {
-                Text("360° 샘플")
-                    .font(GonggiTypography.body(16))
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                Spacer()
-                Button("닫기") {
-                    isPresented = false
-                }
-                .font(GonggiTypography.body(16))
-                .foregroundStyle(.white)
-                .accessibilityLabel("닫기")
-            }
-            .padding(.horizontal, GonggiSpacing.lg)
-            .padding(.top, GonggiSpacing.md)
-            .padding(.bottom, GonggiSpacing.sm)
-            .background(
-                LinearGradient(
-                    colors: [Color.black.opacity(0.55), Color.black.opacity(0)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
+            Text("360° 샘플")
+                .font(GonggiTypography.caption(11))
+                .fontWeight(.semibold)
+                .foregroundStyle(Color.white.opacity(0.95))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.45), in: Capsule())
+                .padding(10)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
-        .statusBarHidden(false)
+        .overlay(
+            RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                .stroke(GonggiColors.brandCyan.opacity(0.35), lineWidth: 1)
+                .allowsHitTesting(false)
+        )
+        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+        .frame(maxWidth: 360)
+        .frame(maxWidth: .infinity)
+        .clipped()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("360도 공간 샘플")
+        .accessibilityRemoveTraits(.isButton)
     }
 }
 
@@ -219,30 +170,25 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
         private var displayLink: CADisplayLink?
         private var animationStart: CFTimeInterval?
         private var panGesture: UIPanGestureRecognizer?
-        private var pinchGesture: UIPinchGestureRecognizer?
         private var lastPan = CGPoint.zero
-        private var fieldOfView: CGFloat = 72
         /// ±18° yaw around living-room heading, 14s round trip, ease-in-out.
         private let yawAmplitude: Float = 18 * .pi / 180
         private let period: CFTimeInterval = 14
+        /// Pause auto-yaw while the user is dragging.
+        private var userInteracting = false
 
         func configureGestures(on view: SCNView, enabled: Bool) {
             if enabled {
                 if panGesture == nil {
                     let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+                    // Allow vertical scroll of the Welcome form while still dragging horizontally in-card.
+                    pan.cancelsTouchesInView = false
                     view.addGestureRecognizer(pan)
                     panGesture = pan
                 }
-                if pinchGesture == nil {
-                    let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
-                    view.addGestureRecognizer(pinch)
-                    pinchGesture = pinch
-                }
                 panGesture?.isEnabled = true
-                pinchGesture?.isEnabled = true
             } else {
                 panGesture?.isEnabled = false
-                pinchGesture?.isEnabled = false
             }
         }
 
@@ -263,12 +209,10 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
 
         func teardown() {
             stopDisplayLink()
-            if let view = scnView {
-                if let pan = panGesture { view.removeGestureRecognizer(pan) }
-                if let pinch = pinchGesture { view.removeGestureRecognizer(pinch) }
+            if let view = scnView, let pan = panGesture {
+                view.removeGestureRecognizer(pan)
             }
             panGesture = nil
-            pinchGesture = nil
             cameraNode = nil
             scnView = nil
         }
@@ -288,7 +232,7 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
         }
 
         @objc private func tick(_ link: CADisplayLink) {
-            guard mode == .previewAutoYaw, let camera = cameraNode else { return }
+            guard mode == .previewAutoYaw, !userInteracting, let camera = cameraNode else { return }
             let start = animationStart ?? link.timestamp
             if animationStart == nil { animationStart = start }
             let t = (link.timestamp - start).truncatingRemainder(dividingBy: period) / period
@@ -302,23 +246,25 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
         @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
             guard let view = gesture.view as? SCNView, let camera = cameraNode else { return }
             let translation = gesture.translation(in: view)
-            if gesture.state == .began { lastPan = translation; return }
-            let dx = Float(translation.x - lastPan.x) * 0.005
-            let dy = Float(translation.y - lastPan.y) * 0.005
-            lastPan = translation
-            camera.eulerAngles.y -= dx
-            let maxPitch: Float = 1.4
-            camera.eulerAngles.x = max(-maxPitch, min(maxPitch, camera.eulerAngles.x - dy))
-            if gesture.state == .ended { lastPan = .zero }
-        }
-
-        @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-            guard let camera = cameraNode?.camera else { return }
-            if gesture.state == .changed {
-                let newFOV = fieldOfView / CGFloat(gesture.scale)
-                fieldOfView = min(100, max(40, newFOV))
-                camera.fieldOfView = fieldOfView
-                gesture.scale = 1
+            switch gesture.state {
+            case .began:
+                userInteracting = true
+                lastPan = translation
+            case .changed:
+                let dx = Float(translation.x - lastPan.x) * 0.005
+                let dy = Float(translation.y - lastPan.y) * 0.005
+                lastPan = translation
+                camera.eulerAngles.y -= dx
+                let maxPitch: Float = 1.4
+                camera.eulerAngles.x = max(-maxPitch, min(maxPitch, camera.eulerAngles.x - dy))
+                // Keep auto-yaw centered on the user's look direction after drag.
+                baseYaw = camera.eulerAngles.y
+            case .ended, .cancelled, .failed:
+                userInteracting = false
+                lastPan = .zero
+                animationStart = CACurrentMediaTime()
+            default:
+                break
             }
         }
     }

@@ -101,7 +101,7 @@ struct SpaceShareSheet: View {
         } catch let err as MobileAuthAPIError {
             errorMessage = err.userFacingMessage
         } catch {
-            errorMessage = "공유 설정을 불러오지 못했어요."
+            errorMessage = "공유 설정을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
         }
     }
 
@@ -124,7 +124,7 @@ struct SpaceShareSheet: View {
             // Revert toggle on failure
             shareEnabled = !enabled
         } catch {
-            errorMessage = "공유 설정을 저장하지 못했어요."
+            errorMessage = "공유 설정을 저장하지 못했어요. 잠시 후 다시 시도해주세요."
             shareEnabled = !enabled
         }
     }
@@ -157,8 +157,25 @@ private extension MobileAuthAPIError {
             return "네트워크에 연결할 수 없습니다."
         case .invalidResponse:
             return "응답을 처리하지 못했어요."
-        case .server(_, let message, _):
+        case .server(let code, let message, _):
+            if Self.isUnsafeServerMessage(message) {
+                if code.contains("LOAD") {
+                    return "공유 설정을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+                }
+                return "공유 설정을 저장하지 못했어요. 잠시 후 다시 시도해주세요."
+            }
             return message
         }
+    }
+
+    static func isUnsafeServerMessage(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower.contains("prisma")
+            || lower.contains("does not exist")
+            || lower.contains("invocation")
+            || lower.contains("gonggispace")
+            || lower.contains("column")
+            || lower.contains("stack")
+            || message.contains("\n")
     }
 }

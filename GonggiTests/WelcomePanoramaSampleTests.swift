@@ -42,6 +42,13 @@ final class WelcomePanoramaSampleTests: XCTestCase {
         XCTAssertEqual(WelcomePanoramaSampleAsset.resourceExt, "jpg")
     }
 
+    func testWelcomeSampleIsNotAButton() {
+        // Presentation is inline-only; VoiceOver must not advertise "open".
+        let label = "360도 공간 샘플"
+        XCTAssertFalse(label.contains("열기"))
+        XCTAssertFalse(label.contains("둘러보기"))
+    }
+
     func testInitialYawTargetsBrightLivingRoomWindows() {
         // Brightest horizon band ≈ u 0.48…0.60 → positive yaw near +22°.
         XCTAssertEqual(WelcomePanoramaSampleAsset.initialYawDegrees, 22, accuracy: 0.1)
