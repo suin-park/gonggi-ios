@@ -221,33 +221,34 @@ final class AuthSessionController: ObservableObject {
 
 // MARK: - Auth shell UI
 
-/// Welcome decoration mode. Production default is space-light (“빛으로 그려지는 공간”).
+/// Welcome decoration mode. Production default is street panorama sample.
 enum AuthWelcomeDecoration: Equatable {
     case wireframeSphere
     case spaceLight
+    case panoramaSample
 }
 
 struct AuthShellView: View {
     @ObservedObject var session: AuthSessionController
-    /// Production Welcome uses space-light; wireframe remains available for DEBUG fixtures.
-    var decoration: AuthWelcomeDecoration = .spaceLight
+    /// Production Welcome uses official 360° street sample; legacy decorations remain for DEBUG fixtures.
+    var decoration: AuthWelcomeDecoration = .panoramaSample
     @StateObject private var appleCoordinator = AppleSignInCoordinator()
     @State private var googleBusy = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.sizeCategory) private var sizeCategory
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    /// Cropped artwork width. Prior square canvas at 196pt showed ≈132pt of ink;
-    /// +45% visual target ≈191pt — keep room for sphere + three auth actions.
+    /// Keep logo compact so sample card + three auth actions stay visible on iPhone 14 Plus / compact height.
     private var welcomeLogoWidth: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 168 }
-        return 200
+        if dynamicTypeSize.isAccessibilitySize { return 140 }
+        if sizeCategory >= .extraExtraLarge { return 152 }
+        return 168
     }
 
     private var decorationHeight: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 100 }
-        if sizeCategory >= .extraExtraLarge { return 120 }
-        return 140
+        if dynamicTypeSize.isAccessibilitySize { return 148 }
+        if sizeCategory >= .extraExtraLarge { return 172 }
+        return 200
     }
 
     private var sphereDiameter: CGFloat {
@@ -273,15 +274,19 @@ struct AuthShellView: View {
                         .padding(.vertical, GonggiSpacing.xs)
 
                     VStack(spacing: GonggiSpacing.sm) {
-                        Text(GonggiBrandCopy.welcomeHeadline)
-                            .font(GonggiTypography.title(26))
+                        Text(WelcomePanoramaSampleAsset.headline)
+                            .font(GonggiTypography.title(24))
                             .foregroundStyle(GonggiColors.textPrimary)
                             .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.85)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text(GonggiBrandCopy.welcomeSupport)
+                        Text(WelcomePanoramaSampleAsset.subtitle)
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
                             .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.9)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
@@ -360,12 +365,19 @@ struct AuthShellView: View {
                     isAnimating: scenePhase == .active
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             case .spaceLight:
                 GonggiSpaceLightStoryView(
                     size: CGSize(width: min(300, w), height: decorationHeight),
                     isAnimating: scenePhase == .active
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            case .panoramaSample:
+                WelcomePanoramaSampleView(isActive: scenePhase == .active)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }

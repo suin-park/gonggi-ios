@@ -33,6 +33,7 @@ targets:
     resources:
       - path: NOTICE
       - path: third_party/opencv/LICENSE
+      - path: Gonggi/Resources/Welcome/WelcomeStreetSample_2048x1024.jpg
     dependencies:
       - framework: Vendor/OpenCV/opencv2.xcframework
         embed: false
