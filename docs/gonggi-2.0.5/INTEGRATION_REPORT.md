@@ -1,4 +1,4 @@
-# Gonggi 2.0 (5) Integration Report
+﻿# Gonggi 2.0 (5) Integration Report
 
 ## Gonggi 2.0 (5)
 
@@ -11,18 +11,18 @@
 
 ### Space Detail
 - name: PATCH owner-only, local + catalog reconcile
-- automatic location: Profile OFF default; ON → permission; post-create one-shot soft attach
+- automatic location: Profile OFF default; ON ??permission; post-create one-shot soft attach
 - manual location: name-only / current location / clear
-- memo: optional ≤1000, empty → null
+- memo: optional ??000, empty ??null
 - share placeholder: coming-soon alert only (2.0.6)
 - 3D object button: removed from Detail only; VR placement kept
-- delete menu: toolbar `…`
+- delete menu: toolbar `??
 
 ### Backend
 - base SHA (pre): prior Ready prod (lineage includes `b74df9e`, `594976a`)
 - deployed SHA: `14da4a357a4b87ddf4991e29cd6d61834f523735`
 - migrations: `20260909120000_space_link_external_url`, `20260909140000_space_detail_metadata`
-- production: Ready — `www.3d-locker.com` → `3d-locker-q2y9kle15` (created 2026-09-09 23:20:13 KST, GitHub deploy sha `14da4a3`)
+- production: Ready ??`www.3d-locker.com` ??`3d-locker-q2y9kle15` (created 2026-09-09 23:20:13 KST, GitHub deploy sha `14da4a3`)
 - rollback: previous Ready e.g. `3d-locker-edqadtvwm` / `9456a94` lineage
 - real AI calls: none during this gate
 - credits spent: none
@@ -34,7 +34,7 @@
 - Release compile / device link / archive: via Gonggi TestFlight workflow (macOS)
 
 ### iOS
-- SHA: (set after release bump commit)
+- SHA: ab9d3d0df622fab14a5ec662bdaced4edb235191
 - MARKETING_VERSION: 2.0
 - CURRENT_PROJECT_VERSION: 5
 
@@ -60,4 +60,5 @@
 
 ### Verdict
 
-PENDING_TESTFLIGHT_UPLOAD — backend Ready at `14da4a3`; version gate next.
+PENDING_TESTFLIGHT_UPLOAD ??backend Ready at `14da4a3`; version gate next.
+
