@@ -21,6 +21,10 @@ xcshareddata/
 # CI artifacts
 TestResults.xcresult/
 screenshots/
+!docs/gonggi-redesign-v1/screenshots/
+!docs/gonggi-redesign-v1/screenshots/**
+!docs/gonggi-redesign-v1/videos/
+!docs/gonggi-redesign-v1/videos/**
 export/
 
 # Apple signing — never commit
