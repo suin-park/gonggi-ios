@@ -1,0 +1,3 @@
+CAPTURE_SHA=abcf8d359cb28547d7091db304a5dc698064fc3b
+DEBUG_FIXTURE=yes (wide latlong + TabView host)
+REAL_DEVICE=NOT RUN
