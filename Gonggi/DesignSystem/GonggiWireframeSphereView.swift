@@ -9,7 +9,24 @@ struct GonggiWireframeSphereView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private var shouldAnimate: Bool {
-        isAnimating && !reduceMotion && scenePhase == .active
+        if debugForceStaticSphere { return false }
+        return isAnimating && !reduceMotion && scenePhase == .active
+    }
+
+    /// DEBUG screenshot harness: `welcomeReduceMotion` cannot set Reduce Motion via environment on all SDKs.
+    private var debugForceStaticSphere: Bool {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-screenshot-reduce-motion") { return true }
+        if let idx = args.firstIndex(of: "-screenshot-screen"),
+           idx + 1 < args.count,
+           args[idx + 1] == "welcomeReduceMotion" {
+            return true
+        }
+        return false
+        #else
+        return false
+        #endif
     }
 
     var body: some View {
