@@ -92,6 +92,14 @@ struct VRSphereSpaceView: View {
     @State private var showExistingSpacePicker = false
     @State private var showDeleteLinkedConfirm = false
     @State private var spaceLinkLabelDraft = ""
+    @State private var spaceLinkURLDraft = ""
+    @State private var showSpaceLinkMetadataSheet = false
+    @State private var spaceLinkMetadataIsEdit = false
+    @State private var pendingLinkTarget: SpaceRecord?
+    @State private var actionCardLink: SpaceLink?
+    @State private var pendingExternalOpenURL: URL?
+    @State private var showExternalLinkConfirm = false
+    @State private var safariURL: SpaceLinkIdentifiedURL?
     @State private var spaceLinkBusyMessage: String?
     @State private var selectedSpaceLinkScreenPoint: CGPoint?
     @State private var isSpaceLinkDragging = false
@@ -200,6 +208,23 @@ struct VRSphereSpaceView: View {
                     selectedSpaceLinkId = nil
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .gonggiAccountPresentationDidReset)) { _ in
+                selectedSpaceLinkId = nil
+                selectedSpaceLinkScreenPoint = nil
+                spaceLinks = []
+                didLoadSpaceLinks = false
+                spaceLinkLabelDraft = ""
+                spaceLinkURLDraft = ""
+                showSpaceLinkMetadataSheet = false
+                pendingLinkTarget = nil
+                actionCardLink = nil
+                showExternalLinkConfirm = false
+                pendingExternalOpenURL = nil
+                safariURL = nil
+                spaceLinkBusyMessage = nil
+                spaceLinkTask?.cancel()
+                spaceLinkTask = nil
+            }
             .onDisappear {
                 // Do not stop audio here — host owns fade/transition across stack pops.
                 cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
@@ -276,11 +301,42 @@ struct VRSphereSpaceView: View {
                     ),
                     onConfirm: { space in
                         showExistingSpacePicker = false
-                        Task { await linkExistingSpace(space) }
+                        pendingLinkTarget = space
+                        spaceLinkLabelDraft = ""
+                        spaceLinkURLDraft = ""
+                        spaceLinkMetadataIsEdit = false
+                        showSpaceLinkMetadataSheet = true
                     },
                     onCancel: { showExistingSpacePicker = false }
                 )
                 .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showSpaceLinkMetadataSheet) {
+                SpaceLinkMetadataEditorView(
+                    title: spaceLinkMetadataIsEdit ? "핫스팟 편집" : "핫스팟 정보",
+                    confirmTitle: spaceLinkMetadataIsEdit ? "저장" : "연결",
+                    displayName: $spaceLinkLabelDraft,
+                    externalUrl: $spaceLinkURLDraft,
+                    onConfirm: {
+                        showSpaceLinkMetadataSheet = false
+                        if spaceLinkMetadataIsEdit {
+                            Task { await saveEditedSpaceLinkMetadata() }
+                        } else if let space = pendingLinkTarget {
+                            pendingLinkTarget = nil
+                            Task { await linkExistingSpace(space) }
+                        }
+                    },
+                    onCancel: {
+                        showSpaceLinkMetadataSheet = false
+                        pendingLinkTarget = nil
+                    }
+                )
+                .presentationDetents([.medium])
+            }
+            .sheet(item: $safariURL) { item in
+                SpaceLinkSafariView(url: item.url) {
+                    safariURL = nil
+                }
             }
             .confirmationDialog(
                 "이 공간 연결을 삭제할까요?",
@@ -358,6 +414,7 @@ struct VRSphereSpaceView: View {
             pitchDeg: link.pitchDeg,
             radius: link.radius,
             label: link.label,
+            externalUrl: link.externalUrl,
             targetSessionId: result.sessionId,
             createdAt: Date()
         )
@@ -482,7 +539,10 @@ struct VRSphereSpaceView: View {
                let link = spaceLinks.first(where: { $0.id == selectedSpaceLinkId }),
                let marker = selectedSpaceLinkScreenPoint {
                 GeometryReader { geo in
-                    let panelSize = CGSize(width: 188, height: link.status == .draft ? 168 : 72)
+                    let panelSize = CGSize(
+                        width: 188,
+                        height: link.status == .draft ? 168 : 120
+                    )
                     let origin = SpaceLinkOverlayLayout.panelOrigin(
                         marker: marker,
                         panelSize: panelSize,
@@ -495,6 +555,9 @@ struct VRSphereSpaceView: View {
                         },
                         onLinkExisting: {
                             showExistingSpacePicker = true
+                        },
+                        onEditMetadata: {
+                            beginEditSpaceLinkMetadata(link)
                         },
                         onDelete: {
                             if link.status == .linked {
@@ -510,6 +573,53 @@ struct VRSphereSpaceView: View {
                 }
                 .allowsHitTesting(true)
                 .zIndex(6)
+            }
+
+            if let actionLink = actionCardLink {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture { actionCardLink = nil }
+                    .zIndex(20)
+                SpaceLinkHotspotActionCard(
+                    title: SpaceLinkExternalURL.hotspotCaption(
+                        displayName: actionLink.label,
+                        externalUrl: actionLink.externalUrl,
+                        targetSpaceName: targetSpaceName(for: actionLink)
+                    ) ?? "공간 연결",
+                    hostname: SpaceLinkExternalURL.hostname(from: actionLink.externalUrl) ?? "",
+                    onNavigate: {
+                        actionCardLink = nil
+                        GonggiHaptics.light()
+                        onNavigateToLinkedSpace?(actionLink)
+                    },
+                    onOpenLink: {
+                        actionCardLink = nil
+                        beginExternalLinkConfirm(for: actionLink)
+                    },
+                    onCancel: { actionCardLink = nil }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .zIndex(21)
+            }
+
+            if showExternalLinkConfirm, let url = pendingExternalOpenURL {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .zIndex(22)
+                SpaceLinkExternalLinkConfirmView(
+                    hostname: SpaceLinkExternalURL.hostname(from: url.absoluteString) ?? url.host ?? "",
+                    onConfirm: {
+                        showExternalLinkConfirm = false
+                        pendingExternalOpenURL = nil
+                        safariURL = SpaceLinkIdentifiedURL(url: url)
+                    },
+                    onCancel: {
+                        showExternalLinkConfirm = false
+                        pendingExternalOpenURL = nil
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .zIndex(23)
             }
         }
     }
@@ -563,6 +673,7 @@ struct VRSphereSpaceView: View {
             supportLiveY: supportLiveY,
             spaceLinks: spaceLinks,
             selectedSpaceLinkId: selectedSpaceLinkId,
+            spaceLinkTargetNames: spaceLinkTargetNames,
             spaceLinkSpawnToken: spaceLinkSpawnToken,
             initialFieldOfView: initialFieldOfView,
             spaceLinkTransitionLocked: spaceLinkTransitionLocked,
@@ -1377,6 +1488,80 @@ struct VRSphereSpaceView: View {
         }
     }
 
+    private var spaceLinkTargetNames: [String: String] {
+        var map: [String: String] = [:]
+        for space in appState.spaces {
+            map[space.id] = space.name
+            if let sid = space.sessionId {
+                map[sid] = space.name
+            }
+        }
+        return map
+    }
+
+    private func targetSpaceName(for link: SpaceLink) -> String? {
+        if let id = link.targetSessionId, let n = spaceLinkTargetNames[id] { return n }
+        if let id = link.targetSpaceId, let n = spaceLinkTargetNames[id] { return n }
+        return nil
+    }
+
+    private func beginEditSpaceLinkMetadata(_ link: SpaceLink) {
+        spaceLinkMetadataIsEdit = true
+        pendingLinkTarget = nil
+        spaceLinkLabelDraft = link.label ?? ""
+        spaceLinkURLDraft = link.externalUrl ?? ""
+        showSpaceLinkMetadataSheet = true
+    }
+
+    private func beginExternalLinkConfirm(for link: SpaceLink) {
+        guard let raw = link.externalUrl,
+              case .success(let normalized?) = SpaceLinkExternalURL.normalize(raw),
+              let url = URL(string: normalized)
+        else { return }
+        pendingExternalOpenURL = url
+        showExternalLinkConfirm = true
+    }
+
+    private func saveEditedSpaceLinkMetadata() async {
+        guard let id = selectedSpaceLinkId,
+              let idx = spaceLinks.firstIndex(where: { $0.id == id }),
+              spaceLinks[idx].status == .linked
+        else { return }
+        let previous = spaceLinks[idx]
+        let newLabel = SpaceLinkExternalURL.normalizeDisplayName(spaceLinkLabelDraft)
+        let newURL: String?
+        switch SpaceLinkExternalURL.normalize(spaceLinkURLDraft) {
+        case .success(let u):
+            newURL = u
+        case .failure(let err):
+            spaceLinkBusyMessage = err.message
+            return
+        }
+        spaceLinks[idx].label = newLabel
+        spaceLinks[idx].externalUrl = newURL
+        spaceLinks[idx].updatedAt = Date()
+        do {
+            let updated = try await spaceLinkStore.patchLink(
+                sourceSpaceId: sessionId,
+                linkId: id,
+                yawDeg: nil,
+                pitchDeg: nil,
+                radius: nil,
+                label: .some(newLabel),
+                externalUrl: .some(newURL)
+            )
+            if let i = spaceLinks.firstIndex(where: { $0.id == id }) {
+                spaceLinks[i] = updated
+            }
+            GonggiHaptics.light()
+        } catch {
+            if let i = spaceLinks.firstIndex(where: { $0.id == id }) {
+                spaceLinks[i] = previous
+            }
+            spaceLinkBusyMessage = "저장하지 못했어요"
+        }
+    }
+
     private func handleSpaceLinkTapped(_ id: String?) {
         if spaceLinkTransitionLocked { return }
         if interactionMode == .edit {
@@ -1394,7 +1579,11 @@ struct VRSphereSpaceView: View {
               link.isNavigable
         else { return }
         GonggiHaptics.light()
-        onNavigateToLinkedSpace?(link)
+        if let url = link.externalUrl, !url.isEmpty {
+            actionCardLink = link
+        } else {
+            onNavigateToLinkedSpace?(link)
+        }
     }
 
     private func spawnDraftSpaceLink(yaw: Float, pitch: Float) {
@@ -1486,9 +1675,23 @@ struct VRSphereSpaceView: View {
 
         let draft = spaceLinks[idx]
         let targetId = space.sessionId ?? space.id
+        let resolvedLabel = SpaceLinkExternalURL.normalizeDisplayName(spaceLinkLabelDraft) ?? draft.label
+        let resolvedURL: String?
+        switch SpaceLinkExternalURL.normalize(
+            spaceLinkURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? draft.externalUrl
+                : spaceLinkURLDraft
+        ) {
+        case .success(let u):
+            resolvedURL = u
+        case .failure(let err):
+            spaceLinkBusyMessage = err.message
+            return
+        }
         #if DEBUG
+        let hostLog = SpaceLinkExternalURL.hostname(from: resolvedURL) ?? "none"
         print(
-            "[spaceLink76] existing link POST source=\(sessionId) target=\(targetId) localStatus=\(space.status.rawValue) remoteURL=\(space.remoteImageURL ?? space.viewerURL?.absoluteString ?? "nil") auth=\(MobileAuthTokenStore.shared.getAccessToken() != nil)"
+            "[spaceLink76] existing link POST source=\(sessionId) target=\(targetId) host=\(hostLog) localStatus=\(space.status.rawValue) auth=\(MobileAuthTokenStore.shared.getAccessToken() != nil)"
         )
         #endif
         do {
@@ -1498,7 +1701,8 @@ struct VRSphereSpaceView: View {
                 yawDeg: draft.yawDeg,
                 pitchDeg: draft.pitchDeg,
                 radius: draft.radius,
-                label: draft.label ?? space.name
+                label: resolvedLabel,
+                externalUrl: resolvedURL
             )
             var merged = created
             // Prefer target session for navigation.
@@ -1507,6 +1711,8 @@ struct VRSphereSpaceView: View {
             }
             spaceLinks[idx] = merged
             selectedSpaceLinkId = merged.id
+            spaceLinkLabelDraft = ""
+            spaceLinkURLDraft = ""
             GonggiHaptics.light()
             spaceLinkBusyMessage = nil
         } catch SpaceLinkStoreError.tooManyLinks {
@@ -2088,6 +2294,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var supportLiveY: Float? = nil
     var spaceLinks: [SpaceLink] = []
     var selectedSpaceLinkId: String? = nil
+    var spaceLinkTargetNames: [String: String] = [:]
     var spaceLinkSpawnToken: Int = 0
     var initialFieldOfView: Double = SpaceLinkTransitionMath.baseFOV
     var spaceLinkTransitionLocked: Bool = false
@@ -2153,7 +2360,12 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         // Build 82: skip hotspot sync on cold create when secondary loads are deferred
         // (empty links until staggered load) — avoids empty→full rebuild thrash later only.
         if !deferSecondaryLoads || !spaceLinks.isEmpty {
-            host.syncSpaceLinks(spaceLinks, selectedId: selectedSpaceLinkId, pulseInView: true)
+            host.syncSpaceLinks(
+                spaceLinks,
+                selectedId: selectedSpaceLinkId,
+                pulseInView: true,
+                targetNames: spaceLinkTargetNames
+            )
         }
         host.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
         host.setLightingExperiment(
@@ -2191,16 +2403,19 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         // (SwiftUI pose is not published during .changed).
         spaceLinks.map {
             String(
-                format: "%@:%@:%.3f:%.3f:%.3f",
+                format: "%@:%@:%.3f:%.3f:%.3f:%@:%@",
                 $0.id,
                 $0.status.rawValue,
                 $0.yawDeg,
                 $0.pitchDeg,
-                $0.radius
+                $0.radius,
+                $0.label ?? "",
+                $0.externalUrl ?? ""
             )
         }.joined(separator: ",")
             + "|" + (selectedSpaceLinkId ?? "")
             + "|" + (editModeActive ? "e" : "v")
+            + "|" + spaceLinkTargetNames.values.sorted().joined(separator: ",")
     }
 
     func updateUIView(_ uiView: SCNHostView, context: Context) {
@@ -2258,7 +2473,12 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         if linkFp != context.coordinator.lastSpaceLinkFingerprint {
             // Build 75: do not advance fingerprint when sync is skipped mid-drag.
             if !uiView.isSpaceLinkDragInProgress {
-                uiView.syncSpaceLinks(spaceLinks, selectedId: selectedSpaceLinkId, pulseInView: true)
+                uiView.syncSpaceLinks(
+                    spaceLinks,
+                    selectedId: selectedSpaceLinkId,
+                    pulseInView: true,
+                    targetNames: spaceLinkTargetNames
+                )
                 context.coordinator.lastSpaceLinkFingerprint = linkFp
             }
         }

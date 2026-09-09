@@ -78,7 +78,8 @@ actor SpaceLinkStore {
         yawDeg: Float,
         pitchDeg: Float,
         radius: Float,
-        label: String?
+        label: String?,
+        externalUrl: String? = nil
     ) async throws -> SpaceLink {
         struct CreateBody: Encodable {
             var targetSpaceId: String
@@ -86,16 +87,23 @@ actor SpaceLinkStore {
             var pitchDeg: Float
             var radius: Float
             var label: String?
+            var externalUrl: String?
+        }
+        let normalizedLabel = SpaceLinkExternalURL.normalizeDisplayName(label)
+        let normalizedURL: String?
+        switch SpaceLinkExternalURL.normalize(externalUrl) {
+        case .success(let u):
+            normalizedURL = u
+        case .failure:
+            throw SpaceLinkStoreError.server(status: 400, code: "INVALID_URL", message: "웹 주소가 올바르지 않아요")
         }
         let body = CreateBody(
             targetSpaceId: targetSpaceId,
             yawDeg: yawDeg,
             pitchDeg: pitchDeg,
             radius: SpaceLink.clampRadius(radius),
-            label: label.flatMap { t in
-                let trimmed = t.trimmingCharacters(in: .whitespacesAndNewlines)
-                return trimmed.isEmpty ? nil : String(trimmed.prefix(64))
-            }
+            label: normalizedLabel,
+            externalUrl: normalizedURL
         )
         var request = URLRequest(url: linksEndpoint(spaceId: sourceSpaceId))
         request.httpMethod = "POST"
@@ -129,17 +137,20 @@ actor SpaceLinkStore {
         yawDeg: Float?,
         pitchDeg: Float?,
         radius: Float?,
-        label: String??
+        label: String?? = nil,
+        externalUrl: String?? = nil
     ) async throws -> SpaceLink {
         struct PatchBody: Encodable {
             var yawDeg: Float?
             var pitchDeg: Float?
             var radius: Float?
             var label: String?
+            var externalUrl: String?
             var encodeLabelNull: Bool = false
+            var encodeExternalUrlNull: Bool = false
 
             enum CodingKeys: String, CodingKey {
-                case yawDeg, pitchDeg, radius, label
+                case yawDeg, pitchDeg, radius, label, externalUrl
             }
 
             func encode(to encoder: Encoder) throws {
@@ -152,6 +163,11 @@ actor SpaceLinkStore {
                 } else if let label {
                     try c.encode(label, forKey: .label)
                 }
+                if encodeExternalUrlNull {
+                    try c.encodeNil(forKey: .externalUrl)
+                } else if let externalUrl {
+                    try c.encode(externalUrl, forKey: .externalUrl)
+                }
             }
         }
 
@@ -160,13 +176,34 @@ actor SpaceLinkStore {
             pitchDeg: pitchDeg,
             radius: radius.map { SpaceLink.clampRadius($0) },
             label: nil,
-            encodeLabelNull: false
+            externalUrl: nil,
+            encodeLabelNull: false,
+            encodeExternalUrlNull: false
         )
         if let labelOpt = label {
             if let labelOpt {
-                body.label = String(labelOpt.prefix(64))
+                body.label = SpaceLinkExternalURL.normalizeDisplayName(labelOpt)
+                if body.label == nil {
+                    body.encodeLabelNull = true
+                }
             } else {
                 body.encodeLabelNull = true
+            }
+        }
+        if let urlOpt = externalUrl {
+            if let urlOpt {
+                switch SpaceLinkExternalURL.normalize(urlOpt) {
+                case .success(let u):
+                    if let u {
+                        body.externalUrl = u
+                    } else {
+                        body.encodeExternalUrlNull = true
+                    }
+                case .failure:
+                    throw SpaceLinkStoreError.server(status: 400, code: "INVALID_URL", message: "웹 주소가 올바르지 않아요")
+                }
+            } else {
+                body.encodeExternalUrlNull = true
             }
         }
 

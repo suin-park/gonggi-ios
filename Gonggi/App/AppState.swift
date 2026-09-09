@@ -157,7 +157,8 @@ final class AppState: ObservableObject {
                 yawDeg: pending.yawDeg,
                 pitchDeg: pending.pitchDeg,
                 radius: pending.radius,
-                label: pending.label
+                label: pending.label,
+                externalUrl: pending.externalUrl
             )
             PendingSpaceLinkCaptureStore.shared.clear()
 

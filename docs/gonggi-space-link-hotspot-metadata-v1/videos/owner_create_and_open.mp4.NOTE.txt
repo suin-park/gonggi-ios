@@ -1,0 +1,2 @@
+PLACEHOLDER — Mac simulator capture required.
+Safe test URL: https://example.com

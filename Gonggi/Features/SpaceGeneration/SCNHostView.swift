@@ -369,7 +369,12 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     /// Sync 공간 연결 billboards (sibling of placedAssetsRoot — never under assets).
-    func syncSpaceLinks(_ links: [SpaceLink], selectedId: String?, pulseInView: Bool) {
+    func syncSpaceLinks(
+        _ links: [SpaceLink],
+        selectedId: String?,
+        pulseInView: Bool,
+        targetNames: [String: String] = [:]
+    ) {
         selectedSpaceLinkID = selectedId
         // Build 74: never tear down nodes mid-drag (would hitch / snap).
         if isSpaceLinkDragging {
@@ -381,10 +386,13 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         spaceLinksRoot.childNodes.forEach { $0.removeFromParentNode() }
         let showPulse = pulseInView && !editModeActive
         for link in links.prefix(SpaceLink.maxLinksPerSource) {
+            let targetKey = link.targetSessionId ?? link.targetSpaceId
+            let targetName = targetKey.flatMap { targetNames[$0] }
             let node = SpaceHotspotNodeFactory.makeNode(
                 link: link,
                 selected: editModeActive && link.id == selectedId,
-                pulse: showPulse
+                pulse: showPulse,
+                targetSpaceName: targetName
             )
             spaceLinksRoot.addChildNode(node)
         }
