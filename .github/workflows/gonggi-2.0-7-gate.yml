@@ -1,0 +1,164 @@
+name: Gonggi 2.0 Release Gate
+
+# Targeted Mac gate for TestFlight — not the full unit suite.
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: 'MARKETING_VERSION expected in project.yml'
+        required: true
+        default: '2.0'
+        type: string
+      build_number:
+        description: 'CURRENT_PROJECT_VERSION expected in project.yml'
+        required: true
+        default: '7'
+        type: string
+
+concurrency:
+  group: gonggi-release-gate
+  cancel-in-progress: false
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+  OPENCV_VERSION: "4.10.0"
+
+jobs:
+  release-gate:
+    name: Targeted tests + Release/device link
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache OpenCV xcframework
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Ensure OpenCV xcframework
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh
+          ./scripts/ensure_opencv_xcframework.sh
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          test -n "${XCODE_APP}"
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+
+      - name: Assert version lock
+        run: |
+          set -euo pipefail
+          grep -q 'MARKETING_VERSION: "${{ inputs.marketing_version }}"' project.yml
+          grep -q 'CURRENT_PROJECT_VERSION: "${{ inputs.build_number }}"' project.yml
+          echo "Version lock OK: ${{ inputs.marketing_version }} (${{ inputs.build_number }})"
+
+      - name: Bundled LatLong sample present
+        run: |
+          set -euo pipefail
+          test -f Gonggi/Resources/WelcomeLatLongSample_1774x887.jpg || \
+            test -n "$(find Gonggi -name 'WelcomeLatLongSample*.jpg' | head -n 1)"
+          echo "Welcome LatLong sample OK"
+
+      - name: Release compile (iphonesimulator)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Device SDK Release link (iphoneos)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Resolve simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID="$(python3 - <<'PY'
+          import json, subprocess, sys
+          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True))
+          for rt in sorted([k for k in data.get("devices", {}) if "iOS" in k], reverse=True):
+              for d in data["devices"][rt]:
+                  if d.get("isAvailable") and "iPhone" in d.get("name", ""):
+                      print(d["udid"]); sys.exit(0)
+          sys.exit(1)
+          PY
+          )"
+          echo "udid=${UDID}" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "${UDID}" 2>/dev/null || true
+
+      - name: Targeted unit tests
+        run: |
+          set -euo pipefail
+          TESTS=(
+            GonggiTests/WelcomePanoramaSampleTests
+            GonggiTests/SpaceLinkLabelSizeTests
+            GonggiTests/AccountIsolationTests
+            GonggiTests/AssetLibraryPhase1Tests
+            GonggiTests/AssetLibraryPhase2Tests
+            GonggiTests/AssetLibraryPhase4BTests
+            GonggiTests/AssetARCameraPlacementTests
+          )
+          ARGS=()
+          for t in "${TESTS[@]}"; do
+            ARGS+=("-only-testing:${t}")
+          done
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            "${ARGS[@]}" \
+            ARCHS=arm64 \
+            EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -resultBundlePath GateTestResults.xcresult
+
+      - name: Preflight Release app bundle
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find "${HOME}/Library/Developer/Xcode/DerivedData" -type d -name 'Gonggi.app' -path '*/Release-iphonesimulator/*' -print -quit)"
+          test -n "${APP_PATH}"
+          python3 scripts/validate-app-bundle-preflight.py "${APP_PATH}"
+          # LatLong should be inside the app bundle resources
+          find "${APP_PATH}" -iname '*WelcomeLatLong*' -print | head -n 5
+          test -n "$(find "${APP_PATH}" -iname '*WelcomeLatLong*' | head -n 1)"
