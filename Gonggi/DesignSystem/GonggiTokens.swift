@@ -201,8 +201,8 @@ enum GonggiMotion {
 enum GonggiBrandCopy {
     /// Logo subtext — present in SVG only; do not re-typeset in UI next to logo.
     static let logoSubtext = "공간을 기록하다"
-    static let welcomeHeadline = "오늘의 공간을,\n다시 둘러볼 기억으로."
-    static let welcomeSupport = "남기고 싶은 공간을 촬영하고,\n다시 둘러보세요."
+    static let welcomeHeadline = WelcomePanoramaSampleAsset.headline
+    static let welcomeSupport = WelcomePanoramaSampleAsset.subtitle
 }
 
 // MARK: - User-facing copy

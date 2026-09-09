@@ -6,6 +6,7 @@ struct SpaceLinkMetadataEditorView: View {
     let confirmTitle: String
     @Binding var displayName: String
     @Binding var externalUrl: String
+    @Binding var labelSize: SpaceLinkLabelSize
     var onConfirm: () -> Void
     var onCancel: () -> Void
 
@@ -43,6 +44,17 @@ struct SpaceLinkMetadataEditorView: View {
                 } footer: {
                     Text("링크를 입력하면 공간을 보는 사람이 열어볼 수 있어요")
                 }
+
+                if showsLabelSizePicker {
+                    Section("텍스트 크기") {
+                        Picker("텍스트 크기", selection: $labelSize) {
+                            ForEach(SpaceLinkLabelSize.allCases, id: \.self) { size in
+                                Text(size.displayTitle).tag(size)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                }
             }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
@@ -56,6 +68,11 @@ struct SpaceLinkMetadataEditorView: View {
                 }
             }
         }
+    }
+
+    private var showsLabelSizePicker: Bool {
+        SpaceLinkExternalURL.normalizeDisplayName(displayName) != nil
+            || SpaceLinkExternalURL.hostname(from: externalUrl) != nil
     }
 
     private func attemptConfirm() {

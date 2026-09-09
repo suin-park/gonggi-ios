@@ -34,6 +34,8 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var height: Int?
     /// Internal failure code (payload_too_large_local, network_error, …). Never shown raw in UI.
     var lastErrorCode: String? = nil
+    /// True only while a lat-long download Task is in flight (not persisted as durable state).
+    var isDownloadingLatLong: Bool = false
     /// Canonical `User.id` when known. Nil = anonymous / legacy unknown (never auto-assign on next login).
     var ownerUserId: String? = nil
     /// Build 80 — optional space audio (catalog / upload).
@@ -43,6 +45,15 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var audioDurationSec: Double? = nil
     var audioSource: String? = nil
     var audioUpdatedAt: String? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionId, jobId, createdAt, completedAt, serverStatus, displayName
+        case memo, locationName, latitude, longitude, locationSource, locationCapturedAt
+        case resultImageURL, localLatLongPath, localLatLongSourceURL
+        case localLatLongRevisionId, localLatLongRevisionToken, latestRevisionId, catalogUpdatedAt
+        case width, height, lastErrorCode, ownerUserId
+        case audioURL, audioFileName, audioMimeType, audioDurationSec, audioSource, audioUpdatedAt
+    }
 
     var isTerminal: Bool {
         serverStatus == "completed" || serverStatus == "failed"
@@ -79,7 +90,13 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
         case "failed":
             return SpaceJobErrorPresentation.userMessage(for: lastErrorCode)
         case "completed":
-            return isDeviceReadyForVR ? nil : "공간을 불러오는 중…"
+            if isDeviceReadyForVR { return nil }
+            if isDownloadingLatLong { return "공간을 불러오는 중…" }
+            if lastErrorCode == "download_failed" || lastErrorCode == "invalid_image" {
+                return SpaceJobErrorPresentation.userMessage(for: lastErrorCode)
+            }
+            // Idle without local file — do not show permanent loading; open/retry starts download.
+            return nil
         default:
             return "공간을 만들고 있어요"
         }

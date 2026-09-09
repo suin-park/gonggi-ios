@@ -480,7 +480,7 @@ struct MemoryArchiveCard: View {
     let space: SpaceRecord
     /// Card body (thumbnail / title / meta) → Space Detail.
     var onOpenDetail: () -> Void
-    /// “공간 보기 →” only — VR Viewer. Nil / unused when not viewable.
+    /// “360° 보기 →” only — VR Viewer. Nil / unused when not viewable.
     var onViewSpace: () -> Void
 
     var body: some View {
@@ -545,7 +545,7 @@ struct MemoryArchiveCard: View {
                 onViewSpace()
             } label: {
                 HStack(spacing: 6) {
-                    Text("공간 보기")
+                    Text("360° 보기")
                         .font(GonggiTypography.caption(14))
                         .foregroundStyle(GonggiColors.brandCyan)
                     Image(systemName: "arrow.right")
@@ -557,7 +557,7 @@ struct MemoryArchiveCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("공간 보기")
+            .accessibilityLabel("360° 보기")
         } else if space.status == .failed {
             Button {
                 GonggiHaptics.light()
@@ -602,7 +602,7 @@ struct MemoryArchiveCard: View {
         case .failed: return "다시 시도"
         case .processing, .uploading: return "진행 상태"
         case .draft: return "이어서 보기"
-        case .ready: return "공간 보기"
+        case .ready: return "360° 보기"
         }
     }
 

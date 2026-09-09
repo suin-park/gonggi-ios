@@ -167,6 +167,11 @@ final class SpaceJobRuntime: ObservableObject {
             await refreshStatus(jobId: job.jobId, generation: generation)
         }
         for job in store.jobs where job.serverStatus == "completed" && !job.isDeviceReadyForVR {
+            // Do not loop forever on a known download failure — user retries via viewer open.
+            if job.lastErrorCode == "download_failed" || job.lastErrorCode == "invalid_image" {
+                continue
+            }
+            if job.isDownloadingLatLong { continue }
             _ = await prepareViewer(jobId: job.jobId)
         }
         if isForeground {
@@ -234,14 +239,65 @@ final class SpaceJobRuntime: ObservableObject {
             }
         }
 
-        do {
-            let local = try await downloadAndPersist(sessionId: job.sessionId, jobId: job.jobId, remote: remote)
-            return .success(local)
-        } catch let err as SpaceViewerError {
-            return .failure(err)
-        } catch {
-            return .failure(.downloadFailed)
+        let trackedJobId = job.jobId
+        let trackedSessionId = job.sessionId
+        store.update(jobId: trackedJobId) { job in
+            job.isDownloadingLatLong = true
+            if job.lastErrorCode == "download_failed" || job.lastErrorCode == "invalid_image" {
+                job.lastErrorCode = nil
+            }
         }
+
+        if downloadTasks[trackedJobId] == nil {
+            downloadTasks[trackedJobId] = Task { [weak self] in
+                guard let self else { return }
+                defer {
+                    self.store.update(jobId: trackedJobId) { $0.isDownloadingLatLong = false }
+                    self.downloadTasks[trackedJobId] = nil
+                }
+                do {
+                    _ = try await self.downloadAndPersist(
+                        sessionId: trackedSessionId,
+                        jobId: trackedJobId,
+                        remote: remote
+                    )
+                    self.store.update(jobId: trackedJobId) { $0.lastErrorCode = nil }
+                } catch {
+                    let code: String = {
+                        if let viewer = error as? SpaceViewerError {
+                            switch viewer {
+                            case .invalidImage: return "invalid_image"
+                            default: return "download_failed"
+                            }
+                        }
+                        return "download_failed"
+                    }()
+                    self.store.update(jobId: trackedJobId) { job in
+                        if job.serverStatus == "completed" {
+                            job.lastErrorCode = code
+                        }
+                    }
+                }
+            }
+        }
+
+        if let inflight = downloadTasks[trackedJobId] {
+            await inflight.value
+        }
+
+        if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: trackedSessionId),
+           SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+            return .success(latest)
+        }
+        if let path = store.job(id: trackedJobId)?.localLatLongPath,
+           SpaceLatLongStore.isValidLocalFile(at: path) {
+            return .success(URL(fileURLWithPath: path))
+        }
+        let failCode = store.job(id: trackedJobId)?.lastErrorCode
+        if failCode == "invalid_image" {
+            return .failure(.invalidImage)
+        }
+        return .failure(.downloadFailed)
     }
 
     // MARK: - Private
@@ -397,9 +453,18 @@ final class SpaceJobRuntime: ObservableObject {
 
         // Deduped background download — must not block polling.
         if downloadTasks[jobId] != nil { return }
+        store.update(jobId: jobId) { job in
+            job.isDownloadingLatLong = true
+            if job.lastErrorCode == "download_failed" || job.lastErrorCode == "invalid_image" {
+                job.lastErrorCode = nil
+            }
+        }
         downloadTasks[jobId] = Task { [weak self] in
             guard let self else { return }
-            defer { self.downloadTasks[jobId] = nil }
+            defer {
+                self.store.update(jobId: jobId) { $0.isDownloadingLatLong = false }
+                self.downloadTasks[jobId] = nil
+            }
             do {
                 _ = try await self.downloadAndPersist(
                     sessionId: sessionId,
@@ -408,8 +473,23 @@ final class SpaceJobRuntime: ObservableObject {
                     reportedWidth: status.width,
                     reportedHeight: status.height
                 )
+                self.store.update(jobId: jobId) { $0.lastErrorCode = nil }
             } catch {
-                // Completed on server; texture retry on next prepareViewer / sync.
+                let code: String = {
+                    if let viewer = error as? SpaceViewerError {
+                        switch viewer {
+                        case .invalidImage: return "invalid_image"
+                        default: return "download_failed"
+                        }
+                    }
+                    return "download_failed"
+                }()
+                self.store.update(jobId: jobId) { job in
+                    // Keep server completed; surface download failure separately.
+                    if job.serverStatus == "completed" {
+                        job.lastErrorCode = code
+                    }
+                }
             }
         }
     }

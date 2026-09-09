@@ -109,7 +109,12 @@ enum SpaceHotspotNodeFactory {
             externalUrl: link.externalUrl,
             targetSpaceName: targetSpaceName
         ), !forceDebug {
-            attachCaption(caption, to: root, above: visualDiameter)
+            attachCaption(
+                caption,
+                size: link.labelSize ?? .default,
+                to: root,
+                above: visualDiameter
+            )
         }
 
         if pulse, !selected, !forceDebug, link.status == .linked {
@@ -229,10 +234,15 @@ enum SpaceHotspotNodeFactory {
 
     // MARK: - Materials / Images
 
-    private static func attachCaption(_ text: String, to root: SCNNode, above visualDiameter: Float) {
-        let image = makeCaptionImage(text: text)
+    private static func attachCaption(
+        _ text: String,
+        size: SpaceLinkLabelSize,
+        to root: SCNNode,
+        above visualDiameter: Float
+    ) {
+        let image = makeCaptionImage(text: text, size: size)
         let aspect = image.size.width / max(image.size.height, 1)
-        let height: Float = 0.22
+        let height: Float = min(max(0.22 * Float(size.captionScale), 0.16), 0.30)
         let width = height * Float(aspect)
         let plane = SCNPlane(width: CGFloat(width), height: CGFloat(height))
         plane.firstMaterial = makeUnlitMaterial(image: image)
@@ -282,9 +292,10 @@ enum SpaceHotspotNodeFactory {
     }
 
     /// Compact navy / translucent caption with Gonggi cyan accent — max 2 lines, truncated.
-    private static func makeCaptionImage(text: String) -> UIImage {
-        let maxWidth: CGFloat = 280
-        let font = UIFont.systemFont(ofSize: 22, weight: .semibold)
+    private static func makeCaptionImage(text: String, size: SpaceLinkLabelSize) -> UIImage {
+        let scale = CGFloat(size.captionScale)
+        let maxWidth: CGFloat = min(max(280 * scale, 224), 320)
+        let font = UIFont.systemFont(ofSize: 22 * scale, weight: .semibold)
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         paragraph.lineBreakMode = .byTruncatingTail
@@ -302,19 +313,27 @@ enum SpaceHotspotNodeFactory {
         )
         let textSize = CGSize(
             width: min(maxWidth - 28, ceil(bound.width)),
-            height: min(72, max(24, ceil(bound.height)))
+            height: min(72 * scale, max(24 * scale, ceil(bound.height)))
         )
-        let size = CGSize(width: textSize.width + 28, height: textSize.height + 16)
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let imageSize = CGSize(
+            width: min(max(textSize.width + 28 * scale, 92), 340),
+            height: min(max(textSize.height + 16 * scale, 36), 108)
+        )
+        let renderer = UIGraphicsImageRenderer(size: imageSize)
         return renderer.image { ctx in
-            let rect = CGRect(origin: .zero, size: size)
+            let rect = CGRect(origin: .zero, size: imageSize)
             let path = UIBezierPath(roundedRect: rect, cornerRadius: 12)
             UIColor(red: 14 / 255, green: 35 / 255, blue: 62 / 255, alpha: 0.78).setFill()
             path.fill()
             UIColor(red: 63 / 255, green: 207 / 255, blue: 228 / 255, alpha: 0.85).setStroke()
             path.lineWidth = 2
             path.stroke()
-            let textRect = CGRect(x: 14, y: 8, width: textSize.width, height: textSize.height)
+            let textRect = CGRect(
+                x: 14 * scale,
+                y: 8 * scale,
+                width: imageSize.width - 28 * scale,
+                height: imageSize.height - 16 * scale
+            )
             ns.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attrs, context: nil)
         }
     }

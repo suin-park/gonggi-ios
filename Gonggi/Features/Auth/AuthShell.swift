@@ -238,17 +238,17 @@ struct AuthShellView: View {
     @Environment(\.sizeCategory) private var sizeCategory
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    /// Keep logo compact so sample card + three auth actions stay visible on iPhone 14 Plus / compact height.
+    /// Keep logo compact so sample card + three auth actions stay visible on compact height.
     private var welcomeLogoWidth: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 140 }
-        if sizeCategory >= .extraExtraLarge { return 152 }
-        return 168
+        if dynamicTypeSize.isAccessibilitySize { return 120 }
+        if sizeCategory >= .extraExtraLarge { return 132 }
+        return 148
     }
 
     private var decorationHeight: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 148 }
-        if sizeCategory >= .extraExtraLarge { return 172 }
-        return 200
+        if dynamicTypeSize.isAccessibilitySize { return 132 }
+        if sizeCategory >= .extraExtraLarge { return 156 }
+        return 180
     }
 
     private var sphereDiameter: CGFloat {
@@ -265,17 +265,18 @@ struct AuthShellView: View {
                     // Independent centered logo header (does not force form centering).
                     GonggiLogoView(variant: .white, width: welcomeLogoWidth)
                         .frame(maxWidth: .infinity)
-                        .padding(.top, GonggiSpacing.lg)
-                        .padding(.bottom, GonggiSpacing.sm)
+                        .padding(.top, GonggiSpacing.md)
+                        .padding(.bottom, GonggiSpacing.xs)
 
                     welcomeDecoration
                         .frame(height: decorationHeight)
                         .frame(maxWidth: .infinity)
+                        .clipped()
                         .padding(.vertical, GonggiSpacing.xs)
 
                     VStack(spacing: GonggiSpacing.sm) {
                         Text(WelcomePanoramaSampleAsset.headline)
-                            .font(GonggiTypography.title(24))
+                            .font(GonggiTypography.title(22))
                             .foregroundStyle(GonggiColors.textPrimary)
                             .multilineTextAlignment(.center)
                             .lineLimit(2)
@@ -323,7 +324,7 @@ struct AuthShellView: View {
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
 
-                    Text("하나의 계정으로 공기와 3D Locker를 함께 이용할 수 있어요.")
+                    Text(WelcomePanoramaSampleAsset.accountFootnote)
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textTertiary)
                         .multilineTextAlignment(.center)

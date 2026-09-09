@@ -17,7 +17,7 @@ struct SpaceDetailView: View {
     @State private var viewerError: String?
     @State private var deleteError: String?
     @State private var showEditSheet = false
-    @State private var showShareAlert = false
+    @State private var showShareSheet = false
     // Build 80 — space audio
     @State private var showAudioImporter = false
     @State private var showAudioRecorder = false
@@ -84,10 +84,14 @@ struct SpaceDetailView: View {
         } message: {
             Text(audioError ?? "")
         }
-        .alert("공간 공유", isPresented: $showShareAlert) {
-            Button("확인", role: .cancel) {}
-        } message: {
-            Text("공간 공유 기능은 다음 업데이트에서 사용할 수 있어요.")
+        .sheet(isPresented: $showShareSheet) {
+            SpaceShareSheet(
+                spaceId: liveSpace.sessionId ?? liveSpace.id,
+                spaceName: liveSpace.name,
+                onClose: { showShareSheet = false }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showEditSheet) {
             SpaceDetailEditView(space: liveSpace)
@@ -281,7 +285,7 @@ struct SpaceDetailView: View {
             GonggiElevatedCard {
                 Text(liveSpace.memo?.isEmpty == false
                     ? liveSpace.memo!
-                    : "이 공간에 대한 메모를 남겨보세요。")
+                    : "이 공간에 대한 메모를 남겨보세요.")
                     .font(GonggiTypography.body(15))
                     .foregroundStyle(
                         liveSpace.memo?.isEmpty == false
@@ -349,16 +353,36 @@ struct SpaceDetailView: View {
         VStack(spacing: GonggiSpacing.sm) {
             // Primary: viewer when ready
             if liveSpace.canOpenExistingVR {
-                PrimaryButton(title: "공간 보기", icon: "cube.transparent") {
+                PrimaryButton(title: "360° 보기", icon: "cube.transparent") {
                     GonggiHaptics.light()
                     Task { await openViewer() }
                 }
-                .accessibilityLabel("공간 보기")
+                .accessibilityLabel("360° 보기")
             }
 
             switch liveSpace.status {
             case .ready:
-                EmptyView()
+                if let note = liveSpace.note, !note.isEmpty {
+                    GonggiElevatedCard {
+                        HStack(spacing: GonggiSpacing.md) {
+                            if liveSpace.note == "공간을 불러오는 중…" {
+                                ProgressView()
+                                    .tint(GonggiColors.accentTeal)
+                            }
+                            Text(note)
+                                .font(GonggiTypography.body(15))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                            Spacer(minLength: 0)
+                            if liveSpace.note != "공간을 불러오는 중…" {
+                                Button("다시 시도") {
+                                    Task { await openViewer() }
+                                }
+                                .font(GonggiTypography.caption(13))
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
             case .failed:
                 PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
                     GonggiHaptics.medium()
@@ -382,9 +406,10 @@ struct SpaceDetailView: View {
             }
 
             SecondaryButton(title: "공유", icon: "square.and.arrow.up") {
-                showShareAlert = true
+                showShareSheet = true
             }
-            .accessibilityLabel("공유, 준비 중")
+            .accessibilityLabel("공유")
+            .disabled(liveSpace.status != .ready)
         }
         .padding(.top, GonggiSpacing.xs)
     }
@@ -505,7 +530,7 @@ struct ViewerPlaceholderView: View {
                         Text("3D 공간 뷰어")
                             .font(GonggiTypography.headline(20))
                             .foregroundStyle(GonggiColors.textPrimary)
-                        Text("곧 이곳에서 기록한 공간을\n다시 걸어 다닐 수 있어요.")
+                        Text("이 공간은 아직 뷰어를 열 수 없어요.")
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
                             .multilineTextAlignment(.center)

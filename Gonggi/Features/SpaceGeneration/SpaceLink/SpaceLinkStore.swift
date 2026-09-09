@@ -79,7 +79,8 @@ actor SpaceLinkStore {
         pitchDeg: Float,
         radius: Float,
         label: String?,
-        externalUrl: String? = nil
+        externalUrl: String? = nil,
+        labelSize: SpaceLinkLabelSize = .default
     ) async throws -> SpaceLink {
         struct CreateBody: Encodable {
             var targetSpaceId: String
@@ -88,6 +89,7 @@ actor SpaceLinkStore {
             var radius: Float
             var label: String?
             var externalUrl: String?
+            var labelSize: String?
         }
         let normalizedLabel = SpaceLinkExternalURL.normalizeDisplayName(label)
         let normalizedURL: String?
@@ -103,7 +105,12 @@ actor SpaceLinkStore {
             pitchDeg: pitchDeg,
             radius: SpaceLink.clampRadius(radius),
             label: normalizedLabel,
-            externalUrl: normalizedURL
+            externalUrl: normalizedURL,
+            labelSize: SpaceLinkExternalURL.hotspotCaption(
+                displayName: normalizedLabel,
+                externalUrl: normalizedURL,
+                targetSpaceName: nil
+            ) == nil ? nil : labelSize.rawValue
         )
         var request = URLRequest(url: linksEndpoint(spaceId: sourceSpaceId))
         request.httpMethod = "POST"
@@ -138,7 +145,8 @@ actor SpaceLinkStore {
         pitchDeg: Float?,
         radius: Float?,
         label: String?? = nil,
-        externalUrl: String?? = nil
+        externalUrl: String?? = nil,
+        labelSize: SpaceLinkLabelSize?? = nil
     ) async throws -> SpaceLink {
         struct PatchBody: Encodable {
             var yawDeg: Float?
@@ -146,11 +154,13 @@ actor SpaceLinkStore {
             var radius: Float?
             var label: String?
             var externalUrl: String?
+            var labelSize: String?
             var encodeLabelNull: Bool = false
             var encodeExternalUrlNull: Bool = false
+            var encodeLabelSizeNull: Bool = false
 
             enum CodingKeys: String, CodingKey {
-                case yawDeg, pitchDeg, radius, label, externalUrl
+                case yawDeg, pitchDeg, radius, label, externalUrl, labelSize
             }
 
             func encode(to encoder: Encoder) throws {
@@ -168,6 +178,11 @@ actor SpaceLinkStore {
                 } else if let externalUrl {
                     try c.encode(externalUrl, forKey: .externalUrl)
                 }
+                if encodeLabelSizeNull {
+                    try c.encodeNil(forKey: .labelSize)
+                } else if let labelSize {
+                    try c.encode(labelSize, forKey: .labelSize)
+                }
             }
         }
 
@@ -177,8 +192,10 @@ actor SpaceLinkStore {
             radius: radius.map { SpaceLink.clampRadius($0) },
             label: nil,
             externalUrl: nil,
+            labelSize: nil,
             encodeLabelNull: false,
-            encodeExternalUrlNull: false
+            encodeExternalUrlNull: false,
+            encodeLabelSizeNull: false
         )
         if let labelOpt = label {
             if let labelOpt {
@@ -204,6 +221,13 @@ actor SpaceLinkStore {
                 }
             } else {
                 body.encodeExternalUrlNull = true
+            }
+        }
+        if let sizeOpt = labelSize {
+            if let sizeOpt {
+                body.labelSize = sizeOpt.rawValue
+            } else {
+                body.encodeLabelSizeNull = true
             }
         }
 

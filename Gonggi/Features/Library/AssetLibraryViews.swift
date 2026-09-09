@@ -93,10 +93,7 @@ struct AssetLibraryView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
             HStack {
-                Text("3D 어셋")
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.brandCyan)
-                Spacer()
+                Spacer(minLength: 0)
                 Button {
                     GonggiHaptics.light()
                     showCreate = true
@@ -108,20 +105,13 @@ struct AssetLibraryView: View {
                         .background(GonggiColors.surfaceElevated.opacity(0.8))
                         .clipShape(Circle())
                 }
-                .accessibilityLabel("새 3D 어셋 만들기")
+                .accessibilityLabel("새 3D 자산 만들기")
             }
-            Text("3D Locker의 3D 어셋을\n한곳에서 관리해요")
-                .font(GonggiTypography.headline(20))
-                .foregroundStyle(GonggiColors.textPrimary)
-                .lineSpacing(2)
             if store.mayBeTruncated {
                 Text("최근 \(AssetLibraryStore.knownServerTakeLimit)개까지 표시돼요")
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
-            Text("앱을 닫아도 3D 생성은 계속돼요.")
-                .font(GonggiTypography.caption(12))
-                .foregroundStyle(GonggiColors.textTertiary)
         }
     }
 
@@ -145,7 +135,7 @@ struct AssetLibraryView: View {
         VStack(spacing: GonggiSpacing.md) {
             ProgressView()
                 .tint(GonggiColors.accentTeal)
-            Text("3D 어셋을 불러오는 중…")
+            Text("3D 자산을 불러오는 중…")
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
         }
@@ -160,15 +150,15 @@ struct AssetLibraryView: View {
                 .font(.system(size: 48, weight: .ultraLight))
                 .foregroundStyle(GonggiColors.accentTeal.opacity(0.8))
                 .accessibilityHidden(true)
-            Text("아직 3D 어셋이 없어요")
+            Text("아직 3D 자산이 없어요")
                 .font(GonggiTypography.headline(18))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("사진으로 새 3D 어셋을 만들어 보세요.")
+            Text("사진으로 새 3D 자산을 만들어 보세요.")
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
-            PrimaryButton(title: "새 3D 어셋 만들기", icon: "plus") {
+            PrimaryButton(title: "새 3D 자산 만들기", icon: "plus") {
                 GonggiHaptics.medium()
                 showCreate = true
             }
@@ -184,7 +174,7 @@ struct AssetLibraryView: View {
                 .font(.system(size: 40, weight: .ultraLight))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .accessibilityHidden(true)
-            Text(store.errorMessage ?? "3D 어셋을 불러오지 못했어요")
+            Text(store.errorMessage ?? "3D 자산을 불러오지 못했어요")
                 .font(GonggiTypography.headline(18))
                 .foregroundStyle(GonggiColors.textPrimary)
                 .multilineTextAlignment(.center)
@@ -409,7 +399,7 @@ struct AssetDetailView: View {
         }
         .background(GonggiAmbientBackground(showGlow: false))
         .navigationBarTitleDisplayMode(.inline)
-        .navigationTitle("3D 어셋")
+        .navigationTitle("3D 자산")
         .task {
             await loadDetail()
             syncPolling()

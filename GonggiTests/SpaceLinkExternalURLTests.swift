@@ -26,13 +26,12 @@ final class SpaceLinkExternalURLTests: XCTestCase {
             ),
             "example.com"
         )
-        XCTAssertEqual(
+        XCTAssertNil(
             SpaceLinkExternalURL.hotspotCaption(
                 displayName: nil,
                 externalUrl: nil,
                 targetSpaceName: "거실"
-            ),
-            "거실"
+            )
         )
         XCTAssertNil(
             SpaceLinkExternalURL.hotspotCaption(
@@ -40,6 +39,25 @@ final class SpaceLinkExternalURLTests: XCTestCase {
                 externalUrl: nil,
                 targetSpaceName: nil
             )
+        )
+    }
+
+    func testAccessibilityLabelFallsBackToNavigateText() {
+        XCTAssertEqual(
+            SpaceLinkExternalURL.accessibilityLabel(
+                displayName: nil,
+                externalUrl: nil,
+                targetSpaceName: nil
+            ),
+            "연결된 공간으로 이동"
+        )
+        XCTAssertEqual(
+            SpaceLinkExternalURL.accessibilityLabel(
+                displayName: nil,
+                externalUrl: nil,
+                targetSpaceName: "거실"
+            ),
+            "연결된 공간으로 이동"
         )
     }
 

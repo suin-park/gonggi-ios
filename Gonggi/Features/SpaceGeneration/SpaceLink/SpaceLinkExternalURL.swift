@@ -78,16 +78,32 @@ enum SpaceLinkExternalURL {
         return String(t.prefix(maxDisplayNameLength))
     }
 
-    /// Label priority: displayName → hostname → target space name → nil (icon-only).
+    /// Visible label priority: displayName → hostname → nil (icon-only).
     static func hotspotCaption(
         displayName: String?,
         externalUrl: String?,
         targetSpaceName: String?
     ) -> String? {
+        _ = targetSpaceName
         if let name = normalizeDisplayName(displayName) { return name }
         if let host = hostname(from: externalUrl) { return host }
-        let target = targetSpaceName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return target.isEmpty ? nil : target
+        return nil
+    }
+
+    static func accessibilityLabel(
+        displayName: String?,
+        externalUrl: String?,
+        targetSpaceName: String?
+    ) -> String {
+        _ = targetSpaceName
+        if let text = hotspotCaption(
+            displayName: displayName,
+            externalUrl: externalUrl,
+            targetSpaceName: targetSpaceName
+        ) {
+            return text
+        }
+        return "연결된 공간으로 이동"
     }
 
     // MARK: - Private

@@ -69,6 +69,6 @@ final class VRExitToLibraryTests: XCTestCase {
 
     func testLibraryCategoryTitlesUnchanged() {
         XCTAssertEqual(LibraryCategory.spaces.title, "공간")
-        XCTAssertEqual(LibraryCategory.assets.title, "3D 어셋")
+        XCTAssertEqual(LibraryCategory.assets.title, "3D 자산")
     }
 }

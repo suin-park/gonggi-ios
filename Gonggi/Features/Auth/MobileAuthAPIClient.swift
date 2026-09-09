@@ -220,6 +220,76 @@ actor MobileAuthAPIClient {
         return json
     }
 
+    struct SpaceShareState: Equatable, Sendable {
+        var shareEnabled: Bool
+        var shareToken: String?
+        var shareUrl: String?
+    }
+
+    /// GET /api/gonggi/spaces/:id/share — owner link-share state.
+    func getSpaceShare(accessToken: String, spaceId: String) async throws -> SpaceShareState {
+        var request = URLRequest(
+            url: config.apiBaseURL
+                .appendingPathComponent("api/gonggi/spaces")
+                .appendingPathComponent(spaceId)
+                .appendingPathComponent("share")
+        )
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw MobileAuthAPIError.network }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard (200..<300).contains(http.statusCode),
+              let share = json?["share"] as? [String: Any]
+        else {
+            throw MobileAuthAPIError.server(
+                code: (json?["error"] as? String) ?? "ERROR",
+                message: (json?["message"] as? String) ?? "공유 설정을 불러오지 못했어요.",
+                status: http.statusCode
+            )
+        }
+        return SpaceShareState(
+            shareEnabled: share["shareEnabled"] as? Bool ?? false,
+            shareToken: share["shareToken"] as? String,
+            shareUrl: share["shareUrl"] as? String
+        )
+    }
+
+    /// PATCH /api/gonggi/spaces/:id/share — owner enable/disable link share.
+    func setSpaceShare(accessToken: String, spaceId: String, enabled: Bool) async throws -> SpaceShareState {
+        var request = URLRequest(
+            url: config.apiBaseURL
+                .appendingPathComponent("api/gonggi/spaces")
+                .appendingPathComponent(spaceId)
+                .appendingPathComponent("share")
+        )
+        request.httpMethod = "PATCH"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+        request.timeoutInterval = 30
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw MobileAuthAPIError.network }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard (200..<300).contains(http.statusCode),
+              let share = json?["share"] as? [String: Any]
+        else {
+            throw MobileAuthAPIError.server(
+                code: (json?["error"] as? String) ?? "ERROR",
+                message: (json?["message"] as? String) ?? "공유 설정을 저장하지 못했어요.",
+                status: http.statusCode
+            )
+        }
+        return SpaceShareState(
+            shareEnabled: share["shareEnabled"] as? Bool ?? false,
+            shareToken: share["shareToken"] as? String,
+            shareUrl: share["shareUrl"] as? String
+        )
+    }
+
     /// Build 78 — soft-delete owned GonggiSpace (links cleaned server-side). Does not delete R2.
     func deleteSpace(accessToken: String, spaceId: String) async throws {
         var request = URLRequest(

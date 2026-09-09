@@ -9,6 +9,30 @@ enum SpaceLinkStatus: String, Codable, Sendable, Equatable {
     case failed
 }
 
+enum SpaceLinkLabelSize: String, Codable, Sendable, Equatable, CaseIterable {
+    case small = "SMALL"
+    case medium = "MEDIUM"
+    case large = "LARGE"
+
+    static let `default`: SpaceLinkLabelSize = .medium
+
+    var displayTitle: String {
+        switch self {
+        case .small: return "작게"
+        case .medium: return "보통"
+        case .large: return "크게"
+        }
+    }
+
+    var captionScale: Double {
+        switch self {
+        case .small: return 0.8
+        case .medium: return 1.0
+        case .large: return 1.3
+        }
+    }
+}
+
 struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
     var id: String
     var sourceSpaceId: String
@@ -20,6 +44,8 @@ struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
     var label: String?
     /// Optional https URL opened from the hotspot (never auto-fetched).
     var externalUrl: String?
+    /// Semantic hotspot label size. Nil from server/legacy means MEDIUM.
+    var labelSize: SpaceLinkLabelSize?
     var status: SpaceLinkStatus
     var targetEntryYawDeg: Float?
     var targetSessionId: String?
@@ -57,7 +83,7 @@ struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, sourceSpaceId, targetSpaceId, yawDeg, pitchDeg, radius
-        case label, displayName, externalUrl, status, targetEntryYawDeg
+        case label, displayName, externalUrl, labelSize, status, targetEntryYawDeg
         case targetSessionId, targetResultImageURL, targetStatus, createdAt, updatedAt
     }
 
@@ -70,6 +96,7 @@ struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
         radius: Float,
         label: String?,
         externalUrl: String? = nil,
+        labelSize: SpaceLinkLabelSize? = nil,
         status: SpaceLinkStatus,
         targetEntryYawDeg: Float?,
         targetSessionId: String?,
@@ -86,6 +113,7 @@ struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
         self.radius = radius
         self.label = label
         self.externalUrl = externalUrl
+        self.labelSize = labelSize
         self.status = status
         self.targetEntryYawDeg = targetEntryYawDeg
         self.targetSessionId = targetSessionId
@@ -107,6 +135,7 @@ struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
         let decodedDisplay = try c.decodeIfPresent(String.self, forKey: .displayName)
         label = SpaceLinkExternalURL.normalizeDisplayName(decodedLabel ?? decodedDisplay)
         externalUrl = try c.decodeIfPresent(String.self, forKey: .externalUrl)
+        labelSize = try c.decodeIfPresent(SpaceLinkLabelSize.self, forKey: .labelSize)
         status = try c.decode(SpaceLinkStatus.self, forKey: .status)
         targetEntryYawDeg = try c.decodeIfPresent(Float.self, forKey: .targetEntryYawDeg)
         targetSessionId = try c.decodeIfPresent(String.self, forKey: .targetSessionId)
@@ -126,6 +155,7 @@ struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
         try c.encode(radius, forKey: .radius)
         try c.encodeIfPresent(label, forKey: .label)
         try c.encodeIfPresent(externalUrl, forKey: .externalUrl)
+        try c.encodeIfPresent(labelSize, forKey: .labelSize)
         try c.encode(status, forKey: .status)
         try c.encodeIfPresent(targetEntryYawDeg, forKey: .targetEntryYawDeg)
         try c.encodeIfPresent(targetSessionId, forKey: .targetSessionId)
@@ -141,7 +171,8 @@ struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
         pitchDeg: Float,
         radius: Float = defaultRadius,
         label: String? = nil,
-        externalUrl: String? = nil
+        externalUrl: String? = nil,
+        labelSize: SpaceLinkLabelSize = .default
     ) -> SpaceLink {
         let now = Date()
         return SpaceLink(
@@ -153,6 +184,7 @@ struct SpaceLink: Identifiable, Codable, Equatable, Sendable {
             radius: clampRadius(radius),
             label: label,
             externalUrl: externalUrl,
+            labelSize: labelSize,
             status: .draft,
             targetEntryYawDeg: nil,
             targetSessionId: nil,
@@ -173,6 +205,7 @@ struct PendingSpaceLinkCapture: Codable, Equatable, Sendable {
     var radius: Float
     var label: String?
     var externalUrl: String?
+    var labelSize: SpaceLinkLabelSize?
     var targetSessionId: String
     var createdAt: Date
 }
@@ -188,6 +221,7 @@ struct SpaceLinkDTO: Codable, Equatable, Sendable {
     var label: String?
     var displayName: String?
     var externalUrl: String?
+    var labelSize: SpaceLinkLabelSize?
     var status: String
     var targetEntryYawDeg: Double?
     var createdAt: String
@@ -209,6 +243,7 @@ struct SpaceLinkDTO: Codable, Equatable, Sendable {
             radius: SpaceLink.clampRadius(Float(radius)),
             label: name,
             externalUrl: externalUrl,
+            labelSize: labelSize,
             status: .linked,
             targetEntryYawDeg: targetEntryYawDeg.map { Float($0) },
             targetSessionId: targetSessionId,

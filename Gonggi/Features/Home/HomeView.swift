@@ -7,20 +7,17 @@ struct HomeView: View {
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
 
-    private var recentSpace: SpaceRecord? {
-        appState.spaces.first
+    private var recentSpaces: [SpaceRecord] {
+        Array(appState.spaces.prefix(5))
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: GonggiSpacing.xl) {
-                    GonggiBrandMark()
-                    heroSection
-                    if let recent = recentSpace {
-                        recentSection(recent)
-                    }
+                    header
                     actions
+                    recentSection
                 }
                 .padding(GonggiSpacing.lg)
                 .padding(.bottom, GonggiSpacing.xxl)
@@ -60,7 +57,7 @@ struct HomeView: View {
                 }
             )) {
                 Button("다시 불러오기") {
-                    if let id = appState.pendingViewerJobId ?? selectedSpace?.id ?? recentSpace?.id {
+                    if let id = appState.pendingViewerJobId ?? selectedSpace?.id ?? recentSpaces.first?.id {
                         Task { await openViewer(jobId: id) }
                     }
                 }
@@ -100,83 +97,97 @@ struct HomeView: View {
         }
     }
 
-    private var heroSection: some View {
-        ZStack(alignment: .bottomLeading) {
-            RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
-                .fill(GonggiColors.heroGradient)
-                .frame(height: 220)
-            HStack {
-                Spacer(minLength: 0)
-                GonggiWireframeSphereView(diameter: 148, isAnimating: true)
-                    .opacity(0.9)
-                    .padding(.trailing, GonggiSpacing.md)
-            }
-            .padding(.top, GonggiSpacing.sm)
-            LinearGradient(
-                colors: [.clear, GonggiColors.backgroundPrimary.opacity(0.72)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
-            Text(GonggiBrandCopy.welcomeHeadline)
-                .font(GonggiTypography.headline(18))
-                .foregroundStyle(GonggiColors.textPrimary.opacity(0.94))
-                .padding(GonggiSpacing.lg)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            GonggiBrandMark()
+            Text("무엇을 시작할까요?")
+                .font(GonggiTypography.title(24))
+                .foregroundStyle(GonggiColors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
-                .stroke(GonggiColors.border, lineWidth: 1)
-        )
-        .accessibilityLabel("공간을 다시 둘러보는 소개")
     }
 
-    private func recentSection(_ space: SpaceRecord) -> some View {
+    private var actions: some View {
+        VStack(spacing: GonggiSpacing.sm) {
+            PrimaryButton(title: "새 공간 촬영", icon: "camera.aperture") {
+                appState.selectTab(.record)
+            }
+            SecondaryButton(title: "공간 관리", icon: "archivebox") {
+                appState.selectTab(.library)
+            }
+        }
+    }
+
+    private var recentSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            Text("최근 기록한 공간")
+            Text("최근 작업")
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
-            Button {
-                handleSpaceTap(space)
-            } label: {
-                HStack(spacing: GonggiSpacing.md) {
-                    SpaceThumbnailView(
-                        space: space,
-                        height: 56,
-                        width: 56,
-                        cornerRadius: GonggiRadius.sm,
-                        showsActivityOverlay: true
-                    )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(space.name)
-                            .font(GonggiTypography.headline(16))
-                            .foregroundStyle(GonggiColors.textPrimary)
-                        Text(space.note ?? space.statusBadgeLabel)
-                            .font(GonggiTypography.caption(12))
-                            .foregroundStyle(
-                                space.repairBadge == .repairFailed || space.status == .failed
-                                    ? GonggiColors.error
-                                    : GonggiColors.textTertiary
+
+            if recentSpaces.isEmpty {
+                Text("아직 만든 공간이 없어요.")
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, GonggiSpacing.xs)
+            } else {
+                ForEach(recentSpaces) { space in
+                    Button {
+                        handleSpaceTap(space)
+                    } label: {
+                        HStack(spacing: GonggiSpacing.md) {
+                            SpaceThumbnailView(
+                                space: space,
+                                height: 56,
+                                width: 56,
+                                cornerRadius: GonggiRadius.sm,
+                                showsActivityOverlay: true
                             )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(space.name)
+                                    .font(GonggiTypography.headline(16))
+                                    .foregroundStyle(GonggiColors.textPrimary)
+                                    .lineLimit(1)
+                                Text(recentSubtitle(for: space))
+                                    .font(GonggiTypography.caption(12))
+                                    .foregroundStyle(
+                                        space.repairBadge == .repairFailed || space.status == .failed
+                                            ? GonggiColors.error
+                                            : GonggiColors.textTertiary
+                                    )
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(GonggiColors.textTertiary)
+                        }
+                        .padding(GonggiSpacing.md)
+                        .background(GonggiColors.surfaceElevated)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                                .stroke(GonggiColors.borderSubtle, lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
                     }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(GonggiColors.textTertiary)
+                    .buttonStyle(GonggiPressableStyle())
+                    .accessibilityLabel("\(space.name), 상세 보기")
                 }
-                .padding(GonggiSpacing.md)
-                .background(GonggiColors.surfaceElevated)
-                .overlay(
-                    RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
-                        .stroke(GonggiColors.borderSubtle, lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
             }
-            .buttonStyle(GonggiPressableStyle())
         }
+    }
+
+    private func recentSubtitle(for space: SpaceRecord) -> String {
+        if space.status == .ready {
+            return space.capturedAt.formatted(date: .abbreviated, time: .omitted)
+        }
+        if let note = space.note, !note.isEmpty {
+            return note
+        }
+        return space.statusBadgeLabel
     }
 
     private func handleSpaceTap(_ space: SpaceRecord) {
-        // Build 79: home recent card → Detail (manage). Viewer via Library “공간 보기”.
         selectedSpace = space
     }
 
@@ -195,17 +206,6 @@ struct HomeView: View {
             )
         case .failure(let error):
             viewerError = error.userMessage
-        }
-    }
-
-    private var actions: some View {
-        VStack(spacing: GonggiSpacing.sm) {
-            PrimaryButton(title: "새 공간 기록하기", icon: "camera.aperture") {
-                appState.selectTab(.record)
-            }
-            SecondaryButton(title: "보관함 보기", icon: "archivebox") {
-                appState.selectTab(.library)
-            }
         }
     }
 }

@@ -2,12 +2,16 @@ import SceneKit
 import SwiftUI
 import UIKit
 
-/// Bundle resource for the official Welcome street LatLong sample (read-only demo).
+/// Bundle resource for the official Welcome LatLong sample (read-only demo).
 enum WelcomePanoramaSampleAsset {
-    static let resourceName = "WelcomeStreetSample_2048x1024"
+    static let resourceName = "WelcomeLatLongSample_1774x887"
     static let resourceExt = "jpg"
-    static let optimizedWidth = 2048
-    static let optimizedHeight = 1024
+    static let optimizedWidth = 1774
+    static let optimizedHeight = 887
+    /// Living room + floor-to-ceiling windows peak near equirect u≈0.56 → yaw ≈ +22°.
+    /// Convention: inside-out sphere, equirectYaw = +cameraYaw (see `VRSphereEquirectBridge`).
+    static let initialYawDegrees: Float = 22
+    static let initialPitchDegrees: Float = 0
 
     static var bundleURL: URL? {
         Bundle.main.url(forResource: resourceName, withExtension: resourceExt)
@@ -18,9 +22,10 @@ enum WelcomePanoramaSampleAsset {
         return UIImage(contentsOfFile: url.path)
     }
 
-    /// Exact Welcome copy (do not paraphrase).
-    static let headline = "공간을 360°로 기록하세요."
-    static let subtitle = "촬영한 공간을 언제든 다시 둘러볼 수 있어요"
+    /// Welcome-only product copy.
+    static let headline = "공간을 360°로 기록하고 공유하세요."
+    static let subtitle = "스마트폰으로 촬영하고 필요한 정보까지 담아보세요."
+    static let accountFootnote = "공간과 3D 자산을 하나의 계정으로 관리하세요."
 }
 
 /// Welcome-only equirect sample card + fullscreen. Does not touch Space Viewer / jobs / auth.
@@ -63,6 +68,8 @@ struct WelcomePanoramaSampleView: View {
             )
             .aspectRatio(16.0 / 9.0, contentMode: .fit)
             .frame(maxWidth: 360)
+            .frame(maxWidth: .infinity)
+            .clipped()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("360도 공간 샘플 둘러보기")
@@ -165,8 +172,11 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
         cameraNode.camera?.zNear = 0.1
         cameraNode.camera?.zFar = 100
         cameraNode.position = SCNVector3(0, 0, 0)
-        // Street-forward heading (yaw/pitch 0); no pole start, no mirror.
-        cameraNode.eulerAngles = SCNVector3(0, 0, 0)
+        cameraNode.eulerAngles = SCNVector3(
+            WelcomePanoramaSampleAsset.initialPitchDegrees * .pi / 180,
+            WelcomePanoramaSampleAsset.initialYawDegrees * .pi / 180,
+            0
+        )
         scene.rootNode.addChildNode(cameraNode)
 
         view.scene = scene
@@ -175,6 +185,7 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
         context.coordinator.cameraNode = cameraNode
         context.coordinator.scnView = view
         context.coordinator.mode = mode
+        context.coordinator.baseYaw = WelcomePanoramaSampleAsset.initialYawDegrees * .pi / 180
         context.coordinator.configureGestures(on: view, enabled: allowsUserGestures)
         context.coordinator.setAnimating(isAnimating)
         return view
@@ -204,13 +215,14 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
         var cameraNode: SCNNode?
         weak var scnView: SCNView?
         var mode: WelcomePanoramaSceneMode = .previewAutoYaw
+        var baseYaw: Float = WelcomePanoramaSampleAsset.initialYawDegrees * .pi / 180
         private var displayLink: CADisplayLink?
         private var animationStart: CFTimeInterval?
         private var panGesture: UIPanGestureRecognizer?
         private var pinchGesture: UIPinchGestureRecognizer?
         private var lastPan = CGPoint.zero
         private var fieldOfView: CGFloat = 72
-        /// ±18° yaw, 14s round trip, ease-in-out.
+        /// ±18° yaw around living-room heading, 14s round trip, ease-in-out.
         private let yawAmplitude: Float = 18 * .pi / 180
         private let period: CFTimeInterval = 14
 
@@ -239,16 +251,14 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
                 startDisplayLink()
             } else {
                 stopDisplayLink()
-                // Keep current yaw when pausing; reset preview to forward when fully stopped in preview mode.
                 if mode == .previewAutoYaw, let camera = cameraNode {
                     camera.eulerAngles.x = 0
-                    // leave yaw as-is mid-cycle look ok; snap to 0 for reduce-motion static
                 }
             }
         }
 
         func snapToForwardStatic() {
-            cameraNode?.eulerAngles = SCNVector3(0, 0, 0)
+            cameraNode?.eulerAngles = SCNVector3(0, baseYaw, 0)
         }
 
         func teardown() {
@@ -282,9 +292,8 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
             let start = animationStart ?? link.timestamp
             if animationStart == nil { animationStart = start }
             let t = (link.timestamp - start).truncatingRemainder(dividingBy: period) / period
-            // Smooth ease-in-out ping-pong on cosine
             let eased = 0.5 - 0.5 * cos(t * 2 * Double.pi)
-            let yaw = yawAmplitude * Float(2 * eased - 1)
+            let yaw = baseYaw + yawAmplitude * Float(2 * eased - 1)
             camera.eulerAngles.y = yaw
             camera.eulerAngles.x = 0
             scnView?.setNeedsDisplay()

@@ -16,18 +16,24 @@ struct LibraryView: View {
                 VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
                     categoryPicker
                     if category == .spaces {
-                        spacesHeader
-                        LazyVStack(spacing: GonggiSpacing.md) {
-                            ForEach(appState.spaces) { space in
-                                MemoryArchiveCard(
-                                    space: space,
-                                    onOpenDetail: {
-                                        selectedSpace = space
-                                    },
-                                    onViewSpace: {
-                                        Task { await openViewer(jobId: space.id) }
-                                    }
-                                )
+                        if appState.spaces.isEmpty {
+                            Text("아직 만든 공간이 없어요.")
+                                .font(GonggiTypography.body(15))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                                .padding(.top, GonggiSpacing.sm)
+                        } else {
+                            LazyVStack(spacing: GonggiSpacing.md) {
+                                ForEach(appState.spaces) { space in
+                                    MemoryArchiveCard(
+                                        space: space,
+                                        onOpenDetail: {
+                                            selectedSpace = space
+                                        },
+                                        onViewSpace: {
+                                            Task { await openViewer(jobId: space.id) }
+                                        }
+                                    )
+                                }
                             }
                         }
                     } else {
@@ -38,7 +44,7 @@ struct LibraryView: View {
                 .padding(.bottom, GonggiSpacing.xxl)
             }
             .background(GonggiAmbientBackground())
-            .navigationTitle("보관함")
+            .navigationTitle("공간 관리")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
@@ -101,16 +107,12 @@ struct LibraryView: View {
     }
 
     private var categoryPicker: some View {
-        Picker("보관함 분류", selection: $category) {
+        Picker("분류", selection: $category) {
             ForEach(LibraryCategory.allCases) { item in
                 Text(item.title).tag(item)
             }
         }
         .pickerStyle(.segmented)
-    }
-
-    private func handleOpen(_ space: SpaceRecord) {
-        selectedSpace = space
     }
 
     private func openViewer(jobId: String) async {
@@ -131,18 +133,6 @@ struct LibraryView: View {
         }
     }
 
-    private var spacesHeader: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("공간 보관함")
-                .font(GonggiTypography.caption(13))
-                .foregroundStyle(GonggiColors.brandCyan)
-            Text("기록한 공간을\n다시 둘러보세요")
-                .font(GonggiTypography.headline(20))
-                .foregroundStyle(GonggiColors.textPrimary)
-                .lineSpacing(2)
-        }
-        .padding(.bottom, GonggiSpacing.xs)
-    }
 }
 
 #Preview {

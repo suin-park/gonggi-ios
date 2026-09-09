@@ -3,8 +3,11 @@ import XCTest
 
 final class WelcomePanoramaSampleTests: XCTestCase {
     func testWelcomeCopyIsExact() {
-        XCTAssertEqual(WelcomePanoramaSampleAsset.headline, "공간을 360°로 기록하세요.")
-        XCTAssertEqual(WelcomePanoramaSampleAsset.subtitle, "촬영한 공간을 언제든 다시 둘러볼 수 있어요")
+        XCTAssertEqual(WelcomePanoramaSampleAsset.headline, "공간을 360°로 기록하고 공유하세요.")
+        XCTAssertEqual(WelcomePanoramaSampleAsset.subtitle, "스마트폰으로 촬영하고 필요한 정보까지 담아보세요.")
+        XCTAssertEqual(WelcomePanoramaSampleAsset.accountFootnote, "공간과 3D 자산을 하나의 계정으로 관리하세요.")
+        XCTAssertFalse(WelcomePanoramaSampleAsset.headline.contains("·"))
+        XCTAssertFalse(WelcomePanoramaSampleAsset.subtitle.contains("·"))
     }
 
     func testDemoAssetExistsWithTwoToOneRatio() throws {
@@ -27,6 +30,7 @@ final class WelcomePanoramaSampleTests: XCTestCase {
         XCTAssertEqual(url?.isFileURL, true)
         XCTAssertFalse(url?.absoluteString.contains("http://") == true)
         XCTAssertFalse(url?.absoluteString.contains("https://") == true)
+        XCTAssertFalse(url?.path.contains("C:\\projects") == true)
     }
 
     func testDemoAssetIsNotFailedGlbOrDepth() {
@@ -36,5 +40,11 @@ final class WelcomePanoramaSampleTests: XCTestCase {
         XCTAssertFalse(name.contains("wireframe"))
         XCTAssertFalse(name.contains("novel"))
         XCTAssertEqual(WelcomePanoramaSampleAsset.resourceExt, "jpg")
+    }
+
+    func testInitialYawTargetsBrightLivingRoomWindows() {
+        // Brightest horizon band ≈ u 0.48…0.60 → positive yaw near +22°.
+        XCTAssertEqual(WelcomePanoramaSampleAsset.initialYawDegrees, 22, accuracy: 0.1)
+        XCTAssertEqual(WelcomePanoramaSampleAsset.initialPitchDegrees, 0, accuracy: 0.1)
     }
 }

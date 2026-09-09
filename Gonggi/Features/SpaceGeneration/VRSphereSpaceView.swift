@@ -95,6 +95,7 @@ struct VRSphereSpaceView: View {
     @State private var showDeleteLinkedConfirm = false
     @State private var spaceLinkLabelDraft = ""
     @State private var spaceLinkURLDraft = ""
+    @State private var spaceLinkLabelSizeDraft: SpaceLinkLabelSize = .default
     @State private var showSpaceLinkMetadataSheet = false
     @State private var spaceLinkMetadataIsEdit = false
     @State private var pendingLinkTarget: SpaceRecord?
@@ -311,6 +312,7 @@ struct VRSphereSpaceView: View {
                         pendingLinkTarget = space
                         spaceLinkLabelDraft = ""
                         spaceLinkURLDraft = ""
+                        spaceLinkLabelSizeDraft = .default
                         spaceLinkMetadataIsEdit = false
                         showSpaceLinkMetadataSheet = true
                     },
@@ -324,6 +326,7 @@ struct VRSphereSpaceView: View {
                     confirmTitle: spaceLinkMetadataIsEdit ? "저장" : "연결",
                     displayName: $spaceLinkLabelDraft,
                     externalUrl: $spaceLinkURLDraft,
+                    labelSize: $spaceLinkLabelSizeDraft,
                     onConfirm: {
                         showSpaceLinkMetadataSheet = false
                         if spaceLinkMetadataIsEdit {
@@ -422,6 +425,7 @@ struct VRSphereSpaceView: View {
             radius: link.radius,
             label: link.label,
             externalUrl: link.externalUrl,
+            labelSize: link.labelSize,
             targetSessionId: result.sessionId,
             createdAt: Date()
         )
@@ -1614,6 +1618,7 @@ struct VRSphereSpaceView: View {
         pendingLinkTarget = nil
         spaceLinkLabelDraft = link.label ?? ""
         spaceLinkURLDraft = link.externalUrl ?? ""
+        spaceLinkLabelSizeDraft = link.labelSize ?? .default
         showSpaceLinkMetadataSheet = true
     }
 
@@ -1643,6 +1648,7 @@ struct VRSphereSpaceView: View {
         }
         spaceLinks[idx].label = newLabel
         spaceLinks[idx].externalUrl = newURL
+        spaceLinks[idx].labelSize = (newLabel != nil || newURL != nil) ? spaceLinkLabelSizeDraft : nil
         spaceLinks[idx].updatedAt = Date()
         do {
             let updated = try await spaceLinkStore.patchLink(
@@ -1652,7 +1658,8 @@ struct VRSphereSpaceView: View {
                 pitchDeg: nil,
                 radius: nil,
                 label: .some(newLabel),
-                externalUrl: .some(newURL)
+                externalUrl: .some(newURL),
+                labelSize: .some((newLabel != nil || newURL != nil) ? spaceLinkLabelSizeDraft : nil)
             )
             if let i = spaceLinks.firstIndex(where: { $0.id == id }) {
                 spaceLinks[i] = updated
@@ -1799,6 +1806,9 @@ struct VRSphereSpaceView: View {
         )
         #endif
         do {
+            let resolvedLabelSize = (resolvedLabel != nil || resolvedURL != nil)
+                ? spaceLinkLabelSizeDraft
+                : .default
             let created = try await spaceLinkStore.createLinked(
                 sourceSpaceId: sessionId,
                 targetSpaceId: targetId,
@@ -1806,7 +1816,8 @@ struct VRSphereSpaceView: View {
                 pitchDeg: draft.pitchDeg,
                 radius: draft.radius,
                 label: resolvedLabel,
-                externalUrl: resolvedURL
+                externalUrl: resolvedURL,
+                labelSize: resolvedLabelSize
             )
             var merged = created
             // Prefer target session for navigation.
@@ -1817,6 +1828,7 @@ struct VRSphereSpaceView: View {
             selectedSpaceLinkId = merged.id
             spaceLinkLabelDraft = ""
             spaceLinkURLDraft = ""
+            spaceLinkLabelSizeDraft = .default
             GonggiHaptics.light()
             spaceLinkBusyMessage = nil
         } catch SpaceLinkStoreError.tooManyLinks {
