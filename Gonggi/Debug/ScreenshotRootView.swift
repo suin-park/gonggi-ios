@@ -12,8 +12,9 @@ struct ScreenshotRootView: View {
             case .welcome, .welcomeCompact:
                 AuthShellView(session: AuthSessionController.shared)
             case .welcomeReduceMotion:
+                // Reduce Motion is forced inside GonggiWireframeSphereView via screenshot screen id
+                // (accessibilityReduceMotion env key is not writable on all SDKs).
                 AuthShellView(session: AuthSessionController.shared)
-                    .environment(\.accessibilityReduceMotion, true)
             case .welcomeDynamicType:
                 AuthShellView(session: AuthSessionController.shared)
                     .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
