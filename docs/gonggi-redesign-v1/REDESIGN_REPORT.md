@@ -11,7 +11,7 @@
 | Redesign start (branch base) | `8466862` (`docs: record thumbnail revision CI results for 765639b`) |
 | Thumbnail implementation preserved | `765639b` |
 | Visual capture SHA | `a336363` |
-| Completion SHA | _60b42f8_ |
+| Completion SHA | `b4765cb` |
 
 Branch: `design/brand-redesign-v1`  
 Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
@@ -80,7 +80,7 @@ Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
 - SpaceThumbnailView revision cache (`765639b`)
 - LiveStatus / prepareViewer / account isolation
 - Capture / AR RealityKit / VR pipelines
-- Card tap ??Detail vs ?œê³µê°?ë³´ê¸°????VR
+- Card tap ??Detail vs ???????????VR
 
 ### Skipped / NOT RUN
 - Real-device AR camera placement performance
@@ -98,7 +98,7 @@ Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
 
 ### Capture environment
 - Device: iPhone Simulator (CI `gonggi-ios-screenshots`, macos-15)
-- Resolution observed: `1179Ã—2556`
+- Resolution observed: `1179×2556`
 - Fixture: DEBUG `-mock -screenshot-screen ??
 - Capture SHA: `a336363`
 
@@ -108,7 +108,7 @@ Screenshot CI: https://github.com/suin-park/gonggi-ios/actions/runs/34295573715
 |---|---|
 | Simulator Debug build | PASS (screenshot workflow) |
 | Screenshot verify | PASS (required set) |
-| Thumbnail revision (A?“F) + related | Previously passed on `765639b` ??not re-run as full suite this pass |
+| Thumbnail revision (A??F) + related | Previously passed on `765639b` ??not re-run as full suite this pass |
 | Full unit suite | **Not claimed GREEN** ??baseline ~43 failures from prior CI remain the baseline |
 | Redesign-specific unit tests | None added |
 
