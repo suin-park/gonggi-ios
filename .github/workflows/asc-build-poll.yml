@@ -1,0 +1,38 @@
+name: ASC Build Poll
+
+# One-shot: confirm TestFlight build visibility. Does not archive.
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        required: true
+        default: "2.0"
+      build_number:
+        required: true
+        default: "8"
+      bundle_id:
+        required: true
+        default: "com.whik.gonggi"
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PyJWT
+        run: pip install --quiet 'PyJWT[crypto]>=2.8'
+
+      - name: Poll App Store Connect for build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+        run: |
+          set -euo pipefail
+          python3 scripts/poll-asc-build.py
