@@ -107,7 +107,9 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
         if let result = json["result"] as? [String: Any],
            let planObj = result["guidePlan"] {
             let planData = try JSONSerialization.data(withJSONObject: planObj)
-            guidePlan = try JSONDecoder().decode(AdvancedCaptureGuidePlan.self, from: planData)
+            guidePlan = AdvancedCaptureCopy.sanitize(
+                try JSONDecoder().decode(AdvancedCaptureGuidePlan.self, from: planData)
+            )
         }
 
         return AdvancedCaptureStatusResponse(
@@ -205,7 +207,7 @@ final class MockAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchecke
         return AdvancedCaptureStatusResponse(
             ok: true,
             status: .ready,
-            guidePlan: .mockDefault(sessionId: jobId),
+            guidePlan: AdvancedCaptureCopy.sanitize(.mockDefault(sessionId: jobId)),
             errorCode: nil
         )
     }

@@ -92,7 +92,7 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
             ],
             globalTips: [
                 "조명이 일정한 곳에서 촬영하세요.",
-                "거울·유리면은 천천히, 가까이 가지 마세요.",
+                "거울/유리면은 천천히, 가까이 가지 마세요.",
                 "걷을 때는 흔들림을 줄이기 위해 속도를 일정하게 유지하세요.",
             ],
             estimatedTotalSec: 70,
@@ -157,5 +157,25 @@ enum AdvancedCaptureError: LocalizedError, Equatable {
 
     var userMessage: String {
         errorDescription ?? "알 수 없는 오류가 발생했어요."
+    }
+}
+
+/// Advanced-capture copy helpers (avoid middle-dot · in user-facing Korean).
+enum AdvancedCaptureCopy {
+    static func withoutMiddleDot(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "·", with: "/")
+            .replacingOccurrences(of: "•", with: "/")
+    }
+
+    static func sanitize(_ plan: AdvancedCaptureGuidePlan) -> AdvancedCaptureGuidePlan {
+        var next = plan
+        next.segments = plan.segments.map { seg in
+            var s = seg
+            s.instructionKo = withoutMiddleDot(seg.instructionKo)
+            return s
+        }
+        next.globalTips = plan.globalTips.map(withoutMiddleDot)
+        return next
     }
 }

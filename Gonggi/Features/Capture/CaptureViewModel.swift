@@ -34,9 +34,10 @@ final class CaptureViewModel: ObservableObject {
     }
 
     func applyGuidePlan(_ plan: AdvancedCaptureGuidePlan) {
-        guidePlan = plan
+        let sanitized = AdvancedCaptureCopy.sanitize(plan)
+        guidePlan = sanitized
         guidedSegmentIndex = 0
-        if let first = plan.segments.first {
+        if let first = sanitized.segments.first {
             guidance.applySnapshot(quality: guidance.quality, message: first.instructionKo)
         }
     }
@@ -62,18 +63,36 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
+    private var configureGeneration = 0
+
     func configure(mockMode: Bool) {
         guidance.mockMode = mockMode
         useMockCamera = mockMode || !ARWorldTrackingConfiguration.isSupported
         CaptureSessionStore.pruneStaleSessions()
+        configureGeneration += 1
+        let generation = configureGeneration
         if useMockCamera {
             startMockTicks()
             arSession.pause()
+            start()
         } else {
             mockTimer?.cancel()
-            startAR()
+            // SwiftUI onAppear often races ARView.makeUIView — running too early yields a black
+            // camera until the app is backgrounded. Defer until the view is in the hierarchy.
+            Task { @MainActor in
+                await Task.yield()
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                guard generation == configureGeneration, !useMockCamera else { return }
+                startAR()
+                start()
+            }
         }
-        start()
+    }
+
+    /// Re-run AR after returning to foreground (recovers black preview).
+    func resumeCameraIfNeeded() {
+        guard !useMockCamera, !isStopping else { return }
+        startAR()
     }
 
     func start() {

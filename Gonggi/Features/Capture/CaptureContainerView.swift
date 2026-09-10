@@ -280,6 +280,7 @@ struct CaptureContainerView: View {
 
 struct CaptureFlowView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel = CaptureViewModel()
     @State private var showSummary = false
     @State private var showProcessing = false
@@ -343,6 +344,11 @@ struct CaptureFlowView: View {
             viewModel.configure(mockMode: appState.isMockMode)
             if let plan = guidePlan {
                 viewModel.applyGuidePlan(plan)
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                viewModel.resumeCameraIfNeeded()
             }
         }
         .sheet(isPresented: $showSummary) {

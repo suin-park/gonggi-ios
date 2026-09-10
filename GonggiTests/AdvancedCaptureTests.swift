@@ -41,4 +41,11 @@ final class AdvancedCaptureTests: XCTestCase {
         }
         XCTAssertTrue(store.record(sessionId: "s1")?.canStartGuidedCapture == true)
     }
+
+    func testAdvancedCaptureCopyReplacesMiddleDot() {
+        XCTAssertEqual(AdvancedCaptureCopy.withoutMiddleDot("거울·유리"), "거울/유리")
+        let plan = AdvancedCaptureGuidePlan.mockDefault(sessionId: "x")
+        let sanitized = AdvancedCaptureCopy.sanitize(plan)
+        XCTAssertFalse(sanitized.globalTips.joined().contains("·"))
+    }
 }

@@ -18,7 +18,7 @@ struct GuidedCapturePlanBanner: View {
                     Text("촬영 가이드 \(min(segmentIndex + 1, plan.segments.count))/\(plan.segments.count)")
                         .font(GonggiTypography.caption(12))
                         .foregroundStyle(GonggiColors.accentCyan)
-                    Text(segment.instructionKo)
+                    Text(AdvancedCaptureCopy.withoutMiddleDot(segment.instructionKo))
                         .font(GonggiTypography.body(16))
                         .foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
@@ -42,28 +42,26 @@ struct Guided3DGSCaptureFlowView: View {
     let sessionId: String
     let onClose: () -> Void
 
-    @State private var phase: Phase = .intro
     @State private var introStep = 0
-
-    private enum Phase {
-        case intro
-        case capturing
-    }
+    @State private var showCapture = false
 
     var body: some View {
         ZStack {
             GonggiAmbientBackground()
-            switch phase {
-            case .intro:
-                introContent
-            case .capturing:
-                CaptureFlowView(
-                    onClose: onClose,
-                    guidePlan: plan,
-                    sourceLatLongSessionId: sessionId
-                )
-                .environmentObject(appState)
-            }
+            introContent
+        }
+        // Nested fullScreenCover so ARView gets a real window lifecycle.
+        // In-place ZStack swap left a black camera until the user backgrounded the app.
+        .fullScreenCover(isPresented: $showCapture) {
+            CaptureFlowView(
+                onClose: {
+                    showCapture = false
+                    onClose()
+                },
+                guidePlan: plan,
+                sourceLatLongSessionId: sessionId
+            )
+            .environmentObject(appState)
         }
     }
 
@@ -82,7 +80,7 @@ struct Guided3DGSCaptureFlowView: View {
                 .multilineTextAlignment(.center)
 
             if introStep == 1, let tip = plan.globalTips.first {
-                Text(tip)
+                Text(AdvancedCaptureCopy.withoutMiddleDot(tip))
                     .font(GonggiTypography.body(15))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -90,7 +88,7 @@ struct Guided3DGSCaptureFlowView: View {
             }
 
             if let total = plan.estimatedTotalSec {
-                Text("예상 \(Int(total))초 · \(plan.segments.count)단계")
+                Text("예상 \(Int(total))초 / \(plan.segments.count)단계")
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
@@ -106,7 +104,7 @@ struct Guided3DGSCaptureFlowView: View {
             } else {
                 PrimaryButton(title: "촬영 시작", icon: "video.fill") {
                     GonggiHaptics.medium()
-                    phase = .capturing
+                    showCapture = true
                 }
                 .padding(.horizontal, GonggiSpacing.lg)
             }
