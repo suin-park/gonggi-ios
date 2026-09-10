@@ -1040,9 +1040,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         guard len > 1e-8 else { return nil }
         dir /= len
         let to = SCNVector3(dir.x * 50, dir.y * 50, dir.z * 50)
-        let hits = sphere.hitTestWithSegment(from: SCNVector3Zero, to: to, options: [
-            .ignoreHiddenNodes: true,
-        ])
+        let hits = sphere.hitTestWithSegment(from: SCNVector3Zero, to: to, options: nil)
         guard let hit = hits.first else { return nil }
         let uv = hit.textureCoordinates(withMappingChannel: 0)
         let eq = VRSphereEquirectBridge.equirectDegreesFromTextureUV(
