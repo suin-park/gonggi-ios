@@ -144,7 +144,12 @@ enum AdvancedCaptureError: LocalizedError, Equatable {
         case .jobNotFound: return "분석 작업을 찾을 수 없어요."
         case .unauthorized: return "로그인이 필요해요."
         case .network: return "네트워크에 연결할 수 없어요."
-        case .server(let code): return "분석을 시작하지 못했어요 (\(code))."
+        case .server(let code):
+            // Already localized phrases from the API client, or raw codes.
+            if code.contains(" ") || code.contains("어요") || code.contains("아요") {
+                return code
+            }
+            return "분석을 시작하지 못했어요 (\(code))."
         case .missingLocalSources: return "원본 촬영본을 찾을 수 없어요. 같은 기기에서 다시 촬영해 주세요."
         case .unknown(let msg): return msg
         }

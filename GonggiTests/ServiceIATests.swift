@@ -20,6 +20,15 @@ final class ServiceIATests: XCTestCase {
         XCTAssertFalse(CaptureMode.directionCapture.title.contains("20"))
     }
 
+    func testAdvancedCaptureAPIURLDoesNotPercentEncodeSlashes() throws {
+        let base = URL(string: "https://www.3d-locker.com")!
+        // Mirror production client join — must keep literal slashes.
+        let root = base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let url = URL(string: root + "/api/gonggi/advanced-capture/analyze")!
+        XCTAssertEqual(url.absoluteString, "https://www.3d-locker.com/api/gonggi/advanced-capture/analyze")
+        XCTAssertFalse(url.absoluteString.contains("%2F"))
+    }
+
     func testAdvancedCaptureMockGuidePlanHasSegments() {
         let plan = AdvancedCaptureGuidePlan.mockDefault(sessionId: "test-session")
         XCTAssertFalse(plan.segments.isEmpty)

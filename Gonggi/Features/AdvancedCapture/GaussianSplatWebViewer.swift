@@ -7,8 +7,9 @@ struct GaussianSplatWebViewer: View {
     var onClose: () -> Void
 
     private var viewerURL: URL {
-        AppConfiguration.production.apiBaseURL
-            .appendingPathComponent("api/gaussian-spaces/\(spaceId)/viewer-html")
+        let root = AppConfiguration.production.apiBaseURL.absoluteString
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return URL(string: "\(root)/api/gaussian-spaces/\(spaceId)/viewer-html")!
     }
 
     var body: some View {

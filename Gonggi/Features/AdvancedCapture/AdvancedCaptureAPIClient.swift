@@ -32,11 +32,12 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
     }
 
     func startAnalyze(sessionId: String, force: Bool = false) async throws -> AdvancedCaptureAnalyzeStartResponse {
-        let url = config.apiBaseURL.appendingPathComponent("api/gonggi/advanced-capture/analyze")
+        let url = try Self.apiURL(base: config.apiBaseURL, path: "/api/gonggi/advanced-capture/analyze")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 60
         if let token = MobileAuthTokenStore.shared.getAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -53,28 +54,33 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
         if http.statusCode == 401 {
             throw AdvancedCaptureError.unauthorized
         }
-        let decoded = try JSONDecoder().decode(AnalyzeDTO.self, from: data)
-        guard decoded.ok else {
-            throw AdvancedCaptureError.server(decoded.errorCode ?? "analyze_failed")
+
+        let json = try Self.jsonObject(from: data)
+        let ok = json["ok"] as? Bool ?? false
+        let errorCode = json["errorCode"] as? String
+        guard ok else {
+            throw AdvancedCaptureError.server(Self.userFacingServerCode(errorCode))
         }
         return AdvancedCaptureAnalyzeStartResponse(
             ok: true,
-            sessionId: decoded.sessionId ?? sessionId,
-            jobId: decoded.jobId ?? sessionId,
-            status: Self.mapStatus(decoded.status),
-            reused: decoded.reused ?? false
+            sessionId: (json["sessionId"] as? String) ?? sessionId,
+            jobId: (json["jobId"] as? String) ?? sessionId,
+            status: Self.mapStatus(json["status"] as? String),
+            reused: (json["reused"] as? Bool) ?? false
         )
     }
 
     func fetchStatus(jobId: String) async throws -> AdvancedCaptureStatusResponse {
         var components = URLComponents(
-            url: config.apiBaseURL.appendingPathComponent("api/gonggi/advanced-capture/status"),
+            url: try Self.apiURL(base: config.apiBaseURL, path: "/api/gonggi/advanced-capture/status"),
             resolvingAgainstBaseURL: false
         )!
         components.queryItems = [URLQueryItem(name: "id", value: jobId)]
-        var request = URLRequest(url: components.url!)
+        guard let url = components.url else { throw AdvancedCaptureError.network }
+        var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
         if let token = MobileAuthTokenStore.shared.getAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -89,16 +95,47 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
         if http.statusCode == 404 {
             throw AdvancedCaptureError.jobNotFound
         }
-        let decoded = try JSONDecoder().decode(StatusDTO.self, from: data)
-        guard decoded.ok else {
-            throw AdvancedCaptureError.server(decoded.errorCode ?? "status_failed")
+
+        let json = try Self.jsonObject(from: data)
+        let ok = json["ok"] as? Bool ?? false
+        let errorCode = json["errorCode"] as? String
+        guard ok else {
+            throw AdvancedCaptureError.server(Self.userFacingServerCode(errorCode))
         }
+
+        var guidePlan: AdvancedCaptureGuidePlan?
+        if let result = json["result"] as? [String: Any],
+           let planObj = result["guidePlan"] {
+            let planData = try JSONSerialization.data(withJSONObject: planObj)
+            guidePlan = try JSONDecoder().decode(AdvancedCaptureGuidePlan.self, from: planData)
+        }
+
         return AdvancedCaptureStatusResponse(
             ok: true,
-            status: Self.mapStatus(decoded.status),
-            guidePlan: decoded.result?.guidePlan,
-            errorCode: decoded.errorCode
+            status: Self.mapStatus(json["status"] as? String),
+            guidePlan: guidePlan,
+            errorCode: errorCode
         )
+    }
+
+    /// Avoid `appendingPathComponent("a/b/c")` — Foundation percent-encodes `/` as `%2F` and 404s with HTML.
+    private static func apiURL(base: URL, path: String) throws -> URL {
+        let root = base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
+        guard let url = URL(string: root + normalizedPath) else {
+            throw AdvancedCaptureError.network
+        }
+        return url
+    }
+
+    private static func jsonObject(from data: Data) throws -> [String: Any] {
+        guard !data.isEmpty else {
+            throw AdvancedCaptureError.unknown("서버 응답이 비어 있어요.")
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AdvancedCaptureError.unknown("서버 응답 형식을 읽지 못했어요. 잠시 후 다시 시도해 주세요.")
+        }
+        return obj
     }
 
     private static func mapStatus(_ raw: String?) -> AdvancedCaptureAnalysisStatus {
@@ -111,24 +148,25 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
         }
     }
 
-    private struct AnalyzeDTO: Decodable {
-        var ok: Bool
-        var sessionId: String?
-        var jobId: String?
-        var status: String?
-        var reused: Bool?
-        var errorCode: String?
-    }
-
-    private struct StatusDTO: Decodable {
-        var ok: Bool
-        var status: String?
-        var errorCode: String?
-        var result: ResultDTO?
-    }
-
-    private struct ResultDTO: Decodable {
-        var guidePlan: AdvancedCaptureGuidePlan?
+    private static func userFacingServerCode(_ code: String?) -> String {
+        switch code {
+        case "space_not_ready":
+            return "공간이 아직 준비되지 않았어요. LatLong 생성이 끝난 뒤 다시 시도해 주세요."
+        case "missing_latlong":
+            return "LatLong 이미지를 서버에서 찾지 못했어요."
+        case "missing_inputs":
+            return "촬영 원본을 서버에서 찾지 못했어요."
+        case "feature_disabled":
+            return "고급 생성이 잠시 비활성화되어 있어요."
+        case "forbidden", "auth_required":
+            return "로그인이 필요하거나 이 공간에 대한 권한이 없어요."
+        case "astra_failed":
+            return "분석 서버에서 오류가 났어요."
+        case let c?:
+            return c
+        default:
+            return "analyze_failed"
+        }
     }
 }
 

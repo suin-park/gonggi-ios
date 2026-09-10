@@ -60,8 +60,17 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         self.session = session
     }
 
+    private static func apiURL(base: URL, path: String) throws -> URL {
+        let root = base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let normalized = path.hasPrefix("/") ? path : "/\(path)"
+        guard let url = URL(string: root + normalized) else {
+            throw SpaceGenerationError.networkUnavailable
+        }
+        return url
+    }
+
     func createSpace(_ request: CreateSpaceRequest) async throws -> CreateSpaceResponse {
-        let url = config.apiBaseURL.appendingPathComponent("api/gaussian-spaces/video")
+        let url = try Self.apiURL(base: config.apiBaseURL, path: "/api/gaussian-spaces/video")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -155,8 +164,8 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         lock.unlock()
         guard let context = ctx else { throw SpaceGenerationError.jobNotFound }
 
-        let path = "api/gaussian-spaces/\(context.spaceId)/video-conversion/\(jobId)/start"
-        let url = config.apiBaseURL.appendingPathComponent(path)
+        let path = "/api/gaussian-spaces/\(context.spaceId)/video-conversion/\(jobId)/start"
+        let url = try Self.apiURL(base: config.apiBaseURL, path: path)
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -188,8 +197,8 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         lock.unlock()
         guard let context = ctx else { throw SpaceGenerationError.jobNotFound }
 
-        let path = "api/gaussian-spaces/\(context.spaceId)/video-conversion/\(jobId)"
-        let url = config.apiBaseURL.appendingPathComponent(path)
+        let path = "/api/gaussian-spaces/\(context.spaceId)/video-conversion/\(jobId)"
+        let url = try Self.apiURL(base: config.apiBaseURL, path: path)
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -227,8 +236,8 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         let ctx = jobContext[jobId]
         lock.unlock()
         guard let context = ctx else { return }
-        let path = "api/gaussian-spaces/\(context.spaceId)/video-conversion/\(jobId)"
-        let url = config.apiBaseURL.appendingPathComponent(path)
+        let path = "/api/gaussian-spaces/\(context.spaceId)/video-conversion/\(jobId)"
+        guard let url = try? Self.apiURL(base: config.apiBaseURL, path: path) else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "DELETE"
         try? attachAuth(&req)
