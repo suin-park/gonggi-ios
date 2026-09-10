@@ -86,26 +86,9 @@ struct DirectionCaptureView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
 
-            if viewModel.isPhotoPending {
-                Text("촬영 중…")
-                    .font(GonggiTypography.title(20))
-                    .foregroundStyle(.white)
-                    .shadow(radius: 4)
-                    .padding(.top, 18)
-            } else {
-                Text(viewModel.phaseTitle)
-                    .font(GonggiTypography.title(22))
-                    .foregroundStyle(.white)
-                    .shadow(radius: 4)
-                    .padding(.top, 18)
-            }
-
-            Text(viewModel.guideText)
-                .font(GonggiTypography.caption(14))
-                .foregroundStyle(.white.opacity(0.9))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-                .padding(.top, 8)
+            guidanceBanner
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
                 .allowsHitTesting(false)
 
             #if DEBUG
@@ -120,6 +103,46 @@ struct DirectionCaptureView: View {
             bottomBar
                 .padding(.bottom, 28)
         }
+    }
+
+    /// Large, high-contrast coach for phase title + live guide (TestFlight: hard to read at 14pt).
+    private var guidanceBanner: some View {
+        VStack(spacing: 10) {
+            Text(viewModel.isPhotoPending ? "촬영 중…" : viewModel.phaseTitle)
+                .font(GonggiTypography.display(28))
+                .fontWeight(.bold)
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.85)
+                .lineLimit(2)
+
+            if !viewModel.guideText.isEmpty, !viewModel.isPhotoPending {
+                Text(viewModel.guideText)
+                    .font(GonggiTypography.headline(20))
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.black.opacity(0.72))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(GonggiColors.accentTeal.opacity(0.55), lineWidth: 1.5)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 16, y: 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            viewModel.isPhotoPending
+                ? "촬영 중"
+                : "\(viewModel.phaseTitle). \(viewModel.guideText)"
+        )
     }
 
     private var bottomBar: some View {

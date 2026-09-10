@@ -32,6 +32,7 @@ final class ARVideoRecorder: @unchecked Sendable {
     private var targetFPS: Double = 30
     private var configuredWidth: Int = 0
     private var configuredHeight: Int = 0
+    private var sessionStarted = false
 
     func startRecording(to url: URL, prefer4K: Bool = true) throws {
         try queue.sync {
@@ -41,9 +42,11 @@ final class ARVideoRecorder: @unchecked Sendable {
             }
             frameCount = 0
             startTime = nil
+            sessionStarted = false
             writer = nil
             input = nil
             adaptor = nil
+            configured = false
         }
         _prefer4K = prefer4K
     }
@@ -76,10 +79,12 @@ final class ARVideoRecorder: @unchecked Sendable {
 
     func cancel() {
         queue.async { [weak self] in
-            guard let self, let url = outputURL else { return }
-            input?.markAsFinished()
-            writer?.cancelWriting()
-            try? FileManager.default.removeItem(at: url)
+            guard let self else { return }
+            let url = outputURL
+            self.safeAbortWritingLocked()
+            if let url {
+                try? FileManager.default.removeItem(at: url)
+            }
             self.resetLocked()
         }
     }
@@ -99,15 +104,20 @@ final class ARVideoRecorder: @unchecked Sendable {
             }
         }
 
-        guard let writer, let input, let adaptor, writer.status == .writing else { return }
-        guard input.isReadyForMoreMediaData else { return }
+        guard let writer, let input, let adaptor else { return }
+        guard writer.status != .failed, writer.status != .cancelled, writer.status != .completed else {
+            return
+        }
 
         let time = CMTime(seconds: frame.timestamp, preferredTimescale: 600)
-        if startTime == nil {
-            startTime = time
-            writer.startWriting()
+        if !sessionStarted {
+            guard writer.startWriting() else { return }
             writer.startSession(atSourceTime: time)
+            startTime = time
+            sessionStarted = true
         }
+
+        guard writer.status == .writing, input.isReadyForMoreMediaData else { return }
 
         let relative = CMTimeSubtract(time, startTime ?? time)
         if adaptor.append(pixelBuffer, withPresentationTime: relative) {
@@ -167,14 +177,26 @@ final class ARVideoRecorder: @unchecked Sendable {
         guard let writer, let input, let url = outputURL else {
             throw RecorderError.notStarted
         }
+
+        // Never call markAsFinished unless the writer is actively writing —
+        // otherwise AVFoundation raises an ObjC exception that bypasses Swift `catch`
+        // and aborts the process (TestFlight: “그냥 꺼집니다”).
+        guard sessionStarted, writer.status == .writing else {
+            safeAbortWritingLocked()
+            resetLocked()
+            throw RecorderError.finishFailed("recording never started (no frames)")
+        }
+
         input.markAsFinished()
         let group = DispatchGroup()
         group.enter()
         writer.finishWriting { group.leave() }
-        group.wait()
+        _ = group.wait(timeout: .now() + 30)
 
         guard writer.status == .completed else {
-            throw RecorderError.finishFailed(writer.error?.localizedDescription ?? "unknown")
+            let message = writer.error?.localizedDescription ?? "status=\(writer.status.rawValue)"
+            resetLocked()
+            throw RecorderError.finishFailed(message)
         }
 
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -192,11 +214,21 @@ final class ARVideoRecorder: @unchecked Sendable {
         return result
     }
 
+    /// Cancel / tear down without ObjC exceptions when writer never entered `.writing`.
+    private func safeAbortWritingLocked() {
+        guard let writer else { return }
+        // Both markAsFinished and cancelWriting raise if startWriting never ran.
+        guard writer.status == .writing else { return }
+        input?.markAsFinished()
+        writer.cancelWriting()
+    }
+
     private func resetLocked() {
         writer = nil
         input = nil
         adaptor = nil
         startTime = nil
+        sessionStarted = false
         configured = false
         frameCount = 0
         outputURL = nil

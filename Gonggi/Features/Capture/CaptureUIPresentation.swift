@@ -102,9 +102,17 @@ enum CaptureUIPresenter {
             )
         }
         if coverage >= 0.55 {
+            // LiDAR: cyan wireframe = still needs coverage. Non-LiDAR: no mesh overlay —
+            // referring to "청록 표시" confuses users (TestFlight feedback).
+            let subtitle: String
+            if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
+                subtitle = "화면의 청록 선을 다른 각도에서 천천히 비춰주세요"
+            } else {
+                subtitle = "아직 덜 담긴 벽·모서리를 다른 각도에서 천천히 비춰주세요"
+            }
             return CaptureCoachPresentation(
                 title: "좋아요. 조금만 더 둘러보세요",
-                subtitle: "청록 표시 영역을 다른 각도에서 비춰주세요",
+                subtitle: subtitle,
                 severity: .guidance,
                 icon: "arrow.triangle.2.circlepath",
                 warning: nil

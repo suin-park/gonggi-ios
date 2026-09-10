@@ -76,7 +76,9 @@ struct CaptureOverlayView: View {
             GonggiIconButton(systemName: "xmark", style: .dimmed, action: onClose)
                 .accessibilityLabel("닫기")
             Spacer()
-            CoverageLegend(compact: true)
+            if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
+                CoverageLegend(compact: true)
+            }
             GonggiIconButton(systemName: "questionmark.circle", style: .dimmed, action: onGuide)
                 .accessibilityLabel("촬영 가이드")
         }
