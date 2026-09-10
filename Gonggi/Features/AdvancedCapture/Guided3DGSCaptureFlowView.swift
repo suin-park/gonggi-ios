@@ -35,7 +35,7 @@ struct GuidedCapturePlanBanner: View {
     }
 }
 
-/// Entry flow: countdown copy → guided AR video capture using an Astra plan.
+/// Entry flow: intro overlay on top of live capture so AR warms while the user reads.
 struct Guided3DGSCaptureFlowView: View {
     @EnvironmentObject private var appState: AppState
     let plan: AdvancedCaptureGuidePlan
@@ -43,80 +43,84 @@ struct Guided3DGSCaptureFlowView: View {
     let onClose: () -> Void
 
     @State private var introStep = 0
-    @State private var showCapture = false
+    @State private var showIntro = true
 
     var body: some View {
         ZStack {
-            GonggiAmbientBackground()
-            introContent
-        }
-        // Nested fullScreenCover so ARView gets a real window lifecycle.
-        // In-place ZStack swap left a black camera until the user backgrounded the app.
-        .fullScreenCover(isPresented: $showCapture) {
+            // Single fullScreenCover host (from SpaceDetail) — do not nest another cover.
+            // Keep CaptureFlowView mounted under the intro so ARSession can start immediately.
             CaptureFlowView(
-                onClose: {
-                    showCapture = false
-                    onClose()
-                },
+                onClose: onClose,
                 guidePlan: plan,
                 sourceLatLongSessionId: sessionId
             )
             .environmentObject(appState)
+            .allowsHitTesting(!showIntro)
+
+            if showIntro {
+                introContent
+                    .transition(.opacity)
+                    .zIndex(1)
+            }
         }
     }
 
     private var introContent: some View {
-        VStack(spacing: GonggiSpacing.xl) {
-            Spacer()
-            Image(systemName: "viewfinder")
-                .font(.system(size: 48, weight: .light))
-                .foregroundStyle(GonggiColors.accentTeal)
+        ZStack {
+            GonggiAmbientBackground()
+            VStack(spacing: GonggiSpacing.xl) {
+                Spacer()
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(GonggiColors.accentTeal)
 
-            Text(introStep == 0
-                ? "촬영 모드가 곧 시작됩니다."
-                : "촬영을 시작해주세요.")
-                .font(GonggiTypography.title(24))
-                .foregroundStyle(GonggiColors.textPrimary)
-                .multilineTextAlignment(.center)
-
-            if introStep == 1, let tip = plan.globalTips.first {
-                Text(AdvancedCaptureCopy.withoutMiddleDot(tip))
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
+                Text(introStep == 0
+                    ? "촬영 모드가 곧 시작됩니다."
+                    : "촬영을 시작해주세요.")
+                    .font(GonggiTypography.title(24))
+                    .foregroundStyle(GonggiColors.textPrimary)
                     .multilineTextAlignment(.center)
+
+                if introStep == 1, let tip = plan.globalTips.first {
+                    Text(AdvancedCaptureCopy.withoutMiddleDot(tip))
+                        .font(GonggiTypography.body(15))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, GonggiSpacing.lg)
+                }
+
+                if let total = plan.estimatedTotalSec {
+                    Text("예상 \(Int(total))초 / \(plan.segments.count)단계")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.textTertiary)
+                }
+
+                Spacer()
+
+                if introStep == 0 {
+                    PrimaryButton(title: "계속", icon: "arrow.right") {
+                        GonggiHaptics.light()
+                        introStep = 1
+                    }
                     .padding(.horizontal, GonggiSpacing.lg)
-            }
+                } else {
+                    PrimaryButton(title: "촬영 시작", icon: "video.fill") {
+                        GonggiHaptics.medium()
+                        withAnimation(GonggiMotion.quick) {
+                            showIntro = false
+                        }
+                    }
+                    .padding(.horizontal, GonggiSpacing.lg)
+                }
 
-            if let total = plan.estimatedTotalSec {
-                Text("예상 \(Int(total))초 / \(plan.segments.count)단계")
-                    .font(GonggiTypography.caption(13))
+                Button("닫기") { onClose() }
+                    .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textTertiary)
+                    .padding(.bottom, GonggiSpacing.lg)
             }
-
-            Spacer()
-
-            if introStep == 0 {
-                PrimaryButton(title: "계속", icon: "arrow.right") {
-                    GonggiHaptics.light()
-                    introStep = 1
-                }
-                .padding(.horizontal, GonggiSpacing.lg)
-            } else {
-                PrimaryButton(title: "촬영 시작", icon: "video.fill") {
-                    GonggiHaptics.medium()
-                    showCapture = true
-                }
-                .padding(.horizontal, GonggiSpacing.lg)
-            }
-
-            Button("닫기") { onClose() }
-                .font(GonggiTypography.caption(14))
-                .foregroundStyle(GonggiColors.textTertiary)
-                .padding(.bottom, GonggiSpacing.lg)
+            .padding()
         }
-        .padding()
         .onAppear {
-            // Auto-advance first beat so the copy sequence feels intentional.
             Task {
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 if introStep == 0 { introStep = 1 }

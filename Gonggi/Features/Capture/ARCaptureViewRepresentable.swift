@@ -7,10 +7,12 @@ struct ARCaptureViewRepresentable: UIViewRepresentable {
     let session: ARSession
     let coverageSpatialIndex: CoverageSpatialIndex
     var showMeshOverlay: Bool
+    /// Fired once the ARView is in a window with a non-zero bounds (safe time to `ARSession.run`).
+    var onViewReady: (() -> Void)? = nil
     var onFrame: (ARFrame) -> Void
 
-    func makeUIView(context: Context) -> ARView {
-        let view = ARView(frame: .zero)
+    func makeUIView(context: Context) -> GonggiCaptureARView {
+        let view = GonggiCaptureARView(frame: .zero)
         view.session = session
         view.automaticallyConfigureSession = false
         session.delegate = context.coordinator
@@ -19,18 +21,32 @@ struct ARCaptureViewRepresentable: UIViewRepresentable {
         context.coordinator.arView = view
         context.coordinator.coverageSpatialIndex = coverageSpatialIndex
         context.coordinator.onFrame = onFrame
+        context.coordinator.onViewReady = onViewReady
         context.coordinator.meshOverlaySupported = CaptureDeviceCapabilities.supportsLiDARMeshReconstruction
         context.coordinator.showMeshOverlay = showMeshOverlay
         context.coordinator.installCoachingOverlay(on: view)
+        let coordinator = context.coordinator
+        view.onAttachedToWindow = { [weak coordinator] in
+            coordinator?.notifyViewReadyIfNeeded()
+        }
         return view
     }
 
-    func updateUIView(_ uiView: ARView, context: Context) {
+    func updateUIView(_ uiView: GonggiCaptureARView, context: Context) {
         context.coordinator.onFrame = onFrame
+        context.coordinator.onViewReady = onViewReady
         context.coordinator.coverageSpatialIndex = coverageSpatialIndex
         context.coordinator.showMeshOverlay = showMeshOverlay
+        let coordinator = context.coordinator
+        uiView.onAttachedToWindow = { [weak coordinator] in
+            coordinator?.notifyViewReadyIfNeeded()
+        }
         if !context.coordinator.meshOverlaySupported || !showMeshOverlay {
             context.coordinator.clearWireframes()
+        }
+        // Cover presentation can attach the window after makeUIView — re-check.
+        if uiView.window != nil {
+            context.coordinator.notifyViewReadyIfNeeded()
         }
     }
 
@@ -40,17 +56,29 @@ struct ARCaptureViewRepresentable: UIViewRepresentable {
         weak var arView: ARView?
         var coverageSpatialIndex: CoverageSpatialIndex?
         var onFrame: ((ARFrame) -> Void)?
+        var onViewReady: (() -> Void)?
         var showMeshOverlay = true
         var meshOverlaySupported = false
+        private var didNotifyViewReady = false
 
         private var wireframeAnchors: [UUID: AnchorEntity] = [:]
         private var lastMeshUpdate: TimeInterval = 0
         private let meshUpdateInterval: TimeInterval = 0.12
 
+        func notifyViewReadyIfNeeded() {
+            guard !didNotifyViewReady else { return }
+            guard let arView, arView.window != nil, arView.bounds.width > 1, arView.bounds.height > 1 else {
+                return
+            }
+            didNotifyViewReady = true
+            onViewReady?()
+        }
+
         func installCoachingOverlay(on view: ARView) {
             let coaching = ARCoachingOverlayView()
             coaching.goal = .horizontalPlane
             coaching.session = view.session
+            coaching.activatesAutomatically = true
             coaching.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(coaching)
             NSLayoutConstraint.activate([
@@ -143,6 +171,26 @@ struct ARCaptureViewRepresentable: UIViewRepresentable {
         private func removeWireframe(id: UUID, from arView: ARView) {
             guard let anchorEntity = wireframeAnchors.removeValue(forKey: id) else { return }
             arView.scene.removeAnchor(anchorEntity)
+        }
+    }
+}
+
+/// Notifies when attached to a window so we can start `ARSession` after layout.
+final class GonggiCaptureARView: ARView {
+    var onAttachedToWindow: (() -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onAttachedToWindow?()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if window != nil, bounds.width > 1, bounds.height > 1 {
+            onAttachedToWindow?()
         }
     }
 }

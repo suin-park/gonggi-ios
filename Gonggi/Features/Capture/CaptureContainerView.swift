@@ -295,17 +295,33 @@ struct CaptureFlowView: View {
 
     var body: some View {
         ZStack {
-            if viewModel.useMockCamera {
+            switch viewModel.cameraPresentation {
+            case .pending:
+                Color.black.ignoresSafeArea()
+            case .mock:
                 MockCameraBackground(quality: viewModel.guidance.quality)
-            } else {
+            case .live:
                 ARCaptureViewRepresentable(
                     session: viewModel.arSession,
                     coverageSpatialIndex: viewModel.framePipeline.coverageSpatialIndex,
-                    showMeshOverlay: viewModel.guidance.showGuideOverlay
+                    showMeshOverlay: viewModel.guidance.showGuideOverlay,
+                    onViewReady: { viewModel.onARViewReady() }
                 ) { frame in
                     viewModel.ingestFrame(frame)
                 }
                 .ignoresSafeArea()
+            }
+
+            if viewModel.cameraPresentation == .live, !viewModel.hasReceivedFrame {
+                Color.black.opacity(0.55).ignoresSafeArea()
+                VStack(spacing: GonggiSpacing.sm) {
+                    ProgressView()
+                        .tint(GonggiColors.accentCyan)
+                    Text("카메라 준비 중…")
+                        .font(GonggiTypography.caption(14))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+                .allowsHitTesting(false)
             }
 
             CaptureOverlayView(

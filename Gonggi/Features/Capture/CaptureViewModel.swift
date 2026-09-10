@@ -4,7 +4,15 @@ import SwiftUI
 
 @MainActor
 final class CaptureViewModel: ObservableObject {
-    @Published private(set) var useMockCamera = true
+    enum CameraPresentation: Equatable {
+        case pending
+        case mock
+        case live
+    }
+
+    @Published private(set) var cameraPresentation: CameraPresentation = .pending
+    @Published private(set) var useMockCamera = false
+    @Published private(set) var hasReceivedFrame = false
     @Published private(set) var lastSummary: CaptureSessionSummary?
     @Published private(set) var isStopping = false
     @Published private(set) var isReconstructingTexturedMesh = false
@@ -20,6 +28,8 @@ final class CaptureViewModel: ObservableObject {
     private var guidanceCancellable: AnyCancellable?
     private var startedAt = Date()
     private var guidePlan: AdvancedCaptureGuidePlan?
+    private var configureGeneration = 0
+    private var didStartLiveSession = false
 
     init() {
         guidanceCancellable = guidance.objectWillChange.sink { [weak self] _ in
@@ -63,35 +73,43 @@ final class CaptureViewModel: ObservableObject {
         }
     }
 
-    private var configureGeneration = 0
-
     func configure(mockMode: Bool) {
         guidance.mockMode = mockMode
         useMockCamera = mockMode || !ARWorldTrackingConfiguration.isSupported
         CaptureSessionStore.pruneStaleSessions()
         configureGeneration += 1
-        let generation = configureGeneration
+        didStartLiveSession = false
+        hasReceivedFrame = false
+
         if useMockCamera {
+            cameraPresentation = .mock
             startMockTicks()
             arSession.pause()
             start()
         } else {
             mockTimer?.cancel()
-            // SwiftUI onAppear often races ARView.makeUIView — running too early yields a black
-            // camera until the app is backgrounded. Defer until the view is in the hierarchy.
+            // Mount ARView first; `onARViewReady` starts the session once it has a window.
+            cameraPresentation = .live
+            let generation = configureGeneration
             Task { @MainActor in
-                await Task.yield()
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                guard generation == configureGeneration, !useMockCamera else { return }
-                startAR()
-                start()
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                guard generation == configureGeneration, !didStartLiveSession else { return }
+                onARViewReady()
             }
         }
     }
 
+    /// Called from ARView when it is in the window with a real size.
+    func onARViewReady() {
+        guard cameraPresentation == .live, !useMockCamera, !didStartLiveSession else { return }
+        didStartLiveSession = true
+        startAR()
+        start()
+    }
+
     /// Re-run AR after returning to foreground (recovers black preview).
     func resumeCameraIfNeeded() {
-        guard !useMockCamera, !isStopping else { return }
+        guard cameraPresentation == .live, !useMockCamera, !isStopping else { return }
         startAR()
     }
 
@@ -155,6 +173,9 @@ final class CaptureViewModel: ObservableObject {
 
     /// Called synchronously from ARSessionDelegate — do not dispatch before this returns.
     func ingestFrame(_ frame: ARFrame) {
+        if !hasReceivedFrame {
+            hasReceivedFrame = true
+        }
         if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
             texturedMeshCapture.ingest(frame: frame)
         }
