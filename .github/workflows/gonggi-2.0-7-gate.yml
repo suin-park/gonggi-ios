@@ -12,7 +12,7 @@ on:
       build_number:
         description: 'CURRENT_PROJECT_VERSION expected in project.yml'
         required: true
-        default: '7'
+        default: '8'
         type: string
 
 concurrency:
@@ -128,9 +128,10 @@ jobs:
         run: |
           set -euo pipefail
           TESTS=(
+            GonggiTests/MyInfoProfileTests
+            GonggiTests/AccountIsolationTests
             GonggiTests/WelcomePanoramaSampleTests
             GonggiTests/SpaceLinkLabelSizeTests
-            GonggiTests/AccountIsolationTests
             GonggiTests/AssetLibraryPhase1Tests
             GonggiTests/AssetLibraryPhase2Tests
             GonggiTests/AssetLibraryPhase4BTests
