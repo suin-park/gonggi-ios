@@ -27,15 +27,26 @@ struct SpaceVRNavigationHost: View {
     @State private var sourceHoldTask: Task<Void, Never>?
 
     var onClose: () -> Void
+    var onStackCountChange: ((Int) -> Void)?
 
-    init(sessions: [SpaceViewerSession], onClose: @escaping () -> Void) {
+    init(
+        sessions: [SpaceViewerSession],
+        onClose: @escaping () -> Void,
+        onStackCountChange: ((Int) -> Void)? = nil
+    ) {
         _stack = State(initialValue: sessions.isEmpty ? [] : sessions)
         self.onClose = onClose
+        self.onStackCountChange = onStackCountChange
     }
 
-    init(root: SpaceViewerSession, onClose: @escaping () -> Void) {
+    init(
+        root: SpaceViewerSession,
+        onClose: @escaping () -> Void,
+        onStackCountChange: ((Int) -> Void)? = nil
+    ) {
         _stack = State(initialValue: [root])
         self.onClose = onClose
+        self.onStackCountChange = onStackCountChange
     }
 
     private var renderSessions: [SpaceViewerSession] {
@@ -54,13 +65,15 @@ struct SpaceVRNavigationHost: View {
                 VRSphereSpaceView(
                     imageURL: session.fileURL,
                     sessionId: session.id,
-                    preferredAudioURL: session.audioURL,
-                    suppressAutoAudio: suppressStackAudio || isCrossfading || deferSourceHold,
+                    preferredAudioURL: session.allowsOwnerControls ? session.audioURL : nil,
+                    suppressAutoAudio: suppressStackAudio || isCrossfading || deferSourceHold || !session.allowsOwnerControls,
                     initialFieldOfView: isTop ? targetEntryFOV : SpaceLinkTransitionMath.baseFOV,
                     spaceLinkTransitionLocked: isTransitioning,
                     transitionBridgeRole: isSourceDuringCrossfade ? .overlay : .primary,
                     deferSecondaryLoads: isTop && (isCrossfading || isTransitioning),
-                    startInEditMode: session.startInEditMode && isTop && !isCrossfading,
+                    startInEditMode: session.allowsOwnerControls && session.startInEditMode && isTop && !isCrossfading,
+                    allowsOwnerControls: session.allowsOwnerControls,
+                    publicOverlay: session.publicOverlay,
                     onClose: {
                         guard !isTransitioning else { return }
                         if stack.count > 1 {
@@ -140,6 +153,12 @@ struct SpaceVRNavigationHost: View {
             stack.removeAll()
             Task { await SpaceAudioManager.shared.fadeOutAndStop() }
         }
+        .onChange(of: stack.count) { _, count in
+            onStackCountChange?(count)
+        }
+        .onAppear {
+            onStackCountChange?(stack.count)
+        }
     }
 
     private func opacity(for session: SpaceViewerSession, isTop: Bool) -> Double {
@@ -163,6 +182,11 @@ struct SpaceVRNavigationHost: View {
         let targetKey = link.targetSessionId ?? link.targetSpaceId
         guard let targetKey, !targetKey.isEmpty else {
             navigateError = "연결할 공간을 찾을 수 없어요"
+            return
+        }
+
+        if targetKey.hasPrefix("public:") || targetKey.hasPrefix("share:") {
+            await navigatePublicOrShare(targetKey: targetKey, link: link)
             return
         }
 
@@ -411,6 +435,69 @@ struct SpaceVRNavigationHost: View {
             isTransitioning = false
             navigateError = "공간을 불러오지 못했어요"
             await playAudioForTopOfStack()
+        }
+    }
+
+    @MainActor
+    private func navigatePublicOrShare(targetKey: String, link: SpaceLink) async {
+        isTransitioning = true
+        suppressStackAudio = true
+        defer {
+            suppressStackAudio = false
+            isTransitioning = false
+        }
+
+        let api = MobilePublicSpacesAPIClient()
+        do {
+            if targetKey.hasPrefix("public:") {
+                let slug = String(targetKey.dropFirst("public:".count))
+                let detail = try await api.getPublicSpace(accessToken: MobileAuthTokenStore.shared.getAccessToken(), slug: slug)
+                let file = try await api.downloadPanorama(
+                    accessToken: MobileAuthTokenStore.shared.getAccessToken(),
+                    panoramaUrl: detail.panoramaUrl,
+                    cacheKey: "public-\(slug)"
+                )
+                _ = await SpaceLinkPanoramaTextureCache.shared.predecode(url: file)
+                let overlay = PublicViewerOverlay(detail: detail, apiBaseURL: await api.apiBaseURL)
+                let session = SpaceViewerSession(
+                    id: "public:\(slug)",
+                    fileURL: file,
+                    audioURL: nil,
+                    startInEditMode: false,
+                    allowsOwnerControls: false,
+                    publicOverlay: overlay
+                )
+                targetEntryFOV = SpaceLinkTransitionMath.baseFOV
+                stack.append(session)
+                return
+            }
+
+            if targetKey.hasPrefix("share:") {
+                let token = String(targetKey.dropFirst("share:".count))
+                let detail = try await api.getShareSpace(token: token)
+                let file = try await api.downloadPanorama(
+                    accessToken: nil,
+                    panoramaUrl: detail.panoramaUrl,
+                    cacheKey: "share-\(token)"
+                )
+                _ = await SpaceLinkPanoramaTextureCache.shared.predecode(url: file)
+                // Share path: hotspots without cross-space public overlay (existing share semantics).
+                let session = SpaceViewerSession(
+                    id: "share:\(token)",
+                    fileURL: file,
+                    audioURL: nil,
+                    startInEditMode: false,
+                    allowsOwnerControls: false,
+                    publicOverlay: nil
+                )
+                targetEntryFOV = SpaceLinkTransitionMath.baseFOV
+                stack.append(session)
+                return
+            }
+            navigateError = "연결할 공간을 찾을 수 없어요"
+        } catch {
+            navigateError = "공간을 불러오지 못했어요"
+            _ = link
         }
     }
 

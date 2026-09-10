@@ -1,0 +1,39 @@
+name: ASC Build Exists Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        required: true
+        default: "2.0"
+      build_number:
+        required: true
+        default: "9"
+      bundle_id:
+        required: true
+        default: "com.whik.gonggi"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet 'PyJWT[crypto]>=2.8'
+      - name: Check if build already exists
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+        run: |
+          set +e
+          python3 scripts/check-asc-build-exists.py
+          code=$?
+          if [[ $code -eq 2 ]]; then
+            echo "::error::Build ${MARKETING_VERSION} (${BUILD_NUMBER}) already exists in App Store Connect"
+            exit 1
+          fi
+          exit $code

@@ -231,10 +231,46 @@ actor MobileAuthAPIClient {
         return json
     }
 
+    struct SpaceShareIncluded: Equatable, Sendable, Identifiable {
+        var id: String
+        var title: String?
+        var status: String
+    }
+
     struct SpaceShareState: Equatable, Sendable {
         var shareEnabled: Bool
         var shareToken: String?
         var shareUrl: String?
+        var shareAudioEnabled: Bool
+        var hasAudio: Bool
+        var includedSpaces: [SpaceShareIncluded]
+        var linkCandidates: [SpaceShareIncluded]
+        var includeLinkedSpaces: Bool
+    }
+
+    private static func parseShareIncluded(_ rows: Any?) -> [SpaceShareIncluded] {
+        guard let arr = rows as? [[String: Any]] else { return [] }
+        return arr.compactMap { row in
+            guard let id = row["id"] as? String, !id.isEmpty else { return nil }
+            return SpaceShareIncluded(
+                id: id,
+                title: row["title"] as? String,
+                status: (row["status"] as? String) ?? ""
+            )
+        }
+    }
+
+    private static func parseShareState(_ share: [String: Any]) -> SpaceShareState {
+        SpaceShareState(
+            shareEnabled: share["shareEnabled"] as? Bool ?? false,
+            shareToken: share["shareToken"] as? String,
+            shareUrl: share["shareUrl"] as? String,
+            shareAudioEnabled: share["shareAudioEnabled"] as? Bool ?? false,
+            hasAudio: share["hasAudio"] as? Bool ?? false,
+            includedSpaces: parseShareIncluded(share["includedSpaces"]),
+            linkCandidates: parseShareIncluded(share["linkCandidates"]),
+            includeLinkedSpaces: share["includeLinkedSpaces"] as? Bool ?? false
+        )
     }
 
     /// GET /api/gonggi/spaces/:id/share — owner link-share state.
@@ -261,15 +297,17 @@ actor MobileAuthAPIClient {
                 status: http.statusCode
             )
         }
-        return SpaceShareState(
-            shareEnabled: share["shareEnabled"] as? Bool ?? false,
-            shareToken: share["shareToken"] as? String,
-            shareUrl: share["shareUrl"] as? String
-        )
+        return Self.parseShareState(share)
     }
 
-    /// PATCH /api/gonggi/spaces/:id/share — owner enable/disable link share.
-    func setSpaceShare(accessToken: String, spaceId: String, enabled: Bool) async throws -> SpaceShareState {
+    /// PATCH /api/gonggi/spaces/:id/share — owner enable/disable + included tour + audio.
+    func setSpaceShare(
+        accessToken: String,
+        spaceId: String,
+        enabled: Bool? = nil,
+        includedSpaceIds: [String]? = nil,
+        shareAudioEnabled: Bool? = nil
+    ) async throws -> SpaceShareState {
         var request = URLRequest(
             url: config.apiBaseURL
                 .appendingPathComponent("api/gonggi/spaces")
@@ -280,7 +318,11 @@ actor MobileAuthAPIClient {
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+        var body: [String: Any] = [:]
+        if let enabled { body["enabled"] = enabled }
+        if let includedSpaceIds { body["includedSpaceIds"] = includedSpaceIds }
+        if let shareAudioEnabled { body["shareAudioEnabled"] = shareAudioEnabled }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.timeoutInterval = 30
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw MobileAuthAPIError.network }
@@ -294,11 +336,7 @@ actor MobileAuthAPIClient {
                 status: http.statusCode
             )
         }
-        return SpaceShareState(
-            shareEnabled: share["shareEnabled"] as? Bool ?? false,
-            shareToken: share["shareToken"] as? String,
-            shareUrl: share["shareUrl"] as? String
-        )
+        return Self.parseShareState(share)
     }
 
     /// Build 78 — soft-delete owned GonggiSpace (links cleaned server-side). Does not delete R2.

@@ -41,6 +41,7 @@ enum AccountPresentationReset {
         PendingSpaceLinkCaptureStore.shared.clear()
         SpaceRepairStore.shared.clearPresentation()
         SpaceAudioManager.shared.stop()
+        PublicSpacesAccountStore.unbind()
         NotificationCenter.default.post(name: .gonggiAccountPresentationDidReset, object: nil)
     }
 
@@ -57,6 +58,7 @@ enum AccountPresentationReset {
         PendingSpaceLinkCaptureStore.shared.clear()
         SpaceRepairStore.shared.clearPresentation()
         SpaceAudioManager.shared.stop()
+        PublicSpacesAccountStore.bind(userId: userId)
         NotificationCenter.default.post(name: .gonggiAccountPresentationDidReset, object: nil)
     }
 }

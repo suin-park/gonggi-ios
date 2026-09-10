@@ -3,7 +3,7 @@ import SwiftUI
 import UIKit
 #endif
 
-/// Owner link-share sheet — enable link, copy, system share sheet.
+/// Owner link-share sheet — enable link, copy, system share sheet, optional tour spaces.
 struct SpaceShareSheet: View {
     let spaceId: String
     let spaceName: String
@@ -15,6 +15,11 @@ struct SpaceShareSheet: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var copied = false
+    @State private var includeLinkedSpaces = false
+    @State private var selectedIncludedIds: Set<String> = []
+    @State private var linkCandidates: [MobileAuthAPIClient.SpaceShareIncluded] = []
+    @State private var shareAudioEnabled = false
+    @State private var hasAudio = false
 
     private let api = MobileAuthAPIClient()
 
@@ -35,7 +40,7 @@ struct SpaceShareSheet: View {
                         .foregroundStyle(GonggiColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } footer: {
-                    Text("공유를 끄면 기존 링크로 더 이상 열 수 없어요. 연결된 다른 공간은 함께 공개되지 않아요.")
+                    Text("공유를 끄면 기존 링크로 더 이상 열 수 없어요. 연결된 공간은 아래에서 직접 선택한 경우에만 함께 공유돼요.")
                 }
 
                 if shareEnabled, let shareURL, !shareURL.isEmpty {
@@ -58,6 +63,67 @@ struct SpaceShareSheet: View {
                         } label: {
                             Label("공유하기", systemImage: "square.and.arrow.up")
                         }
+                    }
+                }
+
+                if shareEnabled {
+                    Section {
+                        Toggle("공간 오디오 포함", isOn: Binding(
+                            get: { shareAudioEnabled },
+                            set: { newValue in
+                                Task { await setShareAudio(newValue) }
+                            }
+                        ))
+                        .disabled(isLoading || isSaving || !hasAudio)
+
+                        if !hasAudio {
+                            Text("이 공간에 업로드·녹음된 오디오가 없어요.")
+                                .font(GonggiTypography.caption(13))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                        }
+                    } footer: {
+                        Text("켠 공간의 오디오만 공유 링크에서 들을 수 있어요. 연결된 공간은 각 공간의 공유 설정에서 따로 켜야 해요. 메모와는 별개예요.")
+                    }
+                }
+
+                if shareEnabled, !linkCandidates.isEmpty {
+                    Section {
+                        Toggle("연결된 공간 함께 공유", isOn: Binding(
+                            get: { includeLinkedSpaces },
+                            set: { newValue in
+                                includeLinkedSpaces = newValue
+                                if !newValue {
+                                    selectedIncludedIds = []
+                                    Task { await saveIncludedIds([]) }
+                                }
+                            }
+                        ))
+                        .disabled(isLoading || isSaving)
+
+                        if includeLinkedSpaces {
+                            ForEach(linkCandidates) { candidate in
+                                Toggle(isOn: Binding(
+                                    get: { selectedIncludedIds.contains(candidate.id) },
+                                    set: { on in
+                                        if on {
+                                            selectedIncludedIds.insert(candidate.id)
+                                        } else {
+                                            selectedIncludedIds.remove(candidate.id)
+                                        }
+                                        Task { await saveIncludedIds(Array(selectedIncludedIds)) }
+                                    }
+                                )) {
+                                    Text(candidate.title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                                          ?? "공간")
+                                        .font(GonggiTypography.body(15))
+                                }
+                                .disabled(isLoading || isSaving)
+                            }
+                        }
+                    } header: {
+                        Text("포함할 공간 선택")
+                    } footer: {
+                        Text("선택한 공간만 같은 공유 링크로 이동할 수 있어요. 공개(PUBLIC)로 바꾸지 않아요.")
                     }
                 }
 
@@ -86,6 +152,16 @@ struct SpaceShareSheet: View {
         }
     }
 
+    private func apply(_ state: MobileAuthAPIClient.SpaceShareState) {
+        shareEnabled = state.shareEnabled
+        shareURL = state.shareUrl
+        linkCandidates = state.linkCandidates
+        selectedIncludedIds = Set(state.includedSpaces.map(\.id))
+        includeLinkedSpaces = !state.includedSpaces.isEmpty
+        shareAudioEnabled = state.shareAudioEnabled
+        hasAudio = state.hasAudio
+    }
+
     private func load() async {
         isLoading = true
         defer { isLoading = false }
@@ -95,8 +171,7 @@ struct SpaceShareSheet: View {
         }
         do {
             let state = try await api.getSpaceShare(accessToken: token, spaceId: spaceId)
-            shareEnabled = state.shareEnabled
-            shareURL = state.shareUrl
+            apply(state)
             errorMessage = nil
         } catch let err as MobileAuthAPIError {
             errorMessage = err.userFacingMessage
@@ -114,18 +189,65 @@ struct SpaceShareSheet: View {
         }
         do {
             let state = try await api.setSpaceShare(accessToken: token, spaceId: spaceId, enabled: enabled)
-            shareEnabled = state.shareEnabled
-            shareURL = state.shareUrl
+            apply(state)
             copied = false
             errorMessage = nil
             GonggiHaptics.light()
         } catch let err as MobileAuthAPIError {
             errorMessage = err.userFacingMessage
-            // Revert toggle on failure
             shareEnabled = !enabled
         } catch {
             errorMessage = "공유 설정을 저장하지 못했어요. 잠시 후 다시 시도해주세요."
             shareEnabled = !enabled
+        }
+    }
+
+    private func saveIncludedIds(_ ids: [String]) async {
+        isSaving = true
+        defer { isSaving = false }
+        guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
+            errorMessage = "로그인이 필요해요."
+            return
+        }
+        do {
+            let state = try await api.setSpaceShare(
+                accessToken: token,
+                spaceId: spaceId,
+                includedSpaceIds: ids
+            )
+            apply(state)
+            errorMessage = nil
+        } catch let err as MobileAuthAPIError {
+            errorMessage = err.userFacingMessage
+            await load()
+        } catch {
+            errorMessage = "공유 설정을 저장하지 못했어요. 잠시 후 다시 시도해주세요."
+            await load()
+        }
+    }
+
+    private func setShareAudio(_ enabled: Bool) async {
+        isSaving = true
+        defer { isSaving = false }
+        guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
+            errorMessage = "로그인이 필요해요."
+            return
+        }
+        do {
+            let state = try await api.setSpaceShare(
+                accessToken: token,
+                spaceId: spaceId,
+                shareAudioEnabled: enabled
+            )
+            apply(state)
+            errorMessage = nil
+            GonggiHaptics.light()
+        } catch let err as MobileAuthAPIError {
+            errorMessage = err.userFacingMessage
+            shareAudioEnabled = !enabled
+        } catch {
+            errorMessage = "공유 설정을 저장하지 못했어요. 잠시 후 다시 시도해주세요."
+            shareAudioEnabled = !enabled
         }
     }
 
@@ -147,6 +269,13 @@ struct SpaceShareSheet: View {
         }
         presenter.present(activity, animated: true)
         #endif
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        let t = trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 }
 

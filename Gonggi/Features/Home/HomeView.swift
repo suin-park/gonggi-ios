@@ -7,9 +7,17 @@ struct HomeView: View {
     @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
+    @State private var publicSpaces: [PublicSpaceListItem] = []
+    @State private var publicViewerRoute: PublicSpaceSlugRoute?
+
+    private let publicAPI = MobilePublicSpacesAPIClient()
 
     private var recentSpaces: [SpaceRecord] {
         Array(appState.spaces.prefix(5))
+    }
+
+    private var homePublicSpaces: [PublicSpaceListItem] {
+        PublicSpacesPolicy.homePreviewLimit(publicSpaces, max: 4)
     }
 
     /// Top padding scales with usable height (~24–48pt extra on tall phones).
@@ -45,6 +53,11 @@ struct HomeView: View {
                         }
 
                         recentSection
+
+                        if PublicSpacesPolicy.shouldShowHomeSection(spaces: homePublicSpaces) {
+                            Color.clear.frame(height: GonggiSpacing.xl)
+                            publicSpacesSection
+                        }
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
                     .padding(.top, homeTopPadding(for: usableHeight))
@@ -62,15 +75,21 @@ struct HomeView: View {
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
             }
+            .fullScreenCover(item: $publicViewerRoute) { route in
+                PublicSpaceViewerLoader(slug: route.slug)
+                    .environmentObject(appState)
+            }
             .fullScreenCover(item: $viewerLaunch) { launch in
                 SpaceVRNavigationHost(
                     sessions: launch.sessions,
                     onClose: { viewerLaunch = nil }
                 )
             }
+            .task { await loadPublicSpaces() }
             .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
                 viewerLaunch = nil
                 selectedSpace = nil
+                publicViewerRoute = nil
             }
             .overlay {
                 if isPreparingViewer {
@@ -209,6 +228,58 @@ struct HomeView: View {
                     .accessibilityLabel("\(space.name), 상세 보기")
                 }
             }
+        }
+    }
+
+    private var publicSpacesSection: some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            HStack {
+                Text("공개 공간")
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                Spacer(minLength: 0)
+                NavigationLink {
+                    PublicSpacesListView()
+                } label: {
+                    Text("전체 보기")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.accentTeal)
+                }
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: GonggiSpacing.md) {
+                    ForEach(homePublicSpaces) { item in
+                        Button {
+                            publicViewerRoute = PublicSpaceSlugRoute(slug: item.publicSlug)
+                        } label: {
+                            PublicSpaceCardView(item: item)
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+                    }
+                }
+            }
+        }
+    }
+
+    private func loadPublicSpaces() async {
+        do {
+            let page = try await publicAPI.listPublicSpaces(
+                accessToken: MobileAuthTokenStore.shared.getAccessToken(),
+                limit: 4,
+                cursor: nil
+            )
+            publicSpaces = page.spaces
+            if let userId = AuthSessionController.shared.profile?.id
+                ?? AuthSessionController.shared.currentUser?.userId
+            {
+                PublicSpacesAccountStore.saveHomePreviewSlugs(
+                    page.spaces.map(\.publicSlug),
+                    userId: userId
+                )
+            }
+        } catch {
+            publicSpaces = []
         }
     }
 

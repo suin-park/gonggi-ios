@@ -576,6 +576,7 @@ struct ProfileAppSettingsView: View {
 // MARK: - Privacy / permissions
 
 struct ProfilePrivacyPermissionsView: View {
+    @ObservedObject private var auth = AuthSessionController.shared
     @State private var camera = "확인 중"
     @State private var location = "확인 중"
     @State private var mic = "확인 중"
@@ -604,6 +605,11 @@ struct ProfilePrivacyPermissionsView: View {
             Section {
                 NavigationLink("공유 중인 공간 관리") {
                     ProfileSharedSpacesView()
+                }
+                NavigationLink("차단한 사용자") {
+                    BlockedPublishersView(
+                        userId: auth.profile?.id ?? auth.currentUser?.userId
+                    )
                 }
             }
         }

@@ -82,13 +82,13 @@ final class MyInfoProfileTests: XCTestCase {
         XCTAssertEqual(GonggiProductURLs.support.path, "/support")
     }
 
-    func testVersionLockIsTwoPointZeroBuildEight() throws {
+    func testVersionLockIsTwoPointZeroBuildNine() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let yml = try String(contentsOf: root.appendingPathComponent("project.yml"), encoding: .utf8)
         XCTAssertTrue(yml.contains("MARKETING_VERSION: \"2.0\""))
-        XCTAssertTrue(yml.contains("CURRENT_PROJECT_VERSION: \"8\""))
+        XCTAssertTrue(yml.contains("CURRENT_PROJECT_VERSION: \"9\""))
     }
 
     func testCellularBlockedMessageExists() {

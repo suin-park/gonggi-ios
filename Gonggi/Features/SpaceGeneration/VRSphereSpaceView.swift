@@ -23,6 +23,10 @@ struct VRSphereSpaceView: View {
     var deferSecondaryLoads: Bool = false
     /// Phase 2 — open in Edit immediately (placement handoff).
     var startInEditMode: Bool = false
+    /// Public viewers disable edit / repair / owner audio.
+    var allowsOwnerControls: Bool = true
+    /// Public discovery overlay — hotspots/placement from public DTO (not owner APIs).
+    var publicOverlay: PublicViewerOverlay? = nil
     var onClose: () -> Void
     /// Optional: notify parent of new local texture path (do not recreate viewer — orientation preserved in-place).
     var onRepairCompleted: ((URL) -> Void)? = nil
@@ -131,6 +135,8 @@ struct VRSphereSpaceView: View {
         transitionBridgeRole: SpaceLinkTransitionBridge.Role = .primary,
         deferSecondaryLoads: Bool = false,
         startInEditMode: Bool = false,
+        allowsOwnerControls: Bool = true,
+        publicOverlay: PublicViewerOverlay? = nil,
         onClose: @escaping () -> Void,
         onRepairCompleted: ((URL) -> Void)? = nil,
         onNavigateToLinkedSpace: ((SpaceLink) -> Void)? = nil,
@@ -146,6 +152,8 @@ struct VRSphereSpaceView: View {
         self.transitionBridgeRole = transitionBridgeRole
         self.deferSecondaryLoads = deferSecondaryLoads
         self.startInEditMode = startInEditMode
+        self.allowsOwnerControls = allowsOwnerControls
+        self.publicOverlay = publicOverlay
         self.onClose = onClose
         self.onRepairCompleted = onRepairCompleted
         self.onNavigateToLinkedSpace = onNavigateToLinkedSpace
@@ -657,7 +665,7 @@ struct VRSphereSpaceView: View {
 
     private var showsLibraryExitButton: Bool {
         // Authenticated app viewer only — Welcome sample / public share use other chrome.
-        authSession.isSignedIn
+        allowsOwnerControls && authSession.isSignedIn
     }
 
     private var backButton: some View {
@@ -1006,30 +1014,32 @@ struct VRSphereSpaceView: View {
 
     private var vrToolbar: some View {
         HStack(spacing: 8) {
-            Button {
-                enterEditMode()
-            } label: {
-                Text("편집")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(height: 40)
-                    .padding(.horizontal, 12)
-                    .background(Color.black.opacity(0.45))
-                    .clipShape(Capsule())
-            }
+            if allowsOwnerControls {
+                Button {
+                    enterEditMode()
+                } label: {
+                    Text("편집")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(height: 40)
+                        .padding(.horizontal, 12)
+                        .background(Color.black.opacity(0.45))
+                        .clipShape(Capsule())
+                }
 
-            Button {
-                GonggiHaptics.light()
-                spaceAudio.toggleMute()
-            } label: {
-                Image(systemName: spaceAudio.isMuted ? "speaker.slash" : "speaker.wave.2")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(Color.black.opacity(0.45))
-                    .clipShape(Circle())
+                Button {
+                    GonggiHaptics.light()
+                    spaceAudio.toggleMute()
+                } label: {
+                    Image(systemName: spaceAudio.isMuted ? "speaker.slash" : "speaker.wave.2")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(Color.black.opacity(0.45))
+                        .clipShape(Circle())
+                }
+                .accessibilityLabel(spaceAudio.isMuted ? "소리 켜기" : "소리 끄기")
             }
-            .accessibilityLabel(spaceAudio.isMuted ? "소리 켜기" : "소리 끄기")
 
             Button {
                 GonggiHaptics.light()
@@ -1066,21 +1076,23 @@ struct VRSphereSpaceView: View {
             }
             .accessibilityLabel(motionEnabled ? "모션 끄기" : "모션 켜기")
 
-            Menu {
-                Button {
-                    reopenRepairGuidanceFromMenu()
+            if allowsOwnerControls {
+                Menu {
+                    Button {
+                        reopenRepairGuidanceFromMenu()
+                    } label: {
+                        Label(SelectiveRepairHintPreferences.reopenMenuTitle, systemImage: "hand.tap")
+                    }
                 } label: {
-                    Label(SelectiveRepairHintPreferences.reopenMenuTitle, systemImage: "hand.tap")
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(Color.black.opacity(0.45))
+                        .clipShape(Circle())
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(Color.black.opacity(0.45))
-                    .clipShape(Circle())
+                .accessibilityLabel("더보기")
             }
-            .accessibilityLabel("더보기")
         }
     }
 
@@ -1267,6 +1279,11 @@ struct VRSphereSpaceView: View {
     }
 
     private func loadPlacementIfNeeded() {
+        if let overlay = publicOverlay, !allowsOwnerControls {
+            loadPublicPlacement(from: overlay)
+            return
+        }
+        guard allowsOwnerControls else { return }
         guard !didLoadPlacement else { return }
         didLoadPlacement = true
         loadingAssets = true
@@ -1293,6 +1310,63 @@ struct VRSphereSpaceView: View {
                 loadingAssets = false
                 await consumeExternalPendingPlacementIfNeeded()
             }
+        }
+    }
+
+    private func loadPublicPlacement(from overlay: PublicViewerOverlay) {
+        guard !didLoadPlacement else { return }
+        didLoadPlacement = true
+        loadingAssets = true
+        let detail = PublicSpaceDetail(
+            publicSlug: overlay.publicSlug,
+            title: overlay.title,
+            publisherDisplayName: "",
+            publishedAt: nil,
+            width: nil,
+            height: nil,
+            panoramaUrl: "",
+            hotspots: overlay.hotspots,
+            placementFloorY: overlay.placementFloorY,
+            placementAssets: overlay.placementAssets,
+            publisherBlockToken: "",
+            supportUrl: ""
+        )
+        draftLayout = PublicSpacesPolicy.placementLayout(from: detail)
+        placementTask = Task { @MainActor in
+            guard let base = overlay.apiBaseURL else {
+                loadingAssets = false
+                return
+            }
+            var meta: [String: MobileAssetDTO] = [:]
+            var urls: [String: URL] = [:]
+            await withTaskGroup(of: (String, MobileAssetDTO, URL?).self) { group in
+                for asset in overlay.placementAssets {
+                    guard let modelPath = asset.modelUrl,
+                          let remote = PublicSpacesPolicy.resolveMediaURL(
+                            relativeOrAbsolute: modelPath,
+                            apiBaseURL: base
+                          )
+                    else { continue }
+                    let dto = MobileAssetDTO(
+                        id: asset.assetId,
+                        name: "Public asset",
+                        usdzUrl: remote.absoluteString,
+                        availableForPlacement: true,
+                        availability: "ready"
+                    )
+                    group.addTask { [usdzCache] in
+                        let local = await usdzCache.localURL(assetId: asset.assetId, remoteURL: remote)
+                        return (asset.assetId, dto, local)
+                    }
+                }
+                for await (assetId, dto, local) in group {
+                    meta[assetId] = dto
+                    if let local { urls[assetId] = local }
+                }
+            }
+            assetMetadata = meta
+            modelURLs = urls
+            loadingAssets = false
         }
     }
 
@@ -1570,6 +1644,21 @@ struct VRSphereSpaceView: View {
     }
 
     private func loadSpaceLinksIfNeeded() {
+        if let overlay = publicOverlay, !allowsOwnerControls {
+            let links = PublicSpacesPolicy.spaceLinks(
+                from: overlay.hotspots,
+                sourceId: sessionId
+            )
+            spaceLinks = Array(links.prefix(SpaceLink.maxLinksPerSource))
+            var checkpoints: [String: (yaw: Float, pitch: Float, radius: Float)] = [:]
+            for link in spaceLinks where link.status == .linked {
+                checkpoints[link.id] = (link.yawDeg, link.pitchDeg, link.radius)
+            }
+            linkedPoseCheckpoint = checkpoints
+            didLoadSpaceLinks = true
+            return
+        }
+        guard allowsOwnerControls else { return }
         // Build 78: refresh from server on each entry so soft-deleted targets disappear.
         refreshSpaceLinksFromServer()
     }
@@ -1608,6 +1697,12 @@ struct VRSphereSpaceView: View {
     }
 
     private func targetSpaceName(for link: SpaceLink) -> String? {
+        if let overlay = publicOverlay,
+           let hotspot = overlay.hotspots.first(where: { $0.id == link.id }),
+           let title = hotspot.targetTitle,
+           !title.isEmpty {
+            return title
+        }
         if let id = link.targetSessionId, let n = spaceLinkTargetNames[id] { return n }
         if let id = link.targetSpaceId, let n = spaceLinkTargetNames[id] { return n }
         return nil
@@ -1686,12 +1781,15 @@ struct VRSphereSpaceView: View {
             return
         }
         guard let id,
-              let link = spaceLinks.first(where: { $0.id == id }),
-              link.isNavigable
+              let link = spaceLinks.first(where: { $0.id == id })
         else { return }
+        let hasExternal = !(link.externalUrl ?? "").isEmpty
+        guard link.isNavigable || hasExternal else { return }
         GonggiHaptics.light()
-        if let url = link.externalUrl, !url.isEmpty {
+        if hasExternal, link.isNavigable {
             actionCardLink = link
+        } else if hasExternal {
+            beginExternalLinkConfirm(for: link)
         } else {
             onNavigateToLinkedSpace?(link)
         }
@@ -1958,7 +2056,7 @@ struct VRSphereSpaceView: View {
     }
 
     private var repairGestureAvailable: Bool {
-        interactionMode == .view && !spaceLinkTransitionLocked && panoramaReady
+        allowsOwnerControls && interactionMode == .view && !spaceLinkTransitionLocked && panoramaReady
     }
 
     /// Persistent card: panorama ready → delay → fade in. No auto timeout.

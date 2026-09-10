@@ -179,4 +179,8 @@ struct SpaceViewerSession: Identifiable, Equatable {
     var audioURL: URL? = nil
     /// Phase 2 — open directly in Edit (Asset Detail / Space Detail placement).
     var startInEditMode: Bool = false
+    /// Public / guest viewers must disable edit, repair, delete, and owner audio chrome.
+    var allowsOwnerControls: Bool = true
+    /// When set, VR loads hotspots/placement from public DTO instead of owner APIs.
+    var publicOverlay: PublicViewerOverlay? = nil
 }

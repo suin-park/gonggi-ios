@@ -18,6 +18,7 @@ struct SpaceDetailView: View {
     @State private var deleteError: String?
     @State private var showEditSheet = false
     @State private var showShareSheet = false
+    @State private var showVisibilitySheet = false
     // Build 80 — space audio
     @State private var showAudioImporter = false
     @State private var showAudioRecorder = false
@@ -89,6 +90,14 @@ struct SpaceDetailView: View {
                 spaceId: liveSpace.sessionId ?? liveSpace.id,
                 spaceName: liveSpace.name,
                 onClose: { showShareSheet = false }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showVisibilitySheet) {
+            SpaceVisibilityPickerSheet(
+                spaceId: liveSpace.sessionId ?? liveSpace.id,
+                onClose: { showVisibilitySheet = false }
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -170,6 +179,10 @@ struct SpaceDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
+                    Button("공개 범위", systemImage: "eye") {
+                        showVisibilitySheet = true
+                    }
+                    .disabled(liveSpace.status != .ready)
                     Button("공간 삭제", systemImage: "trash", role: .destructive) {
                         showDeleteConfirm = true
                     }
