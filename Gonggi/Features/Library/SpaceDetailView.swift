@@ -101,18 +101,6 @@ struct SpaceDetailView: View {
         } message: {
             Text(audioError ?? "")
         }
-        .confirmationDialog(
-            "원활한 촬영을 위한 분석을 시작합니다.",
-            isPresented: $showAdvancedAnalyzeConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("분석 시작") {
-                Task { await startAdvancedAnalyze() }
-            }
-            Button("취소", role: .cancel) {}
-        } message: {
-            Text("LatLong과 촬영 좌표를 바탕으로 3DGS 촬영 가이드를 만들어요. 앱을 나가도 분석은 계속됩니다.")
-        }
         .alert("분석을 시작하지 못했어요", isPresented: Binding(
             get: { advancedAnalyzeError != nil },
             set: { if !$0 { advancedAnalyzeError = nil } }
@@ -210,6 +198,12 @@ struct SpaceDetailView: View {
                 .padding(.bottom, GonggiSpacing.xxl)
             }
             .contentMargins(.bottom, GonggiSpacing.md, for: .scrollContent)
+            .onChange(of: showAdvancedAnalyzeConfirm) { _, show in
+                guard show else { return }
+                withAnimation(GonggiMotion.quick) {
+                    proxy.scrollTo("space-detail-actions", anchor: .center)
+                }
+            }
             #if DEBUG
             .onAppear {
                 guard ScreenshotLaunchConfig.screen == .spaceDetailScrolled else { return }
@@ -517,8 +511,23 @@ struct SpaceDetailView: View {
             }
             .accessibilityLabel("가이드 촬영 시작")
         } else if let record, record.status == .failed {
+            if showAdvancedAnalyzeConfirm {
+                AdvancedAnalyzeConfirmCard(
+                    isStarting: isStartingAdvancedAnalyze,
+                    onStart: {
+                        GonggiHaptics.medium()
+                        showAdvancedAnalyzeConfirm = false
+                        Task { await startAdvancedAnalyze() }
+                    },
+                    onDismiss: { showAdvancedAnalyzeConfirm = false }
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             SecondaryButton(title: "고급 생성 다시 시도", icon: "arrow.clockwise") {
-                showAdvancedAnalyzeConfirm = true
+                GonggiHaptics.medium()
+                withAnimation(GonggiMotion.quick) {
+                    showAdvancedAnalyzeConfirm = true
+                }
             }
             if let msg = record.lastErrorMessage ?? record.lastErrorCode {
                 Text(msg)
@@ -526,9 +535,23 @@ struct SpaceDetailView: View {
                     .foregroundStyle(GonggiColors.warning)
             }
         } else {
+            if showAdvancedAnalyzeConfirm {
+                AdvancedAnalyzeConfirmCard(
+                    isStarting: isStartingAdvancedAnalyze,
+                    onStart: {
+                        GonggiHaptics.medium()
+                        showAdvancedAnalyzeConfirm = false
+                        Task { await startAdvancedAnalyze() }
+                    },
+                    onDismiss: { showAdvancedAnalyzeConfirm = false }
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             SecondaryButton(title: "고급 생성", icon: "sparkles") {
                 GonggiHaptics.medium()
-                showAdvancedAnalyzeConfirm = true
+                withAnimation(GonggiMotion.quick) {
+                    showAdvancedAnalyzeConfirm.toggle()
+                }
             }
             .accessibilityLabel("고급 생성")
             .disabled(isStartingAdvancedAnalyze)
@@ -687,6 +710,90 @@ struct ViewerPlaceholderView: View {
                 }
             }
         }
+    }
+}
+
+/// Inline confirm card anchored above the 「고급 생성」 button (replaces broken confirmationDialog).
+private struct AdvancedAnalyzeConfirmCard: View {
+    var isStarting: Bool
+    let onStart: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+                HStack(alignment: .top) {
+                    Text("원활한 촬영을 위한 분석을 시작합니다.")
+                        .font(GonggiTypography.headline(16))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: GonggiSpacing.sm)
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(GonggiColors.textTertiary)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("닫기")
+                }
+
+                Text("LatLong과 촬영 좌표를 바탕으로 3DGS 촬영 가이드를 만들어요. 앱을 나가도 분석은 계속됩니다.")
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    guard !isStarting else { return }
+                    onStart()
+                } label: {
+                    HStack(spacing: GonggiSpacing.xs) {
+                        if isStarting {
+                            ProgressView()
+                                .tint(GonggiColors.accentCyan)
+                        }
+                        Text(isStarting ? "분석 시작 중…" : "분석 시작")
+                            .font(GonggiTypography.headline(16))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .foregroundStyle(GonggiColors.accentCyan)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isStarting)
+                .accessibilityLabel("분석 시작")
+            }
+            .padding(GonggiSpacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                    .fill(GonggiColors.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                    .stroke(GonggiColors.border, lineWidth: 1)
+            )
+
+            // Tip pointing down toward the 고급 생성 button below.
+            AdvancedAnalyzeConfirmCardTip()
+                .fill(GonggiColors.surfaceElevated)
+                .frame(width: 18, height: 10)
+                .padding(.top, -1)
+        }
+        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct AdvancedAnalyzeConfirmCardTip: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
