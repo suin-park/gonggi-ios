@@ -270,7 +270,6 @@ jobs:
             exit 1
           fi
           echo "Archive created successfully."
-          echo "build_sha=${BUILD_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Export IPA
         env:
