@@ -234,6 +234,18 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
     var localLatLongPath: String? = nil
     var sessionId: String? = nil
     var remoteImageURL: String? = nil
+    /// Catalog `latestRevisionId` when known — used for thumbnail cache invalidation.
+    var latestRevisionId: String? = nil
+    /// Remote `resultImageURL` that was current when `localLatLongPath` was written.
+    var localLatLongSourceURL: String? = nil
+    /// Revision id of the bytes at `localLatLongPath` (captured at download **start**).
+    var localLatLongRevisionId: String? = nil
+    /// Full revision token stamped with those bytes (`rev:…` / `url+upd:…`).
+    var localLatLongRevisionToken: String? = nil
+    /// Catalog `updatedAt` — invalidates same-URL content when revision id is absent.
+    var catalogUpdatedAt: String? = nil
+    /// Owner user id when known (cache account key fallback).
+    var ownerUserId: String? = nil
     /// Overlay for selective repair; base `status` stays `.ready` while repairing/failed repair.
     var repairBadge: SpaceRepairBadge = .none
     /// Build 80 — optional space audio metadata from catalog / job store.

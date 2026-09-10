@@ -140,10 +140,27 @@ actor SpaceRepairRuntime {
                         let latest = try SpaceLatLongStore.latestLatLongURL(sessionId: sessionId)
                         try? FileManager.default.removeItem(at: latest)
                         try FileManager.default.copyItem(at: dest, to: latest)
+                        let revId = status.revisionId
+                        let token = SpaceThumbnailCacheKey.revisionToken(
+                            latestRevisionId: revId,
+                            remoteImageURL: urlStr,
+                            catalogUpdatedAt: nil
+                        )
+                        let stamp = SpaceLatLongRevisionStamp(
+                            revisionId: revId,
+                            revisionToken: token,
+                            sourceURL: urlStr,
+                            accountId: nil,
+                            spaceId: sessionId,
+                            catalogUpdatedAt: nil
+                        )
+                        SpaceLatLongStore.writeRevisionStamp(stamp, forImageAt: dest)
+                        SpaceLatLongStore.writeRevisionStamp(stamp, forImageAt: latest)
                         store.update(repairJobId: repairJobId) { job in
                             job.localLatLongPath = dest.path
                             job.status = "completed"
                             job.resultImageURL = urlStr
+                            job.revisionId = revId ?? job.revisionId
                         }
                     } catch {
                         store.update(repairJobId: repairJobId) { job in

@@ -316,7 +316,12 @@ struct AssetLibraryView: View {
 
     private func assetCard(_ asset: MobileAssetDTO) -> some View {
         HStack(spacing: GonggiSpacing.md) {
-            AssetThumbnailView(urlString: asset.thumbUrl, size: 64)
+            AssetThumbnailView(
+                urlString: asset.thumbUrl,
+                size: 64,
+                showsMissingCaption: false,
+                debugAssetId: asset.id
+            )
             VStack(alignment: .leading, spacing: 4) {
                 Text(asset.name)
                     .font(GonggiTypography.body(16))
@@ -492,11 +497,16 @@ struct AssetDetailView: View {
                 .fill(GonggiColors.surface)
                 .frame(height: 260)
             if asset.canPreviewUSDZ, let urlString = asset.usdzUrl, let url = URL(string: urlString) {
-                AssetUSDZPreviewHost(assetId: asset.id, remoteURL: url)
+                AssetUSDZPreviewHost(assetId: asset.id, remoteURL: url, thumbUrl: asset.thumbUrl)
                     .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous))
                     .frame(height: 260)
             } else {
-                AssetThumbnailView(urlString: asset.thumbUrl, size: 120)
+                AssetThumbnailView(
+                    urlString: asset.thumbUrl,
+                    size: 120,
+                    showsMissingCaption: true,
+                    debugAssetId: asset.id
+                )
             }
         }
         .frame(maxWidth: .infinity)
@@ -736,46 +746,199 @@ private struct IdentifiedURL: Identifiable {
 
 // MARK: - Thumbnail
 
+enum AssetThumbnailLoadPhase: Equatable {
+    case noURL
+    case loading
+    case success
+    case networkFailure(status: Int?)
+    case decodeFailure
+}
+
 struct AssetThumbnailView: View {
     let urlString: String?
     var size: CGFloat = 64
+    /// When true and there is no result thumb, show a small "미리보기 없음" caption under the icon.
+    var showsMissingCaption: Bool = false
+    /// Optional asset id prefix for DEBUG diagnostics only (never shown in UI).
+    var debugAssetId: String? = nil
+    /// Explicitly labeled input-photo fallback (not a result thumb). Nil = do not use input photo.
+    var inputPhotoURLString: String? = nil
+    var inputPhotoCaption: String = "입력 사진"
+
+    @State private var phase: AssetThumbnailLoadPhase = .noURL
+    @State private var image: UIImage?
+    @State private var showingInputPhoto = false
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
-                .fill(GonggiColors.surface)
-                .frame(width: size, height: size)
-            if let urlString, let url = URL(string: urlString) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
+        VStack(spacing: 4) {
+            ZStack {
+                RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
+                    .fill(GonggiColors.surface)
+                    .frame(width: size, height: size)
+                switch phase {
+                case .success:
+                    if let image {
+                        Image(uiImage: image)
                             .resizable()
                             .scaledToFill()
-                    case .failure:
-                        placeholderIcon
-                    case .empty:
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    @unknown default:
+                            .frame(width: size, height: size)
+                            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
+                            .accessibilityHidden(true)
+                    } else {
                         placeholderIcon
                     }
+                case .loading:
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .tint(GonggiColors.accentTeal)
+                case .noURL, .networkFailure, .decodeFailure:
+                    placeholderIcon
+                        .accessibilityHidden(true)
                 }
-                .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
-                .accessibilityHidden(true)
-            } else {
-                placeholderIcon
-                    .accessibilityHidden(true)
+            }
+            .frame(width: size, height: size)
+
+            if showingInputPhoto, phase == .success {
+                Text(inputPhotoCaption)
+                    .font(GonggiTypography.caption(10))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                    .lineLimit(1)
+            } else if showsMissingCaption, phase == .noURL || isFailurePhase {
+                Text("미리보기 없음")
+                    .font(GonggiTypography.caption(10))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                    .lineLimit(1)
             }
         }
-        .frame(width: size, height: size)
+        .task(id: "\(urlString ?? "")|\(inputPhotoURLString ?? "")") {
+            await load()
+        }
+    }
+
+    private var isFailurePhase: Bool {
+        switch phase {
+        case .networkFailure, .decodeFailure: return true
+        default: return false
+        }
     }
 
     private var placeholderIcon: some View {
         Image(systemName: "cube.transparent")
             .font(.system(size: size * 0.35, weight: .light))
             .foregroundStyle(GonggiColors.accentTeal)
+    }
+
+    @MainActor
+    private func load() async {
+        image = nil
+        showingInputPhoto = false
+        let authGen = AuthSessionGeneration.current
+
+        if let urlString, let url = URL(string: urlString), !urlString.isEmpty {
+            phase = .loading
+            let result = await AssetThumbnailFetcher.fetch(url: url)
+            guard AuthSessionGeneration.isCurrent(authGen) else { return }
+            apply(result, asInputPhoto: false)
+            #if DEBUG
+            logDebug(preferredURL: urlString, result: result)
+            #endif
+            if phase == .success { return }
+        }
+
+        // Result thumb missing/failed — optional labeled input photo only (never silent backfill).
+        if let input = inputPhotoURLString, let url = URL(string: input), !input.isEmpty {
+            phase = .loading
+            let result = await AssetThumbnailFetcher.fetch(url: url)
+            guard AuthSessionGeneration.isCurrent(authGen) else { return }
+            apply(result, asInputPhoto: true)
+            #if DEBUG
+            logDebug(preferredURL: input, result: result)
+            #endif
+            return
+        }
+
+        if urlString == nil || urlString?.isEmpty == true {
+            phase = .noURL
+        }
+    }
+
+    private func apply(_ result: AssetThumbnailFetcher.Result, asInputPhoto: Bool) {
+        switch result {
+        case .success(let img):
+            image = img
+            phase = .success
+            showingInputPhoto = asInputPhoto
+        case .networkFailure(let status):
+            phase = .networkFailure(status: status)
+            showingInputPhoto = false
+        case .decodeFailure:
+            phase = .decodeFailure
+            showingInputPhoto = false
+        }
+    }
+
+    #if DEBUG
+    private func logDebug(preferredURL: String, result: AssetThumbnailFetcher.Result) {
+        let idPart: String
+        if let debugAssetId, debugAssetId.count >= 8 {
+            idPart = String(debugAssetId.prefix(8))
+        } else {
+            idPart = debugAssetId ?? "-"
+        }
+        let hasURL = !(urlString ?? "").isEmpty
+        let status: String
+        switch result {
+        case .success:
+            status = "success"
+        case .networkFailure(let code):
+            status = "networkFailure status=\(code.map(String.init) ?? "nil")"
+        case .decodeFailure:
+            status = "decodeFailure"
+        }
+        // Never log full signed URLs / tokens — host + path prefix only.
+        let hostPath: String
+        if let u = URL(string: preferredURL) {
+            hostPath = "\(u.host ?? "?")\(String(u.path.prefix(48)))"
+        } else {
+            hostPath = "unparseable"
+        }
+        print(
+            "[AssetThumbDBG] id=\(idPart) hasResultThumb=\(hasURL) phase=\(status) url=\(hostPath) inputPhoto=\(showingInputPhoto)"
+        )
+    }
+    #endif
+}
+
+enum AssetThumbnailFetcher {
+    enum Result: Sendable {
+        case success(UIImage)
+        case networkFailure(status: Int?)
+        case decodeFailure
+    }
+
+    static func fetch(url: URL) async -> Result {
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            let status = (response as? HTTPURLResponse)?.statusCode
+            if let status, !(200 ... 299).contains(status) {
+                return .networkFailure(status: status)
+            }
+            if let head = String(data: data.prefix(64), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               head.hasPrefix("<") || head.hasPrefix("{") || head.hasPrefix("[") {
+                return .decodeFailure
+            }
+            guard let image = UIImage(data: data) else {
+                return .decodeFailure
+            }
+            return .success(image)
+        } catch {
+            #if DEBUG
+            let ns = error as NSError
+            print("[AssetThumbDBG] fetchError domain=\(ns.domain) code=\(ns.code)")
+            #endif
+            return .networkFailure(status: nil)
+        }
     }
 }
 
@@ -784,6 +947,7 @@ struct AssetThumbnailView: View {
 struct AssetUSDZPreviewHost: View {
     let assetId: String
     let remoteURL: URL
+    var thumbUrl: String? = nil
 
     @State private var localURL: URL?
     @State private var failed = false
@@ -793,7 +957,12 @@ struct AssetUSDZPreviewHost: View {
             if let localURL {
                 AssetSceneKitPreviewRepresentable(modelURL: localURL)
             } else if failed {
-                AssetThumbnailView(urlString: nil, size: 80)
+                AssetThumbnailView(
+                    urlString: thumbUrl,
+                    size: 80,
+                    showsMissingCaption: true,
+                    debugAssetId: assetId
+                )
             } else {
                 ProgressView()
                     .tint(GonggiColors.accentTeal)

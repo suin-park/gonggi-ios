@@ -134,19 +134,13 @@ struct HomeView: View {
                 handleSpaceTap(space)
             } label: {
                 HStack(spacing: GonggiSpacing.md) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous)
-                            .fill(GonggiColors.surface)
-                            .frame(width: 56, height: 56)
-                        if space.showsActivityIndicator {
-                            ProgressView()
-                                .tint(GonggiColors.accentTeal)
-                        } else {
-                            Image(systemName: space.thumbnailSystemImage)
-                                .font(.system(size: 24, weight: .light))
-                                .foregroundStyle(GonggiColors.accentTeal)
-                        }
-                    }
+                    SpaceThumbnailView(
+                        space: space,
+                        height: 56,
+                        width: 56,
+                        cornerRadius: GonggiRadius.sm,
+                        showsActivityOverlay: true
+                    )
                     VStack(alignment: .leading, spacing: 2) {
                         Text(space.name)
                             .font(GonggiTypography.headline(16))
