@@ -1847,9 +1847,6 @@ struct VRSphereSpaceView: View {
         let checkpoint = linkedPoseCheckpoint[id] ?? (link.yawDeg, link.pitchDeg, link.radius)
         pendingPoseSaveIds.insert(id)
         Task {
-            defer {
-                await MainActor.run { pendingPoseSaveIds.remove(id) }
-            }
             do {
                 _ = try await spaceLinkStore.patchLink(
                     sourceSpaceId: sessionId,
@@ -1860,10 +1857,12 @@ struct VRSphereSpaceView: View {
                     label: nil
                 )
                 await MainActor.run {
+                    pendingPoseSaveIds.remove(id)
                     linkedPoseCheckpoint[id] = (link.yawDeg, link.pitchDeg, link.radius)
                 }
             } catch {
                 await MainActor.run {
+                    pendingPoseSaveIds.remove(id)
                     updateSpaceLinkPose(
                         id: id,
                         yaw: checkpoint.yaw,
