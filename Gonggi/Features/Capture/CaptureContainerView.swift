@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Capture mode selection.
-/// Production UI exposes only 360 space record + 3D space scan (BETA).
+/// Production Record tab opens DirectionCapture (LatLong) immediately.
 /// Other modes remain for DEBUG / internal access only.
 enum CaptureMode: String, Identifiable {
     case directionCapture
@@ -11,9 +11,17 @@ enum CaptureMode: String, Identifiable {
 
     var id: String { rawValue }
 
-    /// Modes shown on the Record tab for end users.
+    /// Production default — Record tab enters this mode directly.
+    static var productionDefault: CaptureMode { .directionCapture }
+
+    /// DEBUG / internal modes listed under developer section.
+    static var debugModes: [CaptureMode] {
+        [.spaceScan3DGS, .panoramaCapture, .quick360Experimental]
+    }
+
+    /// Legacy alias — production no longer shows a multi-mode picker.
     static var productionModes: [CaptureMode] {
-        [.directionCapture, .spaceScan3DGS]
+        [.directionCapture]
     }
 
     var title: String {
@@ -63,11 +71,11 @@ enum CaptureMode: String, Identifiable {
     }
 }
 
-/// Entry for Record tab — presents mode selection then full-screen capture flow.
+/// Entry for Record tab — opens LatLong (DirectionCapture) immediately.
 struct CaptureContainerView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var selectedMode: CaptureMode?
-    @State private var isCapturing = false
+    @State private var selectedMode: CaptureMode? = .directionCapture
+    @State private var isCapturing = true
     #if DEBUG
     @State private var showDebugModes = false
     #endif
@@ -76,11 +84,13 @@ struct CaptureContainerView: View {
         NavigationStack {
             ZStack {
                 GonggiAmbientBackground()
-                if isCapturing, let mode = selectedMode,
-                   mode == .spaceScan3DGS {
+                if isCapturing, let mode = selectedMode, mode == .spaceScan3DGS {
                     captureFlow(for: mode)
+                } else if !isCapturing {
+                    idlePrompt
                 } else {
-                    startPrompt
+                    // DirectionCapture / other modes use fullScreenCover; keep ambient behind.
+                    Color.clear
                 }
             }
             .navigationBarHidden(true)
@@ -130,6 +140,12 @@ struct CaptureContainerView: View {
             })
             .environmentObject(appState)
         }
+        .onAppear {
+            // Re-enter Record tab after closing: open LatLong capture again.
+            if !isCapturing {
+                startDirectionCapture()
+            }
+        }
     }
 
     @ViewBuilder
@@ -142,19 +158,17 @@ struct CaptureContainerView: View {
         }
     }
 
-    private var startPrompt: some View {
+    /// Shown briefly after the user dismisses capture (before onAppear reopens, or DEBUG tools).
+    private var idlePrompt: some View {
         VStack(spacing: GonggiSpacing.xl) {
             Spacer()
-            Text("어떤 방식으로\n공간을 기록할까요?")
+            Text("공간을 기록할까요?")
                 .font(GonggiTypography.title(26))
                 .foregroundStyle(GonggiColors.textPrimary)
                 .multilineTextAlignment(.center)
-                .lineSpacing(2)
 
-            VStack(spacing: GonggiSpacing.md) {
-                ForEach(CaptureMode.productionModes) { mode in
-                    modeCard(mode)
-                }
+            PrimaryButton(title: "촬영 시작", icon: "camera.aperture") {
+                startDirectionCapture()
             }
             .padding(.horizontal, GonggiSpacing.lg)
 
@@ -183,13 +197,20 @@ struct CaptureContainerView: View {
                     .foregroundStyle(GonggiColors.textTertiary)
             }
             if showDebugModes {
-                modeCard(.panoramaCapture)
-                modeCard(.quick360Experimental)
+                ForEach(CaptureMode.debugModes) { mode in
+                    modeCard(mode)
+                }
             }
         }
         .padding(.horizontal, GonggiSpacing.lg)
     }
     #endif
+
+    private func startDirectionCapture() {
+        GonggiHaptics.medium()
+        selectedMode = .directionCapture
+        isCapturing = true
+    }
 
     private func modeCard(_ mode: CaptureMode) -> some View {
         Button {
@@ -263,7 +284,13 @@ struct CaptureFlowView: View {
     @State private var showSummary = false
     @State private var showProcessing = false
     @State private var showSpacePreview = false
+    @State private var showGaussianViewer = false
+    @State private var completedGaussianSpaceId: String?
     let onClose: () -> Void
+    /// Optional Astra guide plan — when set, overlay shows segment coaching.
+    var guidePlan: AdvancedCaptureGuidePlan? = nil
+    /// LatLong space session that spawned this guided 3DGS capture.
+    var sourceLatLongSessionId: String? = nil
 
     var body: some View {
         ZStack {
@@ -296,6 +323,11 @@ struct CaptureFlowView: View {
                 onGuide: { viewModel.guidance.toggleGuide() }
             )
 
+            if let plan = guidePlan {
+                GuidedCapturePlanBanner(plan: plan, segmentIndex: viewModel.guidedSegmentIndex)
+                    .allowsHitTesting(false)
+            }
+
             if viewModel.isStopping || viewModel.isReconstructingTexturedMesh {
                 Color.black.opacity(0.45).ignoresSafeArea()
                 VStack(spacing: GonggiSpacing.sm) {
@@ -307,7 +339,12 @@ struct CaptureFlowView: View {
                 }
             }
         }
-        .onAppear { viewModel.configure(mockMode: appState.isMockMode) }
+        .onAppear {
+            viewModel.configure(mockMode: appState.isMockMode)
+            if let plan = guidePlan {
+                viewModel.applyGuidePlan(plan)
+            }
+        }
         .sheet(isPresented: $showSummary) {
             if let summary = viewModel.lastSummary {
                 CaptureSummaryView(
@@ -318,7 +355,7 @@ struct CaptureFlowView: View {
                         appState.pendingCapture = summary
                         showProcessing = true
                     },
-                    onPreviewSpace: summary.texturedSpaceURL.map { url in
+                    onPreviewSpace: summary.texturedSpaceURL.map { _ in
                         { showSpacePreview = true }
                     }
                 )
@@ -336,14 +373,31 @@ struct CaptureFlowView: View {
                 ProcessingView(
                     summary: summary,
                     spaceService: appState.spaceService,
-                    onComplete: { _, spaceId in
-                        appState.addSpace(from: summary, jobId: spaceId)
-                        appState.updateSpaceStatus(id: spaceId, status: .ready)
-                        onClose()
-                        appState.selectTab(.library)
+                    qualityProfile: guidePlan?.qualityProfile ?? "capture_dense_v2",
+                    sourceLatLongSessionId: sourceLatLongSessionId,
+                    allowStubVideoInMock: appState.isMockMode,
+                    onComplete: { jobId, spaceId in
+                        if let latLongId = sourceLatLongSessionId {
+                            AdvancedCaptureAnalysisStore.shared.update(sessionId: latLongId) { record in
+                                record.linkedGaussianSpaceId = spaceId
+                                record.linkedGaussianJobId = jobId
+                            }
+                        }
+                        completedGaussianSpaceId = spaceId
+                        showProcessing = false
+                        showGaussianViewer = true
                     },
                     onDismiss: { showProcessing = false }
                 )
+            }
+        }
+        .fullScreenCover(isPresented: $showGaussianViewer) {
+            if let spaceId = completedGaussianSpaceId {
+                GaussianSplatWebViewer(spaceId: spaceId) {
+                    showGaussianViewer = false
+                    onClose()
+                    appState.selectTab(.library)
+                }
             }
         }
     }

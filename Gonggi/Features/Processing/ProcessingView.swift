@@ -14,12 +14,50 @@ final class ProcessingViewModel: ObservableObject {
         self.spaceService = spaceService
     }
 
-    func start(summary: CaptureSessionSummary) {
+    func start(
+        summary: CaptureSessionSummary,
+        qualityProfile: String = "capture_dense_v2",
+        allowStubVideoInMock: Bool = false
+    ) {
         pollTask?.cancel()
         pollTask = Task {
             do {
+                let videoURL = summary.videoURL
+                    ?? (try? CaptureSessionStore.videoURL(sessionId: summary.sessionId))
+                let resolvedURL: URL? = {
+                    guard let videoURL, FileManager.default.fileExists(atPath: videoURL.path) else {
+                        return nil
+                    }
+                    return videoURL
+                }()
+
+                let byteSize: Int
+                let uploadURL: URL
+                if let resolvedURL,
+                   let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedURL.path),
+                   let size = (attrs[.size] as? NSNumber)?.intValue,
+                   size > 1024 {
+                    byteSize = size
+                    uploadURL = resolvedURL
+                } else if allowStubVideoInMock {
+                    // Mock UI only — never upload stubs to production video-gaussian.
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("mock-capture-\(UUID().uuidString).mov")
+                    try Data(repeating: 0, count: 2048).write(to: tmp)
+                    byteSize = 2048
+                    uploadURL = tmp
+                } else {
+                    throw SpaceGenerationError.unknown("촬영 동영상(original.mov)을 찾을 수 없어요. 다시 촬영해 주세요.")
+                }
+
                 let created = try await spaceService.createSpace(
-                    CreateSpaceRequest(name: summary.suggestedName, visibility: "private")
+                    CreateSpaceRequest(
+                        name: summary.suggestedName,
+                        visibility: "private",
+                        videoByteSize: byteSize,
+                        durationSec: summary.duration,
+                        qualityProfile: qualityProfile
+                    )
                 )
                 let meta = CaptureUploadMetadata(
                     durationSec: summary.duration,
@@ -32,10 +70,8 @@ final class ProcessingViewModel: ObservableObject {
                         "overlap": summary.quality.overlapScore,
                     ]
                 )
-                let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("capture.mov")
-                try? Data().write(to: tmp)
                 try await spaceService.uploadCapture(
-                    UploadCaptureRequest(jobId: created.jobId, localCaptureURL: tmp, metadata: meta)
+                    UploadCaptureRequest(jobId: created.jobId, localCaptureURL: uploadURL, metadata: meta)
                 )
                 try await spaceService.startGeneration(jobId: created.jobId)
                 status = try await spaceService.fetchStatus(jobId: created.jobId)
@@ -48,12 +84,21 @@ final class ProcessingViewModel: ObservableObject {
 
     private func poll(jobId: String, spaceId: String) async {
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 800_000_000)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let fetched = try? await spaceService.fetchStatus(jobId: jobId) else { continue }
             status = fetched
             if fetched.overallProgress >= 0.99 {
                 isComplete = true
                 completedSpaceId = spaceId
+                break
+            }
+            // Surface hard failures instead of spinning forever.
+            if let errStep = fetched.steps.first(where: {
+                if case .failed = $0.status { return true }
+                return false
+            }) {
+                _ = errStep
+                errorMessage = "3DGS 생성에 실패했어요. 잠시 후 다시 시도해 주세요."
                 break
             }
         }
@@ -75,6 +120,9 @@ enum ARKitSupport {
 struct ProcessingView: View {
     let summary: CaptureSessionSummary
     let spaceService: SpaceGenerationService
+    let qualityProfile: String
+    let sourceLatLongSessionId: String?
+    let allowStubVideoInMock: Bool
     let onComplete: (String, String) -> Void
     let onDismiss: () -> Void
     /// DEBUG screenshot mode only — freezes UI without starting pipeline.
@@ -86,12 +134,18 @@ struct ProcessingView: View {
     init(
         summary: CaptureSessionSummary,
         spaceService: SpaceGenerationService,
+        qualityProfile: String = "capture_dense_v2",
+        sourceLatLongSessionId: String? = nil,
+        allowStubVideoInMock: Bool = false,
         screenshotFrozenStatus: GenerationJobStatus? = nil,
         onComplete: @escaping (String, String) -> Void,
         onDismiss: @escaping () -> Void
     ) {
         self.summary = summary
         self.spaceService = spaceService
+        self.qualityProfile = qualityProfile
+        self.sourceLatLongSessionId = sourceLatLongSessionId
+        self.allowStubVideoInMock = allowStubVideoInMock
         self.screenshotFrozenStatus = screenshotFrozenStatus
         self.onComplete = onComplete
         self.onDismiss = onDismiss
@@ -116,9 +170,9 @@ struct ProcessingView: View {
                     }
 
                     if viewModel.isComplete,
-                       let spaceId = viewModel.completedSpaceId,
-                       let jobId = viewModel.status?.jobId {
-                        PrimaryButton(title: "보관함에서 보기", icon: "archivebox") {
+                       let spaceId = viewModel.completedSpaceId {
+                        let jobId = viewModel.status?.jobId ?? spaceId
+                        PrimaryButton(title: "3D 공간 둘러보기", icon: "move.3d") {
                             GonggiHaptics.success()
                             onComplete(jobId, spaceId)
                         }
@@ -129,7 +183,7 @@ struct ProcessingView: View {
                 .padding(.bottom, GonggiSpacing.xxl)
             }
             .background(GonggiAmbientBackground(showGlow: false))
-            .navigationTitle("공간 만들기")
+            .navigationTitle("3DGS 생성")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -145,7 +199,11 @@ struct ProcessingView: View {
                 return
             }
             #endif
-            viewModel.start(summary: summary)
+            viewModel.start(
+                summary: summary,
+                qualityProfile: qualityProfile,
+                allowStubVideoInMock: allowStubVideoInMock
+            )
         }
         .onDisappear { viewModel.cancel() }
     }

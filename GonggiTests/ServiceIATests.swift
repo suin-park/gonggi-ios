@@ -9,13 +9,22 @@ final class ServiceIATests: XCTestCase {
         XCTAssertEqual(AppTab.profile.title, "내 정보")
     }
 
-    func testProductionCaptureModesAreOnlyTwo() {
-        XCTAssertEqual(CaptureMode.productionModes, [.directionCapture, .spaceScan3DGS])
+    func testProductionCaptureDefaultIsDirectionCaptureOnly() {
+        XCTAssertEqual(CaptureMode.productionDefault, .directionCapture)
+        XCTAssertEqual(CaptureMode.productionModes, [.directionCapture])
         XCTAssertEqual(CaptureMode.directionCapture.title, "360 공간 기록")
         XCTAssertEqual(CaptureMode.spaceScan3DGS.title, "3D 공간 스캔")
         XCTAssertTrue(CaptureMode.spaceScan3DGS.showsBetaBadge)
+        XCTAssertTrue(CaptureMode.debugModes.contains(.spaceScan3DGS))
         XCTAssertFalse(CaptureMode.directionCapture.title.contains("10"))
         XCTAssertFalse(CaptureMode.directionCapture.title.contains("20"))
+    }
+
+    func testAdvancedCaptureMockGuidePlanHasSegments() {
+        let plan = AdvancedCaptureGuidePlan.mockDefault(sessionId: "test-session")
+        XCTAssertFalse(plan.segments.isEmpty)
+        XCTAssertEqual(plan.qualityProfile, "capture_dense_v2")
+        XCTAssertTrue(plan.segments.allSatisfy { !$0.instructionKo.isEmpty })
     }
 
     func testLibraryCategories() {

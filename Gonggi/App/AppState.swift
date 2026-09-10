@@ -45,12 +45,14 @@ final class AppState: ObservableObject {
         jobStore: SpaceJobStore? = nil
     ) {
         self.isMockMode = isMockMode
-        self.spaceService = spaceService ?? MockSpaceGenerationService()
+        self.spaceService = spaceService
+            ?? (isMockMode ? MockSpaceGenerationService() : LockerSpaceGenerationService())
         let store = jobStore ?? SpaceJobStore.shared
         self.jobStore = store
         self.jobRuntime = SpaceJobRuntime(store: store)
         self.jobRuntime.configure(useMock: isMockMode)
         SpaceJobRuntimeSharedHook.runtime = self.jobRuntime
+        AdvancedCaptureAnalysisRuntime.shared.configure(useMock: isMockMode)
         store.onChange = { [weak self] in
             self?.rebuildSpaces()
             self?.schedulePendingSpaceLinkFinalize()
@@ -103,6 +105,8 @@ final class AppState: ObservableObject {
         isExitingVRToLibrary = false
         forceDismissViewerEpoch &+= 1
         spaceLinkFinalizeTask?.cancel()
+        AdvancedCaptureAnalysisStore.shared.clearAll()
+        AdvancedCaptureAnalysisRuntime.shared.stopPolling()
         rebuildSpaces()
     }
 
@@ -294,10 +298,13 @@ final class AppState: ObservableObject {
 
     func handleScenePhase(_ phase: ScenePhase) {
         jobRuntime.handleScenePhase(phase)
+        AdvancedCaptureAnalysisRuntime.shared.configure(useMock: isMockMode)
+        AdvancedCaptureAnalysisRuntime.shared.handleScenePhase(phase)
         if phase == .active {
             Task {
                 await jobRuntime.syncActiveJobsOnce()
                 await SpaceRepairRuntime.shared.syncActiveRepairs()
+                await AdvancedCaptureAnalysisRuntime.shared.syncActiveOnce()
                 rebuildSpaces()
             }
         }
@@ -306,6 +313,7 @@ final class AppState: ObservableObject {
     /// Tab / Library visibility — resume status poll without full reconcile storm.
     func ensureSpaceGenerationPolling() {
         jobRuntime.ensurePolling()
+        AdvancedCaptureAnalysisRuntime.shared.ensurePolling()
     }
 
     func addSpace(from summary: CaptureSessionSummary, jobId: String) {

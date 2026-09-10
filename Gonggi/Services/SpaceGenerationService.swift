@@ -5,6 +5,12 @@ import Foundation
 struct CreateSpaceRequest: Equatable {
     var name: String
     var visibility: String
+    /// Declared upload size for signed PUT (video-gaussian create).
+    var videoByteSize: Int? = nil
+    var videoFilename: String = "original.mov"
+    var videoContentType: String = "video/quicktime"
+    var durationSec: Double? = nil
+    var qualityProfile: String = "capture_dense_v2"
 }
 
 struct CreateSpaceResponse: Equatable {

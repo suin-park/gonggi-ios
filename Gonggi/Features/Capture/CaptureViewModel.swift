@@ -8,6 +8,8 @@ final class CaptureViewModel: ObservableObject {
     @Published private(set) var lastSummary: CaptureSessionSummary?
     @Published private(set) var isStopping = false
     @Published private(set) var isReconstructingTexturedMesh = false
+    /// Active Astra guide segment index (0-based) when a guide plan is applied.
+    @Published private(set) var guidedSegmentIndex: Int = 0
 
     let guidance = CaptureGuidanceEngine()
     let arSession = ARSession()
@@ -17,6 +19,7 @@ final class CaptureViewModel: ObservableObject {
     private var mockTimer: AnyCancellable?
     private var guidanceCancellable: AnyCancellable?
     private var startedAt = Date()
+    private var guidePlan: AdvancedCaptureGuidePlan?
 
     init() {
         guidanceCancellable = guidance.objectWillChange.sink { [weak self] _ in
@@ -25,7 +28,37 @@ final class CaptureViewModel: ObservableObject {
         framePipeline.onQualityUpdate = { [weak self] quality, message in
             Task { @MainActor in
                 self?.guidance.applySnapshot(quality: quality, message: message)
+                self?.advanceGuidedSegmentIfNeeded()
             }
+        }
+    }
+
+    func applyGuidePlan(_ plan: AdvancedCaptureGuidePlan) {
+        guidePlan = plan
+        guidedSegmentIndex = 0
+        if let first = plan.segments.first {
+            guidance.applySnapshot(quality: guidance.quality, message: first.instructionKo)
+        }
+    }
+
+    func advanceGuidedSegment() {
+        guard let plan = guidePlan, !plan.segments.isEmpty else { return }
+        guidedSegmentIndex = min(guidedSegmentIndex + 1, plan.segments.count - 1)
+        let seg = plan.segments[guidedSegmentIndex]
+        guidance.applySnapshot(quality: guidance.quality, message: seg.instructionKo)
+    }
+
+    private func advanceGuidedSegmentIfNeeded() {
+        guard let plan = guidePlan, plan.segments.count > 1 else { return }
+        // Heuristic: move to next segment every ~25s of recording while coverage rises.
+        let elapsed = Date().timeIntervalSince(startedAt)
+        let expected = Int(elapsed / 25.0)
+        if expected > guidedSegmentIndex, expected < plan.segments.count {
+            guidedSegmentIndex = expected
+            guidance.applySnapshot(
+                quality: guidance.quality,
+                message: plan.segments[guidedSegmentIndex].instructionKo
+            )
         }
     }
 

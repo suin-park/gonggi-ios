@@ -27,6 +27,14 @@ struct SpaceDetailView: View {
     @State private var isUploadingAudio = false
     @State private var audioError: String?
     @ObservedObject private var spaceAudio = SpaceAudioManager.shared
+    @ObservedObject private var advancedCaptureStore = AdvancedCaptureAnalysisStore.shared
+
+    @State private var showAdvancedAnalyzeConfirm = false
+    @State private var isStartingAdvancedAnalyze = false
+    @State private var advancedAnalyzeError: String?
+    @State private var showGuidedCapture = false
+    @State private var guidedPlan: AdvancedCaptureGuidePlan?
+    @State private var showGaussianViewer = false
 
     private var liveSpace: SpaceRecord {
         appState.spaces.first(where: { $0.id == space.id || $0.sessionId == space.id }) ?? space
@@ -34,6 +42,14 @@ struct SpaceDetailView: View {
 
     private var audioSpaceKey: String {
         liveSpace.sessionId ?? liveSpace.id
+    }
+
+    private var advancedSessionKey: String {
+        liveSpace.sessionId ?? liveSpace.id
+    }
+
+    private var advancedRecord: AdvancedCaptureAnalysisRecord? {
+        advancedCaptureStore.record(sessionId: advancedSessionKey)
     }
 
     var body: some View {
@@ -84,6 +100,43 @@ struct SpaceDetailView: View {
             Button("확인", role: .cancel) { audioError = nil }
         } message: {
             Text(audioError ?? "")
+        }
+        .confirmationDialog(
+            "원활한 촬영을 위한 분석을 시작합니다.",
+            isPresented: $showAdvancedAnalyzeConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("분석 시작") {
+                Task { await startAdvancedAnalyze() }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("LatLong과 촬영 좌표를 바탕으로 3DGS 촬영 가이드를 만들어요. 앱을 나가도 분석은 계속됩니다.")
+        }
+        .alert("분석을 시작하지 못했어요", isPresented: Binding(
+            get: { advancedAnalyzeError != nil },
+            set: { if !$0 { advancedAnalyzeError = nil } }
+        )) {
+            Button("확인", role: .cancel) { advancedAnalyzeError = nil }
+        } message: {
+            Text(advancedAnalyzeError ?? "")
+        }
+        .fullScreenCover(isPresented: $showGuidedCapture) {
+            if let plan = guidedPlan {
+                Guided3DGSCaptureFlowView(
+                    plan: plan,
+                    sessionId: advancedSessionKey,
+                    onClose: { showGuidedCapture = false }
+                )
+                .environmentObject(appState)
+            }
+        }
+        .fullScreenCover(isPresented: $showGaussianViewer) {
+            if let spaceId = advancedRecord?.linkedGaussianSpaceId {
+                GaussianSplatWebViewer(spaceId: spaceId) {
+                    showGaussianViewer = false
+                }
+            }
         }
         .sheet(isPresented: $showShareSheet) {
             SpaceShareSheet(
@@ -371,6 +424,8 @@ struct SpaceDetailView: View {
                     Task { await openViewer() }
                 }
                 .accessibilityLabel("360° 보기")
+
+                advancedCaptureActions
             }
 
             switch liveSpace.status {
@@ -427,6 +482,59 @@ struct SpaceDetailView: View {
         .padding(.top, GonggiSpacing.xs)
     }
 
+    @ViewBuilder
+    private var advancedCaptureActions: some View {
+        let record = advancedRecord
+        if let record, record.status.isInFlight {
+            GonggiElevatedCard {
+                HStack(spacing: GonggiSpacing.md) {
+                    ProgressView()
+                        .tint(GonggiColors.accentTeal)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("원활한 촬영을 위한 분석을 진행 중이에요")
+                            .font(GonggiTypography.body(15))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                        Text("앱을 나가도 분석은 계속됩니다")
+                            .font(GonggiTypography.caption(12))
+                            .foregroundStyle(GonggiColors.textTertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else if let record, record.canStartGuidedCapture, let plan = record.guidePlan {
+            if record.canOpenGaussianViewer {
+                SecondaryButton(title: "3DGS 공간 둘러보기", icon: "move.3d") {
+                    GonggiHaptics.medium()
+                    showGaussianViewer = true
+                }
+                .accessibilityLabel("3DGS 공간 둘러보기")
+            }
+            SecondaryButton(title: "가이드 촬영 시작", icon: "video.fill") {
+                GonggiHaptics.medium()
+                guidedPlan = plan
+                showGuidedCapture = true
+            }
+            .accessibilityLabel("가이드 촬영 시작")
+        } else if let record, record.status == .failed {
+            SecondaryButton(title: "고급 생성 다시 시도", icon: "arrow.clockwise") {
+                showAdvancedAnalyzeConfirm = true
+            }
+            if let msg = record.lastErrorMessage ?? record.lastErrorCode {
+                Text(msg)
+                    .font(GonggiTypography.caption(12))
+                    .foregroundStyle(GonggiColors.warning)
+            }
+        } else {
+            SecondaryButton(title: "고급 생성", icon: "sparkles") {
+                GonggiHaptics.medium()
+                showAdvancedAnalyzeConfirm = true
+            }
+            .accessibilityLabel("고급 생성")
+            .disabled(isStartingAdvancedAnalyze)
+        }
+    }
+
     private func openViewer() async {
         isPreparingViewer = true
         defer { isPreparingViewer = false }
@@ -438,6 +546,22 @@ struct SpaceDetailView: View {
             )
         case .failure(let error):
             viewerError = error.userMessage
+        }
+    }
+
+    private func startAdvancedAnalyze() async {
+        isStartingAdvancedAnalyze = true
+        defer { isStartingAdvancedAnalyze = false }
+        AdvancedCaptureAnalysisRuntime.shared.configure(useMock: appState.isMockMode)
+        let force = advancedRecord?.status == .failed
+        switch await AdvancedCaptureAnalysisRuntime.shared.startAnalysis(
+            sessionId: advancedSessionKey,
+            force: force
+        ) {
+        case .success:
+            break
+        case .failure(let error):
+            advancedAnalyzeError = error.userMessage
         }
     }
 
