@@ -11,7 +11,8 @@ settings:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: ""
     MARKETING_VERSION: "2.0"
-    CURRENT_PROJECT_VERSION: "10"
+    CURRENT_PROJECT_VERSION: "11"
+    GONGGI_BUILD_SHA: "local"
 
 configs:
   Debug: debug
@@ -80,6 +81,7 @@ targets:
       properties:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        GonggiBuildSHA: $(GONGGI_BUILD_SHA)
         CFBundleIconName: AppIcon
         UILaunchScreen: {}
         NSCameraUsageDescription: 파노라마·공간 기록, 사진으로 3D 만들기, AR로 3D 어셋 배치를 위해 카메라가 필요합니다.

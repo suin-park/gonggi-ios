@@ -902,6 +902,173 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         return SpaceLinkMath.equirectDegreesFromWorldDirection(dir)
     }
 
+    // MARK: - Scene diagnostics (TestFlight export; read-only)
+
+    struct SceneDiagnosticsSnapshot {
+        struct HotspotNodeSnap {
+            var id: String
+            var worldPosition: [Float]
+            var hitTestUV: SpaceSceneDiagnostics.UVHit?
+        }
+
+        struct PlacementNodeSnap {
+            var id: String
+            var worldPosition: [Float]
+            var worldTransform: [Float]
+            var localScale: [Float]
+            var contentBaseScale: Float
+        }
+
+        var geometry: SpaceSceneDiagnostics.GeometryInfo
+        var camera: SpaceSceneDiagnostics.CameraInfo
+        var hotspots: [HotspotNodeSnap]
+        var placements: [PlacementNodeSnap]
+    }
+
+    /// Read-only snapshot of the live SceneKit graph. Does not mutate scene or stores.
+    func captureSceneDiagnosticsSnapshot() -> SceneDiagnosticsSnapshot {
+        applyLookToCamera()
+
+        let sphere = sphereNode
+        let mat = sphere?.geometry?.firstMaterial
+        let cull: String?
+        switch mat?.cullMode {
+        case .some(.front): cull = "front"
+        case .some(.back): cull = "back"
+        default: cull = mat == nil ? nil : "unknown"
+        }
+        let lighting: String?
+        switch mat?.lightingModel {
+        case .some(.constant): lighting = "constant"
+        case .some(.physicallyBased): lighting = "physicallyBased"
+        default: lighting = mat == nil ? nil : "other"
+        }
+
+        let contentsT = mat?.diffuse.contentsTransform ?? SCNMatrix4Identity
+        let scale = sphere?.scale ?? SCNVector3(1, 1, 1)
+        let worldT = sphere?.simdWorldTransform ?? matrix_identity_float4x4
+        let radius = (sphere?.geometry as? SCNSphere)?.radius
+        let segments = (sphere?.geometry as? SCNSphere)?.segmentCount
+
+        let geometry = SpaceSceneDiagnostics.GeometryInfo(
+            sphereGeometryType: sphere?.geometry.map { String(describing: type(of: $0)) } ?? "nil",
+            sphereRadius: radius.map { Float($0) },
+            sphereSegmentCount: segments,
+            sphereLocalScale: [scale.x, scale.y, scale.z],
+            sphereWorldTransform: SpaceSceneDiagnostics.matrix16(worldT),
+            sphereParentName: sphere?.parent?.name,
+            cullMode: cull,
+            materialLightingModel: lighting,
+            contentsTransform: SpaceSceneDiagnostics.scnMatrix16(contentsT),
+            wrapS: wrapName(mat?.diffuse.wrapS),
+            wrapT: wrapName(mat?.diffuse.wrapT),
+            insideOutScaleConvention: [
+                Quick360SphereCoordinateConvention.insideOutScale.x,
+                Quick360SphereCoordinateConvention.insideOutScale.y,
+                Quick360SphereCoordinateConvention.insideOutScale.z,
+            ]
+        )
+
+        let cam = cameraNode
+        let camT = cam?.presentation.simdWorldTransform ?? matrix_identity_float4x4
+        let euler = cam?.presentation.eulerAngles ?? SCNVector3Zero
+        let proj = cam?.camera.map { SpaceSceneDiagnostics.scnMatrix16($0.projectionTransform) }
+        let camera = SpaceSceneDiagnostics.CameraInfo(
+            worldTransform: SpaceSceneDiagnostics.matrix16(camT),
+            eulerPitchYawRoll: [euler.x, euler.y, euler.z],
+            lookFinalYawDeg: look.finalYawDeg,
+            lookFinalPitchDeg: look.finalPitchDeg,
+            fieldOfViewDeg: Float(cam?.camera?.fieldOfView ?? CGFloat(userViewingFOV)),
+            zNear: cam?.camera.map { Float($0.zNear) },
+            zFar: cam?.camera.map { Float($0.zFar) },
+            viewportWidth: Float(viewportSize.width),
+            viewportHeight: Float(viewportSize.height),
+            projectionTransform: proj
+        )
+
+        var hotspotSnaps: [SceneDiagnosticsSnapshot.HotspotNodeSnap] = []
+        for node in spaceLinksRoot.childNodes {
+            guard let id = SpaceHotspotNodeFactory.linkID(from: node) else { continue }
+            let wp = node.presentation.simdWorldPosition
+            let pose = spaceLinkPoses[id]
+            let dir: SIMD3<Float>
+            if let pose {
+                dir = SpaceLinkMath.lookDirection(yawDeg: pose.yaw, pitchDeg: pose.pitch)
+            } else {
+                let len = simd_length(wp)
+                dir = len > 1e-6 ? wp / len : SIMD3(0, 0, -1)
+            }
+            let uv = hitTestPanoramaUV(along: dir)
+            hotspotSnaps.append(
+                .init(
+                    id: id,
+                    worldPosition: [wp.x, wp.y, wp.z],
+                    hitTestUV: uv
+                )
+            )
+        }
+
+        var placementSnaps: [SceneDiagnosticsSnapshot.PlacementNodeSnap] = []
+        for node in placedAssetsRoot.childNodes {
+            guard let id = VRPlacedAssetNodeFactory.placedAssetID(from: node) else { continue }
+            let wp = node.presentation.simdWorldPosition
+            let sc = node.presentation.scale
+            placementSnaps.append(
+                .init(
+                    id: id,
+                    worldPosition: [wp.x, wp.y, wp.z],
+                    worldTransform: SpaceSceneDiagnostics.matrix16(node.presentation.simdWorldTransform),
+                    localScale: [sc.x, sc.y, sc.z],
+                    contentBaseScale: VRPlacedAssetNodeFactory.contentBaseScale(of: node)
+                )
+            )
+        }
+
+        return SceneDiagnosticsSnapshot(
+            geometry: geometry,
+            camera: camera,
+            hotspots: hotspotSnaps,
+            placements: placementSnaps
+        )
+    }
+
+    /// Ray from origin along `direction` against the panorama sphere → texture UV + equirect.
+    func hitTestPanoramaUV(along direction: SIMD3<Float>) -> SpaceSceneDiagnostics.UVHit? {
+        guard let sphere = sphereNode else { return nil }
+        var dir = direction
+        let len = simd_length(dir)
+        guard len > 1e-8 else { return nil }
+        dir /= len
+        let to = SCNVector3(dir.x * 50, dir.y * 50, dir.z * 50)
+        let hits = sphere.hitTestWithSegment(from: SCNVector3Zero, to: to, options: [
+            .ignoreHiddenNodes: true,
+        ])
+        guard let hit = hits.first else { return nil }
+        let uv = hit.textureCoordinates(withMappingChannel: 0)
+        let eq = VRSphereEquirectBridge.equirectDegreesFromTextureUV(
+            u: Float(uv.x),
+            v: Float(uv.y)
+        )
+        return SpaceSceneDiagnostics.UVHit(
+            u: Float(uv.x),
+            v: Float(uv.y),
+            equirectYawDeg: eq.yawDeg,
+            equirectPitchDeg: eq.pitchDeg,
+            hitNodeName: hit.node.name
+        )
+    }
+
+    private func wrapName(_ mode: SCNWrapMode?) -> String? {
+        guard let mode else { return nil }
+        switch mode {
+        case .clamp: return "clamp"
+        case .repeat: return "repeat"
+        case .clampToBorder: return "clampToBorder"
+        case .mirror: return "mirror"
+        @unknown default: return "unknown"
+        }
+    }
+
     func applyEnvironmentLighting(from imageURL: URL) {
         lightingPanoramaURL = imageURL
         applyLightingExperimentIfNeeded(force: false)

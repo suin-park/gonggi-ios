@@ -249,7 +249,8 @@ jobs:
           ARCHIVE_PATH: ${{ steps.paths.outputs.archive_path }}
         run: |
           set -euo pipefail
-          echo "Building archive - marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}"
+          BUILD_SHA="$(git rev-parse --short=12 HEAD)"
+          echo "Building archive - marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}, sha ${BUILD_SHA}"
           xcodebuild archive \
             -project "${{ env.PROJECT }}" \
             -scheme "${{ env.SCHEME }}" \
@@ -261,13 +262,15 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="${PROFILE_NAME}" \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             MARKETING_VERSION="${MARKETING_VERSION}" \
-            CURRENT_PROJECT_VERSION="${BUILD_NUMBER}"
+            CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
+            GONGGI_BUILD_SHA="${BUILD_SHA}"
 
           if [[ ! -d "${ARCHIVE_PATH}" ]]; then
             echo "::error::Archive not found at ${ARCHIVE_PATH}"
             exit 1
           fi
           echo "Archive created successfully."
+          echo "build_sha=${BUILD_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Export IPA
         env:

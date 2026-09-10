@@ -115,6 +115,10 @@ struct VRSphereSpaceView: View {
     @State private var spaceLinkLinking = false
     /// Last server-confirmed pose for linked rollback.
     @State private var linkedPoseCheckpoint: [String: (yaw: Float, pitch: Float, radius: Float)] = [:]
+    /// Linked IDs with in-flight pose PATCH (diagnostics only).
+    @State private var pendingPoseSaveIds: Set<String> = []
+    @State private var diagnosticsShareURL: URL?
+    @State private var diagnosticsExporting = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var authSession = AuthSessionController.shared
@@ -354,6 +358,16 @@ struct VRSphereSpaceView: View {
             .sheet(item: $safariURL) { item in
                 SpaceLinkSafariView(url: item.url) {
                     safariURL = nil
+                }
+            }
+            .sheet(isPresented: Binding(
+                get: { diagnosticsShareURL != nil },
+                set: { if !$0 { diagnosticsShareURL = nil } }
+            )) {
+                if let url = diagnosticsShareURL {
+                    GonggiActivityShareSheet(items: [url]) {
+                        diagnosticsShareURL = nil
+                    }
                 }
             }
             .confirmationDialog(
@@ -1083,6 +1097,12 @@ struct VRSphereSpaceView: View {
                     } label: {
                         Label(SelectiveRepairHintPreferences.reopenMenuTitle, systemImage: "hand.tap")
                     }
+                    Button {
+                        exportSpaceDiagnostics()
+                    } label: {
+                        Label("공간 진단 정보 내보내기", systemImage: "doc.text")
+                    }
+                    .disabled(diagnosticsExporting)
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 15, weight: .semibold))
@@ -1825,7 +1845,11 @@ struct VRSphereSpaceView: View {
               link.status == .linked
         else { return }
         let checkpoint = linkedPoseCheckpoint[id] ?? (link.yawDeg, link.pitchDeg, link.radius)
+        pendingPoseSaveIds.insert(id)
         Task {
+            defer {
+                await MainActor.run { pendingPoseSaveIds.remove(id) }
+            }
             do {
                 _ = try await spaceLinkStore.patchLink(
                     sourceSpaceId: sessionId,
@@ -2130,6 +2154,111 @@ struct VRSphereSpaceView: View {
         selectiveRepairHintBecameVisible = true
         withAnimation(.easeIn(duration: SelectiveRepairHintPreferences.fadeInDurationSeconds)) {
             selectiveRepairHintOpacity = 1
+        }
+    }
+
+    /// TestFlight diagnosis: capture local scene, then fetch server links without writing cache.
+    private func exportSpaceDiagnostics() {
+        guard !diagnosticsExporting else { return }
+        diagnosticsExporting = true
+        GonggiHaptics.light()
+        spaceLinkBusyMessage = "진단 정보를 준비하는 중…"
+
+        let host = SpaceLinkTransitionBridge.shared.sourceHostForExit
+            ?? SpaceLinkTransitionBridge.shared.activeHost
+        let sceneSnap = host?.captureSceneDiagnosticsSnapshot()
+        let displayedLinks = spaceLinks
+        let displayedTexture = textureURL
+        let layoutAssets = draftLayout.assets
+        let meta = assetMetadata
+        let checkpoints = linkedPoseCheckpoint
+        let pending = Array(pendingPoseSaveIds)
+        let revision = baseRevisionId
+        let sid = sessionId
+
+        Task {
+            let cached = (try? await spaceLinkStore.loadCached(spaceId: sid)) ?? []
+            var server: [SpaceLink]?
+            var serverError: String?
+            do {
+                server = try await spaceLinkStore.fetchRemote(spaceId: sid)
+            } catch {
+                serverError = String(describing: type(of: error))
+            }
+
+            var notes: [String] = [
+                "Local scene captured before server fetch.",
+                "fetchRemote used for server hotspots; SpaceLink cache was not overwritten.",
+                "Auth tokens, share tokens, signed URLs, email, memo, and photo originals are omitted.",
+            ]
+            if sceneSnap == nil {
+                notes.append("WARNING: SCNHostView unavailable; geometry/camera/hitTest omitted.")
+            }
+
+            let emptyScene = SCNHostView.SceneDiagnosticsSnapshot(
+                geometry: SpaceSceneDiagnostics.GeometryInfo(
+                    sphereGeometryType: "unavailable",
+                    sphereRadius: nil,
+                    sphereSegmentCount: nil,
+                    sphereLocalScale: [],
+                    sphereWorldTransform: [],
+                    sphereParentName: nil,
+                    cullMode: nil,
+                    materialLightingModel: nil,
+                    contentsTransform: [],
+                    wrapS: nil,
+                    wrapT: nil,
+                    insideOutScaleConvention: [
+                        Quick360SphereCoordinateConvention.insideOutScale.x,
+                        Quick360SphereCoordinateConvention.insideOutScale.y,
+                        Quick360SphereCoordinateConvention.insideOutScale.z,
+                    ]
+                ),
+                camera: SpaceSceneDiagnostics.CameraInfo(
+                    worldTransform: [],
+                    eulerPitchYawRoll: [],
+                    lookFinalYawDeg: 0,
+                    lookFinalPitchDeg: 0,
+                    fieldOfViewDeg: 70,
+                    zNear: nil,
+                    zFar: nil,
+                    viewportWidth: 0,
+                    viewportHeight: 0,
+                    projectionTransform: nil
+                ),
+                hotspots: [],
+                placements: []
+            )
+
+            let report = SpaceSceneDiagnostics.buildReport(
+                sessionId: sid,
+                baseRevisionId: revision,
+                displayedTextureURL: displayedTexture,
+                localDisplayedLinks: displayedLinks,
+                localCachedLinks: cached,
+                serverLinks: server,
+                serverFetchError: serverError,
+                pendingPoseSaveIds: pending,
+                linkedPoseCheckpoint: checkpoints,
+                placementEntries: layoutAssets,
+                assetMetadata: meta,
+                scene: sceneSnap ?? emptyScene,
+                notes: notes
+            )
+
+            do {
+                let url = try SpaceSceneDiagnostics.writeTempFile(report)
+                await MainActor.run {
+                    diagnosticsShareURL = url
+                    diagnosticsExporting = false
+                    spaceLinkBusyMessage = nil
+                }
+            } catch {
+                await MainActor.run {
+                    diagnosticsExporting = false
+                    spaceLinkBusyMessage = "진단 파일을 만들지 못했어요"
+                }
+            }
         }
     }
 

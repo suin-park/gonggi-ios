@@ -129,6 +129,7 @@ jobs:
           set -euo pipefail
           TESTS=(
             GonggiTests/MyInfoProfileTests
+            GonggiTests/SpaceSceneDiagnosticsTests
             GonggiTests/AccountIsolationTests
             GonggiTests/WelcomePanoramaSampleTests
             GonggiTests/SpaceLinkLabelSizeTests
