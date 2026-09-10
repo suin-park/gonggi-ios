@@ -172,20 +172,70 @@ final class AuthSessionController: ObservableObject {
             user = try await api.fetchMe(accessToken: tokens.accessToken)
         }
         profile = user
-        let shell = user?.shell ?? .placeholder
-        var enriched = shell
-        enriched.userId = user?.id
-        enriched.provider = user?.provider
-        if let credits = user?.creditsTotal {
-            enriched.creditsLabel = "\(credits)"
-        }
         // Bind empty/user partition before UI shows signed-in content from a prior account.
         if let userId = user?.id, !userId.isEmpty {
             AccountPresentationReset.prepareForSignedIn(userId: userId)
         } else {
             AccountPresentationReset.resetForSignOut()
         }
-        phase = .signedIn(enriched)
+        phase = .signedIn(makeShell(from: user))
+    }
+
+    private func makeShell(from user: MobileAuthUserDTO?) -> AuthUserShell {
+        guard let user else { return .placeholder }
+        var enriched = user.shell
+        enriched.userId = user.id.isEmpty ? nil : user.id
+        enriched.provider = user.provider.isEmpty ? nil : user.provider
+        if let credits = user.creditsTotal {
+            enriched.creditsLabel = "\(credits)"
+        }
+        return enriched
+    }
+
+    /// Refresh /api/auth/me into AppState shell after profile edits.
+    func refreshProfile() async {
+        guard let access = accessToken else { return }
+        let generation = AuthSessionGeneration.current
+        do {
+            let user = try await api.fetchMe(accessToken: access)
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
+            profile = user
+            phase = .signedIn(makeShell(from: user))
+        } catch {
+            // Keep existing profile on refresh failure.
+        }
+    }
+
+    func updateDisplayName(_ name: String) async throws {
+        guard let access = accessToken else {
+            throw MobileAuthAPIError.server(code: "AUTH_REQUIRED", message: "로그인이 필요합니다.", status: 401)
+        }
+        let accountAPI = MobileAccountAPIClient()
+        let user = try await accountAPI.updateProfile(accessToken: access, name: name)
+        profile = user
+        phase = .signedIn(makeShell(from: user))
+    }
+
+    func deleteAccount(
+        currentPassword: String? = nil,
+        appleIdentityToken: String? = nil,
+        appleAuthorizationCode: String? = nil,
+        googleIdToken: String? = nil
+    ) async throws {
+        guard let access = accessToken else {
+            throw MobileAuthAPIError.server(code: "AUTH_REQUIRED", message: "로그인이 필요합니다.", status: 401)
+        }
+        let accountAPI = MobileAccountAPIClient()
+        try await accountAPI.deleteAccount(
+            accessToken: access,
+            currentPassword: currentPassword,
+            appleIdentityToken: appleIdentityToken,
+            appleAuthorizationCode: appleAuthorizationCode,
+            googleIdToken: googleIdToken
+        )
+        clearLocalCredentials()
+        AccountPresentationReset.resetForSignOut()
+        phase = .signedOut
     }
 
     private func clearLocalCredentials() {
@@ -201,6 +251,9 @@ final class AuthSessionController: ObservableObject {
     private func afterSignedInSideEffects() async {
         guard let access = accessToken else { return }
         let generation = AuthSessionGeneration.current
+        // Enrich plan / providers / password flags from /api/auth/me.
+        await refreshProfile()
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
         let userId = profile?.id
         // Only anonymous / unknown-owner sessionIds — never re-claim other accounts' jobs.
         let sessionIds = SpaceJobStore.shared.claimEligibleSessionIds()

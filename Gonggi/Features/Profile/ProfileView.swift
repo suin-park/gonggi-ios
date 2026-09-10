@@ -1,12 +1,18 @@
 import SwiftUI
+import SafariServices
 
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var auth = AuthSessionController.shared
-    @State private var showDeleteConfirm = false
+    @State private var showLogoutConfirm = false
+    @State private var safariURL: SpaceLinkIdentifiedURL?
 
     private var user: AuthUserShell {
         auth.currentUser ?? .placeholder
+    }
+
+    private var profile: MobileAuthUserDTO? {
+        auth.profile
     }
 
     var body: some View {
@@ -14,60 +20,145 @@ struct ProfileView: View {
             ScrollView {
                 VStack(spacing: GonggiSpacing.lg) {
                     profileHeader
-                    sectionCard(title: "계정 및 보안") {
-                        navRow("프로필 수정", icon: "person.crop.circle")
-                        navRow("이메일", icon: "envelope", trailing: user.email)
-                        navRow("연결된 로그인", icon: "link", trailing: user.provider ?? "—")
-                        navRow("비밀번호 변경", icon: "key")
-                    }
-                    sectionCard(title: "서비스") {
-                        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-                            Label("공기", systemImage: "house")
-                                .foregroundStyle(GonggiColors.textPrimary)
-                            Label("3D Locker", systemImage: "cube")
-                                .foregroundStyle(GonggiColors.textPrimary)
-                            Text("하나의 계정으로 두 서비스를 이용할 수 있습니다.")
-                                .font(GonggiTypography.caption(12))
-                                .foregroundStyle(GonggiColors.textTertiary)
-                        }
-                    }
-                    sectionCard(title: "이용 정보") {
-                        navRow("요금제", icon: "creditcard", trailing: "준비 중")
-                        navRow("3D Locker 크레딧", icon: "sparkles", trailing: user.creditsLabel ?? "—")
-                        navRow("저장 공간", icon: "internaldrive", trailing: "—")
-                    }
-                    sectionCard(title: "설정") {
+                    accountUnifiedNote
+
+                    sectionCard(title: "계정") {
                         NavigationLink {
-                            SettingsPlaceholderView(userId: user.userId)
+                            ProfileEditNameView()
                         } label: {
-                            settingsRow(title: "알림 · 앱 설정", icon: "gearshape")
+                            settingsRow(title: "프로필 수정", icon: "person.crop.circle")
                         }
                         .buttonStyle(GonggiPressableStyle())
-                        navRow("개인정보 관련 설정", icon: "hand.raised")
-                    }
-                    sectionCard(title: "3D Locker") {
-                        if let url = URL(string: "https://www.3d-locker.com") {
-                            Link(destination: url) {
-                                settingsRow(title: "3D Locker 웹 열기", icon: "safari")
+
+                        NavigationLink {
+                            ProfileEmailView()
+                        } label: {
+                            settingsRow(
+                                title: "이메일",
+                                icon: "envelope",
+                                trailing: user.email
+                            )
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+
+                        NavigationLink {
+                            ProfileProvidersView()
+                        } label: {
+                            settingsRow(
+                                title: "로그인 방법",
+                                icon: "link",
+                                trailing: providersTrailing
+                            )
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+
+                        if showPasswordChange {
+                            NavigationLink {
+                                ProfilePasswordView(mode: .change)
+                            } label: {
+                                settingsRow(title: "비밀번호 변경", icon: "key")
                             }
+                            .buttonStyle(GonggiPressableStyle())
+                        } else if showPasswordSet {
+                            NavigationLink {
+                                ProfilePasswordView(mode: .set)
+                            } label: {
+                                settingsRow(title: "비밀번호 설정", icon: "key")
+                            }
+                            .buttonStyle(GonggiPressableStyle())
                         }
                     }
-                    sectionCard(title: "계정 관리") {
-                        Button {
-                            GonggiHaptics.light()
-                            auth.signOutShell()
+
+                    sectionCard(title: "이용 현황") {
+                        if let planLabel = profile?.planLabel, !planLabel.isEmpty {
+                            NavigationLink {
+                                ProfilePlanView()
+                            } label: {
+                                settingsRow(title: "현재 플랜", icon: "creditcard", trailing: planLabel)
+                            }
+                            .buttonStyle(GonggiPressableStyle())
+                        }
+
+                        NavigationLink {
+                            ProfileCreditsView()
                         } label: {
-                            settingsRow(title: "로그아웃", icon: "rectangle.portrait.and.arrow.right", destructive: true)
+                            settingsRow(
+                                title: "크레딧",
+                                icon: "sparkles",
+                                trailing: creditsTrailing
+                            )
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+
+                        NavigationLink {
+                            ProfileUsageView()
+                        } label: {
+                            settingsRow(title: "콘텐츠 사용량", icon: "chart.bar")
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+
+                        NavigationLink {
+                            ProfileSharedSpacesView()
+                        } label: {
+                            settingsRow(title: "공유 관리", icon: "square.and.arrow.up")
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+                    }
+
+                    sectionCard(title: "설정 및 지원") {
+                        NavigationLink {
+                            ProfileAppSettingsView(userId: user.userId)
+                        } label: {
+                            settingsRow(title: "앱 설정", icon: "gearshape")
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+
+                        NavigationLink {
+                            ProfilePrivacyPermissionsView()
+                        } label: {
+                            settingsRow(title: "권한 및 개인정보", icon: "hand.raised")
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+
+                        NavigationLink {
+                            ProfileHelpView()
+                        } label: {
+                            settingsRow(title: "도움말 및 문의", icon: "questionmark.circle")
                         }
                         .buttonStyle(GonggiPressableStyle())
 
                         Button {
-                            showDeleteConfirm = true
+                            safariURL = SpaceLinkIdentifiedURL(url: GonggiProductURLs.lockerWeb)
                         } label: {
-                            settingsRow(title: "회원 탈퇴", icon: "person.crop.circle.badge.minus", destructive: true)
+                            settingsRow(title: "3D Locker 웹 열기", icon: "safari")
                         }
                         .buttonStyle(GonggiPressableStyle())
                     }
+
+                    sectionCard(title: "계정 관리") {
+                        Button {
+                            showLogoutConfirm = true
+                        } label: {
+                            settingsRow(
+                                title: "로그아웃",
+                                icon: "rectangle.portrait.and.arrow.right",
+                                destructive: true
+                            )
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+
+                        NavigationLink {
+                            ProfileDeleteAccountView()
+                        } label: {
+                            settingsRow(
+                                title: "회원 탈퇴",
+                                icon: "person.crop.circle.badge.minus",
+                                destructive: true
+                            )
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+                    }
+
                     if appState.isMockMode {
                         mockBadge
                     }
@@ -78,11 +169,55 @@ struct ProfileView: View {
             .background(GonggiAmbientBackground(showGlow: false))
             .navigationTitle("내 정보")
             .navigationBarTitleDisplayMode(.large)
-            .alert("회원 탈퇴", isPresented: $showDeleteConfirm) {
-                Button("닫기", role: .cancel) {}
-            } message: {
-                Text("공기와 3D Locker 계정이 함께 삭제됩니다. 실제 탈퇴는 계정 연동 후 별도 단계에서 지원합니다.")
+            .task {
+                await auth.refreshProfile()
             }
+            .alert("로그아웃하시겠어요?", isPresented: $showLogoutConfirm) {
+                Button("취소", role: .cancel) {}
+                Button("로그아웃", role: .destructive) {
+                    GonggiHaptics.light()
+                    auth.signOutShell()
+                }
+            }
+            .sheet(item: $safariURL) { item in
+                SpaceLinkSafariView(url: item.url) {
+                    safariURL = nil
+                }
+            }
+        }
+    }
+
+    private var showPasswordChange: Bool {
+        profile?.canChangePassword == true || profile?.hasPassword == true
+    }
+
+    private var showPasswordSet: Bool {
+        !showPasswordChange && profile?.canSetPassword == true
+    }
+
+    private var providersTrailing: String? {
+        if let ids = profile?.providers, !ids.isEmpty {
+            return ids.map(Self.providerShort).joined(separator: ", ")
+        }
+        if let p = profile?.provider ?? user.provider, !p.isEmpty {
+            return Self.providerShort(p)
+        }
+        return nil
+    }
+
+    private var creditsTrailing: String? {
+        if let total = profile?.creditsTotal {
+            return "\(total)"
+        }
+        return user.creditsLabel
+    }
+
+    private static func providerShort(_ raw: String) -> String {
+        switch raw.uppercased() {
+        case "GOOGLE": return "Google"
+        case "APPLE": return "Apple"
+        case "LOCAL": return "이메일"
+        default: return raw
         }
     }
 
@@ -99,10 +234,10 @@ struct ProfileView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-                .frame(width: 64, height: 64)
+                .frame(width: 56, height: 56)
                 .overlay(
                     Image(systemName: user.photoSystemImage)
-                        .font(.system(size: 26, weight: .light))
+                        .font(.system(size: 22, weight: .light))
                         .foregroundStyle(GonggiColors.textPrimary)
                 )
             VStack(alignment: .leading, spacing: 2) {
@@ -124,6 +259,13 @@ struct ProfileView: View {
         .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
     }
 
+    private var accountUnifiedNote: some View {
+        Text("이 계정은 공기와 3D Locker에서 함께 사용됩니다.")
+            .font(GonggiTypography.caption(12))
+            .foregroundStyle(GonggiColors.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func sectionCard(title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
             Text(title)
@@ -135,11 +277,15 @@ struct ProfileView: View {
         }
     }
 
-    private func navRow(_ title: String, icon: String, trailing: String? = nil) -> some View {
+    private func settingsRow(
+        title: String,
+        icon: String,
+        trailing: String? = nil,
+        destructive: Bool = false
+    ) -> some View {
         HStack {
             Label(title, systemImage: icon)
-                .font(GonggiTypography.body(15))
-                .foregroundStyle(GonggiColors.textPrimary)
+                .font(GonggiTypography.body(16))
             Spacer()
             if let trailing {
                 Text(trailing)
@@ -147,20 +293,6 @@ struct ProfileView: View {
                     .foregroundStyle(GonggiColors.textTertiary)
                     .lineLimit(1)
             }
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(GonggiColors.textTertiary)
-        }
-        .padding(GonggiSpacing.md)
-        .background(GonggiColors.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-    }
-
-    private func settingsRow(title: String, icon: String, destructive: Bool = false) -> some View {
-        HStack {
-            Label(title, systemImage: icon)
-                .font(GonggiTypography.body(16))
-            Spacer()
             Image(systemName: "chevron.right")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(GonggiColors.textTertiary)
@@ -183,38 +315,6 @@ struct ProfileView: View {
             .padding(GonggiSpacing.md)
             .background(GonggiColors.accentCyan.opacity(0.08))
             .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
-    }
-}
-
-struct SettingsPlaceholderView: View {
-    let userId: String?
-    @State private var captureLocationEnabled: Bool
-
-    init(userId: String?) {
-        self.userId = userId
-        _captureLocationEnabled = State(
-            initialValue: SpaceCaptureLocationPreferences.isEnabled(userId: userId)
-        )
-    }
-
-    var body: some View {
-        List {
-            Toggle("촬영 위치 자동 기록", isOn: $captureLocationEnabled)
-                .onChange(of: captureLocationEnabled) { _, enabled in
-                    SpaceCaptureLocationPreferences.setEnabled(enabled, userId: userId)
-                    if enabled {
-                        // Request permission only after the user turns the setting ON.
-                        Task { _ = try? await SpaceOneShotLocation().request() }
-                    }
-                }
-                .disabled(userId == nil)
-            Toggle("촬영 가이드 힌트", isOn: .constant(true))
-            Toggle("업로드 Wi‑Fi 전용", isOn: .constant(false))
-            Toggle("알림", isOn: .constant(true))
-        }
-        .scrollContentBackground(.hidden)
-        .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("설정")
     }
 }
 

@@ -9,12 +9,23 @@ struct MobileAuthUserDTO: Equatable, Sendable {
     var provider: String
     var orgId: String?
     var creditsTotal: Int?
+    var emailVerified: Bool?
+    var hasPassword: Bool?
+    var canSetPassword: Bool?
+    var canChangePassword: Bool?
+    var providers: [String]?
+    var planCode: String?
+    var planLabel: String?
+    var planPeriodEnd: String?
 
     var shell: AuthUserShell {
         AuthUserShell(
             displayName: name.isEmpty ? "공기 사용자" : name,
             email: email.isEmpty ? "—" : email,
-            photoSystemImage: "person.fill"
+            photoSystemImage: "person.fill",
+            userId: id.isEmpty ? nil : id,
+            provider: provider.isEmpty ? nil : provider,
+            creditsLabel: creditsTotal.map { "\($0)" }
         )
     }
 }
@@ -350,15 +361,6 @@ actor MobileAuthAPIClient {
     }
 
     private func parseUser(_ user: [String: Any]) -> MobileAuthUserDTO {
-        let credits = user["credits"] as? [String: Any]
-        return MobileAuthUserDTO(
-            id: user["id"] as? String ?? "",
-            email: user["email"] as? String ?? "",
-            name: user["name"] as? String ?? "",
-            avatar: user["avatar"] as? String ?? user["avatarUrl"] as? String,
-            provider: user["provider"] as? String ?? "",
-            orgId: user["orgId"] as? String,
-            creditsTotal: credits?["total"] as? Int ?? user["credits"] as? Int
-        )
+        MobileAuthAPIClient.parseUserPublic(user)
     }
 }

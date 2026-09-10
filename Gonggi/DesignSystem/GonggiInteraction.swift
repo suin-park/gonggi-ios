@@ -2,23 +2,31 @@ import SwiftUI
 import UIKit
 
 enum GonggiHaptics {
+    /// Optional UI haptics respect App Settings. System accessibility feedback is untouched.
+    private static var enabled: Bool { GonggiAppSettings.hapticsEnabled }
+
     static func light() {
+        guard enabled else { return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
     static func medium() {
+        guard enabled else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
     static func success() {
+        guard enabled else { return }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     static func error() {
+        guard enabled else { return }
         UINotificationFeedbackGenerator().notificationOccurred(.error)
     }
 
     static func selection() {
+        guard enabled else { return }
         UISelectionFeedbackGenerator().selectionChanged()
     }
 }

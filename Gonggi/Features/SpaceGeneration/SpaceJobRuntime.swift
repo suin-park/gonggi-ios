@@ -305,6 +305,16 @@ final class SpaceJobRuntime: ObservableObject {
     private func uploadCreate(sessionId: String, files: [(direction: String, fileURL: URL)]) async {
         guard let api else { return }
         let generation = AuthSessionGeneration.current
+        if await shouldBlockCellularUpload() {
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
+            store.update(jobId: sessionId) { job in
+                if job.serverStatus == "uploading" {
+                    job.serverStatus = "failed"
+                    job.lastErrorCode = "cellular_blocked"
+                }
+            }
+            return
+        }
         do {
             let meta = captureMetadataBySession[sessionId] ?? Self.loadCaptureMetadataJSON(sessionId: sessionId)
             let response = try await api.create(
@@ -340,6 +350,14 @@ final class SpaceJobRuntime: ObservableObject {
     private func uploadRegenerate(sessionId: String, files: [(direction: String, fileURL: URL)]) async {
         guard let api else { return }
         let generation = AuthSessionGeneration.current
+        if await shouldBlockCellularUpload() {
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
+            store.update(jobId: sessionId) { job in
+                job.serverStatus = "failed"
+                job.lastErrorCode = "cellular_blocked"
+            }
+            return
+        }
         do {
             let meta = captureMetadataBySession[sessionId] ?? Self.loadCaptureMetadataJSON(sessionId: sessionId)
             let response = try await api.regenerate(
@@ -362,6 +380,11 @@ final class SpaceJobRuntime: ObservableObject {
                 job.lastErrorCode = SpaceJobErrorPresentation.code(from: error)
             }
         }
+    }
+
+    private func shouldBlockCellularUpload() async -> Bool {
+        guard !GonggiAppSettings.allowCellularUpload else { return false }
+        return await GonggiNetworkPath.isExpensiveOrConstrained()
     }
 
     private func pollLoop(generation: UInt64) async {
