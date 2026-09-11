@@ -45,7 +45,7 @@ final class SpaceImportViewModel: ObservableObject {
         phase = .validating
         guard let validated = SpaceImportMediaValidator.validateStillImage(image) else {
             phase = .failed(
-                "2:1 LatLong(파노라마) 이미지만 가져올 수 있어요. Insta360에서는 Equirectangular로보낸 뒤 다시 시도하세요."
+                "2:1 파노라마(LatLong) 이미지만 가져올 수 있어요. 360 카메라에서 equirectangular(경위도)로 내보낸 파일을 선택해 주세요."
             )
             return
         }
@@ -71,7 +71,7 @@ final class SpaceImportViewModel: ObservableObject {
             let h = Int(abs(rendered.height))
             guard w > 0, h > 0, w == h * 2, w >= 1024, w <= 8192 else {
                 phase = .failed(
-                    "2:1 equirect 영상만 가져올 수 있어요. Insta360에서는 360 영상(Equirectangular)으로보낸 파일을 선택하세요."
+                    "2:1 파노라마(equirectangular) 영상만 가져올 수 있어요. 360 카메라에서 경위도 형식으로 내보낸 영상을 선택해 주세요."
                 )
                 return
             }
@@ -231,7 +231,7 @@ struct SpaceImportSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                    Text("Insta360 등에서보낸 2:1 LatLong 이미지나 equirect 영상을 공간으로 등록합니다.")
+                    Text("360 카메라에서 내보낸 2:1 파노라마(LatLong) 이미지나 영상을 공간으로 등록합니다.")
                         .font(GonggiTypography.body(15))
                         .foregroundStyle(GonggiColors.textSecondary)
 
