@@ -77,6 +77,31 @@ actor MobileAssetsAPIClient {
         )
     }
 
+    /// DELETE `/api/mobile/assets/:id`
+    func deleteAsset(id: String) async throws {
+        let url = ["api", "mobile", "assets", id].reduce(config.apiBaseURL) {
+            $0.appendingPathComponent($1)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 60
+        if let token = MobileAuthTokenStore.shared.getAccessToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MobileAssetsAPIError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw MobileAssetsAPIError.server(status: http.statusCode)
+        }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           json["ok"] as? Bool == false {
+            throw MobileAssetsAPIError.server(status: http.statusCode)
+        }
+    }
+
     /// GET `/api/mobile/assets/:id/explore-visibility`
     func getExploreVisibility(assetId: String) async throws -> AssetExploreVisibilityState {
         let data = try await get(

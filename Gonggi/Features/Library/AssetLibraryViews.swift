@@ -369,6 +369,10 @@ struct AssetDetailView: View {
     @State private var exploreCanList = false
     @State private var exploreBusy = false
     @State private var exploreMessage: String?
+    @State private var showDeleteConfirm = false
+    @State private var isDeleting = false
+    @State private var deleteError: String?
+    @Environment(\.dismiss) private var dismiss
 
     private var asset: MobileAssetDTO { detail ?? listSnapshot }
     private var canPlace: Bool {
@@ -405,6 +409,33 @@ struct AssetDetailView: View {
         .background(GonggiAmbientBackground(showGlow: false))
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle("3D 자산")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .disabled(isDeleting)
+                .accessibilityLabel("자산 삭제")
+            }
+        }
+        .confirmationDialog("이 3D 자산을 삭제할까요?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+            Button("삭제", role: .destructive) {
+                Task { await deleteAsset() }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("3D Locker와 공기 앱에서 함께 삭제되며, 공간에 배치된 경우 배치도 제거돼요. 되돌릴 수 없어요.")
+        }
+        .alert("삭제하지 못했어요", isPresented: Binding(
+            get: { deleteError != nil },
+            set: { if !$0 { deleteError = nil } }
+        )) {
+            Button("확인", role: .cancel) { deleteError = nil }
+        } message: {
+            Text(deleteError ?? "")
+        }
         .task {
             await loadDetail()
             await loadExploreVisibility()
@@ -445,12 +476,16 @@ struct AssetDetailView: View {
             AssetARQuickLookView(localUsdzURL: item.url)
         }
         .overlay {
-            if isLaunchingPlacement || isDownloadingAR {
+            if isLaunchingPlacement || isDownloadingAR || isDeleting {
                 ZStack {
                     Color.black.opacity(0.35).ignoresSafeArea()
                     VStack(spacing: GonggiSpacing.md) {
                         ProgressView().tint(.white).scaleEffect(1.2)
-                        if isDownloadingAR {
+                        if isDeleting {
+                            Text("삭제하는 중…")
+                                .font(GonggiTypography.caption(14))
+                                .foregroundStyle(.white)
+                        } else if isDownloadingAR {
                             Text("AR을 준비하는 중…")
                                 .font(GonggiTypography.caption(14))
                                 .foregroundStyle(.white)
@@ -620,6 +655,33 @@ struct AssetDetailView: View {
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textSecondary)
             }
+
+            Button(role: .destructive) {
+                showDeleteConfirm = true
+            } label: {
+                Label("자산 삭제", systemImage: "trash")
+                    .font(GonggiTypography.headline(16))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, GonggiSpacing.sm)
+            }
+            .disabled(isDeleting)
+            .accessibilityLabel("자산 삭제")
+        }
+    }
+
+    private func deleteAsset() async {
+        guard !isDeleting else { return }
+        isDeleting = true
+        defer { isDeleting = false }
+        deleteError = nil
+        do {
+            try await MobileAssetsAPIClient().deleteAsset(id: asset.id)
+            await VRUsdzCache().invalidate(assetId: asset.id)
+            libraryStore.removeAsset(id: asset.id)
+            GonggiHaptics.medium()
+            dismiss()
+        } catch {
+            deleteError = "자산을 삭제하지 못했어요. 잠시 후 다시 시도해주세요."
         }
     }
 

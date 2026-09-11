@@ -148,6 +148,12 @@ final class AssetLibraryStore: ObservableObject {
         startScopedReadinessPollIfNeeded()
     }
 
+    /// Targeted remove after successful server delete.
+    func removeAsset(id: String) {
+        assets.removeAll { $0.id == id }
+        startScopedReadinessPollIfNeeded()
+    }
+
     /// Targeted update after Detail poll / prepare (avoids full list storm).
     func upsertAsset(_ asset: MobileAssetDTO) {
         if let idx = assets.firstIndex(where: { $0.id == asset.id }) {
