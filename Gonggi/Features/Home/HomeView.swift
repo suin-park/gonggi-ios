@@ -202,7 +202,7 @@ struct HomeView: View {
                     .font(GonggiTypography.body(15))
                     .foregroundStyle(GonggiColors.textSecondary)
             } else if homePublicSpaces.isEmpty {
-                Text("아직 공개된 공간이 없어요.\n보관함에서 공간 공개 범위를 ‘전체 공개’로 설정해 보세요.")
+                Text("아직 공개된 공간이 없어요.\n보관함에서 공간 공개 범위를 ‘전체 공개’로 바꾸면 여기에 나타나요.")
                     .font(GonggiTypography.body(15))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
