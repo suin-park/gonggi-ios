@@ -107,12 +107,21 @@ actor MobilePublicSpacesAPIClient {
         return PublicAssetListPage(assets: assets, nextCursor: next)
     }
 
-    func getPublicSpace(accessToken: String?, slug: String) async throws -> PublicSpaceDetail {
+    func getPublicSpace(
+        accessToken: String?,
+        slug: String,
+        spaceId: String? = nil
+    ) async throws -> PublicSpaceDetail {
+        var items: [URLQueryItem] = []
+        if let spaceId, !spaceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            items.append(URLQueryItem(name: "spaceId", value: spaceId))
+        }
         let json = try await requestJSON(
             pathComponents: ["api", "gonggi", "public", "spaces", slug],
             method: "GET",
             accessToken: accessToken,
             body: nil,
+            queryItems: items.isEmpty ? nil : items,
             fallbackError: "공개 공간을 불러오지 못했어요."
         )
         let root = (json["space"] as? [String: Any]) ?? json
@@ -566,7 +575,9 @@ actor MobilePublicSpacesAPIClient {
             commentsAllowed: row["commentsAllowed"] as? Bool ?? true,
             isLiked: row["isLiked"] as? Bool ?? false,
             publisherAvatarUrl: row["publisherAvatarUrl"] as? String,
-            shareUrl: row["shareUrl"] as? String
+            shareUrl: row["shareUrl"] as? String,
+            spaceId: row["spaceId"] as? String,
+            rootSpaceId: row["rootSpaceId"] as? String
         )
     }
 
@@ -619,6 +630,7 @@ actor MobilePublicSpacesAPIClient {
             canNavigate: row["canNavigate"] as? Bool ?? false,
             targetPublicSlug: row["targetPublicSlug"] as? String,
             targetShareToken: row["targetShareToken"] as? String,
+            targetTourSpaceId: row["targetTourSpaceId"] as? String,
             targetTitle: row["targetTitle"] as? String,
             targetThumbnailUrl: row["targetThumbnailUrl"] as? String
         )

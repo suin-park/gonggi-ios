@@ -1673,9 +1673,15 @@ struct VRSphereSpaceView: View {
 
     private func loadSpaceLinksIfNeeded() {
         if let overlay = publicOverlay, !allowsOwnerControls {
+            let sessionKey = PublicSpacesPolicy.publicTourSessionId(
+                rootSlug: overlay.publicSlug,
+                spaceId: overlay.spaceId,
+                rootSpaceId: overlay.rootSpaceId
+            )
             let links = PublicSpacesPolicy.spaceLinks(
                 from: overlay.hotspots,
-                sourceId: sessionId
+                sourceId: sessionKey,
+                rootSpaceId: overlay.rootSpaceId
             )
             spaceLinks = Array(links.prefix(SpaceLink.maxLinksPerSource))
             var checkpoints: [String: (yaw: Float, pitch: Float, radius: Float)] = [:]

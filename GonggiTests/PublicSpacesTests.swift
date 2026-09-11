@@ -419,4 +419,43 @@ final class PublicSpacesTests: XCTestCase {
         XCTAssertEqual(comment?.canEdit, true)
         XCTAssertEqual(comment?.canHide, false)
     }
+
+    func testPublicTourHotspotMapsToNavigableSpaceLink() {
+        let hotspot = PublicSpaceHotspot(
+            id: "h1",
+            yawDeg: 10,
+            pitchDeg: -5,
+            radius: 3,
+            displayName: "다음 방",
+            labelSize: nil,
+            externalHostname: nil,
+            externalUrl: nil,
+            externalUrlDisabled: false,
+            canNavigate: true,
+            targetPublicSlug: nil,
+            targetShareToken: nil,
+            targetTourSpaceId: "child-space-1",
+            targetTitle: "복도",
+            targetThumbnailUrl: nil
+        )
+        let links = PublicSpacesPolicy.spaceLinks(
+            from: [hotspot],
+            sourceId: "public:root-slug",
+            rootSpaceId: "root-space"
+        )
+        XCTAssertEqual(links.count, 1)
+        XCTAssertEqual(links[0].targetSpaceId, "public:root-slug|tour:child-space-1")
+        XCTAssertTrue(links[0].isNavigable)
+
+        let parsed = PublicSpacesPolicy.parsePublicNavigationTarget(links[0].targetSpaceId!)
+        XCTAssertEqual(parsed?.slug, "root-slug")
+        XCTAssertEqual(parsed?.spaceId, "child-space-1")
+
+        let rootLink = PublicSpacesPolicy.publicTourSessionId(
+            rootSlug: "root-slug",
+            spaceId: "root-space",
+            rootSpaceId: "root-space"
+        )
+        XCTAssertEqual(rootLink, "public:root-slug")
+    }
 }

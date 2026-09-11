@@ -461,17 +461,32 @@ struct SpaceVRNavigationHost: View {
         let api = MobilePublicSpacesAPIClient()
         do {
             if targetKey.hasPrefix("public:") {
-                let slug = String(targetKey.dropFirst("public:".count))
-                let detail = try await api.getPublicSpace(accessToken: MobileAuthTokenStore.shared.getAccessToken(), slug: slug)
+                guard let parsed = PublicSpacesPolicy.parsePublicNavigationTarget(targetKey) else {
+                    navigateError = "연결할 공간을 찾을 수 없어요"
+                    return
+                }
+                let slug = parsed.slug
+                let tourSpaceId = parsed.spaceId
+                let detail = try await api.getPublicSpace(
+                    accessToken: MobileAuthTokenStore.shared.getAccessToken(),
+                    slug: slug,
+                    spaceId: tourSpaceId
+                )
+                let cacheKey = tourSpaceId.map { "public-\(slug)-\($0)" } ?? "public-\(slug)"
                 let file = try await api.downloadPanorama(
                     accessToken: MobileAuthTokenStore.shared.getAccessToken(),
                     panoramaUrl: detail.panoramaUrl,
-                    cacheKey: "public-\(slug)"
+                    cacheKey: cacheKey
                 )
                 _ = await SpaceLinkPanoramaTextureCache.shared.predecode(url: file)
                 let overlay = PublicViewerOverlay(detail: detail, apiBaseURL: await api.apiBaseURL)
+                let sessionId = PublicSpacesPolicy.publicTourSessionId(
+                    rootSlug: slug,
+                    spaceId: tourSpaceId ?? detail.spaceId,
+                    rootSpaceId: detail.rootSpaceId
+                )
                 let session = SpaceViewerSession(
-                    id: "public:\(slug)",
+                    id: sessionId,
                     fileURL: file,
                     audioURL: nil,
                     startInEditMode: false,

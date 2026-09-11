@@ -67,6 +67,73 @@ struct PublicAssetCardView: View {
     }
 }
 
+/// Full-width social feed post for Explore assets.
+struct PublicAssetFeedPostView: View {
+    let item: PublicAssetListItem
+    var onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+                HStack(spacing: GonggiSpacing.sm) {
+                    Circle()
+                        .fill(GonggiColors.surfaceElevated)
+                        .frame(width: 36, height: 36)
+                        .overlay {
+                            Text(String(item.publisherDisplayName.prefix(1)).uppercased())
+                                .font(GonggiTypography.caption(13))
+                                .fontWeight(.semibold)
+                                .foregroundStyle(GonggiColors.textSecondary)
+                        }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.publisherDisplayName)
+                            .font(GonggiTypography.headline(15))
+                            .foregroundStyle(GonggiColors.textPrimary)
+                            .lineLimit(1)
+                        Text(PublicSpaceCardView.formatPublished(item.publishedAt))
+                            .font(GonggiTypography.caption(12))
+                            .foregroundStyle(GonggiColors.textTertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, GonggiSpacing.lg)
+                .padding(.top, GonggiSpacing.md)
+
+                HStack {
+                    Spacer(minLength: 0)
+                    AssetThumbnailView(urlString: item.thumbnailUrl, size: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 240)
+                .background(GonggiColors.surfaceElevated.opacity(0.35))
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text(item.name)
+                        .font(GonggiTypography.headline(17))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(item.availableForAR ? "AR로 보기" : "준비 중")
+                        .font(GonggiTypography.caption(13))
+                        .fontWeight(.semibold)
+                        .foregroundStyle(
+                            item.availableForAR ? GonggiColors.accentTeal : GonggiColors.textTertiary
+                        )
+                }
+                .padding(.horizontal, GonggiSpacing.lg)
+                .padding(.bottom, GonggiSpacing.md)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(GonggiPressableStyle())
+        .disabled(!item.availableForAR)
+        .opacity(item.availableForAR ? 1 : 0.55)
+        .accessibilityLabel("\(item.name), \(item.publisherDisplayName)")
+    }
+}
+
 struct PublicAssetsListView: View {
     @State private var assets: [PublicAssetListItem] = []
     @State private var nextCursor: String?

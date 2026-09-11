@@ -68,6 +68,8 @@ struct PublicSpaceHotspot: Equatable, Identifiable, Sendable {
     var canNavigate: Bool
     var targetPublicSlug: String?
     var targetShareToken: String?
+    /// Same-owner tour child under the PUBLIC listing root (`?spaceId=`).
+    var targetTourSpaceId: String?
     var targetTitle: String?
     var targetThumbnailUrl: String?
 }
@@ -111,6 +113,10 @@ struct PublicSpaceDetail: Equatable, Sendable {
     var isLiked: Bool = false
     var publisherAvatarUrl: String? = nil
     var shareUrl: String? = nil
+    /// Current scene space id (root or tour child).
+    var spaceId: String? = nil
+    /// PUBLIC listing root space id.
+    var rootSpaceId: String? = nil
 }
 
 // MARK: - Comments / likes
@@ -331,8 +337,13 @@ enum PublicSpacesPolicy {
     }
 
     /// Map public DTO hotspots → SpaceLink for read-only VR chrome.
-    static func spaceLinks(from hotspots: [PublicSpaceHotspot], sourceId: String) -> [SpaceLink] {
+    static func spaceLinks(
+        from hotspots: [PublicSpaceHotspot],
+        sourceId: String,
+        rootSpaceId: String? = nil
+    ) -> [SpaceLink] {
         let now = Date()
+        let rootSlug = publicRootSlug(fromSessionId: sourceId)
         return hotspots.compactMap { hotspot in
             if !hotspot.canNavigate
                 && (hotspot.externalUrl == nil || hotspot.externalUrlDisabled)
@@ -341,7 +352,18 @@ enum PublicSpacesPolicy {
             }
             var targetId: String?
             var targetSession: String?
-            if hotspot.canNavigate, let slug = hotspot.targetPublicSlug, !slug.isEmpty {
+            // Prefer in-tour navigation so PRIVATE/UNLISTED children stay under the PUBLIC root.
+            if hotspot.canNavigate,
+               let tourId = hotspot.targetTourSpaceId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !tourId.isEmpty,
+               let rootSlug {
+                targetId = publicTourSessionId(
+                    rootSlug: rootSlug,
+                    spaceId: tourId,
+                    rootSpaceId: rootSpaceId
+                )
+                targetSession = targetId
+            } else if hotspot.canNavigate, let slug = hotspot.targetPublicSlug, !slug.isEmpty {
                 targetId = "public:\(slug)"
                 targetSession = targetId
             } else if hotspot.canNavigate, let token = hotspot.targetShareToken, !token.isEmpty {
@@ -368,6 +390,42 @@ enum PublicSpacesPolicy {
                 updatedAt: now
             )
         }
+    }
+
+    /// `public:{slug}` or `public:{slug}|tour:{spaceId}`
+    static func publicTourSessionId(rootSlug: String, spaceId: String?, rootSpaceId: String? = nil) -> String {
+        let slug = rootSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let spaceId else { return "public:\(slug)" }
+        let trimmed = spaceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "public:\(slug)" }
+        if let rootSpaceId,
+           rootSpaceId.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed {
+            return "public:\(slug)"
+        }
+        return "public:\(slug)|tour:\(trimmed)"
+    }
+
+    static func publicRootSlug(fromSessionId sessionId: String) -> String? {
+        guard sessionId.hasPrefix("public:") else { return nil }
+        let rest = String(sessionId.dropFirst("public:".count))
+        guard let slugPart = rest.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).first
+        else { return nil }
+        let slug = String(slugPart).trimmingCharacters(in: .whitespacesAndNewlines)
+        return slug.isEmpty ? nil : slug
+    }
+
+    static func publicTourSpaceId(fromSessionId sessionId: String) -> String? {
+        guard sessionId.hasPrefix("public:") else { return nil }
+        let rest = String(sessionId.dropFirst("public:".count))
+        guard let markerRange = rest.range(of: "|tour:") else { return nil }
+        let spaceId = String(rest[markerRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return spaceId.isEmpty ? nil : spaceId
+    }
+
+    static func parsePublicNavigationTarget(_ targetKey: String) -> (slug: String, spaceId: String?)? {
+        guard targetKey.hasPrefix("public:") else { return nil }
+        guard let slug = publicRootSlug(fromSessionId: targetKey) else { return nil }
+        return (slug, publicTourSpaceId(fromSessionId: targetKey))
     }
 
     static func placementLayout(from detail: PublicSpaceDetail) -> VRPlacementLayout {
@@ -405,6 +463,8 @@ struct PublicViewerOverlay: Equatable, Sendable {
     var placementFloorY: Double
     var placementAssets: [PublicSpacePlacementAsset]
     var apiBaseURLString: String
+    var rootSpaceId: String?
+    var spaceId: String?
 
     init(detail: PublicSpaceDetail, apiBaseURL: URL) {
         publicSlug = detail.publicSlug
@@ -413,6 +473,8 @@ struct PublicViewerOverlay: Equatable, Sendable {
         placementFloorY = detail.placementFloorY
         placementAssets = detail.placementAssets
         apiBaseURLString = apiBaseURL.absoluteString
+        rootSpaceId = detail.rootSpaceId
+        spaceId = detail.spaceId
     }
 
     var apiBaseURL: URL? { URL(string: apiBaseURLString) }

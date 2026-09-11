@@ -36,8 +36,13 @@ struct PublicSpaceViewerHost: View {
         _commentsAllowed = State(initialValue: detail.commentsAllowed)
         let base = AppConfiguration.production.apiBaseURL
         // Keep audioURL nil so SpaceAudioManager.ensurePlaying never autoplays public audio.
+        let sessionId = PublicSpacesPolicy.publicTourSessionId(
+            rootSlug: detail.publicSlug,
+            spaceId: detail.spaceId,
+            rootSpaceId: detail.rootSpaceId
+        )
         session = SpaceViewerSession(
-            id: "public:\(detail.publicSlug)",
+            id: sessionId,
             fileURL: panoramaFileURL,
             audioURL: nil,
             startInEditMode: false,

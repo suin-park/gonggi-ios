@@ -1,15 +1,17 @@
 import SwiftUI
 
-/// Home tab: public Explore (spaces + 3D assets). Own recent work lives in Library.
+/// Home tab: social-style Explore feed (spaces + 3D assets). Own work lives in Library.
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var exploreSegment: ExploreSegment = .spaces
     @State private var publicSpaces: [PublicSpaceListItem] = []
     @State private var publicAssets: [PublicAssetListItem] = []
+    @State private var spacesNextCursor: String?
+    @State private var assetsNextCursor: String?
     @State private var publicViewerRoute: PublicSpaceSlugRoute?
     @State private var assetQuickLook: ExploreIdentifiedURL?
     @State private var isLoadingExplore = false
+    @State private var isLoadingMore = false
     @State private var exploreError: String?
     @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
@@ -17,50 +19,51 @@ struct HomeView: View {
 
     private let publicAPI = MobilePublicSpacesAPIClient()
 
-    private var homePublicSpaces: [PublicSpaceListItem] {
-        PublicSpacesPolicy.homePreviewLimit(publicSpaces, max: 8)
-    }
-
-    private var homePublicAssets: [PublicAssetListItem] {
-        Array(publicAssets.prefix(8))
-    }
-
-    private func homeTopPadding(for usableHeight: CGFloat) -> CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return GonggiSpacing.md }
-        let extra = usableHeight * 0.045
-        return GonggiSpacing.lg + min(48, max(24, extra))
-    }
-
     var body: some View {
         NavigationStack {
-            GeometryReader { geo in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        header
-                            .padding(.bottom, GonggiSpacing.lg)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    feedHeader
+                        .padding(.horizontal, GonggiSpacing.lg)
+                        .padding(.top, GonggiSpacing.md)
+                        .padding(.bottom, GonggiSpacing.sm)
 
-                        actions
-                            .padding(.bottom, GonggiSpacing.lg)
-
-                        Picker("둘러보기", selection: $exploreSegment) {
-                            ForEach(ExploreSegment.allCases) { segment in
-                                Text(segment.title).tag(segment)
-                            }
+                    Picker("둘러보기", selection: $exploreSegment) {
+                        ForEach(ExploreSegment.allCases) { segment in
+                            Text(segment.title).tag(segment)
                         }
-                        .pickerStyle(.segmented)
-                        .padding(.bottom, GonggiSpacing.md)
-
-                        exploreContent
                     }
+                    .pickerStyle(.segmented)
                     .padding(.horizontal, GonggiSpacing.lg)
-                    .padding(.top, homeTopPadding(for: geo.size.height))
-                    .padding(.bottom, GonggiSpacing.xxl)
-                    .frame(maxWidth: .infinity, alignment: .top)
+                    .padding(.bottom, GonggiSpacing.md)
+
+                    exploreFeed
                 }
-                .contentMargins(.bottom, GonggiSpacing.lg, for: .scrollContent)
+                .padding(.bottom, GonggiSpacing.xxl)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
+            .refreshable { await loadExplore(reset: true) }
+            .contentMargins(.bottom, GonggiSpacing.lg, for: .scrollContent)
             .background(GonggiAmbientBackground())
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        appState.selectTab(.record)
+                    } label: {
+                        Image(systemName: "camera.aperture")
+                    }
+                    .accessibilityLabel("새 공간 촬영")
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        appState.selectTab(.library)
+                    } label: {
+                        Image(systemName: "archivebox")
+                    }
+                    .accessibilityLabel("보관함")
+                }
+            }
             .fullScreenCover(item: $publicViewerRoute) { route in
                 PublicSpaceViewerLoader(slug: route.slug)
                     .environmentObject(appState)
@@ -74,9 +77,9 @@ struct HomeView: View {
             .sheet(item: $assetQuickLook) { item in
                 AssetARQuickLookView(localUsdzURL: item.url)
             }
-            .task { await loadExplore() }
+            .task { await loadExplore(reset: true) }
             .onChange(of: exploreSegment) { _, _ in
-                Task { await loadExplore() }
+                Task { await loadExplore(reset: true) }
             }
             .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
                 viewerLaunch = nil
@@ -137,131 +140,121 @@ struct HomeView: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+    private var feedHeader: some View {
+        HStack(alignment: .center, spacing: GonggiSpacing.md) {
             GonggiBrandMark()
+            Spacer(minLength: 0)
             Text("둘러보기")
-                .font(GonggiTypography.title(24))
-                .foregroundStyle(GonggiColors.textPrimary)
-                .accessibilityAddTraits(.isHeader)
-            Text("다른 사람이 공개한 공간과 3D 자산을 살펴보세요.")
-                .font(GonggiTypography.body(15))
+                .font(GonggiTypography.headline(17))
                 .foregroundStyle(GonggiColors.textSecondary)
-        }
-    }
-
-    private var actions: some View {
-        VStack(spacing: GonggiSpacing.sm) {
-            PrimaryButton(title: "새 공간 촬영", icon: "camera.aperture") {
-                appState.selectTab(.record)
-            }
-            SecondaryButton(title: "보관함", icon: "archivebox") {
-                appState.selectTab(.library)
-            }
+                .accessibilityAddTraits(.isHeader)
         }
     }
 
     @ViewBuilder
-    private var exploreContent: some View {
-        if isLoadingExplore && exploreSegment == .spaces && homePublicSpaces.isEmpty {
+    private var exploreFeed: some View {
+        let isEmptySpaces = exploreSegment == .spaces && publicSpaces.isEmpty
+        let isEmptyAssets = exploreSegment == .assets && publicAssets.isEmpty
+        if isLoadingExplore && (isEmptySpaces || isEmptyAssets) {
             ProgressView("불러오는 중…")
                 .frame(maxWidth: .infinity)
-                .padding(.top, GonggiSpacing.lg)
-        } else if isLoadingExplore && exploreSegment == .assets && homePublicAssets.isEmpty {
-            ProgressView("불러오는 중…")
-                .frame(maxWidth: .infinity)
-                .padding(.top, GonggiSpacing.lg)
+                .padding(.top, GonggiSpacing.xl)
         } else {
             switch exploreSegment {
             case .spaces:
-                spacesExploreSection
+                spacesFeed
             case .assets:
-                assetsExploreSection
+                assetsFeed
             }
         }
     }
 
-    private var spacesExploreSection: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            HStack {
-                Text("공간")
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                Spacer(minLength: 0)
-                NavigationLink {
-                    PublicSpacesListView()
-                } label: {
-                    Text("전체 보기")
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.accentTeal)
-                }
-            }
-
-            if let exploreError, homePublicSpaces.isEmpty {
-                Text(exploreError)
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
-            } else if homePublicSpaces.isEmpty {
-                Text("아직 공개된 공간이 없어요.\n보관함에서 공간 공개 범위를 ‘전체 공개’로 바꾸면 여기에 나타나요.")
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var spacesFeed: some View {
+        LazyVStack(spacing: 0) {
+            if let exploreError, publicSpaces.isEmpty {
+                feedEmptyMessage(exploreError)
+            } else if publicSpaces.isEmpty {
+                feedEmptyMessage("아직 공개된 공간이 없어요.\n보관함에서 공간 공개 범위를 ‘전체 공개’로 바꾸면 여기에 나타나요.")
             } else {
-                LazyVStack(spacing: GonggiSpacing.md) {
-                    ForEach(homePublicSpaces) { item in
-                        Button {
-                            publicViewerRoute = PublicSpaceSlugRoute(slug: item.publicSlug)
-                        } label: {
-                            PublicSpaceCardView(item: item)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(GonggiPressableStyle())
+                ForEach(publicSpaces) { item in
+                    Button {
+                        publicViewerRoute = PublicSpaceSlugRoute(slug: item.publicSlug)
+                    } label: {
+                        PublicSpaceFeedPostView(item: item)
                     }
-                }
-            }
-        }
-    }
-
-    private var assetsExploreSection: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            HStack {
-                Text("3D 자산")
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                Spacer(minLength: 0)
-                NavigationLink {
-                    PublicAssetsListView()
-                } label: {
-                    Text("전체 보기")
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.accentTeal)
-                }
-            }
-
-            if let exploreError, homePublicAssets.isEmpty {
-                Text(exploreError)
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
-            } else if homePublicAssets.isEmpty {
-                Text("아직 공개된 3D 자산이 없어요.\n보관함 자산 상세에서 둘러보기에 공개할 수 있어요.")
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                LazyVStack(spacing: GonggiSpacing.md) {
-                    ForEach(homePublicAssets) { item in
-                        PublicAssetCardView(item: item) {
-                            Task { await openPublicAssetAR(item) }
+                    .buttonStyle(GonggiPressableStyle())
+                    .onAppear {
+                        if item.id == publicSpaces.last?.id {
+                            Task { await loadMore() }
                         }
                     }
+
+                    Divider()
+                        .overlay(GonggiColors.borderSubtle)
+                        .padding(.leading, GonggiSpacing.lg)
+                }
+
+                if isLoadingMore {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, GonggiSpacing.md)
                 }
             }
         }
     }
 
-    private func loadExplore() async {
-        isLoadingExplore = true
-        exploreError = nil
+    private var assetsFeed: some View {
+        LazyVStack(spacing: 0) {
+            if let exploreError, publicAssets.isEmpty {
+                feedEmptyMessage(exploreError)
+            } else if publicAssets.isEmpty {
+                feedEmptyMessage("아직 공개된 3D 자산이 없어요.\n보관함 자산 상세에서 둘러보기에 공개할 수 있어요.")
+            } else {
+                ForEach(publicAssets) { item in
+                    PublicAssetFeedPostView(item: item) {
+                        Task { await openPublicAssetAR(item) }
+                    }
+                    .onAppear {
+                        if item.id == publicAssets.last?.id {
+                            Task { await loadMore() }
+                        }
+                    }
+
+                    Divider()
+                        .overlay(GonggiColors.borderSubtle)
+                        .padding(.leading, GonggiSpacing.lg)
+                }
+
+                if isLoadingMore {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, GonggiSpacing.md)
+                }
+            }
+        }
+    }
+
+    private func feedEmptyMessage(_ text: String) -> some View {
+        Text(text)
+            .font(GonggiTypography.body(15))
+            .foregroundStyle(GonggiColors.textSecondary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, GonggiSpacing.lg)
+            .padding(.top, GonggiSpacing.xxl)
+    }
+
+    private func loadExplore(reset: Bool) async {
+        if reset {
+            isLoadingExplore = true
+            exploreError = nil
+            if exploreSegment == .spaces {
+                spacesNextCursor = nil
+            } else {
+                assetsNextCursor = nil
+            }
+        }
         defer { isLoadingExplore = false }
         let token = MobileAuthTokenStore.shared.getAccessToken()
         do {
@@ -269,10 +262,11 @@ struct HomeView: View {
             case .spaces:
                 let page = try await publicAPI.listPublicSpaces(
                     accessToken: token,
-                    limit: 8,
+                    limit: 12,
                     cursor: nil
                 )
                 publicSpaces = page.spaces
+                spacesNextCursor = page.nextCursor
                 if let userId = AuthSessionController.shared.profile?.id
                     ?? AuthSessionController.shared.currentUser?.userId
                 {
@@ -284,15 +278,59 @@ struct HomeView: View {
             case .assets:
                 let page = try await publicAPI.listPublicAssets(
                     accessToken: token,
-                    limit: 8,
+                    limit: 12,
                     cursor: nil
                 )
                 publicAssets = page.assets
+                assetsNextCursor = page.nextCursor
             }
         } catch {
             exploreError = "공개 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
             if exploreSegment == .spaces { publicSpaces = [] }
             else { publicAssets = [] }
+        }
+    }
+
+    private func loadMore() async {
+        guard !isLoadingMore, !isLoadingExplore else { return }
+        let token = MobileAuthTokenStore.shared.getAccessToken()
+        switch exploreSegment {
+        case .spaces:
+            guard let cursor = spacesNextCursor else { return }
+            isLoadingMore = true
+            defer { isLoadingMore = false }
+            do {
+                let page = try await publicAPI.listPublicSpaces(
+                    accessToken: token,
+                    limit: 12,
+                    cursor: cursor
+                )
+                let merged = PublicSpacesPolicy.mergePaginatedPage(
+                    existing: publicSpaces,
+                    page: page,
+                    replacing: false
+                )
+                publicSpaces = merged.spaces
+                spacesNextCursor = merged.nextCursor
+            } catch {
+                // Keep current feed on pagination failure.
+            }
+        case .assets:
+            guard let cursor = assetsNextCursor else { return }
+            isLoadingMore = true
+            defer { isLoadingMore = false }
+            do {
+                let page = try await publicAPI.listPublicAssets(
+                    accessToken: token,
+                    limit: 12,
+                    cursor: cursor
+                )
+                let existing = Set(publicAssets.map(\.id))
+                publicAssets.append(contentsOf: page.assets.filter { !existing.contains($0.id) })
+                assetsNextCursor = page.nextCursor
+            } catch {
+                // Keep current feed on pagination failure.
+            }
         }
     }
 

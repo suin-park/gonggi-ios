@@ -140,3 +140,87 @@ struct PublicSpaceCardView: View {
         return date.formatted(date: .abbreviated, time: .omitted)
     }
 }
+
+/// Full-width social feed post for Home Explore.
+struct PublicSpaceFeedPostView: View {
+    let item: PublicSpaceListItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            HStack(spacing: GonggiSpacing.sm) {
+                Circle()
+                    .fill(GonggiColors.surfaceElevated)
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        Text(String(item.publisherDisplayName.prefix(1)).uppercased())
+                            .font(GonggiTypography.caption(13))
+                            .fontWeight(.semibold)
+                            .foregroundStyle(GonggiColors.textSecondary)
+                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.publisherDisplayName)
+                        .font(GonggiTypography.headline(15))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .lineLimit(1)
+                    Text(PublicSpaceCardView.formatPublished(item.publishedAt))
+                        .font(GonggiTypography.caption(12))
+                        .foregroundStyle(GonggiColors.textTertiary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "pano.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, GonggiSpacing.lg)
+            .padding(.top, GonggiSpacing.md)
+
+            GeometryReader { geo in
+                PublicSpaceRemoteThumbnail(
+                    thumbnailUrl: item.thumbnailUrl,
+                    width: geo.size.width,
+                    height: geo.size.width * 0.56
+                )
+            }
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .clipped()
+
+            VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+                Text(item.title)
+                    .font(GonggiTypography.headline(17))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if PublicSpacesPolicy.shouldShowEngagementCountsOnCard() {
+                    HStack(spacing: GonggiSpacing.md) {
+                        Label(
+                            PublicSpacesPolicy.engagementCountLabel(item.likeCount),
+                            systemImage: "heart"
+                        )
+                        Label(
+                            PublicSpacesPolicy.engagementCountLabel(item.commentCount),
+                            systemImage: "bubble.right"
+                        )
+                        Spacer(minLength: 0)
+                        Text("360° 보기")
+                            .font(GonggiTypography.caption(13))
+                            .fontWeight(.semibold)
+                            .foregroundStyle(GonggiColors.accentTeal)
+                    }
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .labelStyle(.titleAndIcon)
+                }
+            }
+            .padding(.horizontal, GonggiSpacing.lg)
+            .padding(.bottom, GonggiSpacing.md)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(item.title), \(item.publisherDisplayName), 360도, 좋아요 \(PublicSpacesPolicy.engagementCountLabel(item.likeCount)), 댓글 \(PublicSpacesPolicy.engagementCountLabel(item.commentCount))"
+        )
+    }
+}
