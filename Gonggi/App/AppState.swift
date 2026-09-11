@@ -566,7 +566,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "홈"
+        case .home: return "둘러보기"
         case .record: return "기록"
         case .library: return "보관함"
         case .profile: return "내 정보"
@@ -575,7 +575,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .home: return "house.fill"
+        case .home: return "safari.fill"
         case .record: return "viewfinder"
         case .library: return "archivebox.fill"
         case .profile: return "person.fill"

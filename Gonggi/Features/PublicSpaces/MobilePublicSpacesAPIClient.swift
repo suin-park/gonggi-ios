@@ -82,6 +82,31 @@ actor MobilePublicSpacesAPIClient {
         return PublicSpaceListPage(spaces: spaces, nextCursor: next)
     }
 
+    func listPublicAssets(
+        accessToken: String?,
+        limit: Int = 20,
+        cursor: String? = nil
+    ) async throws -> PublicAssetListPage {
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "limit", value: String(max(1, min(limit, 50)))),
+        ]
+        if let cursor, !cursor.isEmpty {
+            items.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        let json = try await requestJSON(
+            pathComponents: ["api", "gonggi", "public", "assets"],
+            method: "GET",
+            accessToken: accessToken,
+            body: nil,
+            queryItems: items,
+            fallbackError: "공개 자산을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+        )
+        let rows = json["assets"] as? [[String: Any]] ?? []
+        let assets = rows.compactMap(Self.parsePublicAsset)
+        let next = json["nextCursor"] as? String
+        return PublicAssetListPage(assets: assets, nextCursor: next)
+    }
+
     func getPublicSpace(accessToken: String?, slug: String) async throws -> PublicSpaceDetail {
         let json = try await requestJSON(
             pathComponents: ["api", "gonggi", "public", "spaces", slug],
@@ -492,6 +517,23 @@ actor MobilePublicSpacesAPIClient {
             thumbnailUrl: row["thumbnailUrl"] as? String,
             likeCount: intValue(row["likeCount"]) ?? 0,
             commentCount: intValue(row["commentCount"]) ?? 0
+        )
+    }
+
+    nonisolated static func parsePublicAsset(_ row: [String: Any]) -> PublicAssetListItem? {
+        guard let id = row["id"] as? String,
+              let name = row["name"] as? String,
+              let publisher = row["publisherDisplayName"] as? String,
+              let publishedAt = row["publishedAt"] as? String
+        else { return nil }
+        return PublicAssetListItem(
+            id: id,
+            name: name,
+            publisherDisplayName: publisher,
+            publishedAt: publishedAt,
+            thumbnailUrl: row["thumbnailUrl"] as? String,
+            usdzUrl: row["usdzUrl"] as? String,
+            availableForAR: row["availableForAR"] as? Bool ?? false
         )
     }
 

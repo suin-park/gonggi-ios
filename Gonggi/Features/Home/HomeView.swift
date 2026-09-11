@@ -1,80 +1,66 @@
 import SwiftUI
 
+/// Home tab: public Explore (spaces + 3D assets). Own recent work lives in Library.
 struct HomeView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var selectedSpace: SpaceRecord?
+    @State private var exploreSegment: ExploreSegment = .spaces
+    @State private var publicSpaces: [PublicSpaceListItem] = []
+    @State private var publicAssets: [PublicAssetListItem] = []
+    @State private var publicViewerRoute: PublicSpaceSlugRoute?
+    @State private var assetQuickLook: ExploreIdentifiedURL?
+    @State private var isLoadingExplore = false
+    @State private var exploreError: String?
     @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
-    @State private var publicSpaces: [PublicSpaceListItem] = []
-    @State private var publicViewerRoute: PublicSpaceSlugRoute?
 
     private let publicAPI = MobilePublicSpacesAPIClient()
 
-    private var recentSpaces: [SpaceRecord] {
-        Array(appState.spaces.prefix(5))
-    }
-
     private var homePublicSpaces: [PublicSpaceListItem] {
-        PublicSpacesPolicy.homePreviewLimit(publicSpaces, max: 4)
+        PublicSpacesPolicy.homePreviewLimit(publicSpaces, max: 8)
     }
 
-    /// Top padding scales with usable height (~24–48pt extra on tall phones).
+    private var homePublicAssets: [PublicAssetListItem] {
+        Array(publicAssets.prefix(8))
+    }
+
     private func homeTopPadding(for usableHeight: CGFloat) -> CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return GonggiSpacing.md }
         let extra = usableHeight * 0.045
         return GonggiSpacing.lg + min(48, max(24, extra))
     }
 
-    /// Mid gap between CTAs and recent work when the list is empty or short.
-    private func homeMidMin(for usableHeight: CGFloat) -> CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return GonggiSpacing.md }
-        return min(80, max(GonggiSpacing.lg, usableHeight * 0.07))
-    }
-
     var body: some View {
         NavigationStack {
             GeometryReader { geo in
-                let usableHeight = geo.size.height
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         header
                             .padding(.bottom, GonggiSpacing.lg)
 
                         actions
-                            .padding(.bottom, GonggiSpacing.md)
+                            .padding(.bottom, GonggiSpacing.lg)
 
-                        if recentSpaces.count <= 1 {
-                            Spacer(minLength: homeMidMin(for: usableHeight))
-                        } else {
-                            // Fixed gap only — do not expand leftover (list should continue naturally).
-                            Color.clear.frame(height: GonggiSpacing.xl)
+                        Picker("둘러보기", selection: $exploreSegment) {
+                            ForEach(ExploreSegment.allCases) { segment in
+                                Text(segment.title).tag(segment)
+                            }
                         }
+                        .pickerStyle(.segmented)
+                        .padding(.bottom, GonggiSpacing.md)
 
-                        recentSection
-
-                        if PublicSpacesPolicy.shouldShowHomeSection(spaces: homePublicSpaces) {
-                            Color.clear.frame(height: GonggiSpacing.xl)
-                            publicSpacesSection
-                        }
+                        exploreContent
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
-                    .padding(.top, homeTopPadding(for: usableHeight))
+                    .padding(.top, homeTopPadding(for: geo.size.height))
                     .padding(.bottom, GonggiSpacing.xxl)
-                    .frame(
-                        maxWidth: .infinity,
-                        minHeight: recentSpaces.count <= 1 ? usableHeight : nil,
-                        alignment: .top
-                    )
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
                 .contentMargins(.bottom, GonggiSpacing.lg, for: .scrollContent)
             }
             .background(GonggiAmbientBackground())
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $selectedSpace) { space in
-                SpaceDetailView(space: space)
-            }
             .fullScreenCover(item: $publicViewerRoute) { route in
                 PublicSpaceViewerLoader(slug: route.slug)
                     .environmentObject(appState)
@@ -85,10 +71,15 @@ struct HomeView: View {
                     onClose: { viewerLaunch = nil }
                 )
             }
-            .task { await loadPublicSpaces() }
+            .sheet(item: $assetQuickLook) { item in
+                AssetARQuickLookView(localUsdzURL: item.url)
+            }
+            .task { await loadExplore() }
+            .onChange(of: exploreSegment) { _, _ in
+                Task { await loadExplore() }
+            }
             .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
                 viewerLaunch = nil
-                selectedSpace = nil
                 publicViewerRoute = nil
             }
             .overlay {
@@ -111,7 +102,7 @@ struct HomeView: View {
                 }
             )) {
                 Button("다시 불러오기") {
-                    if let id = appState.pendingViewerJobId ?? selectedSpace?.id ?? recentSpaces.first?.id {
+                    if let id = appState.pendingViewerJobId {
                         Task { await openViewer(jobId: id) }
                     }
                 }
@@ -141,12 +132,7 @@ struct HomeView: View {
                 let hit = launch.sessions.contains {
                     $0.id == sessionId || $0.id == jobId
                 }
-                if hit {
-                    viewerLaunch = nil
-                }
-                if selectedSpace?.id == jobId || selectedSpace?.sessionId == sessionId {
-                    selectedSpace = nil
-                }
+                if hit { viewerLaunch = nil }
             }
         }
     }
@@ -154,10 +140,13 @@ struct HomeView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.md) {
             GonggiBrandMark()
-            Text("무엇을 시작할까요?")
+            Text("둘러보기")
                 .font(GonggiTypography.title(24))
                 .foregroundStyle(GonggiColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
+            Text("다른 사람이 공개한 공간과 3D 자산을 살펴보세요.")
+                .font(GonggiTypography.body(15))
+                .foregroundStyle(GonggiColors.textSecondary)
         }
     }
 
@@ -166,75 +155,36 @@ struct HomeView: View {
             PrimaryButton(title: "새 공간 촬영", icon: "camera.aperture") {
                 appState.selectTab(.record)
             }
-            SecondaryButton(title: "공간 관리", icon: "archivebox") {
+            SecondaryButton(title: "보관함", icon: "archivebox") {
                 appState.selectTab(.library)
             }
         }
     }
 
-    private var recentSection: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            Text("최근 작업")
-                .font(GonggiTypography.caption(13))
-                .foregroundStyle(GonggiColors.textTertiary)
-
-            if recentSpaces.isEmpty {
-                Text("아직 만든 공간이 없어요.")
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, GonggiSpacing.xs)
-            } else {
-                ForEach(recentSpaces) { space in
-                    Button {
-                        handleSpaceTap(space)
-                    } label: {
-                        HStack(spacing: GonggiSpacing.md) {
-                            SpaceThumbnailView(
-                                space: space,
-                                height: 56,
-                                width: 56,
-                                cornerRadius: GonggiRadius.sm,
-                                showsActivityOverlay: true
-                            )
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(space.name)
-                                    .font(GonggiTypography.headline(16))
-                                    .foregroundStyle(GonggiColors.textPrimary)
-                                    .lineLimit(1)
-                                Text(recentSubtitle(for: space))
-                                    .font(GonggiTypography.caption(12))
-                                    .foregroundStyle(
-                                        space.repairBadge == .repairFailed || space.status == .failed
-                                            ? GonggiColors.error
-                                            : GonggiColors.textTertiary
-                                    )
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(GonggiColors.textTertiary)
-                        }
-                        .padding(GonggiSpacing.md)
-                        .background(GonggiColors.surfaceElevated)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
-                                .stroke(GonggiColors.borderSubtle, lineWidth: 1)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-                    }
-                    .buttonStyle(GonggiPressableStyle())
-                    .accessibilityLabel("\(space.name), 상세 보기")
-                }
+    @ViewBuilder
+    private var exploreContent: some View {
+        if isLoadingExplore && exploreSegment == .spaces && homePublicSpaces.isEmpty {
+            ProgressView("불러오는 중…")
+                .frame(maxWidth: .infinity)
+                .padding(.top, GonggiSpacing.lg)
+        } else if isLoadingExplore && exploreSegment == .assets && homePublicAssets.isEmpty {
+            ProgressView("불러오는 중…")
+                .frame(maxWidth: .infinity)
+                .padding(.top, GonggiSpacing.lg)
+        } else {
+            switch exploreSegment {
+            case .spaces:
+                spacesExploreSection
+            case .assets:
+                assetsExploreSection
             }
         }
     }
 
-    private var publicSpacesSection: some View {
+    private var spacesExploreSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
             HStack {
-                Text("공개 공간")
+                Text("공간")
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textTertiary)
                 Spacer(minLength: 0)
@@ -247,13 +197,23 @@ struct HomeView: View {
                 }
             }
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: GonggiSpacing.md) {
+            if let exploreError, homePublicSpaces.isEmpty {
+                Text(exploreError)
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+            } else if homePublicSpaces.isEmpty {
+                Text("아직 공개된 공간이 없어요.\n보관함에서 공간 공개 범위를 ‘전체 공개’로 설정해 보세요.")
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                LazyVStack(spacing: GonggiSpacing.md) {
                     ForEach(homePublicSpaces) { item in
                         Button {
                             publicViewerRoute = PublicSpaceSlugRoute(slug: item.publicSlug)
                         } label: {
                             PublicSpaceCardView(item: item)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(GonggiPressableStyle())
                     }
@@ -262,39 +222,93 @@ struct HomeView: View {
         }
     }
 
-    private func loadPublicSpaces() async {
+    private var assetsExploreSection: some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            HStack {
+                Text("3D 자산")
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                Spacer(minLength: 0)
+                NavigationLink {
+                    PublicAssetsListView()
+                } label: {
+                    Text("전체 보기")
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.accentTeal)
+                }
+            }
+
+            if let exploreError, homePublicAssets.isEmpty {
+                Text(exploreError)
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+            } else if homePublicAssets.isEmpty {
+                Text("아직 공개된 3D 자산이 없어요.\n보관함 자산 상세에서 둘러보기에 공개할 수 있어요.")
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                LazyVStack(spacing: GonggiSpacing.md) {
+                    ForEach(homePublicAssets) { item in
+                        PublicAssetCardView(item: item) {
+                            Task { await openPublicAssetAR(item) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func loadExplore() async {
+        isLoadingExplore = true
+        exploreError = nil
+        defer { isLoadingExplore = false }
+        let token = MobileAuthTokenStore.shared.getAccessToken()
         do {
-            let page = try await publicAPI.listPublicSpaces(
-                accessToken: MobileAuthTokenStore.shared.getAccessToken(),
-                limit: 4,
-                cursor: nil
-            )
-            publicSpaces = page.spaces
-            if let userId = AuthSessionController.shared.profile?.id
-                ?? AuthSessionController.shared.currentUser?.userId
-            {
-                PublicSpacesAccountStore.saveHomePreviewSlugs(
-                    page.spaces.map(\.publicSlug),
-                    userId: userId
+            switch exploreSegment {
+            case .spaces:
+                let page = try await publicAPI.listPublicSpaces(
+                    accessToken: token,
+                    limit: 8,
+                    cursor: nil
                 )
+                publicSpaces = page.spaces
+                if let userId = AuthSessionController.shared.profile?.id
+                    ?? AuthSessionController.shared.currentUser?.userId
+                {
+                    PublicSpacesAccountStore.saveHomePreviewSlugs(
+                        page.spaces.map(\.publicSlug),
+                        userId: userId
+                    )
+                }
+            case .assets:
+                let page = try await publicAPI.listPublicAssets(
+                    accessToken: token,
+                    limit: 8,
+                    cursor: nil
+                )
+                publicAssets = page.assets
             }
         } catch {
-            publicSpaces = []
+            exploreError = "공개 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
+            if exploreSegment == .spaces { publicSpaces = [] }
+            else { publicAssets = [] }
         }
     }
 
-    private func recentSubtitle(for space: SpaceRecord) -> String {
-        if space.status == .ready {
-            return space.capturedAt.formatted(date: .abbreviated, time: .omitted)
+    private func openPublicAssetAR(_ item: PublicAssetListItem) async {
+        guard item.availableForAR,
+              let remoteStr = item.usdzUrl,
+              let remote = URL(string: remoteStr)
+        else {
+            exploreError = "AR을 준비할 수 없어요."
+            return
         }
-        if let note = space.note, !note.isEmpty {
-            return note
+        guard let local = await VRUsdzCache().localURL(assetId: item.id, remoteURL: remote) else {
+            exploreError = "AR 파일을 불러오지 못했어요."
+            return
         }
-        return space.statusBadgeLabel
-    }
-
-    private func handleSpaceTap(_ space: SpaceRecord) {
-        selectedSpace = space
+        assetQuickLook = ExploreIdentifiedURL(url: local)
     }
 
     private func openViewer(jobId: String) async {
@@ -315,6 +329,25 @@ struct HomeView: View {
             viewerError = error.userMessage
         }
     }
+}
+
+enum ExploreSegment: String, CaseIterable, Identifiable {
+    case spaces
+    case assets
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .spaces: return "공간"
+        case .assets: return "3D 자산"
+        }
+    }
+}
+
+private struct ExploreIdentifiedURL: Identifiable {
+    let id = UUID()
+    let url: URL
 }
 
 #Preview {

@@ -365,6 +365,10 @@ struct AssetDetailView: View {
     @State private var quickLookURL: IdentifiedURL?
     @State private var pollTask: Task<Void, Never>?
     @State private var isForeground = true
+    @State private var exploreListed = false
+    @State private var exploreCanList = false
+    @State private var exploreBusy = false
+    @State private var exploreMessage: String?
 
     private var asset: MobileAssetDTO { detail ?? listSnapshot }
     private var canPlace: Bool {
@@ -382,6 +386,7 @@ struct AssetDetailView: View {
                     .font(GonggiTypography.title(24))
                     .foregroundStyle(GonggiColors.textPrimary)
                 statusBanner
+                exploreVisibilitySection
                 metaRows
                 actionSection
                 if let actionError {
@@ -402,6 +407,7 @@ struct AssetDetailView: View {
         .navigationTitle("3D 자산")
         .task {
             await loadDetail()
+            await loadExploreVisibility()
             syncPolling()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -531,6 +537,42 @@ struct AssetDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
     }
 
+    private var exploreVisibilitySection: some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            Toggle(isOn: Binding(
+                get: { exploreListed },
+                set: { next in
+                    Task { await setExploreListed(next) }
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("둘러보기에 공개")
+                        .font(GonggiTypography.headline(16))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                    Text(
+                        exploreCanList
+                            ? "다른 사용자가 홈 둘러보기에서 이 자산을 볼 수 있어요."
+                            : "AR 준비가 끝난 뒤에 공개할 수 있어요."
+                    )
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                }
+            }
+            .disabled(!exploreCanList || exploreBusy)
+            .tint(GonggiColors.brandCyan)
+
+            if let exploreMessage {
+                Text(exploreMessage)
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.error)
+            }
+        }
+        .padding(GonggiSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GonggiColors.surfaceElevated.opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+    }
+
     @ViewBuilder
     private var actionSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
@@ -642,6 +684,39 @@ struct AssetDetailView: View {
         detail = fresh
         libraryStore.upsertAsset(fresh)
         syncPolling()
+        exploreCanList = fresh.isUsdzReady
+    }
+
+    private func loadExploreVisibility() async {
+        do {
+            let state = try await MobileAssetsAPIClient().getExploreVisibility(assetId: asset.id)
+            exploreListed = state.exploreListed
+            exploreCanList = state.canList
+            exploreMessage = nil
+        } catch {
+            // Non-fatal — toggle stays off until reload.
+            exploreCanList = asset.isUsdzReady
+        }
+    }
+
+    private func setExploreListed(_ next: Bool) async {
+        guard !exploreBusy else { return }
+        let previous = exploreListed
+        exploreListed = next
+        exploreBusy = true
+        exploreMessage = nil
+        defer { exploreBusy = false }
+        do {
+            let state = try await MobileAssetsAPIClient().setExploreVisibility(
+                assetId: asset.id,
+                exploreListed: next
+            )
+            exploreListed = state.exploreListed
+            exploreCanList = state.canList
+        } catch {
+            exploreListed = previous
+            exploreMessage = "공개 설정을 저장하지 못했어요. 다시 시도해주세요."
+        }
     }
 
     private func prepareAR(invalidateCache: Bool) async {

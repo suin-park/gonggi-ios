@@ -77,6 +77,61 @@ actor MobileAssetsAPIClient {
         )
     }
 
+    /// GET `/api/mobile/assets/:id/explore-visibility`
+    func getExploreVisibility(assetId: String) async throws -> AssetExploreVisibilityState {
+        let data = try await get(
+            pathComponents: ["api", "mobile", "assets", assetId, "explore-visibility"]
+        )
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["ok"] as? Bool == true,
+              let row = json["visibility"] as? [String: Any],
+              let exploreListed = row["exploreListed"] as? Bool,
+              let canList = row["canList"] as? Bool
+        else {
+            throw MobileAssetsAPIError.invalidResponse
+        }
+        return AssetExploreVisibilityState(
+            exploreListed: exploreListed,
+            canList: canList,
+            usdzStatus: (row["usdzStatus"] as? String) ?? "NONE"
+        )
+    }
+
+    /// PATCH `/api/mobile/assets/:id/explore-visibility`
+    func setExploreVisibility(assetId: String, exploreListed: Bool) async throws -> AssetExploreVisibilityState {
+        let url = ["api", "mobile", "assets", assetId, "explore-visibility"].reduce(config.apiBaseURL) {
+            $0.appendingPathComponent($1)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["exploreListed": exploreListed])
+        request.timeoutInterval = 30
+        if let token = MobileAuthTokenStore.shared.getAccessToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MobileAssetsAPIError.invalidResponse
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw MobileAssetsAPIError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode), json["ok"] as? Bool == true,
+              let row = json["visibility"] as? [String: Any],
+              let listed = row["exploreListed"] as? Bool,
+              let canList = row["canList"] as? Bool
+        else {
+            throw MobileAssetsAPIError.server(status: http.statusCode)
+        }
+        return AssetExploreVisibilityState(
+            exploreListed: listed,
+            canList: canList,
+            usdzStatus: (row["usdzStatus"] as? String) ?? "NONE"
+        )
+    }
+
     private func get(pathComponents: [String]) async throws -> Data {
         let url = pathComponents.reduce(config.apiBaseURL) {
             $0.appendingPathComponent($1)
