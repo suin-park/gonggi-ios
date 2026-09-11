@@ -60,6 +60,9 @@ final class SpaceLibraryReconciler {
                 let locationSource = row["locationSource"] as? String
                 let locationCapturedAt = row["locationCapturedAt"] as? String
                 let audio = SpaceAudioMetadata.fromCatalogRow(row)
+                let sourceKind = row["sourceKind"] as? String
+                let mediaKind = row["mediaKind"] as? String
+                let videoURL = row["videoURL"] as? String
                 let existing = previousBySession[sessionId]
 
                 var job = existing ?? SpaceJobRecord(
@@ -89,6 +92,14 @@ final class SpaceLibraryReconciler {
                 job.longitude = longitude
                 job.locationSource = locationSource
                 job.locationCapturedAt = locationCapturedAt
+                if let sourceKind { job.sourceKind = sourceKind }
+                if let mediaKind { job.mediaKind = mediaKind }
+                if let videoURL { job.remoteVideoURL = videoURL }
+                if job.localVideoPath == nil || !(job.localVideoPath.map { FileManager.default.fileExists(atPath: $0) } ?? false) {
+                    if let localVid = SpaceLatLongStore.existingVideoURL(sessionId: sessionId) {
+                        job.localVideoPath = localVid.path
+                    }
+                }
                 let remoteCompleted = status == "completed" || status == "ready"
                 let localCompleted = job.serverStatus == "completed"
                 if remoteCompleted {

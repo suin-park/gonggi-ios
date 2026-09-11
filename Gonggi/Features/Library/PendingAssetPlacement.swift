@@ -119,6 +119,7 @@ enum AssetPlacementLaunch {
                         id: space.id,
                         fileURL: url,
                         audioURL: audioURL,
+                        videoURL: AppState.preferredVideoURL(for: space.id),
                         startInEditMode: true
                     )
                 )

@@ -188,11 +188,13 @@ final class SpaceJobRuntime: ObservableObject {
 
         if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
            SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+            await ensureLocalVideoIfNeeded(job: job)
             return .success(latest)
         }
 
         if SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath),
            let path = job.localLatLongPath {
+            await ensureLocalVideoIfNeeded(job: job)
             return .success(URL(fileURLWithPath: path))
         }
 
@@ -211,11 +213,13 @@ final class SpaceJobRuntime: ObservableObject {
 
         if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
            SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+            await ensureLocalVideoIfNeeded(job: job)
             return .success(latest)
         }
 
         if SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath),
            let path = job.localLatLongPath {
+            await ensureLocalVideoIfNeeded(job: job)
             return .success(URL(fileURLWithPath: path))
         }
 
@@ -287,10 +291,16 @@ final class SpaceJobRuntime: ObservableObject {
 
         if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: trackedSessionId),
            SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+            if let job = store.job(id: trackedJobId) {
+                await ensureLocalVideoIfNeeded(job: job)
+            }
             return .success(latest)
         }
         if let path = store.job(id: trackedJobId)?.localLatLongPath,
            SpaceLatLongStore.isValidLocalFile(at: path) {
+            if let job = store.job(id: trackedJobId) {
+                await ensureLocalVideoIfNeeded(job: job)
+            }
             return .success(URL(fileURLWithPath: path))
         }
         let failCode = store.job(id: trackedJobId)?.lastErrorCode
@@ -298,6 +308,28 @@ final class SpaceJobRuntime: ObservableObject {
             return .failure(.invalidImage)
         }
         return .failure(.downloadFailed)
+    }
+
+    /// Download equirect video when catalog/job has remoteVideoURL but local file is missing.
+    private func ensureLocalVideoIfNeeded(job: SpaceJobRecord) async {
+        guard job.isVideoPanorama || job.remoteVideoURL != nil else { return }
+        if let path = job.localVideoPath, FileManager.default.fileExists(atPath: path) { return }
+        if SpaceLatLongStore.existingVideoURL(sessionId: job.sessionId) != nil { return }
+        guard let remoteStr = job.remoteVideoURL, let remote = URL(string: remoteStr) else { return }
+        let ext = remote.pathExtension.isEmpty ? "mp4" : remote.pathExtension
+        guard let dest = try? SpaceLatLongStore.videoURL(sessionId: job.sessionId, pathExtension: ext) else {
+            return
+        }
+        do {
+            let (tmp, _) = try await URLSession.shared.download(from: remote)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try? FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.moveItem(at: tmp, to: dest)
+            store.update(jobId: job.jobId) { $0.localVideoPath = dest.path }
+        } catch {
+            // Non-fatal: VR can still open poster still.
+        }
     }
 
     // MARK: - Private

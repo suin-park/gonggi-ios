@@ -8,6 +8,8 @@ import UIKit
 /// Full-screen VR with long-press → selective repair flow (async after HTTP 202).
 struct VRSphereSpaceView: View {
     let imageURL: URL
+    /// Optional equirect video; when set, sphere uses AVPlayer (poster remains `imageURL`).
+    var videoURL: URL? = nil
     let sessionId: String
     var baseRevisionId: String = "rev-0-base"
     /// Build 80 — optional preferred audio URL (host may supply).
@@ -130,6 +132,7 @@ struct VRSphereSpaceView: View {
 
     init(
         imageURL: URL,
+        videoURL: URL? = nil,
         sessionId: String,
         baseRevisionId: String = "rev-0-base",
         preferredAudioURL: URL? = nil,
@@ -147,6 +150,7 @@ struct VRSphereSpaceView: View {
         onViewerReady: (() -> Void)? = nil
     ) {
         self.imageURL = imageURL
+        self.videoURL = videoURL
         self.sessionId = sessionId
         self.baseRevisionId = baseRevisionId
         self.preferredAudioURL = preferredAudioURL
@@ -758,6 +762,7 @@ struct VRSphereSpaceView: View {
     private var panoramaHost: some View {
         Panorama360SceneOnlyView(
             imageURL: textureURL,
+            videoURL: videoURL,
             textureGeneration: textureGeneration,
             markerYawDeg: markerYawDeg,
             markerPitchDeg: markerPitchDeg,
@@ -769,7 +774,10 @@ struct VRSphereSpaceView: View {
             confirmSheetPresented: showConfirmSheet,
             recenterToken: recenterToken,
             editModeActive: interactionMode == .edit && !spaceLinkTransitionLocked,
-            repairLongPressEnabled: interactionMode == .view && !spaceLinkTransitionLocked,
+            repairLongPressEnabled: allowsOwnerControls
+                && videoURL == nil
+                && interactionMode == .view
+                && !spaceLinkTransitionLocked,
             placementEntries: draftLayout.assets,
             placementFloorY: draftLayout.floorY,
             assetMetadata: assetMetadata,
@@ -2631,6 +2639,7 @@ private struct RepairCameraPreview: UIViewRepresentable {
 
 private struct Panorama360SceneOnlyView: UIViewRepresentable {
     let imageURL: URL
+    var videoURL: URL? = nil
     var textureGeneration: Int
     var markerYawDeg: Float?
     var markerPitchDeg: Float?
@@ -2705,6 +2714,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.configure(
             imageURL: imageURL,
             preparedTexture: prepared,
+            videoURL: videoURL,
             startMotion: !spaceLinkTransitionLocked && motionDesiredEnabled
         )
         host.setFieldOfViewDegrees(initialFieldOfView)
@@ -2745,6 +2755,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         )
         context.coordinator.lastGeneration = textureGeneration
         context.coordinator.lastURL = imageURL
+        context.coordinator.lastVideoURL = videoURL
         context.coordinator.lastRecenterToken = recenterToken
         context.coordinator.lastMotionDesired = motionDesiredEnabled
         context.coordinator.lastPlacementRequestToken = placementRequestToken
@@ -2800,11 +2811,13 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         SpaceLinkTransitionBridge.shared.register(uiView, role: transitionBridgeRole)
         context.coordinator.registeredHost = uiView
         if textureGeneration != context.coordinator.lastGeneration
-            || imageURL != context.coordinator.lastURL {
+            || imageURL != context.coordinator.lastURL
+            || videoURL != context.coordinator.lastVideoURL {
             let prepared = SpaceLinkPanoramaTextureCache.shared.cachedImage(for: imageURL)
-            uiView.reloadTexture(from: imageURL, preparedTexture: prepared)
+            uiView.reloadTexture(from: imageURL, preparedTexture: prepared, videoURL: videoURL)
             context.coordinator.lastGeneration = textureGeneration
             context.coordinator.lastURL = imageURL
+            context.coordinator.lastVideoURL = videoURL
         }
         if motionDesiredEnabled != context.coordinator.lastMotionDesired {
             uiView.setMotionDesiredEnabled(motionDesiredEnabled)
@@ -2939,6 +2952,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     final class Coordinator {
         var lastGeneration: Int = -1
         var lastURL: URL?
+        var lastVideoURL: URL?
         var didNotifyReady = false
         var lastRecenterToken: Int = 0
         var lastMotionDesired: Bool = true

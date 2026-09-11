@@ -45,6 +45,12 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var audioDurationSec: Double? = nil
     var audioSource: String? = nil
     var audioUpdatedAt: String? = nil
+    /// capture | import
+    var sourceKind: String? = nil
+    /// still | video
+    var mediaKind: String? = nil
+    var remoteVideoURL: String? = nil
+    var localVideoPath: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case sessionId, jobId, createdAt, completedAt, serverStatus, displayName
@@ -53,6 +59,11 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
         case localLatLongRevisionId, localLatLongRevisionToken, latestRevisionId, catalogUpdatedAt
         case width, height, lastErrorCode, ownerUserId
         case audioURL, audioFileName, audioMimeType, audioDurationSec, audioSource, audioUpdatedAt
+        case sourceKind, mediaKind, remoteVideoURL, localVideoPath
+    }
+
+    var isVideoPanorama: Bool {
+        (mediaKind ?? "").lowercased() == "video"
     }
 
     var isTerminal: Bool {
@@ -151,7 +162,11 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
             audioMimeType: audioMimeType,
             audioDurationSec: audioDurationSec,
             audioSource: audioSource,
-            audioUpdatedAt: audioUpdatedAt
+            audioUpdatedAt: audioUpdatedAt,
+            sourceKind: sourceKind,
+            mediaKind: mediaKind,
+            remoteVideoURL: remoteVideoURL,
+            localVideoPath: localVideoPath
         )
     }
 }
@@ -177,6 +192,8 @@ struct SpaceViewerSession: Identifiable, Equatable {
     let fileURL: URL
     /// Build 80 — optional resolved audio URL for host-driven playback.
     var audioURL: URL? = nil
+    /// Equirectangular panorama video (optional). When set, VR uses AVPlayer sphere texture.
+    var videoURL: URL? = nil
     /// Phase 2 — open directly in Edit (Asset Detail / Space Detail placement).
     var startInEditMode: Bool = false
     /// Public / guest viewers must disable edit, repair, delete, and owner audio chrome.

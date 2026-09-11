@@ -22,6 +22,23 @@ enum SpaceLatLongStore {
         try directory(sessionId: sessionId).appendingPathComponent("latlong.jpg")
     }
 
+    /// Equirectangular panorama video (import). Extension usually mp4/mov.
+    static func videoURL(sessionId: String, pathExtension: String = "mp4") throws -> URL {
+        let ext = pathExtension.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+        let safe = ext.isEmpty ? "mp4" : ext
+        return try directory(sessionId: sessionId).appendingPathComponent("panorama.\(safe)")
+    }
+
+    static func existingVideoURL(sessionId: String) -> URL? {
+        guard let dir = try? directory(sessionId: sessionId) else { return nil }
+        let candidates = ["panorama.mp4", "panorama.mov", "panorama.m4v"]
+        for name in candidates {
+            let url = dir.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        return nil
+    }
+
     /// Latest selective-repair revision texture (base `latlong.jpg` is never overwritten).
     static func latestLatLongURL(sessionId: String) throws -> URL {
         try directory(sessionId: sessionId).appendingPathComponent("latlong-latest.jpg")

@@ -220,12 +220,14 @@ final class AppState: ObservableObject {
                     SpaceViewerSession(
                         id: pending.sourceSpaceId,
                         fileURL: sourceURL,
-                        audioURL: Self.preferredAudioURL(for: pending.sourceSpaceId)
+                        audioURL: Self.preferredAudioURL(for: pending.sourceSpaceId),
+                        videoURL: Self.preferredVideoURL(for: pending.sourceSpaceId)
                     ),
                     SpaceViewerSession(
                         id: targetId,
                         fileURL: targetURL,
-                        audioURL: Self.preferredAudioURL(for: targetId)
+                        audioURL: Self.preferredAudioURL(for: targetId),
+                        videoURL: Self.preferredVideoURL(for: targetId)
                     ),
                 ])
                 pendingViewerError = nil
@@ -234,7 +236,8 @@ final class AppState: ObservableObject {
                     single: SpaceViewerSession(
                         id: targetId,
                         fileURL: targetURL,
-                        audioURL: Self.preferredAudioURL(for: targetId)
+                        audioURL: Self.preferredAudioURL(for: targetId),
+                        videoURL: Self.preferredVideoURL(for: targetId)
                     )
                 )
             default:
@@ -479,6 +482,20 @@ final class AppState: ObservableObject {
         SpaceJobStore.shared.jobs.first(where: {
             $0.jobId == spaceId || $0.sessionId == spaceId
         })?.audioURL.flatMap(URL.init(string:))
+    }
+
+    /// Local equirect video when present (import). Prefer on-disk path over remote.
+    static func preferredVideoURL(for spaceId: String) -> URL? {
+        guard let job = SpaceJobStore.shared.jobs.first(where: {
+            $0.jobId == spaceId || $0.sessionId == spaceId
+        }) else { return nil }
+        if let path = job.localVideoPath, FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        if let existing = SpaceLatLongStore.existingVideoURL(sessionId: job.sessionId) {
+            return existing
+        }
+        return nil
     }
 
     /// Phase 2 — peek without consuming (Edit entry timing).

@@ -9,6 +9,7 @@ struct LibraryView: View {
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
     @State private var retryJobId: String?
+    @State private var showImportSheet = false
 
     var body: some View {
         NavigationStack {
@@ -21,6 +22,12 @@ struct LibraryView: View {
                                 .font(GonggiTypography.body(15))
                                 .foregroundStyle(GonggiColors.textSecondary)
                                 .padding(.top, GonggiSpacing.sm)
+                            Button {
+                                showImportSheet = true
+                            } label: {
+                                Label("외부에서 가져오기", systemImage: "square.and.arrow.down")
+                            }
+                            .padding(.top, GonggiSpacing.sm)
                         } else {
                             LazyVStack(spacing: GonggiSpacing.md) {
                                 ForEach(appState.spaces) { space in
@@ -46,6 +53,24 @@ struct LibraryView: View {
             .background(GonggiAmbientBackground())
             .navigationTitle("공간 관리")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if category == .spaces {
+                        Button {
+                            showImportSheet = true
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                        }
+                        .accessibilityLabel("외부에서 가져오기")
+                    }
+                }
+            }
+            .sheet(isPresented: $showImportSheet) {
+                SpaceImportSheet { jobId in
+                    Task { await openViewer(jobId: jobId) }
+                }
+                .environmentObject(appState)
+            }
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)
             }
@@ -125,7 +150,8 @@ struct LibraryView: View {
                 single: SpaceViewerSession(
                     id: jobId,
                     fileURL: url,
-                    audioURL: AppState.preferredAudioURL(for: jobId)
+                    audioURL: AppState.preferredAudioURL(for: jobId),
+                    videoURL: AppState.preferredVideoURL(for: jobId)
                 )
             )
         case .failure(let error):

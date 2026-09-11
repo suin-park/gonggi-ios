@@ -307,7 +307,8 @@ struct HomeView: View {
                 single: SpaceViewerSession(
                     id: jobId,
                     fileURL: url,
-                    audioURL: AppState.preferredAudioURL(for: jobId)
+                    audioURL: AppState.preferredAudioURL(for: jobId),
+                    videoURL: AppState.preferredVideoURL(for: jobId)
                 )
             )
         case .failure(let error):

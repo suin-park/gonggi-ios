@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreMotion
 import Foundation
 import SceneKit
@@ -42,6 +43,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private weak var pinchRecognizer: UIPinchGestureRecognizer?
     private weak var rotationRecognizer: UIRotationGestureRecognizer?
     private weak var panRecognizer: UIPanGestureRecognizer?
+
+    /// Equirect video sphere texture (import). Still images keep UIImage contents.
+    private var panoramaPlayer: AVQueuePlayer?
+    private var panoramaLooper: AVPlayerLooper?
+    private var panoramaVideoURL: URL?
 
     /// Build 69 lighting/shadow PoC — nodes reused across View/Edit (no flicker recreate).
     private let lightingExperiment = VRLightingExperimentController()
@@ -202,12 +208,14 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     // MARK: - Scene
 
     /// - Parameters:
-    ///   - imageURL: on-disk equirect (cache key / fallback).
+    ///   - imageURL: on-disk equirect (cache key / fallback / poster for video).
     ///   - preparedTexture: Build 82 predecoded bitmap; skips main-thread JPEG decode when set.
+    ///   - videoURL: optional equirect MP4/MOV — drives sphere via AVPlayer.
     ///   - startMotion: false during SpaceLink transition lock so CoreMotion attach is deferred.
     func configure(
         imageURL: URL,
         preparedTexture: UIImage? = nil,
+        videoURL: URL? = nil,
         startMotion: Bool = true
     ) {
         let tScene = CFAbsoluteTimeGetCurrent()
@@ -220,7 +228,12 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         material.isDoubleSided = true
         material.lightingModel = .constant
         let tTex = CFAbsoluteTimeGetCurrent()
-        applyTexture(to: material, imageURL: imageURL, preparedTexture: preparedTexture)
+        if let videoURL {
+            applyVideoTexture(to: material, videoURL: videoURL)
+        } else {
+            stopPanoramaVideo()
+            applyTexture(to: material, imageURL: imageURL, preparedTexture: preparedTexture)
+        }
         SpaceLink82Timing.log("textureAssign", ["ms": SpaceLink82Timing.ms(since: tTex)])
         material.diffuse.wrapS = .repeat
         material.diffuse.wrapT = .clamp
@@ -290,12 +303,17 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     /// Reload equirect texture without resetting look composition.
-    func reloadTexture(from imageURL: URL, preparedTexture: UIImage? = nil) {
+    func reloadTexture(from imageURL: URL, preparedTexture: UIImage? = nil, videoURL: URL? = nil) {
         guard let material = sphereNode?.geometry?.firstMaterial else {
-            configure(imageURL: imageURL, preparedTexture: preparedTexture)
+            configure(imageURL: imageURL, preparedTexture: preparedTexture, videoURL: videoURL)
             return
         }
-        applyTexture(to: material, imageURL: imageURL, preparedTexture: preparedTexture)
+        if let videoURL {
+            applyVideoTexture(to: material, videoURL: videoURL)
+        } else {
+            stopPanoramaVideo()
+            applyTexture(to: material, imageURL: imageURL, preparedTexture: preparedTexture)
+        }
         applyLookToCamera()
     }
 
@@ -1177,6 +1195,43 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             "ms": SpaceLink82Timing.ms(since: t0),
             "source": "file"
         ])
+    }
+
+    private func applyVideoTexture(to material: SCNMaterial, videoURL: URL) {
+        if panoramaVideoURL == videoURL, panoramaPlayer != nil {
+            material.diffuse.contents = panoramaPlayer
+            panoramaPlayer?.play()
+            return
+        }
+        stopPanoramaVideo()
+        let item = AVPlayerItem(url: videoURL)
+        let queue = AVQueuePlayer(playerItem: item)
+        queue.isMuted = true
+        let looper = AVPlayerLooper(player: queue, templateItem: item)
+        panoramaPlayer = queue
+        panoramaLooper = looper
+        panoramaVideoURL = videoURL
+        material.diffuse.contents = queue
+        queue.play()
+    }
+
+    func stopPanoramaVideo() {
+        panoramaPlayer?.pause()
+        panoramaLooper = nil
+        panoramaPlayer = nil
+        panoramaVideoURL = nil
+    }
+
+    func setPanoramaVideoPlaying(_ playing: Bool) {
+        if playing {
+            panoramaPlayer?.play()
+        } else {
+            panoramaPlayer?.pause()
+        }
+    }
+
+    var isPanoramaVideoPlaying: Bool {
+        panoramaPlayer?.rate ?? 0 > 0.01
     }
 
     func updateSelection(

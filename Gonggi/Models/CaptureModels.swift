@@ -262,6 +262,16 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
     var audioDurationSec: Double? = nil
     var audioSource: String? = nil
     var audioUpdatedAt: String? = nil
+    /// capture | import
+    var sourceKind: String? = nil
+    /// still | video
+    var mediaKind: String? = nil
+    var remoteVideoURL: String? = nil
+    var localVideoPath: String? = nil
+
+    var isVideoPanorama: Bool {
+        (mediaKind ?? "").lowercased() == "video"
+    }
 
     /// Card / detail badge text.
     var statusBadgeLabel: String {

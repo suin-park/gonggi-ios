@@ -64,6 +64,7 @@ struct SpaceVRNavigationHost: View {
                 let isSourceDuringCrossfade = (isCrossfading || deferSourceHold) && !isTop
                 VRSphereSpaceView(
                     imageURL: session.fileURL,
+                    videoURL: session.videoURL,
                     sessionId: session.id,
                     preferredAudioURL: session.allowsOwnerControls ? session.audioURL : nil,
                     suppressAutoAudio: suppressStackAudio || isCrossfading || deferSourceHold || !session.allowsOwnerControls,
@@ -268,7 +269,12 @@ struct SpaceVRNavigationHost: View {
             let audioURL = await SpaceAudioManager.shared.resolveAudioURL(spaceId: targetKey)
             SpaceLink82Timing.log("audioResolve", ["ms": SpaceLink82Timing.ms(since: audioResolveStart)])
 
-            let session = SpaceViewerSession(id: targetKey, fileURL: url, audioURL: audioURL)
+            let session = SpaceViewerSession(
+                id: targetKey,
+                fileURL: url,
+                audioURL: audioURL,
+                videoURL: AppState.preferredVideoURL(for: targetKey)
+            )
 
             targetEntryFOV = zoomTarget
             sourceOpacity = 1
@@ -416,7 +422,12 @@ struct SpaceVRNavigationHost: View {
         case .success(let url):
             _ = await SpaceLinkPanoramaTextureCache.shared.predecode(url: url)
             let audioURL = await SpaceAudioManager.shared.resolveAudioURL(spaceId: targetKey)
-            let session = SpaceViewerSession(id: targetKey, fileURL: url, audioURL: audioURL)
+            let session = SpaceViewerSession(
+                id: targetKey,
+                fileURL: url,
+                audioURL: audioURL,
+                videoURL: AppState.preferredVideoURL(for: targetKey)
+            )
             stack.append(session)
             withAnimation(.easeInOut(duration: 0.28)) {
                 fadeOpacity = 0

@@ -565,7 +565,12 @@ struct SpaceDetailView: View {
         case .success(let url):
             let audioURL = liveSpace.audioURL.flatMap(URL.init(string:))
             viewerLaunch = SpaceViewerLaunch(
-                single: SpaceViewerSession(id: liveSpace.id, fileURL: url, audioURL: audioURL)
+                single: SpaceViewerSession(
+                    id: liveSpace.id,
+                    fileURL: url,
+                    audioURL: audioURL,
+                    videoURL: AppState.preferredVideoURL(for: liveSpace.id)
+                )
             )
         case .failure(let error):
             viewerError = error.userMessage
