@@ -449,82 +449,239 @@ struct SpaceVRNavigationHost: View {
         }
     }
 
+    /// Public / share hotspot navigation — same align→zoom→crossfade→settle as owner LatLong VR.
     @MainActor
     private func navigatePublicOrShare(targetKey: String, link: SpaceLink) async {
+        let reduceMotion = reduceMotionEnv || UIAccessibility.isReduceMotionEnabled
+        let sourceId = stack.last?.id ?? "?"
         isTransitioning = true
         suppressStackAudio = true
-        defer {
+        sourceHoldTask?.cancel()
+        deferSourceHold = false
+
+        let sourceHost = SpaceLinkTransitionBridge.shared.activeHost
+        guard let sourceHost else {
+            SpaceLink82Timing.log("fallback", ["reason": "no_active_host", "path": "public"])
+            await navigatePublicOrShareWithBlackFallback(targetKey: targetKey)
+            return
+        }
+
+        let t0 = CFAbsoluteTimeGetCurrent()
+        sourceHost.setSpaceLinkTransitionLocked(true)
+        sourceHost.pulseHotspotExit(id: link.id)
+
+        SpaceLink82Timing.log("begin", [
+            "source": sourceId,
+            "target": targetKey,
+            "path": "public",
+            "reduceMotion": reduceMotion
+        ])
+
+        async let audioFade: Void = SpaceAudioManager.shared.fadeOutAndStop(
+            duration: SpaceAudioPolicy.fadeOutSeconds
+        )
+
+        let alignStart = CFAbsoluteTimeGetCurrent()
+        let presentationFOV = sourceHost.currentFieldOfViewDegrees()
+        let zoomTarget = reduceMotion
+            ? presentationFOV
+            : VRViewingFOVMath.transitionZoomTarget(fromCurrent: presentationFOV)
+        async let alignZoom: Void = sourceHost.runAlignAndZoom(
+            targetYawDeg: link.yawDeg,
+            targetPitchDeg: link.pitchDeg,
+            targetFOV: zoomTarget,
+            reduceMotion: reduceMotion
+        )
+
+        let resolveStart = CFAbsoluteTimeGetCurrent()
+        SpaceLink82Timing.log("urlResolve start", ["path": "public"])
+        let resolveResult: Result<SpaceViewerSession, Error>
+        do {
+            let session = try await resolvePublicOrShareSession(targetKey: targetKey)
+            resolveResult = .success(session)
+        } catch {
+            resolveResult = .failure(error)
+        }
+        let resolveMs = SpaceLink82Timing.ms(since: resolveStart)
+        SpaceLink82Timing.log("urlResolve end", ["ms": resolveMs, "path": "public"])
+
+        await alignZoom
+        let alignMs = SpaceLink82Timing.ms(since: alignStart)
+        _ = await audioFade
+
+        switch resolveResult {
+        case .success(let session):
+            let decodeStart = CFAbsoluteTimeGetCurrent()
+            let decoded = await SpaceLinkPanoramaTextureCache.shared.predecode(url: session.fileURL)
+            let decodeMs = SpaceLink82Timing.ms(since: decodeStart)
+            SpaceLink82Timing.log("predecodeGate", [
+                "ms": decodeMs,
+                "ok": decoded != nil,
+                "path": "public"
+            ])
+
+            targetEntryFOV = zoomTarget
+            sourceOpacity = 1
+            targetOpacity = 0
+            targetReadyPending = false
+            SpaceLink82Timing.log("stackAppend", ["path": "public"])
+            isCrossfading = true
+            stack.append(session)
+
+            let waitStart = CFAbsoluteTimeGetCurrent()
+            await waitForTargetViewerReady(timeoutMs: 3_500)
+            let waitMs = SpaceLink82Timing.ms(since: waitStart)
+            SpaceLink82Timing.log("waitFirstFrame", ["ms": waitMs, "path": "public"])
+
+            let crossDur = reduceMotion
+                ? SpaceLinkTransitionMath.reduceMotionCrossfadeDuration
+                : SpaceLinkTransitionMath.crossfadeDuration
+            let crossStart = CFAbsoluteTimeGetCurrent()
+            withAnimation(.easeInOut(duration: crossDur)) {
+                sourceOpacity = 0
+                targetOpacity = 1
+            }
+            try? await Task.sleep(nanoseconds: UInt64(crossDur * 1_000_000_000))
+            let crossMs = SpaceLink82Timing.ms(since: crossStart)
+            SpaceLink82Timing.log("crossfadeComplete", ["ms": crossMs, "path": "public"])
+
+            deferSourceHold = true
+            isCrossfading = false
+            sourceOpacity = 1
+            targetOpacity = 1
+
+            let settleStart = CFAbsoluteTimeGetCurrent()
+            let settleFOV = VRViewingFOVMath.defaultFOV
+            if let targetHost = SpaceLinkTransitionBridge.shared.activeHost {
+                targetHost.setSpaceLinkTransitionLocked(true)
+                if !reduceMotion {
+                    targetHost.applyPresentationFOV(zoomTarget)
+                    await targetHost.animateFieldOfView(
+                        to: settleFOV,
+                        duration: SpaceLinkTransitionMath.settleDuration,
+                        easeOut: true
+                    )
+                } else {
+                    targetHost.applyPresentationFOV(settleFOV)
+                }
+                targetHost.commitUserViewingFOV(settleFOV)
+                await Task.yield()
+                targetHost.setSpaceLinkTransitionLocked(false)
+            }
+            let settleMs = SpaceLink82Timing.ms(since: settleStart)
+
+            targetEntryFOV = VRViewingFOVMath.defaultFOV
             suppressStackAudio = false
             isTransitioning = false
-        }
+            SpaceLink82Timing.log("interactionReady", ["path": "public"])
+            scheduleDeferredSourceRelease()
 
-        let api = MobilePublicSpacesAPIClient()
-        do {
-            if targetKey.hasPrefix("public:") {
-                guard let parsed = PublicSpacesPolicy.parsePublicNavigationTarget(targetKey) else {
-                    navigateError = "연결할 공간을 찾을 수 없어요"
-                    return
-                }
-                let slug = parsed.slug
-                let tourSpaceId = parsed.spaceId
-                let detail = try await api.getPublicSpace(
-                    accessToken: MobileAuthTokenStore.shared.getAccessToken(),
-                    slug: slug,
-                    spaceId: tourSpaceId
-                )
-                let cacheKey = tourSpaceId.map { "public-\(slug)-\($0)" } ?? "public-\(slug)"
-                let file = try await api.downloadPanorama(
-                    accessToken: MobileAuthTokenStore.shared.getAccessToken(),
-                    panoramaUrl: detail.panoramaUrl,
-                    cacheKey: cacheKey
-                )
-                _ = await SpaceLinkPanoramaTextureCache.shared.predecode(url: file)
-                let overlay = PublicViewerOverlay(detail: detail, apiBaseURL: await api.apiBaseURL)
-                let sessionId = PublicSpacesPolicy.publicTourSessionId(
-                    rootSlug: slug,
-                    spaceId: tourSpaceId ?? detail.spaceId,
-                    rootSpaceId: detail.rootSpaceId
-                )
-                let session = SpaceViewerSession(
-                    id: sessionId,
-                    fileURL: file,
-                    audioURL: nil,
-                    startInEditMode: false,
-                    allowsOwnerControls: false,
-                    publicOverlay: overlay
-                )
-                targetEntryFOV = SpaceLinkTransitionMath.baseFOV
-                stack.append(session)
-                return
-            }
+            SpaceLink82Timing.log("done", [
+                "path": "public",
+                "resolveMs": resolveMs,
+                "decodeMs": decodeMs,
+                "alignMs": alignMs,
+                "waitReadyMs": waitMs,
+                "crossfadeMs": crossMs,
+                "settleMs": settleMs,
+                "totalMs": SpaceLink82Timing.ms(since: t0)
+            ])
 
-            if targetKey.hasPrefix("share:") {
-                let token = String(targetKey.dropFirst("share:".count))
-                let detail = try await api.getShareSpace(token: token)
-                let file = try await api.downloadPanorama(
-                    accessToken: nil,
-                    panoramaUrl: detail.panoramaUrl,
-                    cacheKey: "share-\(token)"
-                )
-                _ = await SpaceLinkPanoramaTextureCache.shared.predecode(url: file)
-                // Share path: hotspots without cross-space public overlay (existing share semantics).
-                let session = SpaceViewerSession(
-                    id: "share:\(token)",
-                    fileURL: file,
-                    audioURL: nil,
-                    startInEditMode: false,
-                    allowsOwnerControls: false,
-                    publicOverlay: nil
-                )
-                targetEntryFOV = SpaceLinkTransitionMath.baseFOV
-                stack.append(session)
-                return
-            }
-            navigateError = "연결할 공간을 찾을 수 없어요"
-        } catch {
+        case .failure:
+            SpaceLink82Timing.log("targetLoadFailure", ["resolveMs": resolveMs, "path": "public"])
+            await sourceHost.restoreAfterFailedSpaceLinkTransition()
+            isCrossfading = false
+            deferSourceHold = false
+            targetEntryFOV = VRViewingFOVMath.defaultFOV
+            suppressStackAudio = false
+            isTransitioning = false
             navigateError = "공간을 불러오지 못했어요"
-            _ = link
         }
+    }
+
+    @MainActor
+    private func navigatePublicOrShareWithBlackFallback(targetKey: String) async {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            fadeOpacity = 1
+        }
+        async let audioFade: Void = SpaceAudioManager.shared.fadeOutAndStop()
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        _ = await audioFade
+
+        do {
+            let session = try await resolvePublicOrShareSession(targetKey: targetKey)
+            _ = await SpaceLinkPanoramaTextureCache.shared.predecode(url: session.fileURL)
+            stack.append(session)
+            withAnimation(.easeInOut(duration: 0.28)) {
+                fadeOpacity = 0
+            }
+            suppressStackAudio = false
+            isTransitioning = false
+            try? await Task.sleep(nanoseconds: 280_000_000)
+        } catch {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                fadeOpacity = 0
+            }
+            suppressStackAudio = false
+            isTransitioning = false
+            navigateError = "공간을 불러오지 못했어요"
+        }
+    }
+
+    private func resolvePublicOrShareSession(targetKey: String) async throws -> SpaceViewerSession {
+        let api = MobilePublicSpacesAPIClient()
+        if targetKey.hasPrefix("public:") {
+            guard let parsed = PublicSpacesPolicy.parsePublicNavigationTarget(targetKey) else {
+                throw URLError(.badURL)
+            }
+            let slug = parsed.slug
+            let tourSpaceId = parsed.spaceId
+            let detail = try await api.getPublicSpace(
+                accessToken: MobileAuthTokenStore.shared.getAccessToken(),
+                slug: slug,
+                spaceId: tourSpaceId
+            )
+            let cacheKey = tourSpaceId.map { "public-\(slug)-\($0)" } ?? "public-\(slug)"
+            let file = try await api.downloadPanorama(
+                accessToken: MobileAuthTokenStore.shared.getAccessToken(),
+                panoramaUrl: detail.panoramaUrl,
+                cacheKey: cacheKey
+            )
+            let overlay = PublicViewerOverlay(detail: detail, apiBaseURL: await api.apiBaseURL)
+            let sessionId = PublicSpacesPolicy.publicTourSessionId(
+                rootSlug: slug,
+                spaceId: tourSpaceId ?? detail.spaceId,
+                rootSpaceId: detail.rootSpaceId
+            )
+            return SpaceViewerSession(
+                id: sessionId,
+                fileURL: file,
+                audioURL: nil,
+                startInEditMode: false,
+                allowsOwnerControls: false,
+                publicOverlay: overlay
+            )
+        }
+
+        if targetKey.hasPrefix("share:") {
+            let token = String(targetKey.dropFirst("share:".count))
+            let detail = try await api.getShareSpace(token: token)
+            let file = try await api.downloadPanorama(
+                accessToken: nil,
+                panoramaUrl: detail.panoramaUrl,
+                cacheKey: "share-\(token)"
+            )
+            return SpaceViewerSession(
+                id: "share:\(token)",
+                fileURL: file,
+                audioURL: nil,
+                startInEditMode: false,
+                allowsOwnerControls: false,
+                publicOverlay: nil
+            )
+        }
+
+        throw URLError(.unsupportedURL)
     }
 
     @MainActor
