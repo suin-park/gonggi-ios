@@ -42,26 +42,39 @@ struct HomeView: View {
                 .padding(.bottom, GonggiSpacing.xxl)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
-            .refreshable { await loadExplore(reset: true) }
+            .refreshable {
+                await loadExplore(reset: true)
+                await appState.refreshNotificationUnreadCount()
+            }
             .contentMargins(.bottom, GonggiSpacing.lg, for: .scrollContent)
             .background(GonggiAmbientBackground())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        appState.selectTab(.record)
+                    NavigationLink {
+                        NotificationsListView()
+                            .environmentObject(appState)
                     } label: {
-                        Image(systemName: "camera.aperture")
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "bell")
+                            if appState.notificationUnreadCount > 0 {
+                                Text(appState.notificationUnreadCount > 99
+                                      ? "99+"
+                                      : "\(appState.notificationUnreadCount)")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.red))
+                                    .offset(x: 8, y: -8)
+                            }
+                        }
                     }
-                    .accessibilityLabel("새 공간 촬영")
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        appState.selectTab(.library)
-                    } label: {
-                        Image(systemName: "archivebox")
-                    }
-                    .accessibilityLabel("보관함")
+                    .accessibilityLabel(
+                        appState.notificationUnreadCount > 0
+                            ? "알림, 읽지 않음 \(appState.notificationUnreadCount)개"
+                            : "알림"
+                    )
                 }
             }
             .fullScreenCover(item: $publicViewerRoute) { route in
@@ -77,7 +90,10 @@ struct HomeView: View {
             .sheet(item: $assetQuickLook) { item in
                 AssetARQuickLookView(localUsdzURL: item.url)
             }
-            .task { await loadExplore(reset: true) }
+            .task {
+                await loadExplore(reset: true)
+                await appState.refreshNotificationUnreadCount()
+            }
             .onChange(of: exploreSegment) { _, _ in
                 Task { await loadExplore(reset: true) }
             }

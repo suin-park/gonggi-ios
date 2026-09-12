@@ -113,6 +113,9 @@ struct PublicSpacesListView: View {
             PublicSpaceViewerLoader(slug: route.slug)
                 .environmentObject(appState)
         }
+        .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
+            selectedRoute = nil
+        }
         .task {
             guard !didInitialLoad else { return }
             didInitialLoad = true

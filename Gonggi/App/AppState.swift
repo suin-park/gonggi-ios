@@ -22,8 +22,11 @@ final class AppState: ObservableObject {
     @Published var preferredLibraryCategory: LibraryCategory?
     /// Soft Library refresh signal — does not block tab transition.
     @Published private(set) var libraryRefreshEpoch: UInt64 = 0
-    /// Debounce repeated 「보관함」 taps while covers tear down.
+    /// Unread Gonggi notification badge (likes, comments, admin announcements).
+    @Published var notificationUnreadCount: Int = 0
+    /// Debounce repeated 「보관함」/「홈」 taps while covers tear down.
     private var isExitingVRToLibrary = false
+    private var isExitingVRToHome = false
 
     let spaceService: SpaceGenerationService
     let jobStore: SpaceJobStore
@@ -102,12 +105,28 @@ final class AppState: ObservableObject {
         pendingAssetPlacement = nil
         spaceLinkUserMessage = nil
         preferredLibraryCategory = nil
+        notificationUnreadCount = 0
         isExitingVRToLibrary = false
+        isExitingVRToHome = false
         forceDismissViewerEpoch &+= 1
         spaceLinkFinalizeTask?.cancel()
         AdvancedCaptureAnalysisStore.shared.clearAll()
         AdvancedCaptureAnalysisRuntime.shared.stopPolling()
         rebuildSpaces()
+    }
+
+    /// Refresh home toolbar notification badge (best-effort; ignores auth/network errors).
+    func refreshNotificationUnreadCount() async {
+        guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
+            notificationUnreadCount = 0
+            return
+        }
+        do {
+            let count = try await MobileNotificationsAPIClient().fetchUnreadCount(accessToken: token)
+            notificationUnreadCount = count
+        } catch {
+            // Keep last known badge on transient failures.
+        }
     }
 
     func selectTab(_ tab: AppTab) {
@@ -147,6 +166,27 @@ final class AppState: ObservableObject {
             )
             guard AuthSessionGeneration.isCurrent(generation) else { return }
             rebuildSpaces()
+        }
+    }
+
+    /// One-tap exit from a shared/public VR: dismiss viewer stack and land on Home.
+    func exitVRToHome() {
+        guard !isExitingVRToHome else { return }
+        isExitingVRToHome = true
+        let generation = AuthSessionGeneration.current
+
+        pendingViewerJobId = nil
+        pendingViewerError = nil
+        pendingViewerLaunch = nil
+        selectedTab = .home
+        forceDismissViewerEpoch &+= 1
+
+        Task { @MainActor in
+            // Allow cover teardown to settle before accepting another exit tap.
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if AuthSessionGeneration.isCurrent(generation) {
+                isExitingVRToHome = false
+            }
         }
     }
 

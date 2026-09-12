@@ -22,7 +22,9 @@ actor SpaceRepairRuntime {
         image: UIImage,
         capturedYawDeg: Float,
         capturedElevationDeg: Float,
-        repairMode: String = "marked_region_direct_edit"
+        repairMode: String = "marked_region_direct_edit",
+        userIntentText: String? = nil,
+        intentHint: String? = nil
     ) async throws -> SpaceRepairJobRecord {
         let jpeg = image.jpegData(compressionQuality: 0.9) ?? Data()
         guard !jpeg.isEmpty else { throw SpaceRecordClientError.captureIncomplete }
@@ -67,7 +69,9 @@ actor SpaceRepairRuntime {
             repairImageURL: tmp,
             captureMetadataJSON: metaJSON,
             capturedYawDeg: Double(capturedYawDeg),
-            capturedElevationDeg: Double(capturedElevationDeg)
+            capturedElevationDeg: Double(capturedElevationDeg),
+            userIntentText: userIntentText,
+            intentHint: intentHint
         )
 
         let now = Date()
@@ -83,7 +87,9 @@ actor SpaceRepairRuntime {
             localLatLongPath: nil,
             createdAt: now,
             updatedAt: now,
-            errorCode: nil
+            errorCode: nil,
+            userFacingSummaryKo: nil,
+            intent: intentHint
         )
         store.upsert(job)
         return job
@@ -115,6 +121,12 @@ actor SpaceRepairRuntime {
                     job.revisionId = status.revisionId ?? job.revisionId
                     job.resultImageURL = status.imageUrl
                     job.errorCode = status.errorCode
+                    if let summary = status.userFacingSummaryKo, !summary.isEmpty {
+                        job.userFacingSummaryKo = summary
+                    }
+                    if let intent = status.intent, !intent.isEmpty {
+                        job.intent = intent
+                    }
                 }
 
                 if status.status == "completed" {

@@ -93,14 +93,18 @@ final class RepairSessionController: ObservableObject {
         target: RepairTarget,
         image: UIImage,
         capturedYawDeg: Float,
-        capturedElevationDeg: Float
+        capturedElevationDeg: Float,
+        userIntentText: String? = nil,
+        intentHint: String? = nil
     ) async throws {
         let job = try await SpaceRepairRuntime.shared.submitRepair(
             target: target,
             image: image,
             capturedYawDeg: capturedYawDeg,
             capturedElevationDeg: capturedElevationDeg,
-            repairMode: "marked_region_direct_edit"
+            repairMode: "marked_region_direct_edit",
+            userIntentText: userIntentText,
+            intentHint: intentHint
         )
         // Banner stays off — navigation returns to library; card shows repairing.
         banner = .none

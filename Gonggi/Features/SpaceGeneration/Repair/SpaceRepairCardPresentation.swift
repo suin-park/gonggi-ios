@@ -21,10 +21,11 @@ enum SpaceRepairCardPresentation {
         let latestFailed = jobs.first(where: { $0.status == "failed" })
 
         if let active {
+            let summary = active.userFacingSummaryKo?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return Overlay(
                 badge: .repairing,
                 preferredLocalLatLongPath: latestSuccess?.localLatLongPath,
-                note: "수정 중"
+                note: summary.isEmpty ? "수정 중" : summary
             )
         }
 

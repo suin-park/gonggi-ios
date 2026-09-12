@@ -62,6 +62,9 @@ struct SpaceRepairJobRecord: Codable, Equatable, Identifiable {
     var createdAt: Date
     var updatedAt: Date
     var errorCode: String?
+    /// Server Astra / deterministic summary for card note (optional).
+    var userFacingSummaryKo: String? = nil
+    var intent: String? = nil
 
     var isTerminal: Bool {
         status == "completed" || status == "failed"
@@ -83,4 +86,26 @@ struct SpaceRepairStatusResponse: Equatable {
     var width: Int?
     var height: Int?
     var errorCode: String?
+    var userFacingSummaryKo: String? = nil
+    var intent: String? = nil
+}
+
+enum RepairIntentHint: String, CaseIterable, Identifiable, Equatable {
+    case preserveText = "preserve_text"
+    case fixGeometry = "fix_geometry"
+    case fillGap = "fill_gap"
+    case removeObject = "remove_object"
+    case generalRefine = "general_refine"
+
+    var id: String { rawValue }
+
+    var labelKo: String {
+        switch self {
+        case .preserveText: return "글자 보존"
+        case .fixGeometry: return "구조 수정"
+        case .fillGap: return "빈 곳 채우기"
+        case .removeObject: return "객체 제거"
+        case .generalRefine: return "일반 다듬기"
+        }
+    }
 }

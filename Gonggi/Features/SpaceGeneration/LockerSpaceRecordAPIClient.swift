@@ -122,7 +122,9 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         repairImageURL: URL,
         captureMetadataJSON: String,
         capturedYawDeg: Double,
-        capturedElevationDeg: Double
+        capturedElevationDeg: Double,
+        userIntentText: String? = nil,
+        intentHint: String? = nil
     ) async throws -> SpaceRepairCreateResponse {
         let endpoint = config.apiBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             + "/api/gonggi/space/repair"
@@ -155,6 +157,12 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         appendField(name: "capturedYawDeg", value: String(capturedYawDeg))
         appendField(name: "capturedElevationDeg", value: String(capturedElevationDeg))
         appendField(name: "captureMetadata", value: captureMetadataJSON)
+        if let userIntentText, !userIntentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            appendField(name: "userIntentText", value: String(userIntentText.prefix(200)))
+        }
+        if let intentHint, !intentHint.isEmpty {
+            appendField(name: "intentHint", value: intentHint)
+        }
 
         let data = try Data(contentsOf: repairImageURL)
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
@@ -221,7 +229,9 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
             imageUrl: imageUrl,
             width: width,
             height: height,
-            errorCode: json["errorCode"] as? String
+            errorCode: json["errorCode"] as? String,
+            userFacingSummaryKo: json["userFacingSummaryKo"] as? String,
+            intent: json["intent"] as? String
         )
     }
 

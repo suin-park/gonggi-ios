@@ -81,6 +81,7 @@ struct VRSphereSpaceView: View {
     @State private var editBaselineLayout: VRPlacementLayout?
     @State private var showExitEditConfirm = false
     @State private var isExitingToLibrary = false
+    @State private var isExitingToHome = false
     @State private var placementBlockedMessage: String?
     /// DEBUG lighting panel state (Release always baseline; flag via UserDefaults only).
     @State private var lightingPoCActive = false
@@ -665,6 +666,9 @@ struct VRSphereSpaceView: View {
             if showsLibraryExitButton {
                 libraryExitButton
             }
+            if showsHomeExitButton {
+                homeExitButton
+            }
         }
         .confirmationDialog(
             "편집을 종료할까요?",
@@ -686,6 +690,11 @@ struct VRSphereSpaceView: View {
         allowsOwnerControls && authSession.isSignedIn
     }
 
+    /// Shared/public VR — same chrome weight as the owner 「보관함」 exit.
+    private var showsHomeExitButton: Bool {
+        !allowsOwnerControls
+    }
+
     private var backButton: some View {
         Button {
             GonggiHaptics.light()
@@ -703,7 +712,7 @@ struct VRSphereSpaceView: View {
                 .clipShape(Circle())
         }
         .accessibilityLabel("이전 공간으로 돌아가기")
-        .disabled(spaceLinkTransitionLocked || isExitingToLibrary)
+        .disabled(spaceLinkTransitionLocked || isExitingToLibrary || isExitingToHome)
     }
 
     private var libraryExitButton: some View {
@@ -726,11 +735,34 @@ struct VRSphereSpaceView: View {
             .clipShape(Capsule())
         }
         .accessibilityLabel("VR을 닫고 보관함으로 이동")
-        .disabled(spaceLinkTransitionLocked || isExitingToLibrary || spaceLinkLinking)
+        .disabled(spaceLinkTransitionLocked || isExitingToLibrary || isExitingToHome || spaceLinkLinking)
+    }
+
+    private var homeExitButton: some View {
+        Button {
+            GonggiHaptics.light()
+            performExitToHome()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "house")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("홈")
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .background(Color.black.opacity(0.45))
+            .clipShape(Capsule())
+        }
+        .accessibilityLabel("VR을 닫고 홈으로 이동")
+        .disabled(spaceLinkTransitionLocked || isExitingToLibrary || isExitingToHome || spaceLinkLinking)
     }
 
     private func requestExitToLibrary() {
-        guard !isExitingToLibrary else { return }
+        guard !isExitingToLibrary, !isExitingToHome else { return }
         guard !spaceLinkTransitionLocked else { return }
         if interactionMode == .edit, discardDraftOnExitEdit {
             showExitEditConfirm = true
@@ -743,7 +775,7 @@ struct VRSphereSpaceView: View {
     }
 
     private func performExitToLibrary() {
-        guard !isExitingToLibrary else { return }
+        guard !isExitingToLibrary, !isExitingToHome else { return }
         isExitingToLibrary = true
         showConfirmSheet = false
         captureTarget = nil
@@ -757,6 +789,24 @@ struct VRSphereSpaceView: View {
         motionHintTask?.cancel()
         motionHintTask = nil
         appState.exitVRToLibrary()
+    }
+
+    private func performExitToHome() {
+        guard !isExitingToLibrary, !isExitingToHome else { return }
+        guard !spaceLinkTransitionLocked else { return }
+        isExitingToHome = true
+        showConfirmSheet = false
+        captureTarget = nil
+        actionCardLink = nil
+        safariURL = nil
+        placementTask?.cancel()
+        placementTask = nil
+        spaceLinkTask?.cancel()
+        spaceLinkTask = nil
+        cancelSelectiveRepairHintTask(resetIfNotYetVisible: true)
+        motionHintTask?.cancel()
+        motionHintTask = nil
+        appState.exitVRToHome()
     }
 
     private var panoramaHost: some View {
@@ -2347,6 +2397,9 @@ struct RepairManualCaptureView: View {
     @State private var showSoftWarning = false
     @State private var submitError: String?
     @State private var acceptNavigateTask: Task<Void, Never>?
+    @State private var userIntentText: String = ""
+    @State private var selectedIntentHint: RepairIntentHint? = nil
+    @FocusState private var intentFieldFocused: Bool
 
     var body: some View {
         ZStack {
@@ -2490,12 +2543,61 @@ struct RepairManualCaptureView: View {
                 .scaledToFit()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
+                .onTapGesture { intentFieldFocused = false }
 
             if showSoftWarning, phase == .preview {
                 Text("선택한 부분이 화면에 잘 보이는지 확인해주세요.")
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.yellow)
                     .padding(.top, 8)
+            }
+
+            if phase == .preview || phase == .uploading {
+                VStack(alignment: .leading, spacing: 10) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(RepairIntentHint.allCases) { hint in
+                                Button {
+                                    GonggiHaptics.light()
+                                    if selectedIntentHint == hint {
+                                        selectedIntentHint = nil
+                                    } else {
+                                        selectedIntentHint = hint
+                                    }
+                                } label: {
+                                    Text(hint.labelKo)
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            Capsule().fill(
+                                                selectedIntentHint == hint
+                                                    ? Color.white.opacity(0.92)
+                                                    : Color.white.opacity(0.16)
+                                            )
+                                        )
+                                        .foregroundStyle(selectedIntentHint == hint ? Color.black : Color.white)
+                                }
+                                .disabled(phase == .uploading || phase == .accepted)
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                    }
+
+                    TextField(
+                        "어떻게 고칠까요? (예: 간판 글자를 사진과 똑같이)",
+                        text: $userIntentText,
+                        axis: .vertical
+                    )
+                    .lineLimit(1...3)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.12)))
+                    .foregroundStyle(.white)
+                    .focused($intentFieldFocused)
+                    .disabled(phase == .uploading || phase == .accepted)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
 
             if phase == .uploading {
@@ -2523,6 +2625,7 @@ struct RepairManualCaptureView: View {
                     guard phase == .preview else { return }
                     previewImage = nil
                     phase = .camera
+                    intentFieldFocused = false
                     model.retake()
                 }
                 .buttonStyle(.bordered)
@@ -2530,6 +2633,7 @@ struct RepairManualCaptureView: View {
 
                 Button("이 사진으로 수정") {
                     GonggiHaptics.medium()
+                    intentFieldFocused = false
                     Task { await submit(image: image) }
                 }
                 .buttonStyle(.borderedProminent)
@@ -2544,12 +2648,15 @@ struct RepairManualCaptureView: View {
         phase = .uploading
         model.stop()
         do {
+            let trimmed = userIntentText.trimmingCharacters(in: .whitespacesAndNewlines)
             let job = try await SpaceRepairRuntime.shared.submitRepair(
                 target: target,
                 image: image,
                 capturedYawDeg: previewYaw,
                 capturedElevationDeg: previewElev,
-                repairMode: "marked_region_direct_edit"
+                repairMode: "marked_region_direct_edit",
+                userIntentText: trimmed.isEmpty ? nil : String(trimmed.prefix(200)),
+                intentHint: selectedIntentHint?.rawValue
             )
             // Gate: 202 create + durable store upsert already done inside submitRepair.
             guard SpaceRepairStore.shared.job(repairJobId: job.repairJobId) != nil else {
