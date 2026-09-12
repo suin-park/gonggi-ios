@@ -104,7 +104,7 @@ private enum GaussianNavMode: String, Hashable {
 final class GaussianSplatWebBridge: NSObject {
     weak var webView: WKWebView?
 
-    func setNavigationMode(_ mode: GaussianNavMode) {
+    fileprivate func setNavigationMode(_ mode: GaussianNavMode) {
         let js = """
         (function(){
           var id = '\(mode == .walk ? "fpsCamera" : "flyCamera")';
