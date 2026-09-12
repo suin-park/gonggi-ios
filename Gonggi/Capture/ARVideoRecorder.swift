@@ -20,6 +20,23 @@ final class ARVideoRecorder: @unchecked Sendable {
         let fps: Double
         let codec: String
         let frameCount: Int
+        let droppedFrameCount: Int
+        let preferredTransform: [Double]
+        let imageResolutionWidth: Int
+        let imageResolutionHeight: Int
+    }
+
+    /// Returned only when a pixel buffer is actually appended to the MOV.
+    struct WrittenFrame: Equatable {
+        let videoFrameIndex: Int
+        let sourceARTimestampSeconds: TimeInterval
+        let arTimestampValue: Int64
+        let arTimestampTimescale: Int32
+        let videoPTSValue: Int64
+        let videoPTSTimescale: Int32
+        let videoPTSSeconds: Double
+        let imageWidth: Int
+        let imageHeight: Int
     }
 
     private let queue = DispatchQueue(label: "com.whik.gonggi.ar-video-recorder")
@@ -28,11 +45,17 @@ final class ARVideoRecorder: @unchecked Sendable {
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var startTime: CMTime?
     private var frameCount = 0
+    private var droppedFrameCount = 0
     private var outputURL: URL?
     private var targetFPS: Double = 30
     private var configuredWidth: Int = 0
     private var configuredHeight: Int = 0
     private var sessionStarted = false
+    private var recordedPreferredTransform: [Double] = [1, 0, 0, 1, 0, 0]
+    private var recordedImageResolutionWidth = 0
+    private var recordedImageResolutionHeight = 0
+    private var _prefer4K = true
+    private var configured = false
 
     func startRecording(to url: URL, prefer4K: Bool = true) throws {
         try queue.sync {
@@ -41,20 +64,24 @@ final class ARVideoRecorder: @unchecked Sendable {
                 try FileManager.default.removeItem(at: url)
             }
             frameCount = 0
+            droppedFrameCount = 0
             startTime = nil
             sessionStarted = false
             writer = nil
             input = nil
             adaptor = nil
             configured = false
+            recordedPreferredTransform = [1, 0, 0, 1, 0, 0]
+            recordedImageResolutionWidth = 0
+            recordedImageResolutionHeight = 0
         }
         _prefer4K = prefer4K
     }
 
-    private var _prefer4K = true
-    private var configured = false
-
-    func append(frame: ARFrame) {
+    /// Appends `ARFrame.capturedImage`. Returns mapping only on successful write
+    /// so pose/intrinsics can share the same index (dropped frames skip pose rows).
+    @discardableResult
+    func append(frame: ARFrame) -> WrittenFrame? {
         queue.sync {
             appendLocked(frame: frame)
         }
@@ -91,38 +118,66 @@ final class ARVideoRecorder: @unchecked Sendable {
 
     // MARK: - Private
 
-    private func appendLocked(frame: ARFrame) {
-        guard outputURL != nil else { return }
+    private func appendLocked(frame: ARFrame) -> WrittenFrame? {
+        guard outputURL != nil else { return nil }
         let pixelBuffer = frame.capturedImage
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
 
         if !configured {
             do {
                 try configureWriter(pixelBuffer: pixelBuffer, frame: frame)
                 configured = true
             } catch {
-                return
+                droppedFrameCount += 1
+                return nil
             }
         }
 
-        guard let writer, let input, let adaptor else { return }
+        guard let writer, let input, let adaptor else {
+            droppedFrameCount += 1
+            return nil
+        }
         guard writer.status != .failed, writer.status != .cancelled, writer.status != .completed else {
-            return
+            droppedFrameCount += 1
+            return nil
         }
 
-        let time = CMTime(seconds: frame.timestamp, preferredTimescale: 600)
+        let timescale = CaptureFrameContract.writerTimescale
+        let time = CaptureFrameContract.cmTime(fromSeconds: frame.timestamp, timescale: timescale)
         if !sessionStarted {
-            guard writer.startWriting() else { return }
+            guard writer.startWriting() else {
+                droppedFrameCount += 1
+                return nil
+            }
             writer.startSession(atSourceTime: time)
             startTime = time
             sessionStarted = true
         }
 
-        guard writer.status == .writing, input.isReadyForMoreMediaData else { return }
+        guard writer.status == .writing, input.isReadyForMoreMediaData else {
+            droppedFrameCount += 1
+            return nil
+        }
 
         let relative = CMTimeSubtract(time, startTime ?? time)
         if adaptor.append(pixelBuffer, withPresentationTime: relative) {
+            let index = frameCount
             frameCount += 1
+            return WrittenFrame(
+                videoFrameIndex: index,
+                sourceARTimestampSeconds: frame.timestamp,
+                arTimestampValue: time.value,
+                arTimestampTimescale: time.timescale,
+                videoPTSValue: relative.value,
+                videoPTSTimescale: relative.timescale,
+                videoPTSSeconds: CMTimeGetSeconds(relative),
+                imageWidth: width,
+                imageHeight: height
+            )
         }
+        droppedFrameCount += 1
+        return nil
     }
 
     private func configureWriter(pixelBuffer: CVPixelBuffer, frame: ARFrame) throws {
@@ -134,7 +189,6 @@ final class ARVideoRecorder: @unchecked Sendable {
         var width = srcWidth
         var height = srcHeight
         if _prefer4K, max(srcWidth, srcHeight) >= 3000 {
-            // Keep native buffer size — ARKit typically delivers up to 3840×2160 on Pro devices.
             width = srcWidth
             height = srcHeight
         }
@@ -151,7 +205,12 @@ final class ARVideoRecorder: @unchecked Sendable {
         ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
-        input.transform = videoTransform(for: frame)
+        let transform = videoTransform(for: frame)
+        input.transform = transform
+        recordedPreferredTransform = CaptureFrameContract.encodeAffine(transform)
+        let res = frame.camera.imageResolution
+        recordedImageResolutionWidth = Int(res.width.rounded())
+        recordedImageResolutionHeight = Int(res.height.rounded())
 
         let attrs: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
@@ -178,9 +237,6 @@ final class ARVideoRecorder: @unchecked Sendable {
             throw RecorderError.notStarted
         }
 
-        // Never call markAsFinished unless the writer is actively writing —
-        // otherwise AVFoundation raises an ObjC exception that bypasses Swift `catch`
-        // and aborts the process (TestFlight: “그냥 꺼집니다”).
         guard sessionStarted, writer.status == .writing else {
             safeAbortWritingLocked()
             resetLocked()
@@ -208,16 +264,18 @@ final class ARVideoRecorder: @unchecked Sendable {
             height: configuredHeight,
             fps: targetFPS,
             codec: "hevc",
-            frameCount: frameCount
+            frameCount: frameCount,
+            droppedFrameCount: droppedFrameCount,
+            preferredTransform: recordedPreferredTransform,
+            imageResolutionWidth: recordedImageResolutionWidth,
+            imageResolutionHeight: recordedImageResolutionHeight
         )
         resetLocked()
         return result
     }
 
-    /// Cancel / tear down without ObjC exceptions when writer never entered `.writing`.
     private func safeAbortWritingLocked() {
         guard let writer else { return }
-        // Both markAsFinished and cancelWriting raise if startWriting never ran.
         guard writer.status == .writing else { return }
         input?.markAsFinished()
         writer.cancelWriting()
@@ -231,13 +289,17 @@ final class ARVideoRecorder: @unchecked Sendable {
         sessionStarted = false
         configured = false
         frameCount = 0
+        droppedFrameCount = 0
         outputURL = nil
         configuredWidth = 0
         configuredHeight = 0
+        recordedPreferredTransform = [1, 0, 0, 1, 0, 0]
+        recordedImageResolutionWidth = 0
+        recordedImageResolutionHeight = 0
     }
 
     private func videoTransform(for frame: ARFrame) -> CGAffineTransform {
-        // Portrait capture — rotate landscape buffer.
+        _ = frame
         switch UIDevice.current.orientation {
         case .landscapeLeft:
             return CGAffineTransform(rotationAngle: .pi / 2)

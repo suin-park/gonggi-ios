@@ -72,9 +72,61 @@ struct CaptureQualityState: Equatable {
     var exposureScore: Double
     var trackingQuality: Double
     var lowTextureScore: Double
+    /// Deprecated visual-overlap placeholder — ignore unless `overlapAvailable`.
     var overlapScore: Double
+    var overlapAvailable: Bool
+    /// Heuristic translation-baseline score (NOT depth-aware parallax).
     var parallaxScore: Double
+    /// Prefer `translationBaselineGrade`.
+    var parallaxGrade: CaptureTranslationBaselineGrade {
+        get { translationBaselineGrade }
+        set { translationBaselineGrade = newValue }
+    }
+    var translationBaselineGrade: CaptureTranslationBaselineGrade
+    /// Former misuse of "parallax"; view-direction diversity only.
+    var viewAngleDiversity: Double
     var areas: [AreaCoverage]
+
+    init(
+        overallCoverage: Double,
+        motionSpeed: Double,
+        angularVelocity: Double,
+        blurScore: Double,
+        exposureScore: Double,
+        trackingQuality: Double,
+        lowTextureScore: Double,
+        overlapScore: Double,
+        parallaxScore: Double,
+        areas: [AreaCoverage],
+        overlapAvailable: Bool = false,
+        parallaxGrade: CaptureTranslationBaselineGrade? = nil,
+        translationBaselineGrade: CaptureTranslationBaselineGrade? = nil,
+        viewAngleDiversity: Double = 0
+    ) {
+        self.overallCoverage = overallCoverage
+        self.motionSpeed = motionSpeed
+        self.angularVelocity = angularVelocity
+        self.blurScore = blurScore
+        self.exposureScore = exposureScore
+        self.trackingQuality = trackingQuality
+        self.lowTextureScore = lowTextureScore
+        self.overlapScore = overlapScore
+        self.overlapAvailable = overlapAvailable
+        self.parallaxScore = parallaxScore
+        if let translationBaselineGrade {
+            self.translationBaselineGrade = translationBaselineGrade
+        } else if let parallaxGrade {
+            self.translationBaselineGrade = parallaxGrade
+        } else if parallaxScore >= 0.8 {
+            self.translationBaselineGrade = .good
+        } else if parallaxScore >= 0.4 {
+            self.translationBaselineGrade = .acceptable
+        } else {
+            self.translationBaselineGrade = .insufficient
+        }
+        self.viewAngleDiversity = viewAngleDiversity
+        self.areas = areas
+    }
 
     static let zero = CaptureQualityState(
         overallCoverage: 0,
@@ -85,12 +137,85 @@ struct CaptureQualityState: Equatable {
         trackingQuality: 1,
         lowTextureScore: 0,
         overlapScore: 0,
-        parallaxScore: 0,
-        areas: []
+        parallaxScore: CaptureTranslationBaselineGrade.insufficient.score,
+        areas: [],
+        overlapAvailable: false,
+        translationBaselineGrade: .insufficient,
+        viewAngleDiversity: 0
     )
 
     var progressPercent: Int {
         Int((overallCoverage * 100).rounded())
+    }
+}
+
+/// DEBUG / summary attachment for 3DGS data foundation (P0.5 integrity).
+struct CaptureMOVIntegritySummary: Equatable, Sendable {
+    var writtenFrames: Int
+    var poseSamples: Int
+    var movSamples: Int
+    var ptsMatched: Int
+    var ptsMismatched: Int
+    var maxPTSDeltaSec: Double
+    var countsEqual: Bool
+    var passed: Bool
+    var note: String
+}
+
+struct CaptureDataFoundationSummary: Equatable {
+    var schemaVersion: Int
+    var posesURL: URL?
+    var videoFramesWritten: Int
+    var poseSamples: Int
+    var droppedVideoFrames: Int
+    var keyframe3DGSCount: Int
+    var depthSamples: Int
+    var maxBaselineM: Double
+    var totalPathLengthM: Double
+    var translationBaselineGrade: CaptureTranslationBaselineGrade
+    /// Legacy alias.
+    var parallaxGrade: CaptureTranslationBaselineGrade { translationBaselineGrade }
+    var viewAngleDiversity: Double
+    var overlapAvailable: Bool
+    var discontinuity: CapturePoseDiscontinuitySummary?
+    var integrity: CaptureMOVIntegritySummary?
+    var cameraPathTopDown: [CaptureVec3]
+    var orientationNote: String?
+
+    init(
+        schemaVersion: Int,
+        posesURL: URL? = nil,
+        videoFramesWritten: Int,
+        poseSamples: Int,
+        droppedVideoFrames: Int,
+        keyframe3DGSCount: Int,
+        depthSamples: Int,
+        maxBaselineM: Double,
+        totalPathLengthM: Double,
+        translationBaselineGrade: CaptureTranslationBaselineGrade,
+        viewAngleDiversity: Double,
+        overlapAvailable: Bool,
+        discontinuity: CapturePoseDiscontinuitySummary? = nil,
+        integrity: CaptureMOVIntegritySummary? = nil,
+        cameraPathTopDown: [CaptureVec3] = [],
+        orientationNote: String? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.posesURL = posesURL
+        self.videoFramesWritten = videoFramesWritten
+        self.poseSamples = poseSamples
+        self.droppedVideoFrames = droppedVideoFrames
+        self.keyframe3DGSCount = keyframe3DGSCount
+        self.depthSamples = depthSamples
+        self.maxBaselineM = maxBaselineM
+        self.totalPathLengthM = totalPathLengthM
+        self.translationBaselineGrade = translationBaselineGrade
+        self.viewAngleDiversity = viewAngleDiversity
+        self.overlapAvailable = overlapAvailable
+        self.discontinuity = discontinuity
+        self.integrity = integrity
+        self.cameraPathTopDown = cameraPathTopDown
+        self.orientationNote = orientationNote
     }
 }
 
@@ -122,6 +247,7 @@ struct CaptureSessionSummary: Identifiable, Equatable {
     var angleDiversityScore: Double
     var texturedSpaceURL: URL?
     var texturedMeshReport: TexturedMeshReport?
+    var dataFoundation: CaptureDataFoundationSummary?
 
     init(
         id: UUID = UUID(),
@@ -148,7 +274,8 @@ struct CaptureSessionSummary: Identifiable, Equatable {
         revisitScore: Double = 0,
         angleDiversityScore: Double = 0,
         texturedSpaceURL: URL? = nil,
-        texturedMeshReport: TexturedMeshReport? = nil
+        texturedMeshReport: TexturedMeshReport? = nil,
+        dataFoundation: CaptureDataFoundationSummary? = nil
     ) {
         self.id = id
         self.captureId = captureId
@@ -175,6 +302,7 @@ struct CaptureSessionSummary: Identifiable, Equatable {
         self.angleDiversityScore = angleDiversityScore
         self.texturedSpaceURL = texturedSpaceURL
         self.texturedMeshReport = texturedMeshReport
+        self.dataFoundation = dataFoundation
     }
 
     var duration: TimeInterval { endedAt.timeIntervalSince(startedAt) }

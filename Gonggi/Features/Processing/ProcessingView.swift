@@ -62,12 +62,15 @@ final class ProcessingViewModel: ObservableObject {
                 let meta = CaptureUploadMetadata(
                     durationSec: summary.duration,
                     coverage: summary.quality.overallCoverage,
-                    frameCount: Int(summary.duration * 30),
+                    frameCount: summary.dataFoundation?.poseSamples
+                        ?? Int(summary.duration * 30),
                     deviceHasLiDAR: ARKitSupport.hasLiDAR,
                     qualitySummary: [
                         "blur": summary.quality.blurScore,
                         "parallax": summary.quality.parallaxScore,
-                        "overlap": summary.quality.overlapScore,
+                        "viewAngleDiversity": summary.quality.viewAngleDiversity,
+                        "overlapAvailable": summary.quality.overlapAvailable ? 1 : 0,
+                        "maxBaselineM": summary.dataFoundation?.maxBaselineM ?? 0,
                     ]
                 )
                 try await spaceService.uploadCapture(

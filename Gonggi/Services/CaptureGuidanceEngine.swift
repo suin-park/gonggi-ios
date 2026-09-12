@@ -42,7 +42,10 @@ final class CaptureGuidanceEngine: ObservableObject {
         q.motionSpeed = Double(motionSpeed)
         q.angularVelocity = Double(angularVelocity)
         q.blurScore = max(0, 1 - Double(motionSpeed) * 1.4)
-        q.overlapScore = min(1, Double(meshVertexCount) / 50_000)
+        // P0: do not treat mesh size as visual overlap.
+        q.overlapScore = 0
+        q.overlapAvailable = false
+        _ = meshVertexCount
         quality = q
     }
 }

@@ -32,6 +32,12 @@ struct CaptureSummaryView: View {
                         texturedMeshReportSection(report)
                     }
 
+                    #if DEBUG
+                    if let df = summary.dataFoundation {
+                        dataFoundationDebugSection(df)
+                    }
+                    #endif
+
                     if summary.lowTextureWarnings > 0 {
                         warningBanner
                     }
@@ -125,8 +131,111 @@ struct CaptureSummaryView: View {
                 title: "각도 다양성",
                 value: percentString(summary.angleDiversityScore)
             )
+            GonggiMetricTile(
+                icon: "move.3d",
+                title: "이동 baseline",
+                value: summary.quality.translationBaselineGrade.rawValue,
+                warning: summary.quality.translationBaselineGrade == .insufficient
+            )
         }
     }
+
+    #if DEBUG
+    private func dataFoundationDebugSection(_ df: CaptureDataFoundationSummary) -> some View {
+        let duration = max(summary.duration, 0.001)
+        let limitedFrac = min(1, summary.trackingLimitedSec / duration)
+        let normalFrac = max(0, 1 - limitedFrac)
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            Text("3DGS Data Foundation (DEBUG)")
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(GonggiColors.textTertiary)
+            Group {
+                Text(String(format: "duration %.1fs · schema v%d", duration, df.schemaVersion))
+                Text("written \(df.videoFramesWritten) · poses \(df.poseSamples) · dropped \(df.droppedVideoFrames)")
+                if let integ = df.integrity {
+                    Text("MOV samples \(integ.movSamples) · PTS matched \(integ.ptsMatched) · mismatched \(integ.ptsMismatched)")
+                    Text(String(format: "max PTS Δ %.6fs · integrity %@", integ.maxPTSDeltaSec, integ.passed ? "PASS" : "FAIL"))
+                } else {
+                    Text("MOV integrity: (release build skips reader)")
+                }
+                Text("keyframes \(df.keyframe3DGSCount) · depth \(df.depthSamples)")
+                Text(String(format: "path %.2fm · max baseline %.2fm · grade %@", df.totalPathLengthM, df.maxBaselineM, df.translationBaselineGrade.rawValue))
+                Text(String(format: "viewAngleDiv %.2f · tracking N %.0f%% L %.0f%%", df.viewAngleDiversity, normalFrac * 100, limitedFrac * 100))
+                if let d = df.discontinuity {
+                    Text(String(
+                        format: "jumps %d · maxΔt %.2fm · maxΔr %.2frad · track transitions %d",
+                        d.possiblePoseJumpCount,
+                        d.maxFrameTranslationDeltaM,
+                        d.maxFrameRotationDeltaRad,
+                        d.trackingStateTransitions
+                    ))
+                }
+                Text("overlap: \(df.overlapAvailable ? "yes" : "notAvailable") · sync SoT: videoPTS")
+                if let note = df.orientationNote {
+                    Text(note).lineLimit(3)
+                }
+            }
+            .font(GonggiTypography.caption(12))
+            .foregroundStyle(GonggiColors.textSecondary)
+
+            if !df.cameraPathTopDown.isEmpty {
+                cameraPathDebugView(df.cameraPathTopDown)
+            }
+        }
+        .padding(GonggiSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GonggiColors.surfaceElevated.opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+    }
+
+    private func cameraPathDebugView(_ points: [CaptureVec3]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Camera path (top-down XZ)")
+                .font(GonggiTypography.caption(12))
+                .foregroundStyle(GonggiColors.textTertiary)
+            Canvas { context, size in
+                guard points.count >= 1 else { return }
+                let xs = points.map(\.x)
+                let zs = points.map(\.z)
+                let minX = xs.min() ?? 0
+                let maxX = xs.max() ?? 0
+                let minZ = zs.min() ?? 0
+                let maxZ = zs.max() ?? 0
+                let spanX = max(0.05, maxX - minX)
+                let spanZ = max(0.05, maxZ - minZ)
+                let pad: CGFloat = 8
+                func map(_ p: CaptureVec3) -> CGPoint {
+                    let nx = CGFloat((p.x - minX) / spanX)
+                    let nz = CGFloat((p.z - minZ) / spanZ)
+                    return CGPoint(
+                        x: pad + nx * (size.width - 2 * pad),
+                        y: pad + nz * (size.height - 2 * pad)
+                    )
+                }
+                var path = Path()
+                for (i, p) in points.enumerated() {
+                    let pt = map(p)
+                    if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+                }
+                context.stroke(path, with: .color(GonggiColors.accentCyan), lineWidth: 1.5)
+                if let first = points.first {
+                    let pt = map(first)
+                    context.fill(Path(ellipseIn: CGRect(x: pt.x - 3, y: pt.y - 3, width: 6, height: 6)), with: .color(.green))
+                }
+                if let last = points.last, points.count > 1 {
+                    let pt = map(last)
+                    context.fill(Path(ellipseIn: CGRect(x: pt.x - 3, y: pt.y - 3, width: 6, height: 6)), with: .color(.orange))
+                }
+            }
+            .frame(height: 120)
+            .background(Color.black.opacity(0.25))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            Text("START ● green → END ● orange · axes X horizontal, Z vertical")
+                .font(GonggiTypography.caption(11))
+                .foregroundStyle(GonggiColors.textTertiary)
+        }
+    }
+    #endif
 
     #if DEBUG
     private func prepareExport() {

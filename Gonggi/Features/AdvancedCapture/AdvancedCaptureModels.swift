@@ -61,41 +61,42 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
             segments: [
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-seg-1",
-                    instructionKo: "제자리에서 천천히 한 바퀴 돌아 주세요.",
-                    targetYawDeg: 0,
+                    instructionKo: "벽을 따라 천천히 이동하세요.",
+                    targetYawDeg: nil,
                     targetPitchDeg: 0,
-                    pathHint: "yaw_orbit",
+                    pathHint: "wall_follow",
                     durationSecMin: 20,
-                    durationSecMax: 35,
-                    coverageGoal: "horizontal_ring"
+                    durationSecMax: 40,
+                    coverageGoal: "perimeter"
                 ),
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-seg-2",
-                    instructionKo: "공간을 가로질러 앞뒤로 천천히 걸어 주세요.",
+                    instructionKo: "카메라를 공간 안쪽으로 향한 채 천천히 옆으로 이동하세요.",
                     targetYawDeg: nil,
                     targetPitchDeg: 0,
-                    pathHint: "forward_back",
+                    pathHint: "lateral_parallax",
                     durationSecMin: 15,
-                    durationSecMax: 25,
+                    durationSecMax: 30,
                     coverageGoal: "parallax"
                 ),
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-seg-3",
-                    instructionKo: "위를 향해 천천히 올려 찍고, 아래로 내려 찍어 주세요.",
+                    instructionKo: "같은 가구를 바라보며 앞으로 천천히 걸어 주세요.",
                     targetYawDeg: nil,
-                    targetPitchDeg: 45,
-                    pathHint: "tilt_up_down",
+                    targetPitchDeg: 0,
+                    pathHint: "forward_pass",
                     durationSecMin: 10,
-                    durationSecMax: 20,
-                    coverageGoal: "ceil_floor"
+                    durationSecMax: 25,
+                    coverageGoal: "depth_baseline"
                 ),
             ],
             globalTips: [
+                "제자리에서 돌기만 하면 입체 정보가 부족해집니다.",
                 "조명이 일정한 곳에서 촬영하세요.",
                 "거울/유리면은 천천히, 가까이 가지 마세요.",
                 "걷을 때는 흔들림을 줄이기 위해 속도를 일정하게 유지하세요.",
             ],
-            estimatedTotalSec: 70,
+            estimatedTotalSec: 80,
             qualityProfile: "capture_dense_v2",
             riskFlags: []
         )

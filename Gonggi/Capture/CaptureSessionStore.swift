@@ -5,6 +5,8 @@ enum CaptureSessionStore {
     static let capturesFolderName = "Captures"
     static let videoFileName = "original.mov"
     static let manifestFileName = "manifest.json"
+    static let posesFileName = CaptureFrameContract.posesFileName
+    static let depthFolderName = CaptureFrameContract.depthDirectoryName
     static let meshFolderName = "mesh"
     static let keyframesFolderName = "keyframes"
     static let texturedSpaceUSDZFileName = "textured-space.usdz"
@@ -46,6 +48,17 @@ enum CaptureSessionStore {
 
     static func manifestURL(sessionId: String) throws -> URL {
         try createSessionDirectory(sessionId: sessionId).appendingPathComponent(manifestFileName)
+    }
+
+    static func posesURL(sessionId: String) throws -> URL {
+        try createSessionDirectory(sessionId: sessionId).appendingPathComponent(posesFileName)
+    }
+
+    static func createDepthDirectory(sessionId: String) throws -> URL {
+        let dir = try createSessionDirectory(sessionId: sessionId)
+            .appendingPathComponent(depthFolderName, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     static func createMeshDirectory(sessionId: String) throws -> URL {

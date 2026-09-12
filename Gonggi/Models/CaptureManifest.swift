@@ -1,10 +1,13 @@
 import Foundation
 
 /// On-disk manifest for a capture session (`manifest.json`).
+/// v1 fields preserved; v2 adds schemaVersion + 3DGS data-foundation sections.
 struct CaptureManifest: Codable, Equatable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     var captureVersion: Int
+    /// Explicit schema version for 3DGS data foundation (same as captureVersion for new writes).
+    var schemaVersion: Int
     var captureId: String
     var sessionId: String
     var createdAt: String
@@ -15,6 +18,85 @@ struct CaptureManifest: Codable, Equatable {
     var tracking: CaptureTrackingSummary
     var areas: [CaptureAreaManifest]
     var device: CaptureDeviceInfo
+    // v2
+    var coordinateSystem: CaptureCoordinateSystem?
+    var camera: CaptureCameraInfo?
+    var framesFile: String?
+    var depth: CaptureDepthSummary?
+    var sync: CaptureSyncSummary?
+    var qualitySummary: CaptureQualitySummaryV2?
+    var discontinuity: CapturePoseDiscontinuitySummary?
+
+    enum CodingKeys: String, CodingKey {
+        case captureVersion, schemaVersion, captureId, sessionId, createdAt, durationSec
+        case video, coverage, motion, tracking, areas, device
+        case coordinateSystem, camera, framesFile, depth, sync, qualitySummary, discontinuity
+    }
+
+    init(
+        captureVersion: Int,
+        schemaVersion: Int = CaptureManifest.currentVersion,
+        captureId: String,
+        sessionId: String,
+        createdAt: String,
+        durationSec: Double,
+        video: CaptureVideoInfo,
+        coverage: CaptureCoverageSummary,
+        motion: CaptureMotionSummary,
+        tracking: CaptureTrackingSummary,
+        areas: [CaptureAreaManifest],
+        device: CaptureDeviceInfo,
+        coordinateSystem: CaptureCoordinateSystem? = nil,
+        camera: CaptureCameraInfo? = nil,
+        framesFile: String? = nil,
+        depth: CaptureDepthSummary? = nil,
+        sync: CaptureSyncSummary? = nil,
+        qualitySummary: CaptureQualitySummaryV2? = nil,
+        discontinuity: CapturePoseDiscontinuitySummary? = nil
+    ) {
+        self.captureVersion = captureVersion
+        self.schemaVersion = schemaVersion
+        self.captureId = captureId
+        self.sessionId = sessionId
+        self.createdAt = createdAt
+        self.durationSec = durationSec
+        self.video = video
+        self.coverage = coverage
+        self.motion = motion
+        self.tracking = tracking
+        self.areas = areas
+        self.device = device
+        self.coordinateSystem = coordinateSystem
+        self.camera = camera
+        self.framesFile = framesFile
+        self.depth = depth
+        self.sync = sync
+        self.qualitySummary = qualitySummary
+        self.discontinuity = discontinuity
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        captureVersion = try c.decode(Int.self, forKey: .captureVersion)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? captureVersion
+        captureId = try c.decode(String.self, forKey: .captureId)
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        durationSec = try c.decode(Double.self, forKey: .durationSec)
+        video = try c.decode(CaptureVideoInfo.self, forKey: .video)
+        coverage = try c.decode(CaptureCoverageSummary.self, forKey: .coverage)
+        motion = try c.decode(CaptureMotionSummary.self, forKey: .motion)
+        tracking = try c.decode(CaptureTrackingSummary.self, forKey: .tracking)
+        areas = try c.decode([CaptureAreaManifest].self, forKey: .areas)
+        device = try c.decode(CaptureDeviceInfo.self, forKey: .device)
+        coordinateSystem = try c.decodeIfPresent(CaptureCoordinateSystem.self, forKey: .coordinateSystem)
+        camera = try c.decodeIfPresent(CaptureCameraInfo.self, forKey: .camera)
+        framesFile = try c.decodeIfPresent(String.self, forKey: .framesFile)
+        depth = try c.decodeIfPresent(CaptureDepthSummary.self, forKey: .depth)
+        sync = try c.decodeIfPresent(CaptureSyncSummary.self, forKey: .sync)
+        qualitySummary = try c.decodeIfPresent(CaptureQualitySummaryV2.self, forKey: .qualitySummary)
+        discontinuity = try c.decodeIfPresent(CapturePoseDiscontinuitySummary.self, forKey: .discontinuity)
+    }
 }
 
 struct CaptureVideoInfo: Codable, Equatable {
@@ -33,7 +115,29 @@ struct CaptureCoverageSummary: Codable, Equatable {
     var acceptableAreaCount: Int
     var unseenAreaCount: Int
     var revisitScore: Double
+    /// Renamed conceptually to view-angle diversity (NOT parallax).
     var angleDiversityScore: Double
+    var viewAngleDiversity: Double?
+
+    init(
+        overallPercent: Double,
+        goodAreaCount: Int,
+        insufficientAreaCount: Int,
+        acceptableAreaCount: Int,
+        unseenAreaCount: Int,
+        revisitScore: Double,
+        angleDiversityScore: Double,
+        viewAngleDiversity: Double? = nil
+    ) {
+        self.overallPercent = overallPercent
+        self.goodAreaCount = goodAreaCount
+        self.insufficientAreaCount = insufficientAreaCount
+        self.acceptableAreaCount = acceptableAreaCount
+        self.unseenAreaCount = unseenAreaCount
+        self.revisitScore = revisitScore
+        self.angleDiversityScore = angleDiversityScore
+        self.viewAngleDiversity = viewAngleDiversity ?? angleDiversityScore
+    }
 }
 
 struct CaptureMotionSummary: Codable, Equatable {

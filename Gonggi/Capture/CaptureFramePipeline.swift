@@ -63,8 +63,12 @@ final class CaptureFramePipeline {
         q.trackingQuality = 0.92
         q.exposureScore = 0.88
         q.lowTextureScore = 0.3 + 0.1 * sin(t)
-        q.overlapScore = min(1, 0.35 + t * 0.018)
-        q.parallaxScore = min(1, 0.25 + t * 0.022)
+        q.overlapScore = 0
+        q.overlapAvailable = false
+        // Mock: low translation baseline unless "walking" ticks.
+        q.translationBaselineGrade = mockTick > 40 ? .acceptable : .insufficient
+        q.parallaxScore = q.translationBaselineGrade.score
+        q.viewAngleDiversity = min(1, 0.2 + t * 0.01)
         mockAreas = mockAreas.map { area in
             var a = area
             a.observationCount += 1

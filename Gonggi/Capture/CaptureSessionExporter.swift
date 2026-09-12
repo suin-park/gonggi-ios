@@ -12,11 +12,13 @@ enum CaptureSessionExporter {
         let byteSize: Int64
     }
 
-    /// Copies `original.mov` + `manifest.json` into Documents/GonggiExports/{captureId}/.
+    /// Copies `original.mov` + `manifest.json` (+ `poses.json` / depth if present) into Documents/GonggiExports/{captureId}/.
     static func exportToDocuments(sessionId: String, captureId: String) throws -> ExportResult {
         let sourceDir = try CaptureSessionStore.createSessionDirectory(sessionId: sessionId)
         let videoSrc = sourceDir.appendingPathComponent(CaptureSessionStore.videoFileName)
         let manifestSrc = sourceDir.appendingPathComponent(CaptureSessionStore.manifestFileName)
+        let posesSrc = sourceDir.appendingPathComponent(CaptureSessionStore.posesFileName)
+        let depthSrc = sourceDir.appendingPathComponent(CaptureSessionStore.depthFolderName, isDirectory: true)
 
         guard FileManager.default.fileExists(atPath: videoSrc.path) else {
             throw ExportError.missingVideo
@@ -35,6 +37,18 @@ enum CaptureSessionExporter {
         let manifestDst = exportDir.appendingPathComponent(CaptureSessionStore.manifestFileName)
         try FileManager.default.copyItem(at: videoSrc, to: videoDst)
         try FileManager.default.copyItem(at: manifestSrc, to: manifestDst)
+        if FileManager.default.fileExists(atPath: posesSrc.path) {
+            try FileManager.default.copyItem(
+                at: posesSrc,
+                to: exportDir.appendingPathComponent(CaptureSessionStore.posesFileName)
+            )
+        }
+        if FileManager.default.fileExists(atPath: depthSrc.path) {
+            try FileManager.default.copyItem(
+                at: depthSrc,
+                to: exportDir.appendingPathComponent(CaptureSessionStore.depthFolderName, isDirectory: true)
+            )
+        }
 
         let attrs = try FileManager.default.attributesOfItem(atPath: videoDst.path)
         let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0

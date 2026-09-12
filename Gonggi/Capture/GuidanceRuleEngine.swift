@@ -98,6 +98,15 @@ struct GuidanceRuleEngine {
             ))
         }
 
+        // 3DGS: rotation-only is not parallax — nudge translation without LatLong orbit copy.
+        if quality.translationBaselineGrade == .insufficient, quality.overallCoverage > 0.1 {
+            candidates.append(GuidanceDecision(
+                message: "카메라를 공간 안쪽으로 향한 채 천천히 옆으로 이동하세요",
+                priority: .medium,
+                ruleId: "translation_baseline"
+            ))
+        }
+
         if quality.blurScore < 0.45 {
             candidates.append(GuidanceDecision(
                 message: "카메라를 너무 빠르게 움직이고 있어요",

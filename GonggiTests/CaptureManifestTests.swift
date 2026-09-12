@@ -5,7 +5,8 @@ import XCTest
 final class CaptureManifestTests: XCTestCase {
     func testManifestSerializationRoundTrip() throws {
         let manifest = CaptureManifest(
-            captureVersion: 1,
+            captureVersion: 2,
+            schemaVersion: 2,
             captureId: "GONGGI_CAPTURE_V1_001",
             sessionId: "test-session",
             createdAt: "2026-09-01T12:00:00Z",
@@ -55,7 +56,9 @@ final class CaptureManifestTests: XCTestCase {
                 hasLiDAR: true,
                 sceneDepthAvailable: true,
                 modelIdentifier: "iPhone15,2"
-            )
+            ),
+            coordinateSystem: .arkitDefault,
+            framesFile: "poses.json"
         )
 
         let encoder = JSONEncoder()
@@ -88,15 +91,22 @@ final class CaptureManifestTests: XCTestCase {
                 height: 1080,
                 fps: 30,
                 codec: "hevc",
-                frameCount: 100
+                frameCount: 100,
+                droppedFrameCount: 0,
+                preferredTransform: [0, 1, -1, 0, 0, 0],
+                imageResolutionWidth: 1920,
+                imageResolutionHeight: 1080
             ),
             coverage: coverage,
             telemetry: telemetry,
             mockMode: false
         )
-        XCTAssertEqual(manifest.captureVersion, 1)
+        XCTAssertEqual(manifest.captureVersion, 2)
+        XCTAssertEqual(manifest.schemaVersion, 2)
         XCTAssertEqual(manifest.captureId, "GONGGI_CAPTURE_V1_002")
         XCTAssertEqual(manifest.sessionId, "abc")
         XCTAssertFalse(manifest.areas.isEmpty)
+        XCTAssertEqual(manifest.framesFile, "poses.json")
+        XCTAssertNotNil(manifest.coordinateSystem)
     }
 }
