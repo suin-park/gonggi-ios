@@ -28,6 +28,8 @@ final class CaptureViewModel: ObservableObject {
     private var guidanceCancellable: AnyCancellable?
     private var startedAt = Date()
     private var guidePlan: AdvancedCaptureGuidePlan?
+    /// Normalized Astra initial plan — live metrics remain completion authority.
+    private(set) var capturePlan: CapturePlan = .empty
     private var configureGeneration = 0
     private var didStartLiveSession = false
 
@@ -46,30 +48,34 @@ final class CaptureViewModel: ObservableObject {
     func applyGuidePlan(_ plan: AdvancedCaptureGuidePlan) {
         let sanitized = AdvancedCaptureCopy.sanitize(plan)
         guidePlan = sanitized
+        capturePlan = CapturePlan.normalize(from: sanitized)
         guidedSegmentIndex = 0
-        if let first = sanitized.segments.first {
-            guidance.applySnapshot(quality: guidance.quality, message: first.instructionKo)
+        // Initial hint only — during capture, live GuidanceAction owns the coach bubble.
+        if let hint = capturePlan.startHint {
+            guidance.applySnapshot(quality: guidance.quality, message: hint)
         }
     }
 
     func advanceGuidedSegment() {
         guard let plan = guidePlan, !plan.segments.isEmpty else { return }
         guidedSegmentIndex = min(guidedSegmentIndex + 1, plan.segments.count - 1)
-        let seg = plan.segments[guidedSegmentIndex]
-        guidance.applySnapshot(quality: guidance.quality, message: seg.instructionKo)
+        // Do not override live coach copy with Astra text.
     }
 
     private func advanceGuidedSegmentIfNeeded() {
         guard let plan = guidePlan, plan.segments.count > 1 else { return }
-        // Heuristic: move to next segment every ~25s of recording while coverage rises.
+        let q = guidance.quality
+        // Live qualityCoverage can skip Astra segments that are already satisfied.
+        if q.qualityCoverage >= CaptureCompletionConfig.qualityCoverageReady {
+            guidedSegmentIndex = plan.segments.count - 1
+            return
+        }
+        let coverageDriven = Int(q.qualityCoverage * Double(plan.segments.count))
         let elapsed = Date().timeIntervalSince(startedAt)
-        let expected = Int(elapsed / 25.0)
-        if expected > guidedSegmentIndex, expected < plan.segments.count {
+        let timeDriven = Int(elapsed / 25.0)
+        let expected = min(max(coverageDriven, timeDriven), plan.segments.count - 1)
+        if expected > guidedSegmentIndex {
             guidedSegmentIndex = expected
-            guidance.applySnapshot(
-                quality: guidance.quality,
-                message: plan.segments[guidedSegmentIndex].instructionKo
-            )
         }
     }
 

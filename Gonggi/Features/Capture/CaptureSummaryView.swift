@@ -97,45 +97,40 @@ struct CaptureSummaryView: View {
             spacing: GonggiSpacing.sm
         ) {
             GonggiMetricTile(
-                icon: "checkmark.circle.fill",
-                title: "충분 촬영",
-                value: "\(summary.goodAreaCount)개",
+                icon: "square.3.layers.3d",
+                title: "촬영 범위",
+                value: CaptureUIPresenter.userGradeLabel("coverage", quality: summary.quality),
                 accent: GonggiColors.successGreen
             )
             GonggiMetricTile(
-                icon: "arrow.triangle.2.circlepath",
-                title: "보강 필요",
-                value: "\(summary.insufficientAreaCount)개",
-                accent: GonggiColors.accentCyan,
-                warning: summary.insufficientAreaCount > 0
+                icon: "move.3d",
+                title: "입체 정보",
+                value: CaptureUIPresenter.userGradeLabel("baseline", quality: summary.quality),
+                warning: summary.quality.translationBaselineGrade == .insufficient
+            )
+            GonggiMetricTile(
+                icon: "link",
+                title: "카메라 연결",
+                value: CaptureUIPresenter.userGradeLabel("overlap", quality: summary.quality),
+                warning: summary.quality.overlapState == .lost || summary.quality.overlapState == .weak
+            )
+            GonggiMetricTile(
+                icon: "eye",
+                title: "화면 선명도",
+                value: CaptureUIPresenter.userGradeLabel("sharpness", quality: summary.quality),
+                warning: summary.quality.sharpnessState == .blurry
+            )
+            GonggiMetricTile(
+                icon: "location",
+                title: "카메라 추적",
+                value: CaptureUIPresenter.userGradeLabel("tracking", quality: summary.quality),
+                warning: summary.quality.trackingQuality < 0.7
             )
             GonggiMetricTile(
                 icon: "hare.fill",
                 title: "빠른 이동",
                 value: "\(summary.fastMotionSegments)구간",
                 warning: summary.fastMotionSegments > 0
-            )
-            GonggiMetricTile(
-                icon: "location.slash",
-                title: "추적 제한",
-                value: formattedDuration(summary.trackingLimitedSec),
-                warning: summary.trackingLimitedSec > 3
-            )
-            GonggiMetricTile(
-                icon: "arrow.2.squarepath",
-                title: "재방문",
-                value: percentString(summary.revisitScore)
-            )
-            GonggiMetricTile(
-                icon: "camera.metering.multispot",
-                title: "각도 다양성",
-                value: percentString(summary.angleDiversityScore)
-            )
-            GonggiMetricTile(
-                icon: "move.3d",
-                title: "이동 baseline",
-                value: summary.quality.translationBaselineGrade.rawValue,
-                warning: summary.quality.translationBaselineGrade == .insufficient
             )
         }
     }
@@ -171,6 +166,20 @@ struct CaptureSummaryView: View {
                     ))
                 }
                 Text("overlap: \(df.overlapAvailable ? "yes" : "notAvailable") · sync SoT: videoPTS")
+                Text(String(
+                    format: "obsCov %.0f%% / qualCov %.0f%% / overlap %.2f (%@)",
+                    df.observedCoverage * 100,
+                    df.qualityCoverage * 100,
+                    df.overlapScore,
+                    df.overlapState.rawValue
+                ))
+                Text(String(
+                    format: "sharp %@ / score %.2f / blurSamples %.0f%%",
+                    df.sharpnessState.rawValue,
+                    df.sharpnessScore,
+                    df.sharpnessBlurryFraction * 100
+                ))
+                Text("action \(df.guidanceAction.rawValue) / phase \(df.capturePhase.rawValue) / completion \(df.completionState.rawValue)")
                 if let note = df.orientationNote {
                     Text(note).lineLimit(3)
                 }

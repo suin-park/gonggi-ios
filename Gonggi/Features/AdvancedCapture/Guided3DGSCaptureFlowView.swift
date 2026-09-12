@@ -1,9 +1,11 @@
 import SwiftUI
 
 /// Top banner showing the active Astra guide segment during 3DGS video capture.
+/// Hidden when live metrics require urgent correction (Astra = initial plan only).
 struct GuidedCapturePlanBanner: View {
     let plan: AdvancedCaptureGuidePlan
     let segmentIndex: Int
+    var suppressForLivePriority: Bool = false
 
     private var segment: AdvancedCaptureGuideSegment? {
         guard !plan.segments.isEmpty else { return nil }
@@ -13,7 +15,7 @@ struct GuidedCapturePlanBanner: View {
 
     var body: some View {
         VStack {
-            if let segment {
+            if !suppressForLivePriority, let segment {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("촬영 가이드 \(min(segmentIndex + 1, plan.segments.count))/\(plan.segments.count)")
                         .font(GonggiTypography.caption(12))

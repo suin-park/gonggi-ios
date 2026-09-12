@@ -63,12 +63,16 @@ final class CaptureFramePipeline {
         q.trackingQuality = 0.92
         q.exposureScore = 0.88
         q.lowTextureScore = 0.3 + 0.1 * sin(t)
-        q.overlapScore = 0
-        q.overlapAvailable = false
+        q.overlapScore = mockTick > 20 ? 0.7 : 0.4
+        q.overlapAvailable = true
+        q.overlapState = mockTick > 20 ? .good : .weak
         // Mock: low translation baseline unless "walking" ticks.
         q.translationBaselineGrade = mockTick > 40 ? .acceptable : .insufficient
         q.parallaxScore = q.translationBaselineGrade.score
         q.viewAngleDiversity = min(1, 0.2 + t * 0.01)
+        q.sharpnessScore = 0.8
+        q.sharpnessState = .acceptable
+        q.sharpnessBlurryFraction = 0.05
         mockAreas = mockAreas.map { area in
             var a = area
             a.observationCount += 1
@@ -80,10 +84,33 @@ final class CaptureFramePipeline {
             return a
         }
         q.areas = mockAreas
-        q.overallCoverage = min(0.92, 0.68 + t * 0.008)
-        let msg = guidanceRules.evaluate(quality: q, trackingLimited: false)
+        q.overallCoverage = min(0.92, 0.35 + t * 0.006)
+        q.observedCoverage = q.overallCoverage
+        // qualityCoverage rises slower than observed (rotation alone shouldn't complete)
+        q.qualityCoverage = min(
+            0.9,
+            (mockTick > 40 ? 0.25 : 0.08) + t * 0.004
+        )
+        if mockTick < 15 {
+            q.capturePhase = .stabilizing
+            q.completionState = .notReady
+        } else if q.qualityCoverage >= 0.72 {
+            q.capturePhase = .readyToFinish
+            q.completionState = .ready
+        } else if q.qualityCoverage >= 0.55 {
+            q.capturePhase = .coverageFill
+            q.completionState = .nearlyReady
+        } else if q.qualityCoverage >= 0.35 {
+            q.capturePhase = .parallaxPass
+            q.completionState = .notReady
+        } else {
+            q.capturePhase = .perimeter
+            q.completionState = .notReady
+        }
+        let decision = guidanceRules.evaluateDecision(quality: q, trackingLimited: false)
+        q.guidanceAction = decision.action
         DispatchQueue.main.async { [weak self] in
-            self?.onQualityUpdate?(q, msg)
+            self?.onQualityUpdate?(q, decision.message)
         }
     }
 

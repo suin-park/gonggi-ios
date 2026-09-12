@@ -191,12 +191,20 @@ final class AppState: ObservableObject {
     }
 
     func startSpaceGeneration(from result: DirectionCaptureResult) {
+        enqueueSpaceGeneration(from: result, switchToHome: true)
+    }
+
+    /// Enqueue LatLong generation. When `switchToHome` is false (3D multi-step Record flow),
+    /// stay on Record so step-2 can continue; LatLong job is still persisted.
+    func enqueueSpaceGeneration(from result: DirectionCaptureResult, switchToHome: Bool) {
         // Natural permission moment: user just finished a 20-direction capture.
         GonggiPushRegistrar.shared.requestPermissionIfAppropriate()
         jobRuntime.configure(useMock: isMockMode)
         jobRuntime.start(from: result)
         rebuildSpaces()
-        selectedTab = .home
+        if switchToHome {
+            selectedTab = .home
+        }
         schedulePendingSpaceLinkFinalize()
     }
 

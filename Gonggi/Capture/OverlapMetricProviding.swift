@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// P1 hook — visual / geometric overlap. P0 always reports `.notAvailable`.
+/// Visual / geometric overlap. P0 used `.notAvailable`; P1 provides `CellOverlapAnalyzer`.
 protocol OverlapMetricProviding {
     func availability() -> CaptureMetricAvailability
     func estimateOverlap(
@@ -10,7 +10,7 @@ protocol OverlapMetricProviding {
     ) -> Double?
 }
 
-/// Placeholder until frustum / coverage / feature overlap lands in P1.
+/// Placeholder for callers that intentionally omit overlap.
 struct OverlapMetricUnavailable: OverlapMetricProviding {
     func availability() -> CaptureMetricAvailability { .notAvailable }
     func estimateOverlap(

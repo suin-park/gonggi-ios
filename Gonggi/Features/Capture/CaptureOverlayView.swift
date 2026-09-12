@@ -76,6 +76,15 @@ struct CaptureOverlayView: View {
             GonggiIconButton(systemName: "xmark", style: .dimmed, action: onClose)
                 .accessibilityLabel("닫기")
             Spacer()
+            Text("공간 기록")
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(GonggiColors.textSecondary)
+            Text("\(guidance.quality.progressPercent)%")
+                .font(GonggiTypography.headline(15))
+                .foregroundStyle(GonggiColors.textPrimary)
+                .monospacedDigit()
+                .accessibilityLabel("진행률 \(guidance.quality.progressPercent)퍼센트")
+            Spacer()
             if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
                 CoverageLegend(compact: true)
             }
@@ -86,16 +95,31 @@ struct CaptureOverlayView: View {
     }
 
     private var bottomControls: some View {
-        CaptureControlBar(
-            progress: guidance.quality.overallCoverage,
-            emphasis: progressEmphasis,
-            isReady: isReadyToFinish,
-            isFlashOn: guidance.isFlashOn,
-            showGuideOverlay: guidance.showGuideOverlay,
-            onFlash: onFlash,
-            onFinish: onFinish,
-            onGuide: onGuide
-        )
+        VStack(spacing: GonggiSpacing.xs) {
+            Text(guidance.quality.capturePhase.userLabel)
+                .font(GonggiTypography.caption(12))
+                .foregroundStyle(GonggiColors.textSecondary)
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("촬영 단계")
+
+            if isReadyToFinish {
+                Text("공간 기록을 완료할 수 있어요")
+                    .font(GonggiTypography.caption(13))
+                    .foregroundStyle(GonggiColors.successGreen)
+                    .frame(maxWidth: .infinity)
+            }
+
+            CaptureControlBar(
+                progress: guidance.quality.qualityCoverage,
+                emphasis: progressEmphasis,
+                isReady: isReadyToFinish,
+                isFlashOn: guidance.isFlashOn,
+                showGuideOverlay: guidance.showGuideOverlay,
+                onFlash: onFlash,
+                onFinish: onFinish,
+                onGuide: onGuide
+            )
+        }
         .padding(.horizontal, GonggiSpacing.md)
     }
 }
@@ -123,9 +147,12 @@ struct CaptureWarningChip: View {
 
     private var label: String {
         switch kind {
-        case .fastMovement: return "빠른 이동"
-        case .trackingLimited: return "추적 제한"
-        case .lowTexture: return "저텍스처"
+        case .fastMovement: return "너무 빠름"
+        case .trackingLimited: return "카메라 위치 확인 중"
+        case .lowTexture: return "특징 부족"
+        case .overlapWeak: return "연결이 약해짐"
+        case .blurryFrame: return "화면이 흐림"
+        case .baselineWeak: return "옆으로 이동"
         }
     }
 
@@ -134,6 +161,9 @@ struct CaptureWarningChip: View {
         case .fastMovement: return GonggiColors.warning
         case .trackingLimited: return GonggiColors.warningCritical
         case .lowTexture: return GonggiColors.accentCyan
+        case .overlapWeak: return GonggiColors.warningCritical
+        case .blurryFrame: return GonggiColors.warning
+        case .baselineWeak: return GonggiColors.accentCyan
         }
     }
 
@@ -142,6 +172,9 @@ struct CaptureWarningChip: View {
         case .fastMovement: return GonggiColors.warning.opacity(0.2)
         case .trackingLimited: return GonggiColors.warningCritical.opacity(0.22)
         case .lowTexture: return GonggiColors.accentCyan.opacity(0.15)
+        case .overlapWeak: return GonggiColors.warningCritical.opacity(0.2)
+        case .blurryFrame: return GonggiColors.warning.opacity(0.2)
+        case .baselineWeak: return GonggiColors.accentCyan.opacity(0.15)
         }
     }
 
@@ -149,7 +182,10 @@ struct CaptureWarningChip: View {
         switch kind {
         case .fastMovement: return "빠른 이동 경고"
         case .trackingLimited: return "추적 제한 경고"
-        case .lowTexture: return "저텍스처 경고"
+        case .lowTexture: return "특징 부족 경고"
+        case .overlapWeak: return "촬영 연결 약함 경고"
+        case .blurryFrame: return "화면 흐림 경고"
+        case .baselineWeak: return "횡이동 필요 경고"
         }
     }
 }

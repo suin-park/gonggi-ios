@@ -8,6 +8,7 @@ struct CoverageCell: Equatable {
     var observationCount: Int = 0
     var uniqueViewBuckets: Set<Int> = []
     var revisitCount: Int = 0
+    var baselineBoostCount: Int = 0
     var lastSeenAt: Date?
     var coverageScore: Double = 0
     var state: CoverageState = .unseen
@@ -26,9 +27,33 @@ struct CoverageModelV1 {
     private let minUniqueViewsForGood = 5
     private let minDiversityForGood = 0.5
 
+    var overallCoverage: Double {
+        guard !cells.isEmpty else { return 0 }
+        let scores = cells.values.map(\.coverageScore)
+        return scores.reduce(0, +) / Double(scores.count)
+    }
+
+    /// Soft fill estimate from distinct visited cells (not room mesh fraction).
+    var observedCoverage: Double {
+        min(1, Double(cells.count) / 12.0)
+    }
+
+    /// Cells with acceptable/good observation diversity — preferred UI progress.
+    var qualityCoverage: Double {
+        guard !cells.isEmpty else { return 0 }
+        let fill = observedCoverage
+        let qualityCells = cells.values.filter { $0.state == .acceptable || $0.state == .good }
+        let qualityRatio = Double(qualityCells.count) / Double(cells.count)
+        let qualityMean = qualityCells.isEmpty
+            ? 0
+            : qualityCells.map(\.coverageScore).reduce(0, +) / Double(qualityCells.count)
+        return min(1, 0.4 * fill + 0.35 * qualityRatio + 0.25 * qualityMean)
+    }
+
     mutating func observe(
         cameraTransform: simd_float4x4,
         motionQuality: Double,
+        translationBaselineOK: Bool = false,
         at date: Date = Date()
     ) {
         let pos = simd_float3(
@@ -42,6 +67,9 @@ struct CoverageModelV1 {
         var cell = cells[cellId] ?? CoverageCell(id: cellId)
         cell.observationCount += 1
         cell.uniqueViewBuckets.insert(bucket)
+        if translationBaselineOK {
+            cell.baselineBoostCount += 1
+        }
         if let last = lastCellId, last == cellId, cell.observationCount > 1 {
             cell.revisitCount += 1
         }
@@ -50,17 +78,12 @@ struct CoverageModelV1 {
             observations: cell.observationCount,
             uniqueViews: cell.uniqueViewBuckets.count,
             diversity: cell.angleDiversity,
-            motionQuality: motionQuality
+            motionQuality: motionQuality,
+            baselineBoosts: cell.baselineBoostCount
         )
         cell.state = stateFor(cell: cell)
         cells[cellId] = cell
         lastCellId = cellId
-    }
-
-    var overallCoverage: Double {
-        guard !cells.isEmpty else { return 0 }
-        let scores = cells.values.map(\.coverageScore)
-        return scores.reduce(0, +) / Double(scores.count)
     }
 
     var areas: [AreaCoverage] {
@@ -118,24 +141,32 @@ struct CoverageModelV1 {
         observations: Int,
         uniqueViews: Int,
         diversity: Double,
-        motionQuality: Double
+        motionQuality: Double,
+        baselineBoosts: Int
     ) -> Double {
         let obsFactor = min(1, Double(observations) / Double(minObservationsForGood + 2))
         let viewFactor = min(1, Double(uniqueViews) / Double(minUniqueViewsForGood))
         let divFactor = min(1, diversity / minDiversityForGood)
         let motionFactor = max(0.3, motionQuality)
-        return min(1, (obsFactor * 0.35 + viewFactor * 0.35 + divFactor * 0.2 + motionFactor * 0.1))
+        let baselineFactor = min(1, Double(baselineBoosts) / 3.0)
+        return min(
+            1,
+            obsFactor * 0.3 + viewFactor * 0.3 + divFactor * 0.18 + motionFactor * 0.1 + baselineFactor * 0.12
+        )
     }
 
     private func stateFor(cell: CoverageCell) -> CoverageState {
         if cell.observationCount < 1 { return .unseen }
+        // Single look / spin-only: stay insufficient (not wellObserved).
         if cell.observationCount < 2 || cell.uniqueViewCount < 2 || cell.angleDiversity < 0.15 {
             return .insufficient
         }
         if cell.coverageScore >= 0.72
             && cell.observationCount >= minObservationsForGood
             && cell.uniqueViewCount >= minUniqueViewsForGood
-            && cell.angleDiversity >= minDiversityForGood {
+            && cell.angleDiversity >= minDiversityForGood
+            && cell.baselineBoostCount >= 1
+        {
             return .good
         }
         if cell.coverageScore >= 0.38 { return .acceptable }

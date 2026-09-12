@@ -159,7 +159,7 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
         case "missing_inputs":
             return "촬영 원본을 서버에서 찾지 못했어요."
         case "feature_disabled":
-            return "고급 생성이 잠시 비활성화되어 있어요."
+            return "3D 공간으로 확장이 잠시 비활성화되어 있어요."
         case "forbidden", "auth_required":
             return "로그인이 필요하거나 이 공간에 대한 권한이 없어요."
         case "astra_failed":

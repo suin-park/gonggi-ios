@@ -63,28 +63,34 @@ enum CoverageState: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-/// Rolling capture quality signals — extensible for IMG_7437 learnings.
+/// Rolling capture quality signals — P1 separates baseline / overlap / sharpness.
 struct CaptureQualityState: Equatable {
     var overallCoverage: Double
+    var observedCoverage: Double
+    var qualityCoverage: Double
     var motionSpeed: Double
     var angularVelocity: Double
+    /// Legacy motion blur proxy (velocity-based) — not RGB sharpness.
     var blurScore: Double
     var exposureScore: Double
     var trackingQuality: Double
     var lowTextureScore: Double
-    /// Deprecated visual-overlap placeholder — ignore unless `overlapAvailable`.
     var overlapScore: Double
     var overlapAvailable: Bool
-    /// Heuristic translation-baseline score (NOT depth-aware parallax).
+    var overlapState: CaptureOverlapState
     var parallaxScore: Double
-    /// Prefer `translationBaselineGrade`.
     var parallaxGrade: CaptureTranslationBaselineGrade {
         get { translationBaselineGrade }
         set { translationBaselineGrade = newValue }
     }
     var translationBaselineGrade: CaptureTranslationBaselineGrade
-    /// Former misuse of "parallax"; view-direction diversity only.
     var viewAngleDiversity: Double
+    var sharpnessScore: Double
+    var sharpnessState: CaptureSharpnessState
+    var sharpnessBlurryFraction: Double
+    var capturePhase: CapturePhase
+    var completionState: CaptureCompletionState
+    var guidanceAction: GuidanceAction
     var areas: [AreaCoverage]
 
     init(
@@ -101,9 +107,20 @@ struct CaptureQualityState: Equatable {
         overlapAvailable: Bool = false,
         parallaxGrade: CaptureTranslationBaselineGrade? = nil,
         translationBaselineGrade: CaptureTranslationBaselineGrade? = nil,
-        viewAngleDiversity: Double = 0
+        viewAngleDiversity: Double = 0,
+        observedCoverage: Double? = nil,
+        qualityCoverage: Double? = nil,
+        overlapState: CaptureOverlapState = .notAvailable,
+        sharpnessScore: Double = 0.7,
+        sharpnessState: CaptureSharpnessState = .unknown,
+        sharpnessBlurryFraction: Double = 0,
+        capturePhase: CapturePhase = .stabilizing,
+        completionState: CaptureCompletionState = .notReady,
+        guidanceAction: GuidanceAction = .continueCapture
     ) {
         self.overallCoverage = overallCoverage
+        self.observedCoverage = observedCoverage ?? overallCoverage
+        self.qualityCoverage = qualityCoverage ?? overallCoverage
         self.motionSpeed = motionSpeed
         self.angularVelocity = angularVelocity
         self.blurScore = blurScore
@@ -112,6 +129,7 @@ struct CaptureQualityState: Equatable {
         self.lowTextureScore = lowTextureScore
         self.overlapScore = overlapScore
         self.overlapAvailable = overlapAvailable
+        self.overlapState = overlapState
         self.parallaxScore = parallaxScore
         if let translationBaselineGrade {
             self.translationBaselineGrade = translationBaselineGrade
@@ -125,6 +143,12 @@ struct CaptureQualityState: Equatable {
             self.translationBaselineGrade = .insufficient
         }
         self.viewAngleDiversity = viewAngleDiversity
+        self.sharpnessScore = sharpnessScore
+        self.sharpnessState = sharpnessState
+        self.sharpnessBlurryFraction = sharpnessBlurryFraction
+        self.capturePhase = capturePhase
+        self.completionState = completionState
+        self.guidanceAction = guidanceAction
         self.areas = areas
     }
 
@@ -141,11 +165,13 @@ struct CaptureQualityState: Equatable {
         areas: [],
         overlapAvailable: false,
         translationBaselineGrade: .insufficient,
-        viewAngleDiversity: 0
+        viewAngleDiversity: 0,
+        observedCoverage: 0,
+        qualityCoverage: 0
     )
 
     var progressPercent: Int {
-        Int((overallCoverage * 100).rounded())
+        Int((qualityCoverage * 100).rounded())
     }
 }
 
@@ -181,6 +207,17 @@ struct CaptureDataFoundationSummary: Equatable {
     var integrity: CaptureMOVIntegritySummary?
     var cameraPathTopDown: [CaptureVec3]
     var orientationNote: String?
+    // P1 guidance debug
+    var observedCoverage: Double
+    var qualityCoverage: Double
+    var overlapScore: Double
+    var overlapState: CaptureOverlapState
+    var sharpnessScore: Double
+    var sharpnessState: CaptureSharpnessState
+    var sharpnessBlurryFraction: Double
+    var guidanceAction: GuidanceAction
+    var capturePhase: CapturePhase
+    var completionState: CaptureCompletionState
 
     init(
         schemaVersion: Int,
@@ -198,7 +235,17 @@ struct CaptureDataFoundationSummary: Equatable {
         discontinuity: CapturePoseDiscontinuitySummary? = nil,
         integrity: CaptureMOVIntegritySummary? = nil,
         cameraPathTopDown: [CaptureVec3] = [],
-        orientationNote: String? = nil
+        orientationNote: String? = nil,
+        observedCoverage: Double = 0,
+        qualityCoverage: Double = 0,
+        overlapScore: Double = 0,
+        overlapState: CaptureOverlapState = .notAvailable,
+        sharpnessScore: Double = 0,
+        sharpnessState: CaptureSharpnessState = .unknown,
+        sharpnessBlurryFraction: Double = 0,
+        guidanceAction: GuidanceAction = .continueCapture,
+        capturePhase: CapturePhase = .stabilizing,
+        completionState: CaptureCompletionState = .notReady
     ) {
         self.schemaVersion = schemaVersion
         self.posesURL = posesURL
@@ -216,6 +263,16 @@ struct CaptureDataFoundationSummary: Equatable {
         self.integrity = integrity
         self.cameraPathTopDown = cameraPathTopDown
         self.orientationNote = orientationNote
+        self.observedCoverage = observedCoverage
+        self.qualityCoverage = qualityCoverage
+        self.overlapScore = overlapScore
+        self.overlapState = overlapState
+        self.sharpnessScore = sharpnessScore
+        self.sharpnessState = sharpnessState
+        self.sharpnessBlurryFraction = sharpnessBlurryFraction
+        self.guidanceAction = guidanceAction
+        self.capturePhase = capturePhase
+        self.completionState = completionState
     }
 }
 
@@ -310,9 +367,18 @@ struct CaptureSessionSummary: Identifiable, Equatable {
     var coveragePercent: Int { quality.progressPercent }
 
     var qualityLabel: String {
-        if quality.trackingQuality < 0.5 || quality.blurScore < 0.45 { return "보통" }
-        if quality.overallCoverage >= 0.8 && fastMotionSegments <= 2 { return "좋음" }
-        return "양호"
+        switch quality.completionState {
+        case .ready:
+            return "3D 공간 생성에 적합합니다"
+        case .nearlyReady:
+            return "양호"
+        case .notReady:
+            if quality.trackingQuality < 0.5 || quality.sharpnessState == .blurry {
+                return "추가 촬영 권장"
+            }
+            if quality.qualityCoverage >= 0.45 { return "보통" }
+            return "추가 촬영 권장"
+        }
     }
 }
 

@@ -485,7 +485,7 @@ struct SpaceDetailView: View {
                     ProgressView()
                         .tint(GonggiColors.accentTeal)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("원활한 촬영을 위한 분석을 진행 중이에요")
+                        Text("입체 기록을 위한 분석을 진행 중이에요")
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
                         Text("앱을 나가도 분석은 계속됩니다")
@@ -496,20 +496,20 @@ struct SpaceDetailView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-        } else if let record, record.canStartGuidedCapture, let plan = record.guidePlan {
-            if record.canOpenGaussianViewer {
-                SecondaryButton(title: "3DGS 공간 둘러보기", icon: "move.3d") {
-                    GonggiHaptics.medium()
-                    showGaussianViewer = true
-                }
-                .accessibilityLabel("3DGS 공간 둘러보기")
+        } else if let record, record.canOpenGaussianViewer {
+            // 3D space already exists — show viewer only (no expand CTA).
+            SecondaryButton(title: "3D 공간 보기", icon: "move.3d") {
+                GonggiHaptics.medium()
+                showGaussianViewer = true
             }
-            SecondaryButton(title: "가이드 촬영 시작", icon: "video.fill") {
+            .accessibilityLabel("3D 공간 보기")
+        } else if let record, record.canStartGuidedCapture, let plan = record.guidePlan {
+            SecondaryButton(title: "입체 기록 시작", icon: "figure.walk") {
                 GonggiHaptics.medium()
                 guidedPlan = plan
                 showGuidedCapture = true
             }
-            .accessibilityLabel("가이드 촬영 시작")
+            .accessibilityLabel("입체 기록 시작")
         } else if let record, record.status == .failed {
             if showAdvancedAnalyzeConfirm {
                 AdvancedAnalyzeConfirmCard(
@@ -523,7 +523,7 @@ struct SpaceDetailView: View {
                 )
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            SecondaryButton(title: "고급 생성 다시 시도", icon: "arrow.clockwise") {
+            SecondaryButton(title: "3D 공간으로 확장 다시 시도", icon: "arrow.clockwise") {
                 GonggiHaptics.medium()
                 withAnimation(GonggiMotion.quick) {
                     showAdvancedAnalyzeConfirm = true
@@ -547,13 +547,13 @@ struct SpaceDetailView: View {
                 )
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            SecondaryButton(title: "고급 생성", icon: "sparkles") {
+            SecondaryButton(title: "3D 공간으로 확장", icon: "cube.transparent") {
                 GonggiHaptics.medium()
                 withAnimation(GonggiMotion.quick) {
                     showAdvancedAnalyzeConfirm.toggle()
                 }
             }
-            .accessibilityLabel("고급 생성")
+            .accessibilityLabel("3D 공간으로 확장")
             .disabled(isStartingAdvancedAnalyze)
         }
     }
@@ -718,7 +718,7 @@ struct ViewerPlaceholderView: View {
     }
 }
 
-/// Inline confirm card anchored above the 「고급 생성」 button (replaces broken confirmationDialog).
+/// Inline confirm card anchored above the 「3D 공간으로 확장」 button (replaces broken confirmationDialog).
 private struct AdvancedAnalyzeConfirmCard: View {
     var isStarting: Bool
     let onStart: () -> Void
@@ -728,7 +728,7 @@ private struct AdvancedAnalyzeConfirmCard: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
                 HStack(alignment: .top) {
-                    Text("원활한 촬영을 위한 분석을 시작합니다.")
+                    Text("입체 기록을 위한 분석을 시작합니다.")
                         .font(GonggiTypography.headline(16))
                         .foregroundStyle(GonggiColors.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -744,7 +744,7 @@ private struct AdvancedAnalyzeConfirmCard: View {
                     .accessibilityLabel("닫기")
                 }
 
-                Text("LatLong과 촬영 좌표를 바탕으로 3DGS 촬영 가이드를 만들어요. 앱을 나가도 분석은 계속됩니다.")
+                Text("이미 촬영한 360° 공간을 바탕으로 걸으며 촬영할 가이드를 만들어요. 앱을 나가도 분석은 계속됩니다.")
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -780,7 +780,7 @@ private struct AdvancedAnalyzeConfirmCard: View {
                     .stroke(GonggiColors.border, lineWidth: 1)
             )
 
-            // Tip pointing down toward the 고급 생성 button below.
+            // Tip pointing down toward the expand button below.
             AdvancedAnalyzeConfirmCardTip()
                 .fill(GonggiColors.surfaceElevated)
                 .frame(width: 18, height: 10)

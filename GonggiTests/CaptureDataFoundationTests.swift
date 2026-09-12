@@ -219,6 +219,11 @@ final class CaptureDataFoundationTests: XCTestCase {
         let p = OverlapMetricUnavailable()
         XCTAssertEqual(p.availability(), .notAvailable)
         XCTAssertNil(p.estimateOverlap(currentTransform: matrix_identity_float4x4, referenceTransform: nil))
+        // P1: CellOverlapAnalyzer is available (cell-path metric).
+        var live = CellOverlapAnalyzer()
+        XCTAssertEqual(live.availability(), .available)
+        _ = live.ingest(currentCellId: "0_0_0", isKeyframe: true)
+        XCTAssertNotEqual(live.lastState, .notAvailable)
     }
 
     func testTopDownPathDownsamples() {

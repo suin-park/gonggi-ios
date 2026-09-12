@@ -19,10 +19,20 @@ final class CoverageModelV1Tests: XCTestCase {
             let angle = Float(i) * 0.4
             t.columns.2 = SIMD4<Float>(sin(angle), 0, -cos(angle), 0)
             t.columns.0 = SIMD4<Float>(cos(angle), 0, sin(angle), 0)
-            model.observe(cameraTransform: t, motionQuality: 0.9)
+            // Quality good requires translation baseline boosts (not spin-only).
+            model.observe(cameraTransform: t, motionQuality: 0.9, translationBaselineOK: true)
         }
         let goodCount = model.areas.filter { $0.state == .good }.count
         XCTAssertGreaterThan(goodCount, 0)
+    }
+
+    func testObservedVsQualityCoverage() {
+        var model = CoverageModelV1()
+        // Single cell, single look → observed rises, quality stays low.
+        model.observe(cameraTransform: matrix_identity_float4x4, motionQuality: 1.0)
+        XCTAssertGreaterThan(model.observedCoverage, 0)
+        XCTAssertLessThan(model.qualityCoverage, model.observedCoverage + 0.01)
+        XCTAssertEqual(model.areas.first?.state, .insufficient)
     }
 
     func testOverallCoverageIncreases() {

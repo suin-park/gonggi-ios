@@ -15,6 +15,11 @@ final class CaptureSessionController {
     private var translationBaseline = TranslationBaselineAnalyzer()
     private var depthSampler = CaptureDepthSampler()
     private var discontinuity = CapturePoseDiscontinuityAnalyzer()
+    private var overlapAnalyzer = CellOverlapAnalyzer()
+    private let sharpnessAnalyzer = FrameSharpnessAnalyzer()
+    private var capturePhase: CapturePhase = .stabilizing
+    private var completionState: CaptureCompletionState = .notReady
+    private var lastGuidanceAction: GuidanceAction = .continueCapture
     private var frameSamples: [CaptureFrameSample] = []
     private var lastKeyframeTimestamp: Double?
     private var lastKeyframeTransform: simd_float4x4?
@@ -46,6 +51,11 @@ final class CaptureSessionController {
         guidanceRules.reset()
         translationBaseline.reset()
         discontinuity.reset()
+        overlapAnalyzer.reset()
+        sharpnessAnalyzer.reset()
+        capturePhase = .stabilizing
+        completionState = .notReady
+        lastGuidanceAction = .continueCapture
         depthSampler.reset(sessionId: sessionId)
         frameSamples = []
         lastKeyframeTimestamp = nil
@@ -70,9 +80,27 @@ final class CaptureSessionController {
         // Critical: pose/intrinsics only when this ARFrame's image is written to MOV.
         guard let written = videoRecorder.append(frame: frame) else {
             telemetry.ingest(frame: frame)
+            sharpnessAnalyzer.scheduleSample(pixelBuffer: frame.capturedImage, at: frame.timestamp)
+            let trackingNormal = frame.camera.trackingState == .normal
+            let transform = frame.camera.transform
+            // Do not mutate translationBaseline on dropped video frames (path length / poses stay synced).
             let motionQuality = telemetry.motionQuality
-            coverage.observe(cameraTransform: frame.camera.transform, motionQuality: motionQuality, at: Date())
+            coverage.observe(
+                cameraTransform: transform,
+                motionQuality: motionQuality,
+                translationBaselineOK: translationBaseline.bestGrade != .insufficient,
+                at: Date()
+            )
             coverageSpatialIndex.replace(cells: coverage.snapshotCells())
+            let cellId = CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform))
+            _ = overlapAnalyzer.ingest(currentCellId: cellId, isKeyframe: false)
+            updatePhaseAndCompletion(trackingNormal: trackingNormal)
+            let trackingLimited = !trackingNormal
+            let decision = guidanceRules.evaluateDecision(
+                quality: qualityState(trackingLimited: trackingLimited),
+                trackingLimited: trackingLimited
+            )
+            lastGuidanceAction = decision.action
             return
         }
 
@@ -87,9 +115,7 @@ final class CaptureSessionController {
         }
 
         telemetry.ingest(frame: frame)
-        let motionQuality = telemetry.motionQuality
-        coverage.observe(cameraTransform: frame.camera.transform, motionQuality: motionQuality, at: Date())
-        coverageSpatialIndex.replace(cells: coverage.snapshotCells())
+        sharpnessAnalyzer.scheduleSample(pixelBuffer: frame.capturedImage, at: frame.timestamp)
 
         let trackingNormal = frame.camera.trackingState == .normal
         let transform = frame.camera.transform
@@ -97,6 +123,16 @@ final class CaptureSessionController {
         discontinuity.ingest(transform: transform, trackingState: trackingLabel)
 
         let eval = translationBaseline.evaluate(transform: transform, trackingNormal: trackingNormal)
+        let baselineOK = eval.grade != .insufficient
+
+        let motionQuality = telemetry.motionQuality
+        coverage.observe(
+            cameraTransform: transform,
+            motionQuality: motionQuality,
+            translationBaselineOK: baselineOK,
+            at: Date()
+        )
+        coverageSpatialIndex.replace(cells: coverage.snapshotCells())
 
         let keyDecision = KeyframeSelector3DGS.shouldAccept(
             timestamp: frame.timestamp,
@@ -117,6 +153,10 @@ final class CaptureSessionController {
             depthRef = refs.depth
             confRef = refs.confidence
         }
+
+        let cellId = CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform))
+        _ = overlapAnalyzer.ingest(currentCellId: cellId, isKeyframe: isKeyframe)
+        updatePhaseAndCompletion(trackingNormal: trackingNormal)
 
         let sample = CaptureFrameSample(
             frameIndex: written.videoFrameIndex,
@@ -149,7 +189,11 @@ final class CaptureSessionController {
         frameSamples.append(sample)
 
         let trackingLimited = !trackingNormal
-        _ = guidanceRules.evaluate(quality: qualityState(trackingLimited: trackingLimited), trackingLimited: trackingLimited)
+        let decision = guidanceRules.evaluateDecision(
+            quality: qualityState(trackingLimited: trackingLimited),
+            trackingLimited: trackingLimited
+        )
+        lastGuidanceAction = decision.action
     }
 
     func currentQuality(trackingLimited: Bool = false) -> CaptureQualityState {
@@ -157,8 +201,16 @@ final class CaptureSessionController {
     }
 
     func currentCoachMessage(trackingLimited: Bool = false) -> String {
-        guidanceRules.evaluate(quality: qualityState(trackingLimited: trackingLimited), trackingLimited: trackingLimited)
+        let d = guidanceRules.evaluateDecision(
+            quality: qualityState(trackingLimited: trackingLimited),
+            trackingLimited: trackingLimited
+        )
+        lastGuidanceAction = d.action
+        return d.message
     }
+
+    func currentGuidanceAction() -> GuidanceAction { lastGuidanceAction }
+
 
     func cancel() {
         guard isActive else { return }
@@ -306,11 +358,21 @@ final class CaptureSessionController {
                 totalPathLengthM: Double(translationBaseline.totalPathLengthM),
                 translationBaselineGrade: translationBaseline.bestGrade,
                 viewAngleDiversity: coverage.angleDiversityScore,
-                overlapAvailable: false,
+                overlapAvailable: true,
                 discontinuity: disc,
                 integrity: integritySummary,
                 cameraPathTopDown: path,
-                orientationNote: orientationContract?.note
+                orientationNote: orientationContract?.note,
+                observedCoverage: coverage.observedCoverage,
+                qualityCoverage: coverage.qualityCoverage,
+                overlapScore: overlapAnalyzer.lastScore,
+                overlapState: overlapAnalyzer.lastState,
+                sharpnessScore: sharpnessAnalyzer.snapshot().score,
+                sharpnessState: sharpnessAnalyzer.snapshot().state,
+                sharpnessBlurryFraction: sharpnessAnalyzer.snapshot().blurryFraction,
+                guidanceAction: lastGuidanceAction,
+                capturePhase: capturePhase,
+                completionState: completionState
             )
         )
     }
@@ -322,6 +384,7 @@ final class CaptureSessionController {
         let overall = coverage.overallCoverage
         let lastSample = telemetry.samples.last
         let grade = translationBaseline.bestGrade
+        let sharp = sharpnessAnalyzer.snapshot()
         return CaptureQualityState(
             overallCoverage: overall,
             motionSpeed: lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed,
@@ -330,12 +393,49 @@ final class CaptureSessionController {
             exposureScore: min(1, lastSample?.brightness ?? 0.85),
             trackingQuality: trackingLimited ? 0.35 : 0.95,
             lowTextureScore: estimateLowTexture(),
-            overlapScore: 0,
+            overlapScore: overlapAnalyzer.lastScore,
             parallaxScore: grade.score,
             areas: areas,
-            overlapAvailable: false,
+            overlapAvailable: true,
             translationBaselineGrade: grade,
-            viewAngleDiversity: coverage.angleDiversityScore
+            viewAngleDiversity: coverage.angleDiversityScore,
+            observedCoverage: coverage.observedCoverage,
+            qualityCoverage: coverage.qualityCoverage,
+            overlapState: overlapAnalyzer.lastState,
+            sharpnessScore: sharp.score,
+            sharpnessState: sharp.state,
+            sharpnessBlurryFraction: sharp.blurryFraction,
+            capturePhase: capturePhase,
+            completionState: completionState,
+            guidanceAction: lastGuidanceAction
+        )
+    }
+
+    private func updatePhaseAndCompletion(trackingNormal: Bool) {
+        let elapsed = Date().timeIntervalSince(startedAt)
+        let qCov = coverage.qualityCoverage
+        if elapsed < CapturePhaseConfig.stabilizingSec {
+            capturePhase = .stabilizing
+        } else if completionState == .ready || qCov >= CaptureCompletionConfig.qualityCoverageReady {
+            capturePhase = .readyToFinish
+        } else if qCov < 0.35 {
+            capturePhase = .perimeter
+        } else if qCov < 0.55 {
+            capturePhase = .parallaxPass
+        } else {
+            capturePhase = .coverageFill
+        }
+
+        let sharp = sharpnessAnalyzer.snapshot()
+        completionState = CaptureCompletionGate.evaluate(
+            durationSec: elapsed,
+            keyframeCount: keyframe3DGSCount,
+            pathLengthM: Double(translationBaseline.totalPathLengthM),
+            qualityCoverage: qCov,
+            overlapState: overlapAnalyzer.lastState,
+            sharpnessBlurryFraction: sharp.blurryFraction,
+            trackingNormal: trackingNormal,
+            baselineGrade: translationBaseline.bestGrade
         )
     }
 

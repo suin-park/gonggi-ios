@@ -11,7 +11,7 @@ final class CaptureQualityStateTests: XCTestCase {
 
     func testProgressPercentRounding() {
         var q = CaptureQualityState.zero
-        q.overallCoverage = 0.856
+        q.qualityCoverage = 0.856
         XCTAssertEqual(q.progressPercent, 86)
     }
 

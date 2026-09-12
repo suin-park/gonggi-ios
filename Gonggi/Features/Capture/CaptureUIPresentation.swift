@@ -6,12 +6,18 @@ enum CaptureWarningKind: Equatable {
     case fastMovement
     case trackingLimited
     case lowTexture
+    case overlapWeak
+    case blurryFrame
+    case baselineWeak
 
     var icon: String {
         switch self {
         case .fastMovement: return "hare.fill"
         case .trackingLimited: return "location.slash.fill"
         case .lowTexture: return "square.dashed"
+        case .overlapWeak: return "link.badge.plus"
+        case .blurryFrame: return "eye.slash"
+        case .baselineWeak: return "arrow.left.and.right"
         }
     }
 }
@@ -50,10 +56,17 @@ struct CaptureCoachPresentation: Equatable {
 }
 
 enum CaptureUIPresenter {
-    /// Highest-priority active warning for UI semantics (reads existing quality fields only).
+    /// Highest-priority active warning for chips (problem-only).
     static func warningKind(for quality: CaptureQualityState) -> CaptureWarningKind? {
         if quality.trackingQuality < 0.5 { return .trackingLimited }
-        if quality.motionSpeed > 0.7 || quality.blurScore < 0.45 { return .fastMovement }
+        if quality.overlapAvailable, quality.overlapState == .lost || quality.overlapState == .weak {
+            return .overlapWeak
+        }
+        if quality.sharpnessState == .blurry { return .blurryFrame }
+        if quality.motionSpeed > 0.7 { return .fastMovement }
+        if quality.translationBaselineGrade == .insufficient, quality.observedCoverage > 0.1 {
+            return .baselineWeak
+        }
         if quality.lowTextureScore > 0.6 { return .lowTexture }
         return nil
     }
@@ -62,92 +75,110 @@ enum CaptureUIPresenter {
         quality: CaptureQualityState,
         fallbackMessage: String
     ) -> CaptureCoachPresentation {
+        // Live guidance action wins over Astra fallback copy.
+        let action = quality.guidanceAction
+        let title = CaptureGuidanceCopy.message(for: action)
+
         if let warning = warningKind(for: quality) {
-            switch warning {
-            case .fastMovement:
-                return CaptureCoachPresentation(
-                    title: "조금 천천히 움직여주세요",
-                    subtitle: nil,
-                    severity: .warning,
-                    icon: warning.icon,
-                    warning: warning
-                )
-            case .trackingLimited:
-                return CaptureCoachPresentation(
-                    title: "카메라 위치를 다시 잡고 있어요",
-                    subtitle: "주변의 특징이 보이는 곳을 천천히 비춰주세요",
-                    severity: .critical,
-                    icon: warning.icon,
-                    warning: warning
-                )
-            case .lowTexture:
-                return CaptureCoachPresentation(
-                    title: "이 벽은 특징이 적어요",
-                    subtitle: "주변 가구나 모서리도 함께 담아주세요",
-                    severity: .warning,
-                    icon: warning.icon,
-                    warning: warning
-                )
-            }
+            let severity: CaptureCoachSeverity = (warning == .trackingLimited || warning == .overlapWeak)
+                ? .critical : .warning
+            return CaptureCoachPresentation(
+                title: title,
+                subtitle: phaseSubtitle(quality.capturePhase, fallback: fallbackMessage),
+                severity: severity,
+                icon: warning.icon,
+                warning: warning
+            )
         }
 
-        let coverage = quality.overallCoverage
-        if coverage >= 0.88 {
+        switch quality.completionState {
+        case .ready:
             return CaptureCoachPresentation(
-                title: "거의 다 기록했어요",
+                title: CaptureGuidanceCopy.message(for: .captureComplete),
                 subtitle: "원하면 지금 마무리할 수 있어요",
                 severity: .good,
                 icon: "checkmark.circle.fill",
                 warning: nil
             )
-        }
-        if coverage >= 0.55 {
-            // LiDAR: cyan wireframe = still needs coverage. Non-LiDAR: no mesh overlay —
-            // referring to "청록 표시" confuses users (TestFlight feedback).
-            let subtitle: String
-            if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
-                subtitle = "화면의 청록 선을 다른 각도에서 천천히 비춰주세요"
-            } else {
-                subtitle = "아직 덜 담긴 벽·모서리를 다른 각도에서 천천히 비춰주세요"
-            }
+        case .nearlyReady:
             return CaptureCoachPresentation(
-                title: "좋아요. 조금만 더 둘러보세요",
-                subtitle: subtitle,
-                severity: .guidance,
-                icon: "arrow.triangle.2.circlepath",
+                title: CaptureGuidanceCopy.message(for: .captureNearlyComplete),
+                subtitle: quality.capturePhase.userLabel,
+                severity: .good,
+                icon: "checkmark.circle",
                 warning: nil
             )
-        }
-        if coverage >= 0.35 {
+        case .notReady:
+            if action == .continueCapture {
+                return CaptureCoachPresentation(
+                    title: title,
+                    subtitle: quality.capturePhase.userLabel,
+                    severity: .guidance,
+                    icon: "figure.walk",
+                    warning: nil
+                )
+            }
             return CaptureCoachPresentation(
-                title: "촬영이 진행 중이에요",
-                subtitle: fallbackMessage.isEmpty ? "천천히 움직이며 공간을 더 둘러보세요" : fallbackMessage,
+                title: title,
+                subtitle: phaseSubtitle(quality.capturePhase, fallback: fallbackMessage),
                 severity: .guidance,
                 icon: "viewfinder",
                 warning: nil
             )
         }
-        return CaptureCoachPresentation(
-            title: "아직 촬영이 부족해요",
-            subtitle: "천천히 움직이며 공간을 더 둘러보세요",
-            severity: .guidance,
-            icon: "viewfinder",
-            warning: nil
-        )
+    }
+
+    private static func phaseSubtitle(_ phase: CapturePhase, fallback: String) -> String? {
+        let label = phase.userLabel
+        if fallback.isEmpty || fallback == label { return label }
+        return label
     }
 
     static func isReadyToFinish(_ quality: CaptureQualityState) -> Bool {
-        quality.overallCoverage >= 0.88 && warningKind(for: quality) == nil
+        // Completion gate already encodes quality floors; do not auto-stop.
+        quality.completionState == .ready
     }
 
     static func progressEmphasis(for quality: CaptureQualityState) -> CaptureProgressEmphasis {
         if isReadyToFinish(quality) { return .ready }
-        if quality.overallCoverage >= 0.55 { return .progressing }
+        if quality.qualityCoverage >= 0.55 { return .progressing }
         return .needsWork
     }
 
-    /// Overlay confidence reduction when tracking is limited (visual only).
     static func overlayDimming(for quality: CaptureQualityState) -> Double {
         quality.trackingQuality < 0.5 ? 0.28 : 0
+    }
+
+    static func userGradeLabel(_ kind: String, quality: CaptureQualityState) -> String {
+        switch kind {
+        case "coverage":
+            if quality.qualityCoverage >= 0.72 { return "충분" }
+            if quality.qualityCoverage >= 0.45 { return "보통" }
+            return "추가 촬영 권장"
+        case "baseline":
+            switch quality.translationBaselineGrade {
+            case .good: return "좋음"
+            case .acceptable: return "보통"
+            case .insufficient: return "추가 촬영 권장"
+            }
+        case "overlap":
+            switch quality.overlapState {
+            case .good: return "안정적"
+            case .weak: return "보통"
+            case .lost: return "추가 촬영 권장"
+            case .notAvailable: return "—"
+            }
+        case "sharpness":
+            switch quality.sharpnessState {
+            case .sharp: return "좋음"
+            case .acceptable: return "보통"
+            case .blurry: return "추가 촬영 권장"
+            case .unknown: return "—"
+            }
+        case "tracking":
+            return quality.trackingQuality >= 0.7 ? "안정적" : "추가 촬영 권장"
+        default:
+            return "—"
+        }
     }
 }
