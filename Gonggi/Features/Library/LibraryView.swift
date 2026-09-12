@@ -10,6 +10,8 @@ struct LibraryView: View {
     @State private var viewerError: String?
     @State private var retryJobId: String?
     @State private var showImportSheet = false
+    @State private var gaussianViewerSpaceId: String?
+    @State private var showGaussianViewer = false
 
     var body: some View {
         NavigationStack {
@@ -66,10 +68,24 @@ struct LibraryView: View {
                 }
             }
             .sheet(isPresented: $showImportSheet) {
-                SpaceImportSheet { jobId in
-                    Task { await openViewer(jobId: jobId) }
-                }
+                SpaceImportSheet(
+                    onImported: { jobId in
+                        Task { await openViewer(jobId: jobId) }
+                    },
+                    onGaussianImported: { spaceId in
+                        gaussianViewerSpaceId = spaceId
+                        showGaussianViewer = true
+                    }
+                )
                 .environmentObject(appState)
+            }
+            .fullScreenCover(isPresented: $showGaussianViewer) {
+                if let spaceId = gaussianViewerSpaceId {
+                    GaussianSplatWebViewer(spaceId: spaceId) {
+                        showGaussianViewer = false
+                        gaussianViewerSpaceId = nil
+                    }
+                }
             }
             .navigationDestination(item: $selectedSpace) { space in
                 SpaceDetailView(space: space)

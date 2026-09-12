@@ -18,9 +18,12 @@ final class SpaceImportViewModel: ObservableObject {
     @Published var titleText: String = ""
     @Published var previewImage: UIImage?
     @Published var pickedVideoURL: URL?
+    @Published var pickedPlyURL: URL?
+    @Published var pickedPlyName: String?
     @Published var mediaKind: String = "still"
 
     private let api = SpaceImportAPIClient()
+    private let plyApi = MobileGaussianPLYAPIClient()
     private let store = SpaceJobStore.shared
 
     var statusLine: String? {
@@ -38,6 +41,8 @@ final class SpaceImportViewModel: ObservableObject {
         titleText = ""
         previewImage = nil
         pickedVideoURL = nil
+        pickedPlyURL = nil
+        pickedPlyName = nil
         mediaKind = "still"
     }
 
@@ -52,6 +57,8 @@ final class SpaceImportViewModel: ObservableObject {
         _ = validated
         previewImage = image
         pickedVideoURL = nil
+        pickedPlyURL = nil
+        pickedPlyName = nil
         mediaKind = "still"
         phase = .picking
     }
@@ -85,6 +92,8 @@ final class SpaceImportViewModel: ObservableObject {
             }
             previewImage = poster
             pickedVideoURL = url
+            pickedPlyURL = nil
+            pickedPlyName = nil
             mediaKind = "video"
             phase = .picking
         } catch {
@@ -92,11 +101,47 @@ final class SpaceImportViewModel: ObservableObject {
         }
     }
 
-    /// Returns session/job id on success.
+    
+    func handlePickedPly(url: URL) {
+        phase = .validating
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let name = url.lastPathComponent
+        guard name.lowercased().hasSuffix(".ply") else {
+            phase = .failed("PLY 파일만 가져올 수 있어요")
+            return
+        }
+        do {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            let size = values.fileSize ?? 0
+            guard size > 0 else {
+                phase = .failed("파일을 읽을 수 없어요")
+                return
+            }
+            if size > MobileGaussianPLYAPIClient.maxFileBytes {
+                phase = .failed(MobileGaussianPLYAPIClient.PLYImportError.tooLarge.userMessage)
+                return
+            }
+            pickedPlyURL = url
+            pickedPlyName = name
+            previewImage = nil
+            pickedVideoURL = nil
+            mediaKind = "ply"
+            phase = .picking
+        } catch {
+            phase = .failed("PLY 파일을 확인할 수 없어요")
+        }
+    }
+
+    /// Returns Gaussian space id when mediaKind == ply; otherwise LatLong session/job id.
+/// Returns session/job id on success.
     func submit() async -> String? {
         let title = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = title.isEmpty ? "가져온 공간" : title
 
+        if mediaKind == "ply", let plyURL = pickedPlyURL {
+            return await submitPly(fileURL: plyURL, displayName: displayName)
+        }
         if mediaKind == "video", let videoURL = pickedVideoURL, let poster = previewImage {
             return await submitVideo(videoURL: videoURL, poster: poster, displayName: displayName)
         }
@@ -218,14 +263,34 @@ final class SpaceImportViewModel: ObservableObject {
     }
 }
 
+
+    private func submitPly(fileURL: URL, displayName: String) async -> String? {
+        phase = .uploading
+        do {
+            let result = try await plyApi.importPLY(fileURL: fileURL, name: displayName)
+            phase = .done
+            return "gaussian:" + result.spaceId
+        } catch let err as MobileGaussianPLYAPIClient.PLYImportError {
+            phase = .failed(err.userMessage)
+            return nil
+        } catch {
+            phase = .failed("PLY 가져오기에 실패했어요")
+            return nil
+        }
+    }
+
 struct SpaceImportSheet: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var model = SpaceImportViewModel()
     @State private var photoItem: PhotosPickerItem?
     @State private var videoItem: PhotosPickerItem?
+    @State private var showPlyImporter = false
     @Environment(\.dismiss) private var dismiss
 
+    /// LatLong still/video import → session/job id
     var onImported: ((String) -> Void)?
+    /// External PLY → Gaussian space id
+    var onGaussianImported: ((String) -> Void)?
 
     var body: some View {
         NavigationStack {
@@ -255,7 +320,32 @@ struct SpaceImportSheet: View {
                         }
                     }
 
-                    if let preview = model.previewImage {
+
+                    Button {
+                        showPlyImporter = true
+                    } label: {
+                        labelChip(title: "3DGS PLY", systemImage: "cube.transparent")
+                    }
+                    .disabled(model.phase.isBusy)
+
+                    if model.mediaKind == "ply", let plyName = model.pickedPlyName {
+                        HStack(spacing: 10) {
+                            Image(systemName: "cube.transparent")
+                                .font(.system(size: 28))
+                                .foregroundStyle(GonggiColors.textSecondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(plyName)
+                                    .font(GonggiTypography.body(15))
+                                    .lineLimit(2)
+                                Text("가우시안 스플래팅 공간으로 등록됩니다")
+                                    .font(GonggiTypography.caption(13))
+                                    .foregroundStyle(GonggiColors.textSecondary)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(GonggiColors.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
+                    } else if let preview = model.previewImage {
                         Image(uiImage: preview)
                             .resizable()
                             .scaledToFit()
@@ -277,8 +367,13 @@ struct SpaceImportSheet: View {
                     Button {
                         Task {
                             if let jobId = await model.submit() {
-                                appState.rebuildSpaces()
-                                onImported?(jobId)
+                                if jobId.hasPrefix("gaussian:") {
+                                    let spaceId = String(jobId.dropFirst("gaussian:".count))
+                                    onGaussianImported?(spaceId)
+                                } else {
+                                    appState.rebuildSpaces()
+                                    onImported?(jobId)
+                                }
                                 dismiss()
                             }
                         }
@@ -287,7 +382,10 @@ struct SpaceImportSheet: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.previewImage == nil || model.phase.isBusy)
+                    .disabled(
+                        (model.mediaKind == "ply" ? model.pickedPlyURL == nil : model.previewImage == nil)
+                            || model.phase.isBusy
+                    )
                 }
                 .padding(GonggiSpacing.lg)
             }
@@ -320,6 +418,20 @@ struct SpaceImportSheet: View {
                     } else {
                         model.phase = .failed("영상을 불러오지 못했어요")
                     }
+                }
+            }
+
+            .fileImporter(
+                isPresented: $showPlyImporter,
+                allowedContentTypes: [UTType(filenameExtension: "ply") ?? .data, .item],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    model.handlePickedPly(url: url)
+                case .failure:
+                    model.phase = .failed("PLY 파일을 선택하지 못했어요")
                 }
             }
         }
