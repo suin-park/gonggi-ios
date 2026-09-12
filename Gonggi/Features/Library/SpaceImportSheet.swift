@@ -134,7 +134,6 @@ final class SpaceImportViewModel: ObservableObject {
     }
 
     /// Returns Gaussian space id when mediaKind == ply; otherwise LatLong session/job id.
-/// Returns session/job id on success.
     func submit() async -> String? {
         let title = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = title.isEmpty ? "가져온 공간" : title
@@ -261,8 +260,6 @@ final class SpaceImportViewModel: ObservableObject {
             return nil
         }
     }
-}
-
 
     private func submitPly(fileURL: URL, displayName: String) async -> String? {
         phase = .uploading
@@ -278,6 +275,7 @@ final class SpaceImportViewModel: ObservableObject {
             return nil
         }
     }
+}
 
 struct SpaceImportSheet: View {
     @EnvironmentObject private var appState: AppState
