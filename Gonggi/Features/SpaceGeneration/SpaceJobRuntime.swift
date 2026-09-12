@@ -186,41 +186,21 @@ final class SpaceJobRuntime: ObservableObject {
             return .failure(.jobNotFound)
         }
 
-        if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
-           SpaceLatLongStore.isValidLocalFile(at: latest.path) {
+        // Confirm server result identity before trusting durable local bytes (in-place R2 replace / ?v= bust).
+        if api != nil, job.serverStatus == "completed" || job.resultImageURL != nil {
+            await refreshStatus(jobId: job.jobId, generation: AuthSessionGeneration.current)
+            if let inflight = downloadTasks[job.jobId] {
+                await inflight.value
+            }
+            guard let refreshed = store.job(id: job.jobId) ?? store.jobs.first(where: { $0.sessionId == job.sessionId }) else {
+                return .failure(.jobNotFound)
+            }
+            job = refreshed
+        }
+
+        if let current = currentLocalLatLongURL(for: job) {
             await ensureLocalVideoIfNeeded(job: job)
-            return .success(latest)
-        }
-
-        if SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath),
-           let path = job.localLatLongPath {
-            await ensureLocalVideoIfNeeded(job: job)
-            return .success(URL(fileURLWithPath: path))
-        }
-
-        await refreshStatus(jobId: job.jobId, generation: AuthSessionGeneration.current)
-
-        // Live-status applyCompleted may already be downloading — await it so we do not
-        // start a second downloadAndPersist (SpaceViewerPrepareTests B/D regression).
-        if let inflight = downloadTasks[job.jobId] {
-            await inflight.value
-        }
-
-        guard let refreshed = store.job(id: job.jobId) ?? store.jobs.first(where: { $0.sessionId == job.sessionId }) else {
-            return .failure(.jobNotFound)
-        }
-        job = refreshed
-
-        if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
-           SpaceLatLongStore.isValidLocalFile(at: latest.path) {
-            await ensureLocalVideoIfNeeded(job: job)
-            return .success(latest)
-        }
-
-        if SpaceLatLongStore.isValidLocalFile(at: job.localLatLongPath),
-           let path = job.localLatLongPath {
-            await ensureLocalVideoIfNeeded(job: job)
-            return .success(URL(fileURLWithPath: path))
+            return .success(current)
         }
 
         guard job.serverStatus == "completed" || job.resultImageURL != nil else {
@@ -233,13 +213,10 @@ final class SpaceJobRuntime: ObservableObject {
         // Another applyCompleted download may have started while we re-checked paths.
         if let inflight = downloadTasks[job.jobId] {
             await inflight.value
-            if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
-               SpaceLatLongStore.isValidLocalFile(at: latest.path) {
-                return .success(latest)
-            }
-            if let path = store.job(id: job.jobId)?.localLatLongPath,
-               SpaceLatLongStore.isValidLocalFile(at: path) {
-                return .success(URL(fileURLWithPath: path))
+            if let latestJob = store.job(id: job.jobId) ?? store.jobs.first(where: { $0.sessionId == job.sessionId }),
+               let current = currentLocalLatLongURL(for: latestJob) {
+                await ensureLocalVideoIfNeeded(job: latestJob)
+                return .success(current)
             }
         }
 
@@ -289,25 +266,80 @@ final class SpaceJobRuntime: ObservableObject {
             await inflight.value
         }
 
-        if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: trackedSessionId),
-           SpaceLatLongStore.isValidLocalFile(at: latest.path) {
-            if let job = store.job(id: trackedJobId) {
-                await ensureLocalVideoIfNeeded(job: job)
-            }
-            return .success(latest)
-        }
-        if let path = store.job(id: trackedJobId)?.localLatLongPath,
-           SpaceLatLongStore.isValidLocalFile(at: path) {
-            if let job = store.job(id: trackedJobId) {
-                await ensureLocalVideoIfNeeded(job: job)
-            }
-            return .success(URL(fileURLWithPath: path))
+        if let latestJob = store.job(id: trackedJobId),
+           let current = currentLocalLatLongURL(for: latestJob) {
+            await ensureLocalVideoIfNeeded(job: latestJob)
+            return .success(current)
         }
         let failCode = store.job(id: trackedJobId)?.lastErrorCode
         if failCode == "invalid_image" {
             return .failure(.invalidImage)
         }
         return .failure(.downloadFailed)
+    }
+
+    /// Prefer on-disk texture only when it still matches the server result identity.
+    private func currentLocalLatLongURL(for job: SpaceJobRecord) -> URL? {
+        if let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: job.sessionId),
+           SpaceLatLongStore.isValidLocalFile(at: latest.path),
+           isLocalLatLongCurrent(job: job, localURL: latest) {
+            return latest
+        }
+        if let path = job.localLatLongPath,
+           SpaceLatLongStore.isValidLocalFile(at: path) {
+            let url = URL(fileURLWithPath: path)
+            if isLocalLatLongCurrent(job: job, localURL: url) {
+                return url
+            }
+        }
+        if let base = try? SpaceLatLongStore.latLongURL(sessionId: job.sessionId),
+           SpaceLatLongStore.isValidLocalFile(at: base.path),
+           isLocalLatLongCurrent(job: job, localURL: base) {
+            return base
+        }
+        return nil
+    }
+
+    /// Stale-local guard: source URL / revision token must match current `resultImageURL` identity.
+    /// Legacy locals without a source stamp remain usable (SpaceViewerPrepareTests A/C).
+    private func isLocalLatLongCurrent(job: SpaceJobRecord, localURL: URL) -> Bool {
+        let remote = (job.resultImageURL ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let source = job.localLatLongSourceURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !source.isEmpty,
+           !remote.isEmpty,
+           source != remote {
+            return false
+        }
+
+        let serverToken = SpaceThumbnailCacheKey.revisionToken(
+            latestRevisionId: job.latestRevisionId,
+            remoteImageURL: job.resultImageURL,
+            catalogUpdatedAt: job.catalogUpdatedAt
+        )
+
+        if let path = job.localLatLongPath,
+           URL(fileURLWithPath: path).standardizedFileURL == localURL.standardizedFileURL,
+           let localTok = job.localLatLongRevisionToken?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !localTok.isEmpty,
+           serverToken != "none",
+           localTok != serverToken {
+            return false
+        }
+
+        if let stamp = SpaceLatLongStore.readRevisionStamp(forImageAt: localURL) {
+            let stampSource = stamp.sourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !stampSource.isEmpty, !remote.isEmpty, stampSource != remote {
+                return false
+            }
+            if serverToken != "none",
+               !stamp.revisionToken.isEmpty,
+               stamp.revisionToken != serverToken {
+                return false
+            }
+        }
+
+        return true
     }
 
     /// Download equirect video when catalog/job has remoteVideoURL but local file is missing.
@@ -502,7 +534,10 @@ final class SpaceJobRuntime: ObservableObject {
             ?? store.jobs.first(where: { $0.jobId == jobId })?.sessionId
             ?? jobId
 
-        if SpaceLatLongStore.isValidLocalFile(at: store.job(id: jobId)?.localLatLongPath) {
+        if let existing = store.job(id: jobId),
+           let path = existing.localLatLongPath,
+           SpaceLatLongStore.isValidLocalFile(at: path),
+           isLocalLatLongCurrent(job: existing, localURL: URL(fileURLWithPath: path)) {
             return
         }
 

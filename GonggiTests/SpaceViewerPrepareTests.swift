@@ -271,6 +271,46 @@ final class SpaceViewerPrepareTests: XCTestCase {
         guard case .failure = result else { return XCTFail("missing URL must fail") }
     }
 
+    func testH_StaleSourceURLRedownloads() async throws {
+        let sid = "dir-stale-\(UUID().uuidString)"
+        let dest = try SpaceLatLongStore.latLongURL(sessionId: sid)
+        try FileManager.default.copyItem(at: tempJPEG, to: dest)
+        let oldURL = "https://example.com/latlong.jpg?v=1"
+        let newURL = "https://example.com/latlong.jpg?v=2"
+        var job = SpaceJobRecord(
+            sessionId: sid,
+            jobId: sid,
+            createdAt: Date(),
+            completedAt: Date(),
+            serverStatus: "completed",
+            displayName: "stale",
+            resultImageURL: oldURL,
+            localLatLongPath: dest.path,
+            width: 3840,
+            height: 1920
+        )
+        job.localLatLongSourceURL = oldURL
+        store.upsert(job)
+
+        let api = ControllableSpaceRecordAPI(
+            status: SpaceRecordStatusResponse(
+                status: "completed",
+                imageUrl: newURL,
+                width: 3840,
+                height: 1920
+            ),
+            downloadSource: tempJPEG
+        )
+        runtime.replaceAPI(api)
+
+        let result = await runtime.prepareViewer(jobId: sid)
+        guard case .success = result else { return XCTFail("expected redownload success") }
+        let count = await api.downloadCount
+        XCTAssertEqual(count, 1, "cache-busted result URL must redownload")
+        XCTAssertEqual(store.job(id: sid)?.localLatLongSourceURL, newURL)
+        XCTAssertEqual(store.job(id: sid)?.resultImageURL, newURL)
+    }
+
     private func makeJPEG(width: Int, height: Int) throws -> Data {
         let size = CGSize(width: width, height: height)
         let format = UIGraphicsImageRendererFormat.default()

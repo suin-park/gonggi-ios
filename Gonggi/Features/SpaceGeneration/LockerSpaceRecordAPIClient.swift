@@ -263,7 +263,7 @@ actor LockerSpaceRecordAPIClient: SpaceRecordAPIClienting {
         }
         appendField(name: "sessionId", value: sessionId)
         appendField(name: "installationId", value: GonggiInstallation.id)
-        // Build 61 TestFlight only: explicit H12 scaffold opt-in. Omitted → backend default `direct`.
+        // Builds 61–65: explicit H12 mode. Omitted → backend default `scaffold_repair_v4b_h12`.
         if let mode = GonggiSpaceRecordAIMode.createRequestMode {
             appendField(name: "mode", value: mode)
         }
