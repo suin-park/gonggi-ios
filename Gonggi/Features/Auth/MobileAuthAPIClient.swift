@@ -65,6 +65,54 @@ actor MobileAuthAPIClient {
         )
     }
 
+    func emailRegister(name: String, email: String, password: String) async throws {
+        try await postOkJSON(
+            path: "api/auth/mobile/email/register",
+            body: [
+                "name": name,
+                "email": email,
+                "password": password,
+            ]
+        )
+    }
+
+    func emailVerify(email: String, code: String) async throws -> MobileAuthTokens {
+        try await postJSON(
+            path: "api/auth/mobile/email/verify",
+            body: [
+                "email": email,
+                "code": code,
+                "deviceId": GonggiInstallation.id,
+                "deviceName": "iOS",
+            ]
+        )
+    }
+
+    func emailResendVerification(email: String) async throws {
+        try await postOkJSON(
+            path: "api/auth/mobile/email/resend-verification",
+            body: ["email": email]
+        )
+    }
+
+    func passwordResetRequest(email: String) async throws {
+        try await postOkJSON(
+            path: "api/auth/mobile/password/reset-request",
+            body: ["email": email]
+        )
+    }
+
+    func passwordReset(email: String, code: String, newPassword: String) async throws {
+        try await postOkJSON(
+            path: "api/auth/mobile/password/reset",
+            body: [
+                "email": email,
+                "code": code,
+                "newPassword": newPassword,
+            ]
+        )
+    }
+
     func googleLogin(idToken: String) async throws -> MobileAuthTokens {
         try await postJSON(
             path: "api/auth/mobile/google",
@@ -396,6 +444,26 @@ actor MobileAuthAPIClient {
             sessionId: json["sessionId"] as? String,
             user: userDTO
         )
+    }
+
+    private func postOkJSON(path: String, body: [String: Any]) async throws {
+        var request = URLRequest(url: config.apiBaseURL.appendingPathComponent(path))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 30
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw MobileAuthAPIError.network }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        if http.statusCode >= 400 || (json?["ok"] as? Bool) == false {
+            throw MobileAuthAPIError.server(
+                code: (json?["error"] as? String) ?? "ERROR",
+                message: (json?["message"] as? String) ?? "요청에 실패했습니다.",
+                status: http.statusCode
+            )
+        }
     }
 
     private func parseUser(_ user: [String: Any]) -> MobileAuthUserDTO {
