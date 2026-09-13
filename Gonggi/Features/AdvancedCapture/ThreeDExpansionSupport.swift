@@ -16,6 +16,7 @@ enum ThreeDExpansionSupport {
         return hasLocal || hasRemote
     }
 
+    @MainActor
     static func is3DAlreadyComplete(
         sessionKey: String,
         store: AdvancedCaptureAnalysisStore = .shared
@@ -24,6 +25,7 @@ enum ThreeDExpansionSupport {
     }
 
     /// Spaces that can start / continue 3D expansion (360 ready, 3D not finished).
+    @MainActor
     static func isEligibleFor3DExpansion(
         _ space: SpaceRecord,
         store: AdvancedCaptureAnalysisStore = .shared
@@ -32,6 +34,7 @@ enum ThreeDExpansionSupport {
         return !is3DAlreadyComplete(sessionKey: sessionKey(for: space), store: store)
     }
 
+    @MainActor
     static func expandableSpaces(
         from spaces: [SpaceRecord],
         store: AdvancedCaptureAnalysisStore = .shared
@@ -50,6 +53,7 @@ enum ThreeDExpansionSupport {
     }
 
     /// Cached plan when analysis already ready and usable — otherwise nil (forces re-analyze path).
+    @MainActor
     static func cachedGuidePlan(
         sessionId: String,
         store: AdvancedCaptureAnalysisStore = .shared
