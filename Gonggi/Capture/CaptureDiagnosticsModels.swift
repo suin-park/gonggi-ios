@@ -90,7 +90,7 @@ final class CaptureDiagnosticsAccumulator {
         }
 
         if trackingNormal {
-            trackingNormal += 1
+            self.trackingNormal += 1
         } else if quality.trackingQuality < 0.15 {
             trackingUnavailable += 1
         } else {

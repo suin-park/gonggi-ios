@@ -337,7 +337,7 @@ final class CaptureSessionController {
             overlap: diagnostics.overlapStats(sessionDurationSec: durationSec),
             sharpness: diagnostics.sharpnessStats(blurryFraction: sharpnessAnalyzer.snapshot().blurryFraction),
             tracking: diagnostics.trackingStats(),
-            poseJumpCount: disc?.abnormalJumpCount ?? 0,
+            poseJumpCount: disc.possiblePoseJumpCount,
             completionStateAtFinish: completionState.rawValue,
             finishedBy: finishedBy.rawValue,
             generation: CaptureDiagnosticsStore.loadGenerationDiagnostics(sessionId: sessionId),
