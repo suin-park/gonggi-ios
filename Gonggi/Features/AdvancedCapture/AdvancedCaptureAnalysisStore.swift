@@ -55,6 +55,18 @@ final class AdvancedCaptureAnalysisStore: ObservableObject {
         records.filter { $0.status.isInFlight }
     }
 
+    /// Jobs that still need status/plan polling.
+    /// Includes `ready` without a usable guidePlan so we do not drop the job before AnalysisComplete.
+    func jobsNeedingStatusPoll() -> [AdvancedCaptureAnalysisRecord] {
+        records.filter { record in
+            if record.status.isInFlight { return true }
+            if record.status == .ready {
+                return record.guidePlan.map(ThreeDExpansionSupport.isUsableGuidePlan) != true
+            }
+            return false
+        }
+    }
+
     func clearAll() {
         records = []
         persist()

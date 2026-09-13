@@ -42,6 +42,8 @@ struct Guided3DGSCaptureFlowView: View {
     @EnvironmentObject private var appState: AppState
     let plan: AdvancedCaptureGuidePlan
     let sessionId: String
+    /// LatLong analysis session to link after Gaussian success. Nil for Direct 3D (no 360 dependency).
+    var sourceLatLongSessionId: String? = nil
     let onClose: () -> Void
 
     @State private var introStep = 0
@@ -54,10 +56,11 @@ struct Guided3DGSCaptureFlowView: View {
             CaptureFlowView(
                 onClose: onClose,
                 guidePlan: plan,
-                sourceLatLongSessionId: sessionId
+                sourceLatLongSessionId: sourceLatLongSessionId
             )
             .environmentObject(appState)
             .allowsHitTesting(!showIntro)
+            .id(sessionId)
 
             if showIntro {
                 introContent

@@ -2,34 +2,32 @@ import SwiftUI
 
 struct CaptureOverlayView: View {
     @ObservedObject var guidance: CaptureGuidanceEngine
+    var astraSegmentInstruction: String? = nil
     let onClose: () -> Void
     let onFinish: () -> Void
     let onFlash: () -> Void
     let onGuide: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @StateObject private var holdController = PrimaryGuidanceHoldController()
+    @State private var displayedGuidance: PrimaryGuidanceState?
 
-    private var coach: CaptureCoachPresentation {
-        CaptureUIPresenter.coachPresentation(
-            quality: guidance.quality,
-            fallbackMessage: guidance.coachMessage
-        )
+    private var guidanceState: PrimaryGuidanceState {
+        displayedGuidance
+            ?? CaptureUIPresenter.primaryGuidance(
+                quality: guidance.quality,
+                astraSegmentInstruction: astraSegmentInstruction
+            )
     }
 
     private var progressEmphasis: CaptureProgressEmphasis {
         CaptureUIPresenter.progressEmphasis(for: guidance.quality)
     }
 
-    private var isReadyToFinish: Bool {
-        CaptureUIPresenter.isReadyToFinish(guidance.quality)
-    }
-
     var body: some View {
+        let state = guidanceState
         ZStack {
             // LiDAR mesh wireframe is rendered in ARCaptureViewRepresentable (AR layer).
-            // Non-LiDAR devices: guidance text + progress only.
-
-            // Top/bottom scrims only — keep center camera clear
             VStack(spacing: 0) {
                 LinearGradient(
                     colors: [Color.black.opacity(0.42), .clear],
@@ -50,25 +48,38 @@ struct CaptureOverlayView: View {
 
             VStack(spacing: 0) {
                 topBar
-                if let warning = coach.warning {
-                    CaptureWarningChip(kind: warning)
-                        .padding(.top, GonggiSpacing.xs)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
                 Spacer(minLength: GonggiSpacing.sm)
                 if guidance.showGuideOverlay {
-                    CaptureCoachBubble(presentation: coach)
+                    CaptureCoachBubble(presentation: state.coachPresentation)
                         .padding(.horizontal, GonggiSpacing.lg)
                         .transition(.opacity.combined(with: .scale(scale: 0.97)))
                 }
                 Spacer(minLength: GonggiSpacing.md)
-                bottomControls
+                bottomControls(state)
             }
             .padding(.top, GonggiSpacing.sm)
             .padding(.bottom, GonggiSpacing.lg)
+
+            #if DEBUG
+            debugMetricsBag(state)
+            #endif
         }
-        .animation(reduceMotion ? nil : GonggiMotion.quick, value: coach.title)
+        .animation(reduceMotion ? nil : GonggiMotion.quick, value: state.identityKey)
         .animation(reduceMotion ? nil : GonggiMotion.quick, value: guidance.showGuideOverlay)
+        .onAppear {
+            holdController.reset()
+            refreshPrimaryGuidance()
+        }
+        .onChange(of: guidance.quality) { _, _ in refreshPrimaryGuidance() }
+        .onChange(of: astraSegmentInstruction) { _, _ in refreshPrimaryGuidance() }
+    }
+
+    private func refreshPrimaryGuidance() {
+        let candidate = CaptureUIPresenter.primaryGuidance(
+            quality: guidance.quality,
+            astraSegmentInstruction: astraSegmentInstruction
+        )
+        displayedGuidance = holdController.resolve(candidate)
     }
 
     private var topBar: some View {
@@ -76,14 +87,9 @@ struct CaptureOverlayView: View {
             GonggiIconButton(systemName: "xmark", style: .dimmed, action: onClose)
                 .accessibilityLabel("닫기")
             Spacer()
-            Text("공간 기록")
-                .font(GonggiTypography.caption(13))
-                .foregroundStyle(GonggiColors.textSecondary)
-            Text("\(guidance.quality.progressPercent)%")
+            Text("3D 공간 기록")
                 .font(GonggiTypography.headline(15))
                 .foregroundStyle(GonggiColors.textPrimary)
-                .monospacedDigit()
-                .accessibilityLabel("진행률 \(guidance.quality.progressPercent)퍼센트")
             Spacer()
             if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
                 CoverageLegend(compact: true)
@@ -94,25 +100,22 @@ struct CaptureOverlayView: View {
         .padding(.horizontal, GonggiSpacing.md)
     }
 
-    private var bottomControls: some View {
+    private func bottomControls(_ state: PrimaryGuidanceState) -> some View {
         VStack(spacing: GonggiSpacing.xs) {
-            Text(guidance.quality.capturePhase.userLabel)
-                .font(GonggiTypography.caption(12))
-                .foregroundStyle(GonggiColors.textSecondary)
+            Text(state.statusLabel)
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(
+                    state.isReadyToFinish ? GonggiColors.successGreen : GonggiColors.textSecondary
+                )
                 .frame(maxWidth: .infinity)
-                .accessibilityLabel("촬영 단계")
-
-            if isReadyToFinish {
-                Text("공간 기록을 완료할 수 있어요")
-                    .font(GonggiTypography.caption(13))
-                    .foregroundStyle(GonggiColors.successGreen)
-                    .frame(maxWidth: .infinity)
-            }
+                .accessibilityLabel("촬영 상태 \(state.statusLabel)")
 
             CaptureControlBar(
-                progress: guidance.quality.qualityCoverage,
+                progress: state.ringProgress,
                 emphasis: progressEmphasis,
-                isReady: isReadyToFinish,
+                isReady: state.isReadyToFinish,
+                finishTitle: state.finishButtonTitle,
+                centerSystemImage: state.ringSystemImage,
                 isFlashOn: guidance.isFlashOn,
                 showGuideOverlay: guidance.showGuideOverlay,
                 onFlash: onFlash,
@@ -122,9 +125,35 @@ struct CaptureOverlayView: View {
         }
         .padding(.horizontal, GonggiSpacing.md)
     }
+
+    #if DEBUG
+    private func debugMetricsBag(_ state: PrimaryGuidanceState) -> some View {
+        VStack {
+            Spacer()
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("qCov \(Int((guidance.quality.qualityCoverage * 100).rounded()))% · oCov \(Int((guidance.quality.observedCoverage * 100).rounded()))%")
+                    Text("ov \(guidance.quality.overlapState.rawValue) · base \(guidance.quality.translationBaselineGrade.rawValue)")
+                    Text("sharp \(guidance.quality.sharpnessState.rawValue) · track \(String(format: "%.2f", guidance.quality.trackingQuality))")
+                    Text("act \(guidance.quality.guidanceAction.rawValue) · phase \(guidance.quality.capturePhase.rawValue)")
+                    Text("comp \(guidance.quality.completionState.rawValue) · src \(state.source.rawValue)")
+                }
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(6)
+                .background(Color.black.opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                Spacer()
+            }
+            .padding(.leading, 8)
+            .padding(.bottom, 118)
+        }
+        .allowsHitTesting(false)
+    }
+    #endif
 }
 
-// MARK: - Warning chip
+// MARK: - Warning chip (DEBUG / legacy previews)
 
 struct CaptureWarningChip: View {
     let kind: CaptureWarningKind

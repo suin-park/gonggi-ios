@@ -344,8 +344,14 @@ struct CaptureFlowView: View {
     var sourceLatLongSessionId: String? = nil
 
     private var suppressAstraBanner: Bool {
-        CaptureUIPresenter.warningKind(for: viewModel.guidance.quality) != nil
-            || viewModel.guidance.quality.completionState == .ready
+        // Astra is folded into PrimaryGuidanceState; never show a second action card.
+        true
+    }
+
+    private var astraSegmentInstruction: String? {
+        guard let plan = guidePlan, !plan.segments.isEmpty else { return nil }
+        let idx = min(max(0, viewModel.guidedSegmentIndex), plan.segments.count - 1)
+        return AdvancedCaptureCopy.withoutMiddleDot(plan.segments[idx].instructionKo)
     }
 
     private func finishCapture() {
@@ -388,6 +394,7 @@ struct CaptureFlowView: View {
 
             CaptureOverlayView(
                 guidance: viewModel.guidance,
+                astraSegmentInstruction: astraSegmentInstruction,
                 onClose: {
                     viewModel.cancelCapture()
                     onClose()
@@ -403,11 +410,12 @@ struct CaptureFlowView: View {
                 onGuide: { viewModel.guidance.toggleGuide() }
             )
 
-            if let plan = guidePlan {
+            // Kept for API compatibility / DEBUG — always suppressed in favor of PrimaryGuidance.
+            if let plan = guidePlan, !suppressAstraBanner {
                 GuidedCapturePlanBanner(
                     plan: plan,
                     segmentIndex: viewModel.guidedSegmentIndex,
-                    suppressForLivePriority: suppressAstraBanner
+                    suppressForLivePriority: true
                 )
                 .allowsHitTesting(false)
             }

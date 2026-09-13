@@ -24,30 +24,7 @@ struct GuidanceDecision: Equatable {
 
 enum CaptureGuidanceCopy {
     static func message(for action: GuidanceAction) -> String {
-        switch action {
-        case .continueCapture:
-            return "좋아요. 현재 움직임을 유지하세요."
-        case .moveLaterally, .improveBaseline:
-            return "제자리에서 돌기보다 옆으로 조금 이동해주세요."
-        case .moveForward:
-            return "천천히 앞으로 이동해주세요."
-        case .slowDown:
-            return "조금 천천히 움직여주세요."
-        case .holdSteady:
-            return "잠시 천천히 움직여주세요."
-        case .returnToPreviousArea:
-            return "조금 뒤로 돌아가주세요."
-        case .scanNewArea:
-            return "아직 덜 담긴 영역을 천천히 비춰주세요."
-        case .trackingRecovery:
-            return "카메라 위치를 다시 확인하고 있어요. 천천히 주변을 비춰주세요."
-        case .lowTextureWarning:
-            return "특징이 있는 가구나 모서리도 함께 촬영해주세요."
-        case .captureNearlyComplete:
-            return "거의 다 기록했어요."
-        case .captureComplete:
-            return "공간 기록을 완료할 수 있어요."
-        }
+        CaptureUIPresenter.liveCopy(for: action).title
     }
 
     static func phaseLabel(_ phase: CapturePhase) -> String {

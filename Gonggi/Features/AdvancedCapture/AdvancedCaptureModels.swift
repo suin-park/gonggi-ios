@@ -174,7 +174,8 @@ struct AdvancedCaptureAnalysisRecord: Codable, Equatable, Identifiable, Sendable
     var linkedGaussianJobId: String? = nil
 
     var canStartGuidedCapture: Bool {
-        status == .ready && !(guidePlan?.segments.isEmpty ?? true)
+        status == .ready
+            && (guidePlan.map(ThreeDExpansionSupport.isUsableGuidePlan) == true)
     }
 
     var canOpenGaussianViewer: Bool {

@@ -146,6 +146,9 @@ struct ProgressRing: View {
     var label: String? = nil
     var compact: Bool = false
     var emphasis: CaptureProgressEmphasis = .progressing
+    /// When false, center shows `centerSystemImage` instead of a user-facing %.
+    var showsPercent: Bool = true
+    var centerSystemImage: String? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -162,13 +165,21 @@ struct ProgressRing: View {
                 .animation(reduceMotion ? nil : GonggiMotion.standard, value: progress)
 
             VStack(spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text("\(Int(progress * 100))")
-                        .font(compact ? GonggiTypography.headline(20) : GonggiTypography.display(28))
-                    Text("%")
-                        .font(GonggiTypography.caption(compact ? 11 : 13))
+                if showsPercent {
+                    HStack(alignment: .firstTextBaseline, spacing: 1) {
+                        Text("\(Int(progress * 100))")
+                            .font(compact ? GonggiTypography.headline(20) : GonggiTypography.display(28))
+                        Text("%")
+                            .font(GonggiTypography.caption(compact ? 11 : 13))
+                    }
+                    .foregroundStyle(GonggiColors.textPrimary)
+                } else if let centerSystemImage {
+                    Image(systemName: centerSystemImage)
+                        .font(.system(size: compact ? 16 : 22, weight: .semibold))
+                        .foregroundStyle(
+                            emphasis == .ready ? GonggiColors.successGreen : GonggiColors.textPrimary
+                        )
                 }
-                .foregroundStyle(GonggiColors.textPrimary)
 
                 if let label {
                     Text(label)
@@ -178,13 +189,22 @@ struct ProgressRing: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("스캔 진행률 \(Int(progress * 100))퍼센트")
+        .accessibilityLabel(
+            showsPercent
+                ? "스캔 진행률 \(Int(progress * 100))퍼센트"
+                : (label ?? "촬영 진행 표시")
+        )
     }
 }
 
 struct CaptureFinishPillButton: View {
     let isReady: Bool
+    var title: String? = nil
     let action: () -> Void
+
+    private var resolvedTitle: String {
+        title ?? (isReady ? "기록 완료" : "촬영 종료")
+    }
 
     var body: some View {
         Button {
@@ -194,7 +214,7 @@ struct CaptureFinishPillButton: View {
             HStack(spacing: 6) {
                 Image(systemName: isReady ? "checkmark.circle.fill" : "stop.circle")
                     .font(.system(size: 15, weight: .semibold))
-                Text("촬영 완료")
+                Text(resolvedTitle)
                     .font(GonggiTypography.headline(15))
             }
             .foregroundStyle(isReady ? GonggiColors.backgroundPrimary : GonggiColors.textPrimary)
@@ -221,7 +241,7 @@ struct CaptureFinishPillButton: View {
             )
         }
         .buttonStyle(GonggiPressableStyle(scale: 0.97))
-        .accessibilityLabel(isReady ? "촬영 완료. 충분히 기록되었습니다" : "촬영 완료")
+        .accessibilityLabel(isReady ? "\(resolvedTitle). 충분히 기록되었습니다" : resolvedTitle)
     }
 }
 
@@ -229,6 +249,8 @@ struct CaptureControlBar: View {
     let progress: Double
     let emphasis: CaptureProgressEmphasis
     let isReady: Bool
+    var finishTitle: String = "촬영 종료"
+    var centerSystemImage: String = "circle.dotted"
     let isFlashOn: Bool
     let showGuideOverlay: Bool
     let onFlash: () -> Void
@@ -250,11 +272,13 @@ struct CaptureControlBar: View {
                 lineWidth: 5,
                 label: nil,
                 compact: true,
-                emphasis: emphasis
+                emphasis: emphasis,
+                showsPercent: false,
+                centerSystemImage: centerSystemImage
             )
             .frame(width: 56, height: 56)
 
-            CaptureFinishPillButton(isReady: isReady, action: onFinish)
+            CaptureFinishPillButton(isReady: isReady, title: finishTitle, action: onFinish)
 
             GonggiIconButton(
                 systemName: showGuideOverlay ? "map.fill" : "map",
@@ -348,25 +372,38 @@ struct CaptureCoachBubble: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: GonggiSpacing.sm) {
-            Image(systemName: presentation.icon)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(presentation.severity.iconTint)
-                .frame(width: 28, height: 28)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(presentation.title)
-                    .font(GonggiTypography.headline(16))
-                    .foregroundStyle(GonggiColors.textPrimary)
-                if let subtitle = presentation.subtitle {
-                    Text(subtitle)
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                        .lineSpacing(2)
-                }
+        VStack(spacing: GonggiSpacing.sm) {
+            if let glyph = presentation.directionGlyph {
+                Text(glyph)
+                    .font(.system(size: 36, weight: .medium, design: .rounded))
+                    .foregroundStyle(presentation.severity.iconTint)
+                    .accessibilityHidden(true)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(alignment: .top, spacing: GonggiSpacing.sm) {
+                if presentation.directionGlyph == nil {
+                    Image(systemName: presentation.icon)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(presentation.severity.iconTint)
+                        .frame(width: 28, height: 28)
+                        .accessibilityHidden(true)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(presentation.title)
+                        .font(GonggiTypography.headline(17))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let subtitle = presentation.subtitle {
+                        Text(subtitle)
+                            .font(GonggiTypography.caption(13))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(.horizontal, GonggiSpacing.md)
         .padding(.vertical, GonggiSpacing.sm + 2)

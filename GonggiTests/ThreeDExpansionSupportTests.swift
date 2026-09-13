@@ -162,4 +162,45 @@ final class ThreeDExpansionSupportTests: XCTestCase {
         )
         XCTAssertNil(ThreeDExpansionSupport.cachedGuidePlan(sessionId: "bad-1", store: store))
     }
+
+    @MainActor
+    func testReadyWithoutUsablePlanStaysInPollQueue() throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("3d_exp_poll_\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let store = AdvancedCaptureAnalysisStore(fileURL: tmp)
+        let now = Date()
+        store.upsert(
+            AdvancedCaptureAnalysisRecord(
+                sessionId: "poll-1",
+                jobId: "poll-1",
+                status: .ready,
+                createdAt: now,
+                updatedAt: now,
+                guidePlan: nil
+            )
+        )
+        XCTAssertTrue(store.activeJobs().isEmpty)
+        XCTAssertEqual(store.jobsNeedingStatusPoll().map(\.sessionId), ["poll-1"])
+
+        store.upsert(
+            AdvancedCaptureAnalysisRecord(
+                sessionId: "poll-1",
+                jobId: "poll-1",
+                status: .ready,
+                createdAt: now,
+                updatedAt: now,
+                guidePlan: .mockDefault(sessionId: "poll-1")
+            )
+        )
+        XCTAssertTrue(store.jobsNeedingStatusPoll().isEmpty)
+        XCTAssertTrue(store.record(sessionId: "poll-1")?.canStartGuidedCapture == true)
+    }
+
+    func testDirect3DSessionIdHasNoLatLongPrefixRequirement() {
+        let sessionId = "direct3d-\(UUID().uuidString)"
+        let plan = AdvancedCaptureGuidePlan.defaultP1Plan(sessionId: sessionId)
+        XCTAssertTrue(ThreeDExpansionSupport.isUsableGuidePlan(plan))
+        XCTAssertTrue(sessionId.hasPrefix("direct3d-"))
+    }
 }

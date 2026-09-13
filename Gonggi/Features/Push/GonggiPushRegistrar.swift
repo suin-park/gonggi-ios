@@ -108,6 +108,10 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        let userInfo = notification.request.content.userInfo
+        Task { @MainActor in
+            Self.handleAdvancedCaptureUserInfo(userInfo)
+        }
         completionHandler([.banner, .sound])
     }
 
@@ -121,12 +125,23 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
             ?? (userInfo["session_id"] as? String)
         let type = userInfo["type"] as? String
         Task { @MainActor in
+            Self.handleAdvancedCaptureUserInfo(userInfo)
             if type == "space_generation_completed" || sessionId != nil {
                 GonggiPushDeepLink.pendingSessionId = sessionId
                 NotificationCenter.default.post(name: .gonggiOpenCompletedSpace, object: sessionId)
             }
             completionHandler()
         }
+    }
+
+    @MainActor
+    private static func handleAdvancedCaptureUserInfo(_ userInfo: [AnyHashable: Any]) {
+        let advancedId = (userInfo["advancedCaptureSessionId"] as? String)
+            ?? (userInfo["type"] as? String == "advanced_capture_analysis_complete"
+                ? ((userInfo["sessionId"] as? String) ?? (userInfo["session_id"] as? String))
+                : nil)
+        guard let advancedId, !advancedId.isEmpty else { return }
+        AdvancedCaptureAnalysisRuntime.shared.handleExternalCompletionHint(sessionId: advancedId)
     }
 }
 

@@ -114,6 +114,7 @@ struct SpaceDetailView: View {
                 Guided3DGSCaptureFlowView(
                     plan: plan,
                     sessionId: advancedSessionKey,
+                    sourceLatLongSessionId: advancedSessionKey,
                     onClose: { showGuidedCapture = false }
                 )
                 .environmentObject(appState)

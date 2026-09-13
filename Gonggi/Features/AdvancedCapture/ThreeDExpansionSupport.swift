@@ -173,11 +173,7 @@ enum ThreeDExpansionSupport {
             if let outcome = await forceOnceIfAllowed(reason: "initial stale/unusable/failed") {
                 return outcome
             }
-            // Already forced earlier in this call shouldn't happen; fall through.
-            if unusableReady || existing?.status == .ready {
-                log.error("prepareGuidePlan[\(sessionId, privacy: .public)]: invalid ready after force budget")
-                return .failure(.notReady)
-            }
+            // Fall through to poll loop — do not treat ready-without-plan as terminal yet.
         }
 
         let start = await startOrReuseAnalysis(sessionId: sessionId, useMock: useMock, force: false)
@@ -193,7 +189,7 @@ enum ThreeDExpansionSupport {
             return .success(ready)
         }
 
-        // ready-without-plan: recognize immediately — force at most once, then fail to UI/default.
+        // ready-without-plan: force at most once, then keep polling until hard timeout.
         if let record = AdvancedCaptureAnalysisStore.shared.record(sessionId: sessionId),
            record.status == .ready,
            cachedGuidePlan(sessionId: sessionId) == nil
@@ -201,8 +197,6 @@ enum ThreeDExpansionSupport {
             if let outcome = await forceOnceIfAllowed(reason: "ready without usable plan") {
                 return outcome
             }
-            log.error("prepareGuidePlan[\(sessionId, privacy: .public)]: ready without plan — no more force")
-            return .failure(.notReady)
         }
 
         while Date().timeIntervalSince(started) < hardTimeoutSec {
@@ -228,11 +222,10 @@ enum ThreeDExpansionSupport {
                 }
 
                 if record.status == .ready, cachedGuidePlan(sessionId: sessionId) == nil {
+                    // One force attempt, then continue polling (plan may arrive on a later fetch).
                     if let outcome = await forceOnceIfAllowed(reason: "ready+nil mid-poll") {
                         return outcome
                     }
-                    log.error("prepareGuidePlan[\(sessionId, privacy: .public)]: ready without plan after force")
-                    return .failure(.notReady)
                 }
 
                 if isStaleInFlight(record) {
@@ -248,6 +241,14 @@ enum ThreeDExpansionSupport {
             try? await Task.sleep(nanoseconds: UInt64(pollIntervalSec * 1_000_000_000))
         }
 
+        // Hard timeout: distinguish ready-without-plan vs still in-flight.
+        if let record = AdvancedCaptureAnalysisStore.shared.record(sessionId: sessionId),
+           record.status == .ready,
+           cachedGuidePlan(sessionId: sessionId) == nil
+        {
+            log.error("prepareGuidePlan[\(sessionId, privacy: .public)]: hard timeout with ready but no usable plan")
+            return .failure(.notReady)
+        }
         log.error("prepareGuidePlan[\(sessionId, privacy: .public)]: hard timeout \(hardTimeoutSec)s")
         return .failure(.timedOut)
     }
