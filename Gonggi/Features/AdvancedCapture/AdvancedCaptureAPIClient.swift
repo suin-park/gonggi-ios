@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Client for Locker advanced-capture (Astra) analyze + status.
 protocol AdvancedCaptureAPIClienting: Sendable {
@@ -106,10 +107,17 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
         var guidePlan: AdvancedCaptureGuidePlan?
         if let result = json["result"] as? [String: Any],
            let planObj = result["guidePlan"] {
-            let planData = try JSONSerialization.data(withJSONObject: planObj)
-            guidePlan = AdvancedCaptureCopy.sanitize(
-                try JSONDecoder().decode(AdvancedCaptureGuidePlan.self, from: planData)
-            )
+            do {
+                let planData = try JSONSerialization.data(withJSONObject: planObj)
+                guidePlan = AdvancedCaptureCopy.sanitize(
+                    try JSONDecoder().decode(AdvancedCaptureGuidePlan.self, from: planData)
+                )
+            } catch {
+                // Do not treat as ready usable plan — leave nil so client can force/fallback.
+                Logger(subsystem: "com.whik.gonggi", category: "AdvancedCapture")
+                    .error("guidePlan decode failed for \(jobId, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                guidePlan = nil
+            }
         }
 
         return AdvancedCaptureStatusResponse(

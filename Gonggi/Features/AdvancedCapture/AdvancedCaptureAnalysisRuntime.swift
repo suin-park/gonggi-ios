@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import SwiftUI
 import UserNotifications
 
@@ -149,7 +150,9 @@ final class AdvancedCaptureAnalysisRuntime: ObservableObject {
                 scheduleLocalNotification(sessionId: jobId)
             }
         } catch {
-            // Keep polling; transient network should not fail the job.
+            // Transient network should not fail the job, but must be visible in logs.
+            Logger(subsystem: "com.whik.gonggi", category: "AdvancedCapture")
+                .error("refreshStatus[\(jobId, privacy: .public)] failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

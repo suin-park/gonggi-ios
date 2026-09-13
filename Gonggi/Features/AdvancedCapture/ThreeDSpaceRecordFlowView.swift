@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Record-tab 3D flow: choose existing 360 vs new capture → Astra → Guided 3DGS.
-/// Reuses DirectionCapture / ThreeDExpansionSupport / Guided3DGS — does not alter P0–P1 capture stack.
+/// Record-tab 3D flow: choose existing 360 vs new capture → optional Astra → Guided 3DGS.
+/// Astra is not required — DefaultP1 plan + P1 live guidance can proceed alone.
 struct ThreeDSpaceRecordFlowView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var analysisStore = AdvancedCaptureAnalysisStore.shared
@@ -13,7 +13,8 @@ struct ThreeDSpaceRecordFlowView: View {
         case introStep1
         case directionCapture
         case preparingSpace(sessionId: String)
-        case analyzing(sessionId: String)
+        case analyzing(sessionId: String, startedAt: Date)
+        case analysisRecovery(sessionId: String, message: String)
         case introStep2(sessionId: String, plan: AdvancedCaptureGuidePlan)
         case guidedCapture(sessionId: String, plan: AdvancedCaptureGuidePlan)
         case failed(String)
@@ -21,6 +22,8 @@ struct ThreeDSpaceRecordFlowView: View {
 
     @State private var phase: Phase = .chooseEntry
     @State private var waitTask: Task<Void, Never>?
+    /// When true, selecting an existing space skips Astra and uses DefaultP1 plan.
+    @State private var preferDefaultPlan = false
 
     private var expandableSpaces: [SpaceRecord] {
         ThreeDExpansionSupport.expandableSpaces(from: appState.spaces, store: analysisStore)
@@ -58,15 +61,15 @@ struct ThreeDSpaceRecordFlowView: View {
                 waitingPanel(
                     title: "공간을 준비하고 있어요",
                     detail: "촬영본은 저장됐어요. 준비가 끝나면 입체 기록으로 이어집니다.",
-                    allowsLeaveToHome: true
+                    allowsLeaveToHome: true,
+                    recovery: nil
                 )
 
-            case .analyzing:
-                waitingPanel(
-                    title: "공간을 확인하고 있어요",
-                    detail: "3D 촬영 경로를 준비하고 있습니다.",
-                    allowsLeaveToHome: true
-                )
+            case .analyzing(let sessionId, let startedAt):
+                analyzingPanel(sessionId: sessionId, startedAt: startedAt)
+
+            case .analysisRecovery(let sessionId, let message):
+                recoveryPanel(sessionId: sessionId, message: message)
 
             case .introStep2(_, let plan):
                 stepIntro(
@@ -109,6 +112,7 @@ struct ThreeDSpaceRecordFlowView: View {
                         .padding(.horizontal, GonggiSpacing.lg)
                     PrimaryButton(title: "시작 방식으로", icon: "arrow.uturn.backward") {
                         waitTask?.cancel()
+                        preferDefaultPlan = false
                         phase = .chooseEntry
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
@@ -173,6 +177,7 @@ struct ThreeDSpaceRecordFlowView: View {
                         subtitle: "기록해둔 360° 공간을\n3D 공간으로 확장해요"
                     ) {
                         GonggiHaptics.medium()
+                        preferDefaultPlan = false
                         phase = .pickExisting
                     }
 
@@ -182,7 +187,18 @@ struct ThreeDSpaceRecordFlowView: View {
                         subtitle: "공간을 먼저 촬영한 뒤\n3D로 기록해요"
                     ) {
                         GonggiHaptics.medium()
+                        preferDefaultPlan = false
                         phase = .introStep1
+                    }
+
+                    entryChoiceCard(
+                        icon: "figure.walk",
+                        title: "바로 3D 촬영",
+                        subtitle: "기본 안내로 바로 이어가요\n(기존 360° 공간 선택)"
+                    ) {
+                        GonggiHaptics.medium()
+                        preferDefaultPlan = true
+                        phase = .pickExisting
                     }
                 }
                 .padding(.horizontal, GonggiSpacing.lg)
@@ -193,13 +209,18 @@ struct ThreeDSpaceRecordFlowView: View {
 
     private var pickExistingPanel: some View {
         VStack(spacing: 0) {
-            flowChrome(title: "3D로 확장할 공간 선택", onBack: {
-                waitTask?.cancel()
-                phase = .chooseEntry
-            }, onClose: {
-                waitTask?.cancel()
-                onClose()
-            })
+            flowChrome(
+                title: preferDefaultPlan ? "바로 촬영할 공간 선택" : "3D로 확장할 공간 선택",
+                onBack: {
+                    waitTask?.cancel()
+                    preferDefaultPlan = false
+                    phase = .chooseEntry
+                },
+                onClose: {
+                    waitTask?.cancel()
+                    onClose()
+                }
+            )
 
             if expandableSpaces.isEmpty {
                 emptyExistingPanel
@@ -240,6 +261,7 @@ struct ThreeDSpaceRecordFlowView: View {
                 .foregroundStyle(GonggiColors.textSecondary)
             PrimaryButton(title: "새 공간 기록", icon: "camera.aperture") {
                 GonggiHaptics.medium()
+                preferDefaultPlan = false
                 phase = .introStep1
             }
             .padding(.horizontal, GonggiSpacing.lg)
@@ -320,6 +342,78 @@ struct ThreeDSpaceRecordFlowView: View {
         .accessibilityLabel(title)
     }
 
+    // MARK: - Analyzing / recovery
+
+    private func analyzingPanel(sessionId: String, startedAt: Date) -> some View {
+        TimelineView(.periodic(from: startedAt, by: 1)) { context in
+            let elapsed = context.date.timeIntervalSince(startedAt)
+            let copy = analyzingCopy(elapsed: elapsed)
+            waitingPanel(
+                title: copy.title,
+                detail: copy.detail,
+                allowsLeaveToHome: true,
+                recovery: elapsed >= ThreeDExpansionSupport.PrepareConfig.softTimeoutSec
+                    ? AnalyzingRecoveryActions(
+                        onRetry: { retryAnalysis(sessionId: sessionId) },
+                        onSkipToDefault: { enterWithDefaultPlan(sessionId: sessionId) }
+                    )
+                    : nil
+            )
+        }
+    }
+
+    private func analyzingCopy(elapsed: TimeInterval) -> (title: String, detail: String) {
+        if elapsed < 15 {
+            return ("공간을 확인하고 있어요", "3D 촬영 경로를 준비하고 있습니다.")
+        }
+        if elapsed < ThreeDExpansionSupport.PrepareConfig.softTimeoutSec {
+            return ("촬영 경로를 준비하고 있어요", "조금만 기다려 주세요.")
+        }
+        return (
+            "분석이 예상보다 오래 걸리고 있어요.",
+            "다시 시도하거나, 기본 안내로 바로 촬영을 시작할 수 있어요."
+        )
+    }
+
+    private struct AnalyzingRecoveryActions {
+        var onRetry: () -> Void
+        var onSkipToDefault: () -> Void
+    }
+
+    private func recoveryPanel(sessionId: String, message: String) -> some View {
+        VStack(spacing: GonggiSpacing.lg) {
+            flowChrome(title: "", onBack: {
+                waitTask?.cancel()
+                phase = .pickExisting
+            }, onClose: {
+                waitTask?.cancel()
+                onClose()
+            })
+            Spacer()
+            ProgressView()
+                .tint(GonggiColors.accentCyan)
+            Text(message)
+                .font(GonggiTypography.title(20))
+                .foregroundStyle(GonggiColors.textPrimary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, GonggiSpacing.lg)
+            Text("기본 안내로도 입체 기록을 시작할 수 있어요.")
+                .font(GonggiTypography.body(15))
+                .foregroundStyle(GonggiColors.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, GonggiSpacing.lg)
+            PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
+                retryAnalysis(sessionId: sessionId)
+            }
+            .padding(.horizontal, GonggiSpacing.lg)
+            SecondaryButton(title: "바로 3D 촬영", icon: "figure.walk") {
+                enterWithDefaultPlan(sessionId: sessionId)
+            }
+            .padding(.horizontal, GonggiSpacing.lg)
+            Spacer()
+        }
+    }
+
     // MARK: - Shared chrome / panels
 
     private func flowChrome(title: String, onBack: (() -> Void)?, onClose: @escaping () -> Void) -> some View {
@@ -398,10 +492,14 @@ struct ThreeDSpaceRecordFlowView: View {
         }
     }
 
-    private func waitingPanel(title: String, detail: String, allowsLeaveToHome: Bool) -> some View {
+    private func waitingPanel(
+        title: String,
+        detail: String,
+        allowsLeaveToHome: Bool,
+        recovery: AnalyzingRecoveryActions?
+    ) -> some View {
         VStack(spacing: GonggiSpacing.lg) {
             flowChrome(title: "", onBack: nil, onClose: {
-                // Existing LatLong is never deleted — leave and continue later from Space Detail.
                 waitTask?.cancel()
                 onClose()
                 if allowsLeaveToHome {
@@ -417,11 +515,19 @@ struct ThreeDSpaceRecordFlowView: View {
                 .font(GonggiTypography.title(22))
                 .foregroundStyle(GonggiColors.textPrimary)
                 .multilineTextAlignment(.center)
+                .padding(.horizontal, GonggiSpacing.md)
             Text(detail)
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, GonggiSpacing.lg)
+
+            if let recovery {
+                PrimaryButton(title: "다시 시도", icon: "arrow.clockwise", action: recovery.onRetry)
+                    .padding(.horizontal, GonggiSpacing.lg)
+                SecondaryButton(title: "바로 3D 촬영", icon: "figure.walk", action: recovery.onSkipToDefault)
+                    .padding(.horizontal, GonggiSpacing.lg)
+            }
             Spacer()
         }
     }
@@ -430,27 +536,64 @@ struct ThreeDSpaceRecordFlowView: View {
 
     private func beginExpansion(from space: SpaceRecord) {
         let sessionId = ThreeDExpansionSupport.sessionKey(for: space)
+        if preferDefaultPlan {
+            enterWithDefaultPlan(sessionId: sessionId)
+            return
+        }
         if let plan = ThreeDExpansionSupport.cachedGuidePlan(sessionId: sessionId, store: analysisStore) {
             phase = .introStep2(sessionId: sessionId, plan: plan)
             return
         }
-        phase = .analyzing(sessionId: sessionId)
+        let started = Date()
+        phase = .analyzing(sessionId: sessionId, startedAt: started)
         startExistingExpansionPipeline(sessionId: sessionId)
+    }
+
+    private func enterWithDefaultPlan(sessionId: String) {
+        waitTask?.cancel()
+        preferDefaultPlan = false
+        let plan = AdvancedCaptureCopy.sanitize(.defaultP1Plan(sessionId: sessionId))
+        phase = .introStep2(sessionId: sessionId, plan: plan)
+    }
+
+    private func retryAnalysis(sessionId: String) {
+        waitTask?.cancel()
+        let started = Date()
+        phase = .analyzing(sessionId: sessionId, startedAt: started)
+        waitTask = Task { @MainActor in
+            // Force a fresh analyze attempt (stale / failed recovery).
+            _ = await ThreeDExpansionSupport.startOrReuseAnalysis(
+                sessionId: sessionId,
+                useMock: appState.isMockMode,
+                force: true
+            )
+            guard !Task.isCancelled else { return }
+            await finishPrepare(sessionId: sessionId)
+        }
     }
 
     private func startExistingExpansionPipeline(sessionId: String) {
         waitTask?.cancel()
         waitTask = Task { @MainActor in
-            let result = await ThreeDExpansionSupport.prepareGuidePlan(
-                sessionId: sessionId,
-                useMock: appState.isMockMode
-            )
-            guard !Task.isCancelled else { return }
-            switch result {
-            case .success(let plan):
-                phase = .introStep2(sessionId: sessionId, plan: plan)
-            case .failure(let error):
-                phase = .failed(error.userMessage)
+            await finishPrepare(sessionId: sessionId)
+        }
+    }
+
+    private func finishPrepare(sessionId: String) async {
+        let result = await ThreeDExpansionSupport.prepareGuidePlan(
+            sessionId: sessionId,
+            useMock: appState.isMockMode
+        )
+        guard !Task.isCancelled else { return }
+        switch result {
+        case .success(let plan):
+            phase = .introStep2(sessionId: sessionId, plan: plan)
+        case .failure(let error):
+            if error == .timedOut || error == .notReady {
+                phase = .analysisRecovery(sessionId: sessionId, message: error.userMessage)
+            } else {
+                // Still offer default path via recovery for network/server errors.
+                phase = .analysisRecovery(sessionId: sessionId, message: error.userMessage)
             }
         }
     }
@@ -465,23 +608,16 @@ struct ThreeDSpaceRecordFlowView: View {
                 return
             }
 
-            phase = .analyzing(sessionId: sessionId)
-            let result = await ThreeDExpansionSupport.prepareGuidePlan(
-                sessionId: sessionId,
-                useMock: appState.isMockMode
-            )
-            guard !Task.isCancelled else { return }
-            switch result {
-            case .success(let plan):
-                phase = .introStep2(sessionId: sessionId, plan: plan)
-            case .failure(let error):
-                phase = .failed(error.userMessage)
-            }
+            let started = Date()
+            phase = .analyzing(sessionId: sessionId, startedAt: started)
+            await finishPrepare(sessionId: sessionId)
         }
     }
 
     private func waitUntilSpaceReady(sessionId: String) async -> Bool {
-        for _ in 0..<180 {
+        // Cap wait: do not block for minutes on LatLong generation from this foreground flow.
+        let deadline = Date().addingTimeInterval(90)
+        while Date() < deadline {
             if Task.isCancelled { return false }
             if let job = appState.jobStore.jobs.first(where: {
                 $0.sessionId == sessionId || $0.jobId == sessionId

@@ -101,6 +101,61 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
             riskFlags: []
         )
     }
+
+    /// Astra-free fallback for Guided 3DGS. P1 live guidance remains the completion authority.
+    static func defaultP1Plan(sessionId: String) -> AdvancedCaptureGuidePlan {
+        AdvancedCaptureGuidePlan(
+            segments: [
+                AdvancedCaptureGuideSegment(
+                    id: "\(sessionId)-stabilize",
+                    instructionKo: "공간을 확인하고 있어요. 휴대폰을 천천히 움직여 주세요.",
+                    targetYawDeg: nil,
+                    targetPitchDeg: 0,
+                    pathHint: "stabilize",
+                    durationSecMin: 5,
+                    durationSecMax: 15,
+                    coverageGoal: "tracking"
+                ),
+                AdvancedCaptureGuideSegment(
+                    id: "\(sessionId)-perimeter",
+                    instructionKo: "벽을 따라 천천히 이동하세요.",
+                    targetYawDeg: nil,
+                    targetPitchDeg: 0,
+                    pathHint: "wall_follow",
+                    durationSecMin: 20,
+                    durationSecMax: 40,
+                    coverageGoal: "perimeter"
+                ),
+                AdvancedCaptureGuideSegment(
+                    id: "\(sessionId)-parallax",
+                    instructionKo: "같은 영역을 바라보며 옆으로 조금 이동해주세요.",
+                    targetYawDeg: nil,
+                    targetPitchDeg: 0,
+                    pathHint: "lateral_parallax",
+                    durationSecMin: 15,
+                    durationSecMax: 30,
+                    coverageGoal: "parallax"
+                ),
+                AdvancedCaptureGuideSegment(
+                    id: "\(sessionId)-fill",
+                    instructionKo: "아직 덜 담긴 영역을 천천히 비춰주세요.",
+                    targetYawDeg: nil,
+                    targetPitchDeg: 0,
+                    pathHint: "coverage_fill",
+                    durationSecMin: 15,
+                    durationSecMax: 35,
+                    coverageGoal: "fill"
+                ),
+            ],
+            globalTips: [
+                "제자리에서 돌기보다 옆으로 조금 이동해주세요.",
+                "화면 안내를 따라가면 3D 공간 기록에 충분합니다.",
+            ],
+            estimatedTotalSec: 90,
+            qualityProfile: "capture_default_p1",
+            riskFlags: ["default_plan"]
+        )
+    }
 }
 
 /// Persisted analysis job for one LatLong space (keyed by sessionId).
@@ -132,6 +187,7 @@ struct AdvancedCaptureAnalysisRecord: Codable, Equatable, Identifiable, Sendable
 
 enum AdvancedCaptureError: LocalizedError, Equatable {
     case notReady
+    case timedOut
     case jobNotFound
     case unauthorized
     case network
@@ -142,6 +198,7 @@ enum AdvancedCaptureError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .notReady: return "아직 분석이 끝나지 않았어요."
+        case .timedOut: return "분석이 예상보다 오래 걸리고 있어요."
         case .jobNotFound: return "분석 작업을 찾을 수 없어요."
         case .unauthorized: return "로그인이 필요해요."
         case .network: return "네트워크에 연결할 수 없어요."

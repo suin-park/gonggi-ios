@@ -123,6 +123,20 @@ final class ThreeDExpansionSupportTests: XCTestCase {
         XCTAssertTrue(ThreeDExpansionSupport.isUsableGuidePlan(.mockDefault(sessionId: "ok")))
     }
 
+    func testDefaultP1PlanIsUsableWithoutAstra() {
+        let plan = AdvancedCaptureGuidePlan.defaultP1Plan(sessionId: "def-1")
+        XCTAssertTrue(ThreeDExpansionSupport.isUsableGuidePlan(plan))
+        XCTAssertGreaterThanOrEqual(plan.segments.count, 4)
+        XCTAssertTrue(plan.riskFlags.contains("default_plan"))
+        XCTAssertEqual(plan.qualityProfile, "capture_default_p1")
+    }
+
+    func testPrepareConfigTimeoutsAreBounded() {
+        XCTAssertEqual(ThreeDExpansionSupport.PrepareConfig.softTimeoutSec, 30, accuracy: 0.01)
+        XCTAssertEqual(ThreeDExpansionSupport.PrepareConfig.hardTimeoutSec, 60, accuracy: 0.01)
+        XCTAssertLessThan(ThreeDExpansionSupport.PrepareConfig.hardTimeoutSec, 120)
+    }
+
     @MainActor
     func testReadyButEmptyPlanDoesNotCache() throws {
         let tmp = FileManager.default.temporaryDirectory
