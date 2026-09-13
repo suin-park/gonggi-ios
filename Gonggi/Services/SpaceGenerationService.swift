@@ -11,12 +11,15 @@ struct CreateSpaceRequest: Equatable {
     var videoContentType: String = "video/quicktime"
     var durationSec: Double? = nil
     var qualityProfile: String = "capture_dense_v2"
+    /// Client-owned key for create retry / diagnostics.
+    var idempotencyKey: String? = nil
 }
 
 struct CreateSpaceResponse: Equatable {
     let spaceId: String
     let jobId: String
     let uploadURL: URL?
+    var idempotencyKey: String? = nil
 }
 
 struct UploadCaptureRequest: Equatable {
@@ -47,6 +50,8 @@ enum SpaceGenerationError: LocalizedError {
     case jobNotFound
     case uploadFailed
     case unknown(String)
+    /// Structured create/start failure for diagnostics (user sees sanitized copy).
+    case server(code: String, httpStatus: Int)
 
     var errorDescription: String? {
         switch self {
@@ -55,6 +60,24 @@ enum SpaceGenerationError: LocalizedError {
         case .jobNotFound: return "작업을 찾을 수 없습니다."
         case .uploadFailed: return "업로드에 실패했습니다."
         case .unknown(let msg): return msg
+        case .server(let code, _):
+            return code
+        }
+    }
+
+    var backendErrorCode: String? {
+        switch self {
+        case .server(let code, _): return code
+        case .unknown(let msg): return msg
+        default: return nil
+        }
+    }
+
+    var httpStatus: Int? {
+        switch self {
+        case .server(_, let status): return status
+        case .unauthorized: return 401
+        default: return nil
         }
     }
 }

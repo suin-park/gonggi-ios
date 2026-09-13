@@ -38,9 +38,9 @@ final class CaptureFramePipeline {
         coverageSpatialIndex.reset()
     }
 
-    func finish() async -> CaptureSessionSummary? {
+    func finish(finishedBy: CaptureFinishedBy = .manualEarlyFinish) async -> CaptureSessionSummary? {
         if let controller = sessionController {
-            return try? await controller.finish()
+            return try? await controller.finish(finishedBy: finishedBy)
         }
         return nil
     }

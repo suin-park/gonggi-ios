@@ -237,16 +237,16 @@ enum CaptureUIPresenter {
         }
     }
 
+    /// Ring shows completion progress only — never repeats live action icons from the coach card.
     static func ringSystemImage(for state: CaptureCompletionState, action: GuidanceAction) -> String {
-        if state == .ready { return "checkmark" }
-        switch action {
-        case .trackingRecovery: return "location.slash"
-        case .returnToPreviousArea: return "arrow.uturn.backward"
-        case .slowDown, .holdSteady: return "tortoise"
-        case .improveBaseline, .moveLaterally: return "arrow.left.and.right"
-        case .lowTextureWarning: return "square.dashed"
-        case .captureNearlyComplete: return "checkmark.circle"
-        default: return "circle.dotted"
+        _ = action
+        switch state {
+        case .ready:
+            return "checkmark"
+        case .nearlyReady:
+            return "checkmark.circle"
+        case .notReady:
+            return "viewfinder"
         }
     }
 

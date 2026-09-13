@@ -6,6 +6,10 @@ struct CaptureSummaryView: View {
     let onCreateSpace: () -> Void
     let onPreviewSpace: (() -> Void)?
 
+    @State private var showDiagShare = false
+    @State private var diagShareItems: [URL] = []
+    @State private var diagShareError: String?
+
     #if DEBUG
     @State private var showExportShare = false
     @State private var exportShareItems: [URL] = []
@@ -61,6 +65,16 @@ struct CaptureSummaryView: View {
                         SecondaryButton(title: "추가 촬영", icon: "camera") {
                             onContinueCapture()
                         }
+                        if !summary.sessionId.isEmpty {
+                            SecondaryButton(title: "촬영 진단 공유", icon: "square.and.arrow.up") {
+                                prepareDiagnosticsShare()
+                            }
+                        }
+                        if let diagShareError {
+                            Text(diagShareError)
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.warning)
+                        }
                         #if DEBUG
                         if summary.manifestURL != nil, !summary.captureId.isEmpty {
                             SecondaryButton(title: "촬영 데이터보내기 (Debug)", icon: "square.and.arrow.up") {
@@ -81,6 +95,11 @@ struct CaptureSummaryView: View {
             .background(GonggiAmbientBackground())
             .navigationTitle("촬영 요약")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showDiagShare) {
+                CaptureExportShareSheet(items: diagShareItems) {
+                    showDiagShare = false
+                }
+            }
             #if DEBUG
             .sheet(isPresented: $showExportShare) {
                 CaptureExportShareSheet(items: exportShareItems) {
@@ -88,6 +107,21 @@ struct CaptureSummaryView: View {
                 }
             }
             #endif
+        }
+    }
+
+    private func prepareDiagnosticsShare() {
+        diagShareError = nil
+        do {
+            let folder = try CaptureDiagnosticsStore.buildSharePackage(
+                sessionId: summary.sessionId,
+                captureId: summary.captureId.isEmpty ? summary.sessionId : summary.captureId,
+                includeVideo: false
+            )
+            diagShareItems = [folder]
+            showDiagShare = true
+        } catch {
+            diagShareError = "진단 공유 준비에 실패했어요."
         }
     }
 

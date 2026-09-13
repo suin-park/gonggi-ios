@@ -281,12 +281,12 @@ struct CaptureControlBar: View {
             CaptureFinishPillButton(isReady: isReady, title: finishTitle, action: onFinish)
 
             GonggiIconButton(
-                systemName: showGuideOverlay ? "map.fill" : "map",
+                systemName: showGuideOverlay ? "eye.fill" : "eye.slash",
                 size: 40,
                 style: .dimmed,
                 action: onGuide
             )
-            .accessibilityLabel("가이드 오버레이")
+            .accessibilityLabel(showGuideOverlay ? "가이드 오버레이 끄기" : "가이드 오버레이 켜기")
         }
         .padding(.horizontal, GonggiSpacing.sm)
         .padding(.vertical, GonggiSpacing.xs)
@@ -372,10 +372,10 @@ struct CaptureCoachBubble: View {
     }
 
     var body: some View {
-        VStack(spacing: GonggiSpacing.sm) {
+        VStack(spacing: presentation.subtitle == nil ? 4 : GonggiSpacing.xs) {
             if let glyph = presentation.directionGlyph {
                 Text(glyph)
-                    .font(.system(size: 36, weight: .medium, design: .rounded))
+                    .font(.system(size: 28, weight: .medium, design: .rounded))
                     .foregroundStyle(presentation.severity.iconTint)
                     .accessibilityHidden(true)
             }
@@ -383,22 +383,24 @@ struct CaptureCoachBubble: View {
             HStack(alignment: .top, spacing: GonggiSpacing.sm) {
                 if presentation.directionGlyph == nil {
                     Image(systemName: presentation.icon)
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(presentation.severity.iconTint)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 24, height: 24)
                         .accessibilityHidden(true)
                 }
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(presentation.title)
-                        .font(GonggiTypography.headline(17))
+                        .font(GonggiTypography.headline(16))
                         .foregroundStyle(GonggiColors.textPrimary)
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let subtitle = presentation.subtitle {
                         Text(subtitle)
-                            .font(GonggiTypography.caption(13))
+                            .font(GonggiTypography.caption(12))
                             .foregroundStyle(GonggiColors.textSecondary)
-                            .lineSpacing(2)
+                            .lineSpacing(1)
+                            .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -406,16 +408,16 @@ struct CaptureCoachBubble: View {
             }
         }
         .padding(.horizontal, GonggiSpacing.md)
-        .padding(.vertical, GonggiSpacing.sm + 2)
+        .padding(.vertical, presentation.subtitle == nil ? GonggiSpacing.xs + 2 : GonggiSpacing.sm)
         .background(
             RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
-                .fill(Color.black.opacity(0.62))
+                .fill(Color.black.opacity(0.52))
         )
         .overlay(
             RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
-                .stroke(presentation.severity.accent.opacity(0.45), lineWidth: 1)
+                .stroke(presentation.severity.accent.opacity(0.4), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.3), radius: 12, y: 4)
+        .shadow(color: .black.opacity(0.22), radius: 8, y: 3)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
     }

@@ -20,6 +20,7 @@ final class CaptureSessionController {
     private var capturePhase: CapturePhase = .stabilizing
     private var completionState: CaptureCompletionState = .notReady
     private var lastGuidanceAction: GuidanceAction = .continueCapture
+    private let diagnostics = CaptureDiagnosticsAccumulator()
     private var frameSamples: [CaptureFrameSample] = []
     private var lastKeyframeTimestamp: Double?
     private var lastKeyframeTransform: simd_float4x4?
@@ -56,6 +57,7 @@ final class CaptureSessionController {
         capturePhase = .stabilizing
         completionState = .notReady
         lastGuidanceAction = .continueCapture
+        diagnostics.reset(at: startedAt)
         depthSampler.reset(sessionId: sessionId)
         frameSamples = []
         lastKeyframeTimestamp = nil
@@ -101,6 +103,7 @@ final class CaptureSessionController {
                 trackingLimited: trackingLimited
             )
             lastGuidanceAction = decision.action
+            recordDiagnostics(trackingNormal: trackingNormal)
             return
         }
 
@@ -194,6 +197,17 @@ final class CaptureSessionController {
             trackingLimited: trackingLimited
         )
         lastGuidanceAction = decision.action
+        recordDiagnostics(trackingNormal: trackingNormal)
+    }
+
+    private func recordDiagnostics(trackingNormal: Bool) {
+        let q = qualityState(trackingLimited: !trackingNormal)
+        diagnostics.ingest(
+            action: lastGuidanceAction,
+            phase: capturePhase,
+            quality: q,
+            trackingNormal: trackingNormal
+        )
     }
 
     func currentQuality(trackingLimited: Bool = false) -> CaptureQualityState {
@@ -222,7 +236,7 @@ final class CaptureSessionController {
         frameSamples = []
     }
 
-    func finish() async throws -> CaptureSessionSummary {
+    func finish(finishedBy: CaptureFinishedBy = .manualEarlyFinish) async throws -> CaptureSessionSummary {
         guard isActive else {
             throw SessionError.notActive
         }
@@ -305,6 +319,32 @@ final class CaptureSessionController {
         let revisitAreas = coverage.areas.filter { $0.state == .insufficient || $0.state == .unseen }.count
         let lowTextureWarnings = telemetry.samples.filter { ($0.brightness ?? 1) < 0.25 }.count
         let quality = qualityState(trackingLimited: false)
+
+        CaptureDiagnosticsStore.writeGuidanceHistory(diagnostics.events, sessionId: sessionId)
+        let info = Bundle.main.infoDictionary
+        let diagSummary = CaptureSessionSummaryDiagnostics(
+            sessionId: sessionId,
+            captureId: captureId,
+            durationSec: durationSec,
+            videoFramesWritten: videoResult?.frameCount ?? 0,
+            poseSamples: frameSamples.count,
+            droppedFrames: videoResult?.droppedFrameCount ?? 0,
+            acceptedKeyframes: keyframe3DGSCount,
+            totalTravelDistanceM: Double(translationBaseline.totalPathLengthM),
+            maxTranslationBaselineM: Double(translationBaseline.maxBaselineM),
+            observedCoverageFinal: coverage.observedCoverage,
+            qualityCoverageFinal: coverage.qualityCoverage,
+            overlap: diagnostics.overlapStats(sessionDurationSec: durationSec),
+            sharpness: diagnostics.sharpnessStats(blurryFraction: sharpnessAnalyzer.snapshot().blurryFraction),
+            tracking: diagnostics.trackingStats(),
+            poseJumpCount: disc?.abnormalJumpCount ?? 0,
+            completionStateAtFinish: completionState.rawValue,
+            finishedBy: finishedBy.rawValue,
+            generation: CaptureDiagnosticsStore.loadGenerationDiagnostics(sessionId: sessionId),
+            appVersion: info?["CFBundleShortVersionString"] as? String ?? "0",
+            buildNumber: info?["CFBundleVersion"] as? String ?? "0"
+        )
+        CaptureDiagnosticsStore.writeSessionSummary(diagSummary, sessionId: sessionId)
 
         #if DEBUG
         let integritySummary = CaptureMOVIntegritySummary(

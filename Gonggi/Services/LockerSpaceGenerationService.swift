@@ -53,6 +53,7 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         var videoByteSize: Int?
         var serverStatus: String
         var overallProgress: Double
+        var idempotencyKey: String?
     }
 
     init(config: AppConfiguration = .production, session: URLSession = .shared) {
@@ -79,14 +80,18 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
 
         // Placeholder size — uploadCapture updates with real byte size before PUT.
         let byteSize = request.videoByteSize ?? 1_048_576
+        let profile = ServerGenerationProfileMapper.resolveServerProfile(
+            guideQualityProfile: request.qualityProfile
+        )
+        let idempotencyKey = request.idempotencyKey ?? "gonggi-\(UUID().uuidString)"
         let body: [String: Any] = [
             "name": request.name,
             "visibility": request.visibility,
             "filename": request.videoFilename,
             "contentType": request.videoContentType,
             "byteSize": byteSize,
-            "qualityProfile": request.qualityProfile,
-            "idempotencyKey": "gonggi-\(UUID().uuidString)",
+            "qualityProfile": profile,
+            "idempotencyKey": idempotencyKey,
         ]
         if let duration = request.durationSec {
             var withDuration = body
@@ -104,8 +109,14 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
             throw SpaceGenerationError.unauthorized
         }
         guard (200..<300).contains(http.statusCode) else {
-            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-            throw SpaceGenerationError.unknown(msg ?? "create failed (\(http.statusCode))")
+            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            let code = (json["error"] as? String)
+                ?? (json["errorCode"] as? String)
+                ?? "create_failed_\(http.statusCode)"
+            #if DEBUG
+            print("[video-gaussian] create failed status=\(http.statusCode) code=\(code) profile=\(profile) idem=\(idempotencyKey)")
+            #endif
+            throw SpaceGenerationError.server(code: code, httpStatus: http.statusCode)
         }
 
         let decoded = try JSONDecoder().decode(CreateDTO.self, from: data)
@@ -116,14 +127,15 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         jobContext[jobId] = JobContext(
             spaceId: spaceId,
             uploadURL: uploadURL,
-            qualityProfile: decoded.job.qualityProfile ?? "capture_dense_v2",
+            qualityProfile: decoded.job.qualityProfile ?? profile,
             videoByteSize: nil,
             serverStatus: decoded.job.status ?? "uploading",
-            overallProgress: 0.05
+            overallProgress: 0.05,
+            idempotencyKey: idempotencyKey
         )
         lock.unlock()
 
-        return CreateSpaceResponse(spaceId: spaceId, jobId: jobId, uploadURL: uploadURL)
+        return CreateSpaceResponse(spaceId: spaceId, jobId: jobId, uploadURL: uploadURL, idempotencyKey: idempotencyKey)
     }
 
     func uploadCapture(_ request: UploadCaptureRequest) async throws {
@@ -170,7 +182,9 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         try attachAuth(&req)
-        var body: [String: Any] = ["qualityProfile": context.qualityProfile]
+        var body: [String: Any] = [
+            "qualityProfile": ServerGenerationProfileMapper.sanitize(context.qualityProfile)
+        ]
         if let size = context.videoByteSize {
             body["videoByteSize"] = size
         }
@@ -182,7 +196,11 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         }
         if http.statusCode == 401 { throw SpaceGenerationError.unauthorized }
         guard (200..<300).contains(http.statusCode) else {
-            throw SpaceGenerationError.unknown("start failed (\(http.statusCode))")
+            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            let code = (json["error"] as? String)
+                ?? (json["errorCode"] as? String)
+                ?? "start_failed_\(http.statusCode)"
+            throw SpaceGenerationError.server(code: code, httpStatus: http.statusCode)
         }
         _ = data
         lock.lock()

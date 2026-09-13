@@ -145,7 +145,7 @@ final class CaptureViewModel: ObservableObject {
         arSession.pause()
     }
 
-    func stop() async {
+    func stop(finishedBy: CaptureFinishedBy = .manualEarlyFinish) async {
         guard !isStopping else { return }
         isStopping = true
         mockTimer?.cancel()
@@ -158,7 +158,7 @@ final class CaptureViewModel: ObservableObject {
                 startedAt: startedAt,
                 endedAt: Date()
             )
-        } else if var summary = await framePipeline.finish() {
+        } else if var summary = await framePipeline.finish(finishedBy: finishedBy) {
             if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
                 isReconstructingTexturedMesh = true
                 summary = await enrichWithTexturedMesh(summary)

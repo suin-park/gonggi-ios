@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// DEBUG-only share sheet for capture export (AirDrop / Files / Mac).
+/// Share sheet for capture export / diagnostics (AirDrop / Files / Mac).
 struct CaptureExportShareSheet: UIViewControllerRepresentable {
     let items: [URL]
     var onComplete: (() -> Void)?

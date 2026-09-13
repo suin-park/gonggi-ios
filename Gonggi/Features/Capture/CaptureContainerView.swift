@@ -93,8 +93,8 @@ struct CaptureContainerView: View {
                 case .none:
                     recordModeSelection
                 case .threeDSpaceRecord:
-                    ThreeDSpaceRecordFlowView(onClose: { activeFlow = .none })
-                        .environmentObject(appState)
+                    // Presented via fullScreenCover below (hides global TabView).
+                    Color.clear
                 case .debug(.spaceScan3DGS):
                     CaptureFlowView(onClose: { activeFlow = .none })
                 case .directionCapture, .debug(.panoramaCapture), .debug(.quick360Experimental), .debug(.directionCapture):
@@ -102,6 +102,15 @@ struct CaptureContainerView: View {
                 }
             }
             .navigationBarHidden(true)
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { activeFlow == .threeDSpaceRecord },
+            set: { presented in
+                if !presented { activeFlow = .none }
+            }
+        )) {
+            ThreeDSpaceRecordFlowView(onClose: { activeFlow = .none })
+                .environmentObject(appState)
         }
         .fullScreenCover(isPresented: Binding(
             get: { activeFlow == .directionCapture },
@@ -354,9 +363,9 @@ struct CaptureFlowView: View {
         return AdvancedCaptureCopy.withoutMiddleDot(plan.segments[idx].instructionKo)
     }
 
-    private func finishCapture() {
+    private func finishCapture(finishedBy: CaptureFinishedBy) {
         Task {
-            await viewModel.stop()
+            await viewModel.stop(finishedBy: finishedBy)
             showSummary = true
         }
     }
@@ -401,7 +410,7 @@ struct CaptureFlowView: View {
                 },
                 onFinish: {
                     if viewModel.guidance.quality.completionState == .ready {
-                        finishCapture()
+                        finishCapture(finishedBy: .readyCompletion)
                     } else {
                         showEarlyFinishConfirm = true
                     }
@@ -448,7 +457,7 @@ struct CaptureFlowView: View {
             titleVisibility: .visible
         ) {
             Button("추가 촬영", role: .cancel) {}
-            Button("이대로 완료") { finishCapture() }
+            Button("이대로 완료") { finishCapture(finishedBy: .manualEarlyFinish) }
         }
         .sheet(isPresented: $showSummary) {
             if let summary = viewModel.lastSummary {
@@ -478,7 +487,7 @@ struct CaptureFlowView: View {
                 ProcessingView(
                     summary: summary,
                     spaceService: appState.spaceService,
-                    qualityProfile: guidePlan?.qualityProfile ?? "capture_dense_v2",
+                    qualityProfile: ServerGenerationProfileMapper.resolve(from: guidePlan),
                     sourceLatLongSessionId: sourceLatLongSessionId,
                     allowStubVideoInMock: appState.isMockMode,
                     onComplete: { jobId, spaceId in

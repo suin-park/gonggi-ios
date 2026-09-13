@@ -1,4 +1,5 @@
 import ARKit
+import OSLog
 import SwiftUI
 
 @MainActor
@@ -9,6 +10,7 @@ final class ProcessingViewModel: ObservableObject {
 
     private let spaceService: SpaceGenerationService
     private var pollTask: Task<Void, Never>?
+    private let log = Logger(subsystem: "com.whik.gonggi", category: "Processing")
 
     init(spaceService: SpaceGenerationService) {
         self.spaceService = spaceService
@@ -21,6 +23,19 @@ final class ProcessingViewModel: ObservableObject {
     ) {
         pollTask?.cancel()
         pollTask = Task {
+            let resolvedProfile = ServerGenerationProfileMapper.resolveServerProfile(
+                guideQualityProfile: qualityProfile
+            )
+            var generation = CaptureGenerationDiagnostics.empty
+            generation.createRequestProfile = resolvedProfile
+
+            func persistGeneration() {
+                CaptureDiagnosticsStore.writeGenerationDiagnostics(
+                    generation,
+                    sessionId: summary.sessionId
+                )
+            }
+
             do {
                 let videoURL = summary.videoURL
                     ?? (try? CaptureSessionStore.videoURL(sessionId: summary.sessionId))
@@ -50,15 +65,24 @@ final class ProcessingViewModel: ObservableObject {
                     throw SpaceGenerationError.unknown("촬영 동영상(original.mov)을 찾을 수 없어요. 다시 촬영해 주세요.")
                 }
 
+                let idempotencyKey = "gonggi-\(UUID().uuidString)"
+                generation.idempotencyKey = idempotencyKey
+                persistGeneration()
+
                 let created = try await spaceService.createSpace(
                     CreateSpaceRequest(
                         name: summary.suggestedName,
                         visibility: "private",
                         videoByteSize: byteSize,
                         durationSec: summary.duration,
-                        qualityProfile: qualityProfile
+                        qualityProfile: resolvedProfile,
+                        idempotencyKey: idempotencyKey
                     )
                 )
+                generation.createStatus = 200
+                generation.idempotencyKey = created.idempotencyKey ?? idempotencyKey
+                persistGeneration()
+
                 let meta = CaptureUploadMetadata(
                     durationSec: summary.duration,
                     coverage: summary.quality.overallCoverage,
@@ -73,14 +97,39 @@ final class ProcessingViewModel: ObservableObject {
                         "maxBaselineM": summary.dataFoundation?.maxBaselineM ?? 0,
                     ]
                 )
+                generation.uploadStarted = true
+                persistGeneration()
                 try await spaceService.uploadCapture(
                     UploadCaptureRequest(jobId: created.jobId, localCaptureURL: uploadURL, metadata: meta)
                 )
+                generation.uploadFinished = true
+                persistGeneration()
+
                 try await spaceService.startGeneration(jobId: created.jobId)
+                generation.generationStarted = true
+                persistGeneration()
+
                 status = try await spaceService.fetchStatus(jobId: created.jobId)
                 await poll(jobId: created.jobId, spaceId: created.spaceId)
             } catch {
-                errorMessage = error.localizedDescription
+                if let gen = error as? SpaceGenerationError {
+                    if let status = gen.httpStatus {
+                        generation.createStatus = status
+                    }
+                    generation.backendErrorCode = gen.backendErrorCode
+                } else {
+                    generation.backendErrorCode = error.localizedDescription
+                }
+                persistGeneration()
+                SpaceGenerationErrorPresenter.logFailure(
+                    error: error,
+                    requestProfile: resolvedProfile,
+                    idempotencyKey: generation.idempotencyKey
+                )
+                log.error(
+                    "create/upload/start failed profile=\(resolvedProfile, privacy: .public) code=\(generation.backendErrorCode ?? "nil", privacy: .public) status=\(generation.createStatus ?? -1)"
+                )
+                errorMessage = SpaceGenerationErrorPresenter.userMessage(for: error)
             }
         }
     }
@@ -133,6 +182,9 @@ struct ProcessingView: View {
 
     @StateObject private var viewModel: ProcessingViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showDiagShare = false
+    @State private var diagShareItems: [URL] = []
+    @State private var diagShareError: String?
 
     init(
         summary: CaptureSessionSummary,
@@ -168,6 +220,14 @@ struct ProcessingView: View {
                         }
                     } else if let err = viewModel.errorMessage {
                         errorBanner(err)
+                        SecondaryButton(title: "촬영 진단 공유", icon: "square.and.arrow.up") {
+                            shareDiagnostics()
+                        }
+                        if let diagShareError {
+                            Text(diagShareError)
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.warning)
+                        }
                     } else {
                         loadingState
                     }
@@ -195,6 +255,11 @@ struct ProcessingView: View {
                 }
             }
         }
+        .sheet(isPresented: $showDiagShare) {
+            CaptureExportShareSheet(items: diagShareItems) {
+                showDiagShare = false
+            }
+        }
         .onAppear {
             #if DEBUG
             if let frozen = screenshotFrozenStatus {
@@ -209,6 +274,21 @@ struct ProcessingView: View {
             )
         }
         .onDisappear { viewModel.cancel() }
+    }
+
+    private func shareDiagnostics() {
+        diagShareError = nil
+        do {
+            let folder = try CaptureDiagnosticsStore.buildSharePackage(
+                sessionId: summary.sessionId,
+                captureId: summary.captureId,
+                includeVideo: false
+            )
+            diagShareItems = [folder]
+            showDiagShare = true
+        } catch {
+            diagShareError = "진단 공유 준비에 실패했어요."
+        }
     }
 
     private var header: some View {
