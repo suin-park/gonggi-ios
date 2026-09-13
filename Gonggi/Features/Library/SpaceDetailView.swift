@@ -45,7 +45,7 @@ struct SpaceDetailView: View {
     }
 
     private var advancedSessionKey: String {
-        liveSpace.sessionId ?? liveSpace.id
+        ThreeDExpansionSupport.sessionKey(for: liveSpace)
     }
 
     private var advancedRecord: AdvancedCaptureAnalysisRecord? {
@@ -503,7 +503,10 @@ struct SpaceDetailView: View {
                 showGaussianViewer = true
             }
             .accessibilityLabel("3D 공간 보기")
-        } else if let record, record.canStartGuidedCapture, let plan = record.guidePlan {
+        } else if let record, record.canStartGuidedCapture,
+                  let plan = ThreeDExpansionSupport.cachedGuidePlan(sessionId: advancedSessionKey)
+                    ?? record.guidePlan.map(AdvancedCaptureCopy.sanitize)
+        {
             SecondaryButton(title: "입체 기록 시작", icon: "figure.walk") {
                 GonggiHaptics.medium()
                 guidedPlan = plan
@@ -580,11 +583,10 @@ struct SpaceDetailView: View {
     private func startAdvancedAnalyze() async {
         isStartingAdvancedAnalyze = true
         defer { isStartingAdvancedAnalyze = false }
-        AdvancedCaptureAnalysisRuntime.shared.configure(useMock: appState.isMockMode)
-        let force = advancedRecord?.status == .failed
-        switch await AdvancedCaptureAnalysisRuntime.shared.startAnalysis(
+        // Same pipeline as Record → 기존 공간에서 시작 (LatLong never overwritten).
+        switch await ThreeDExpansionSupport.startOrReuseAnalysis(
             sessionId: advancedSessionKey,
-            force: force
+            useMock: appState.isMockMode
         ) {
         case .success:
             break

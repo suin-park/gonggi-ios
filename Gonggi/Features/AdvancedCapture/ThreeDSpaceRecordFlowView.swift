@@ -1,12 +1,15 @@
 import SwiftUI
 
-/// Record-tab multi-step flow: LatLong (space grasp) → Astra guide → Guided 3DGS capture.
-/// Reuses existing DirectionCapture / analysis / Guided3DGS — does not alter P0.5 capture stack.
+/// Record-tab 3D flow: choose existing 360 vs new capture → Astra → Guided 3DGS.
+/// Reuses DirectionCapture / ThreeDExpansionSupport / Guided3DGS — does not alter P0–P1 capture stack.
 struct ThreeDSpaceRecordFlowView: View {
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var analysisStore = AdvancedCaptureAnalysisStore.shared
     let onClose: () -> Void
 
     private enum Phase: Equatable {
+        case chooseEntry
+        case pickExisting
         case introStep1
         case directionCapture
         case preparingSpace(sessionId: String)
@@ -16,21 +19,33 @@ struct ThreeDSpaceRecordFlowView: View {
         case failed(String)
     }
 
-    @State private var phase: Phase = .introStep1
+    @State private var phase: Phase = .chooseEntry
     @State private var waitTask: Task<Void, Never>?
+
+    private var expandableSpaces: [SpaceRecord] {
+        ThreeDExpansionSupport.expandableSpaces(from: appState.spaces, store: analysisStore)
+    }
 
     var body: some View {
         ZStack {
             GonggiAmbientBackground()
 
             switch phase {
+            case .chooseEntry:
+                chooseEntryPanel
+
+            case .pickExisting:
+                pickExistingPanel
+
             case .introStep1:
                 stepIntro(
                     stepLabel: "1 / 2",
                     title: "공간을 먼저 확인할게요",
                     body: "여러 방향을 촬영해 공간을 파악한 뒤, 이어서 입체 기록을 진행해요.",
                     primaryTitle: "시작하기",
-                    primaryIcon: "camera.aperture"
+                    primaryIcon: "camera.aperture",
+                    showsBack: true,
+                    onBack: { phase = .chooseEntry }
                 ) {
                     GonggiHaptics.medium()
                     phase = .directionCapture
@@ -41,26 +56,28 @@ struct ThreeDSpaceRecordFlowView: View {
 
             case .preparingSpace:
                 waitingPanel(
-                    stepLabel: "1 / 2",
                     title: "공간을 준비하고 있어요",
-                    detail: "촬영본은 저장됐어요. 준비가 끝나면 입체 기록으로 이어집니다."
+                    detail: "촬영본은 저장됐어요. 준비가 끝나면 입체 기록으로 이어집니다.",
+                    allowsLeaveToHome: true
                 )
 
             case .analyzing:
                 waitingPanel(
-                    stepLabel: "2 / 2",
-                    title: "입체 기록을 준비하고 있어요",
-                    detail: "앱을 나가도 분석은 계속됩니다. 잠시만 기다려 주세요."
+                    title: "공간을 확인하고 있어요",
+                    detail: "3D 촬영 경로를 준비하고 있습니다.",
+                    allowsLeaveToHome: true
                 )
 
             case .introStep2(_, let plan):
                 stepIntro(
                     stepLabel: "2 / 2",
-                    title: "공간을 입체적으로 기록할게요",
+                    title: "입체 기록 준비가 완료됐어요",
                     body: plan.globalTips.first.map(AdvancedCaptureCopy.withoutMiddleDot)
                         ?? "공간을 걸으며 촬영해 자유롭게 이동할 수 있어요.",
                     primaryTitle: "입체 기록 시작",
-                    primaryIcon: "figure.walk"
+                    primaryIcon: "figure.walk",
+                    showsBack: false,
+                    onBack: nil
                 ) {
                     GonggiHaptics.medium()
                     if case .introStep2(let sessionId, let plan) = phase {
@@ -90,12 +107,12 @@ struct ThreeDSpaceRecordFlowView: View {
                         .foregroundStyle(GonggiColors.textSecondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, GonggiSpacing.lg)
-                    PrimaryButton(title: "선택 화면으로", icon: "arrow.uturn.backward") {
+                    PrimaryButton(title: "시작 방식으로", icon: "arrow.uturn.backward") {
                         waitTask?.cancel()
-                        onClose()
+                        phase = .chooseEntry
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
-                    Text("촬영본은 보관함에 남아 있어요. 공간 상세에서 이어서 입체 기록을 할 수 있어요.")
+                    Text("기존 360° 공간은 그대로 보관함에 남아 있어요.")
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textTertiary)
                         .multilineTextAlignment(.center)
@@ -111,22 +128,20 @@ struct ThreeDSpaceRecordFlowView: View {
             },
             set: { presented in
                 if !presented, case .directionCapture = phase {
-                    // User dismissed without completing — no LatLong job created.
-                    onClose()
+                    phase = .introStep1
                 }
             }
         )) {
             DirectionCaptureView(
                 onClose: {
-                    // Cancel before LatLong enqueue — return to Record selection.
                     if case .directionCapture = phase {
-                        onClose()
+                        phase = .introStep1
                     }
                 },
                 onCaptureCompleted: { result in
                     appState.enqueueSpaceGeneration(from: result, switchToHome: false)
                     phase = .preparingSpace(sessionId: result.sessionId)
-                    startWaitPipeline(sessionId: result.sessionId)
+                    startNewCapturePipeline(sessionId: result.sessionId)
                 }
             )
             .environmentObject(appState)
@@ -136,7 +151,211 @@ struct ThreeDSpaceRecordFlowView: View {
         }
     }
 
-    // MARK: - Panels
+    // MARK: - Entry choice
+
+    private var chooseEntryPanel: some View {
+        VStack(spacing: 0) {
+            flowChrome(title: "3D 공간 기록", onBack: nil, onClose: {
+                waitTask?.cancel()
+                onClose()
+            })
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+                    Text("어떻게 시작할까요?")
+                        .font(GonggiTypography.body(16))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .padding(.top, GonggiSpacing.md)
+
+                    entryChoiceCard(
+                        icon: "rectangle.stack",
+                        title: "기존 공간에서 시작",
+                        subtitle: "기록해둔 360° 공간을\n3D 공간으로 확장해요"
+                    ) {
+                        GonggiHaptics.medium()
+                        phase = .pickExisting
+                    }
+
+                    entryChoiceCard(
+                        icon: "camera.aperture",
+                        title: "새 공간 기록",
+                        subtitle: "공간을 먼저 촬영한 뒤\n3D로 기록해요"
+                    ) {
+                        GonggiHaptics.medium()
+                        phase = .introStep1
+                    }
+                }
+                .padding(.horizontal, GonggiSpacing.lg)
+                .padding(.bottom, GonggiSpacing.xxl)
+            }
+        }
+    }
+
+    private var pickExistingPanel: some View {
+        VStack(spacing: 0) {
+            flowChrome(title: "3D로 확장할 공간 선택", onBack: {
+                waitTask?.cancel()
+                phase = .chooseEntry
+            }, onClose: {
+                waitTask?.cancel()
+                onClose()
+            })
+
+            if expandableSpaces.isEmpty {
+                emptyExistingPanel
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: GonggiSpacing.md) {
+                        ForEach(expandableSpaces) { space in
+                            Button {
+                                GonggiHaptics.medium()
+                                beginExpansion(from: space)
+                            } label: {
+                                existingSpaceCard(space)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(space.name), \(space.capturedAt.formatted(date: .abbreviated, time: .omitted))")
+                        }
+                    }
+                    .padding(.horizontal, GonggiSpacing.lg)
+                    .padding(.top, GonggiSpacing.md)
+                    .padding(.bottom, GonggiSpacing.xxl)
+                }
+            }
+        }
+    }
+
+    private var emptyExistingPanel: some View {
+        VStack(spacing: GonggiSpacing.lg) {
+            Spacer()
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 44, weight: .light))
+                .foregroundStyle(GonggiColors.textTertiary)
+            Text("아직 사용할 수 있는 360° 공간이 없어요.")
+                .font(GonggiTypography.title(20))
+                .foregroundStyle(GonggiColors.textPrimary)
+                .multilineTextAlignment(.center)
+            Text("먼저 공간을 기록해주세요.")
+                .font(GonggiTypography.body(15))
+                .foregroundStyle(GonggiColors.textSecondary)
+            PrimaryButton(title: "새 공간 기록", icon: "camera.aperture") {
+                GonggiHaptics.medium()
+                phase = .introStep1
+            }
+            .padding(.horizontal, GonggiSpacing.lg)
+            Spacer()
+        }
+        .padding(.horizontal, GonggiSpacing.lg)
+    }
+
+    private func existingSpaceCard(_ space: SpaceRecord) -> some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            SpaceThumbnailView(
+                space: space,
+                height: 140,
+                cornerRadius: GonggiRadius.md,
+                showsActivityOverlay: false
+            )
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(space.name)
+                        .font(GonggiTypography.headline(17))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .lineLimit(2)
+                    Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
+                        .font(GonggiTypography.caption(12))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(GonggiColors.textTertiary)
+            }
+            .padding(.horizontal, GonggiSpacing.xs)
+        }
+        .padding(GonggiSpacing.sm)
+        .background(GonggiColors.surfaceElevated)
+        .overlay(
+            RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                .stroke(GonggiColors.borderSubtle, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+    }
+
+    private func entryChoiceCard(
+        icon: String,
+        title: String,
+        subtitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                ZStack {
+                    Circle()
+                        .fill(GonggiColors.accentTeal.opacity(0.12))
+                        .frame(width: 52, height: 52)
+                    Image(systemName: icon)
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundStyle(GonggiColors.accentTeal)
+                }
+                Text(title)
+                    .font(GonggiTypography.headline(20))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                Text(subtitle)
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(GonggiSpacing.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(GonggiColors.surfaceElevated)
+            .overlay(
+                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
+                    .stroke(GonggiColors.borderSubtle, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+
+    // MARK: - Shared chrome / panels
+
+    private func flowChrome(title: String, onBack: (() -> Void)?, onClose: @escaping () -> Void) -> some View {
+        HStack {
+            if let onBack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .frame(width: 40, height: 40)
+                        .background(GonggiColors.surfaceElevated)
+                        .clipShape(Circle())
+                }
+                .accessibilityLabel("뒤로")
+            } else {
+                Color.clear.frame(width: 40, height: 40)
+            }
+            Spacer()
+            Text(title)
+                .font(GonggiTypography.headline(17))
+                .foregroundStyle(GonggiColors.textPrimary)
+            Spacer()
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .frame(width: 40, height: 40)
+                    .background(GonggiColors.surfaceElevated)
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("닫기")
+        }
+        .padding(.horizontal, GonggiSpacing.lg)
+        .padding(.top, GonggiSpacing.md)
+        .padding(.bottom, GonggiSpacing.sm)
+    }
 
     private func stepIntro(
         stepLabel: String,
@@ -144,31 +363,21 @@ struct ThreeDSpaceRecordFlowView: View {
         body: String,
         primaryTitle: String,
         primaryIcon: String,
+        showsBack: Bool,
+        onBack: (() -> Void)?,
         action: @escaping () -> Void
     ) -> some View {
         VStack(spacing: GonggiSpacing.xl) {
-            HStack {
-                Button {
+            flowChrome(
+                title: stepLabel,
+                onBack: showsBack ? onBack : nil,
+                onClose: {
                     waitTask?.cancel()
                     onClose()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                        .frame(width: 40, height: 40)
-                        .background(GonggiColors.surfaceElevated)
-                        .clipShape(Circle())
                 }
-                Spacer()
-            }
-            .padding(.horizontal, GonggiSpacing.lg)
-            .padding(.top, GonggiSpacing.md)
+            )
 
             Spacer()
-
-            Text(stepLabel)
-                .font(GonggiTypography.caption(13))
-                .foregroundStyle(GonggiColors.accentCyan)
 
             Text(title)
                 .font(GonggiTypography.title(26))
@@ -189,34 +398,21 @@ struct ThreeDSpaceRecordFlowView: View {
         }
     }
 
-    private func waitingPanel(stepLabel: String, title: String, detail: String) -> some View {
+    private func waitingPanel(title: String, detail: String, allowsLeaveToHome: Bool) -> some View {
         VStack(spacing: GonggiSpacing.lg) {
-            HStack {
-                Button {
-                    // LatLong already enqueued — safe to leave; continue later from Space Detail.
-                    waitTask?.cancel()
-                    onClose()
+            flowChrome(title: "", onBack: nil, onClose: {
+                // Existing LatLong is never deleted — leave and continue later from Space Detail.
+                waitTask?.cancel()
+                onClose()
+                if allowsLeaveToHome {
                     appState.selectTab(.home)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                        .frame(width: 40, height: 40)
-                        .background(GonggiColors.surfaceElevated)
-                        .clipShape(Circle())
                 }
-                Spacer()
-            }
-            .padding(.horizontal, GonggiSpacing.lg)
-            .padding(.top, GonggiSpacing.md)
+            })
 
             Spacer()
             ProgressView()
                 .tint(GonggiColors.accentCyan)
                 .scaleEffect(1.2)
-            Text(stepLabel)
-                .font(GonggiTypography.caption(13))
-                .foregroundStyle(GonggiColors.accentCyan)
             Text(title)
                 .font(GonggiTypography.title(22))
                 .foregroundStyle(GonggiColors.textPrimary)
@@ -230,12 +426,38 @@ struct ThreeDSpaceRecordFlowView: View {
         }
     }
 
-    // MARK: - Pipeline
+    // MARK: - Pipelines
 
-    private func startWaitPipeline(sessionId: String) {
+    private func beginExpansion(from space: SpaceRecord) {
+        let sessionId = ThreeDExpansionSupport.sessionKey(for: space)
+        if let plan = ThreeDExpansionSupport.cachedGuidePlan(sessionId: sessionId, store: analysisStore) {
+            phase = .introStep2(sessionId: sessionId, plan: plan)
+            return
+        }
+        phase = .analyzing(sessionId: sessionId)
+        startExistingExpansionPipeline(sessionId: sessionId)
+    }
+
+    private func startExistingExpansionPipeline(sessionId: String) {
         waitTask?.cancel()
         waitTask = Task { @MainActor in
-            // Wait until LatLong generation completes (or fails).
+            let result = await ThreeDExpansionSupport.prepareGuidePlan(
+                sessionId: sessionId,
+                useMock: appState.isMockMode
+            )
+            guard !Task.isCancelled else { return }
+            switch result {
+            case .success(let plan):
+                phase = .introStep2(sessionId: sessionId, plan: plan)
+            case .failure(let error):
+                phase = .failed(error.userMessage)
+            }
+        }
+    }
+
+    private func startNewCapturePipeline(sessionId: String) {
+        waitTask?.cancel()
+        waitTask = Task { @MainActor in
             let spaceReady = await waitUntilSpaceReady(sessionId: sessionId)
             guard !Task.isCancelled else { return }
             guard spaceReady else {
@@ -244,21 +466,17 @@ struct ThreeDSpaceRecordFlowView: View {
             }
 
             phase = .analyzing(sessionId: sessionId)
-            AdvancedCaptureAnalysisRuntime.shared.configure(useMock: appState.isMockMode)
-            let start = await AdvancedCaptureAnalysisRuntime.shared.startAnalysis(sessionId: sessionId)
+            let result = await ThreeDExpansionSupport.prepareGuidePlan(
+                sessionId: sessionId,
+                useMock: appState.isMockMode
+            )
             guard !Task.isCancelled else { return }
-            if case .failure(let error) = start {
+            switch result {
+            case .success(let plan):
+                phase = .introStep2(sessionId: sessionId, plan: plan)
+            case .failure(let error):
                 phase = .failed(error.userMessage)
-                return
             }
-
-            let planReady = await waitUntilGuideReady(sessionId: sessionId)
-            guard !Task.isCancelled else { return }
-            guard let plan = planReady else {
-                phase = .failed("입체 기록 준비를 마치지 못했어요. 보관함 공간 상세에서 이어서 진행할 수 있어요.")
-                return
-            }
-            phase = .introStep2(sessionId: sessionId, plan: plan)
         }
     }
 
@@ -275,22 +493,5 @@ struct ThreeDSpaceRecordFlowView: View {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
         }
         return false
-    }
-
-    private func waitUntilGuideReady(sessionId: String) async -> AdvancedCaptureGuidePlan? {
-        for _ in 0..<120 {
-            if Task.isCancelled { return nil }
-            await AdvancedCaptureAnalysisRuntime.shared.syncActiveOnce()
-            if let record = AdvancedCaptureAnalysisStore.shared.record(sessionId: sessionId) {
-                if record.canStartGuidedCapture, let plan = record.guidePlan {
-                    return AdvancedCaptureCopy.sanitize(plan)
-                }
-                if record.status == .failed {
-                    return nil
-                }
-            }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-        }
-        return nil
     }
 }
