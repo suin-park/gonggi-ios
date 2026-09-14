@@ -193,7 +193,7 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
     }
 
     var priceLabel: String {
-        if let minor = displayPriceMinor, let currency {
+        if let minor = displayPriceMinor, minor > 0, let currency {
             if currency.uppercased() == "KRW" {
                 let won = minor
                 let formatter = NumberFormatter()
@@ -203,16 +203,13 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
             }
             return "\(minor) \(currency)"
         }
-        if let consultationUrl, !consultationUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "가격 문의"
-        }
-        return "가격 정보 없음"
+        // No sale price → always show inquiry (links optional; placement still available).
+        return "가격 문의"
     }
 
     /// VoiceOver / combined a11y — avoid "가격 가격 문의".
     var priceAccessibilityLabel: String {
         if priceLabel == "가격 문의" { return "가격 문의" }
-        if priceLabel == "가격 정보 없음" { return "가격 정보 없음" }
         return "가격 \(priceLabel)"
     }
 }
