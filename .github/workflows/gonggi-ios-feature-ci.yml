@@ -1,0 +1,248 @@
+name: Gonggi iOS Feature CI
+
+# Non-release validation for partner-catalog feature work.
+# No archive, export, TestFlight, ASC upload, or build-number bump.
+on:
+  push:
+    branches:
+      - feature/gonggi-partner-catalog-ios
+    paths:
+      - 'Gonggi/**'
+      - 'GonggiTests/**'
+      - 'project.yml'
+      - 'Vendor/OpenCV/**'
+      - 'third_party/**'
+      - '.github/workflows/gonggi-ios-feature-ci.yml'
+  pull_request:
+    branches:
+      - design/brand-redesign-v1
+      - main
+    paths:
+      - 'Gonggi/**'
+      - 'GonggiTests/**'
+      - 'project.yml'
+      - 'Vendor/OpenCV/**'
+      - 'third_party/**'
+      - '.github/workflows/gonggi-ios-feature-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: gonggi-ios-feature-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+  OPENCV_VERSION: "4.10.0"
+
+jobs:
+  prepare-opencv:
+    name: Prepare OpenCV xcframework
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache OpenCV xcframework
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Ensure OpenCV xcframework
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh
+          ./scripts/ensure_opencv_xcframework.sh
+
+      - name: Upload OpenCV xcframework
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencv2-xcframework-feature
+          path: Vendor/OpenCV/opencv2.xcframework
+          if-no-files-found: error
+          retention-days: 3
+
+  build-and-test:
+    name: Simulator build & unit tests
+    needs: prepare-opencv
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard non-release (no TF / no build bump)
+        run: |
+          set -euo pipefail
+          test ! -f ExportOptions.plist || true
+          grep -q 'CURRENT_PROJECT_VERSION: "33"' project.yml
+          grep -q 'MARKETING_VERSION: "2.0"' project.yml
+          echo "Build number remains 33; marketing 2.0"
+
+      - name: Restore OpenCV xcframework cache
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Download OpenCV artifact if cache miss
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: opencv2-xcframework-feature
+          path: /tmp/opencv-artifact
+
+      - name: Install OpenCV xcframework
+        run: |
+          set -euo pipefail
+          DEST="Vendor/OpenCV/opencv2.xcframework"
+          mkdir -p Vendor/OpenCV
+          if [[ -f "${DEST}/Info.plist" ]]; then
+            echo "Using cached ${DEST}"
+          else
+            FOUND="$(find /tmp/opencv-artifact -type d -name 'opencv2.xcframework' 2>/dev/null | head -n 1 || true)"
+            rm -rf "${DEST}"
+            if [[ -n "${FOUND}" ]]; then
+              cp -R "${FOUND}" "${DEST}"
+            elif [[ -f /tmp/opencv-artifact/Info.plist ]]; then
+              mkdir -p "${DEST}"
+              cp -R /tmp/opencv-artifact/. "${DEST}/"
+            else
+              echo "::error::Could not locate opencv2.xcframework in artifact"
+              exit 1
+            fi
+          fi
+          test -f "${DEST}/Info.plist"
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          if [[ -z "${XCODE_APP}" ]]; then
+            echo "No Xcode.app found on runner"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          sw_vers
+          xcodebuild -showsdks
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate Xcode project (target membership)
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+          xcodebuild -list -project "${{ env.PROJECT }}"
+          # Catalog sources and fixture must be referenced after generation.
+          grep -E "CatalogModels.swift|CatalogHomeSectionView.swift|catalog_product_detail_round_cabinet.json" Gonggi.xcodeproj/project.pbxproj
+
+      - name: Resolve iOS Simulator destination
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID="$(python3 <<'PY'
+          import json, subprocess, sys
+          out = subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True)
+          data = json.loads(out)
+          runtimes = sorted([k for k in data.get("devices", {}) if "iOS" in k], reverse=True)
+          for rt in runtimes:
+              devices = data["devices"][rt]
+              preferred = [d for d in devices if d.get("isAvailable") and "iPhone" in d.get("name", "")]
+              preferred.sort(key=lambda d: d.get("name", ""))
+              for d in preferred:
+                  name = d.get("name", "")
+                  if any(x in name for x in ("iPhone 15", "iPhone 16", "iPhone 14", "iPhone SE")):
+                      print(d["udid"])
+                      sys.exit(0)
+              for d in preferred:
+                  print(d["udid"])
+                  sys.exit(0)
+          sys.exit(1)
+          PY
+          )"
+          echo "udid=${UDID}" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "${UDID}" || true
+
+      - name: Build (iOS Simulator Debug, unsigned)
+        run: |
+          set -euo pipefail
+          set +e
+          xcodebuild build \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "generic/platform=iOS Simulator" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            2>&1 | tee xcodebuild-feature-debug.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "::group::xcodebuild errors (filtered)"
+          grep -E "error:|fatal error:|undefined symbol|ld:|clang\+\+:" xcodebuild-feature-debug.log | tail -n 80 || true
+          echo "::endgroup::"
+          exit "${STATUS}"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-feature-debug-log
+          path: xcodebuild-feature-debug.log
+          if-no-files-found: ignore
+
+      - name: Boot simulator
+        run: xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
+
+      - name: Unit tests (GonggiTests incl. CatalogModelsTests)
+        run: |
+          set -euo pipefail
+          set +e
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GonggiTests \
+            ARCHS=arm64 \
+            EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -resultBundlePath FeatureTestResults.xcresult \
+            2>&1 | tee xcodebuild-feature-test.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "::group::failing tests (filtered)"
+          grep -E "error:|failed \(|XCTAssert|Fatal error|Test Case.*failed|CatalogModelsTests" xcodebuild-feature-test.log | tail -n 120 || true
+          echo "::endgroup::"
+          exit "${STATUS}"
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gonggi-ios-feature-test-results
+          path: |
+            FeatureTestResults.xcresult
+            xcodebuild-feature-test.log
+          if-no-files-found: ignore
