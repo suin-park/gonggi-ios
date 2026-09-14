@@ -65,15 +65,16 @@ struct CatalogDimensions: Codable, Sendable, Equatable, Hashable {
     }
 
     var accessibilityLabel: String {
-        "가로 \(widthMm)밀리미터, 깊이 \(depthMm)밀리미터, 높이 \(heightMm)밀리미터"
+        "너비 \(widthMm)밀리미터, 깊이 \(depthMm)밀리미터, 높이 \(heightMm)밀리미터"
     }
 
-    var shortLabelCm: String {
-        let w = Double(widthMm) / 10
-        let d = Double(depthMm) / 10
-        let h = Double(heightMm) / 10
-        return String(format: "W %.0f × D %.0f × H %.0f cm", w, d, h)
+    /// Product card / detail short label — Catalog mm is the source of truth.
+    var shortLabelMm: String {
+        "W \(widthMm) × D \(depthMm) × H \(heightMm) mm"
     }
+
+    @available(*, deprecated, renamed: "shortLabelMm")
+    var shortLabelCm: String { shortLabelMm }
 }
 
 struct CatalogVec3: Codable, Sendable, Equatable {
@@ -211,6 +212,20 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
     var priceAccessibilityLabel: String {
         if priceLabel == "가격 문의" { return "가격 문의" }
         return "가격 \(priceLabel)"
+    }
+
+    /// Final card thumbnail: product URL → primary variant URL (HTTPS only).
+    var resolvedThumbnailURL: String? {
+        if let product = CatalogThumbnailURL.sanitizedHTTPSString(thumbnailUrl) {
+            return product
+        }
+        if let variant = CatalogThumbnailURL.sanitizedHTTPSString(primaryVariant?.thumbnailUrl) {
+            return variant
+        }
+        return variants?
+            .lazy
+            .compactMap { CatalogThumbnailURL.sanitizedHTTPSString($0.thumbnailUrl) }
+            .first
     }
 }
 

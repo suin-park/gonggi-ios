@@ -79,6 +79,7 @@ struct PendingCatalogPlacement: Equatable, Sendable {
         entry.catalogProductId = productId
         entry.catalogVariantId = variantId
         entry.catalogAssetId = catalogAssetId
+        entry.catalogOwnedAssetId = placementSpec.catalogOwnedAssetId
         entry.catalogRevision = catalogRevision
         entry.placementSpecVersion = placementSpecVersion
         entry.catalogWidthMm = dimensionsMm.widthMm
@@ -86,7 +87,8 @@ struct PendingCatalogPlacement: Equatable, Sendable {
         entry.catalogHeightMm = dimensionsMm.heightMm
         entry.spaceProjectionKey = projectionKey
         entry.catalogDisplayName = displayName
-        entry.catalogThumbnailUrl = thumbnailUrl
+        // Do not persist thumbnail URLs into placement JSON (may be ephemeral).
+        entry.catalogThumbnailUrl = nil
         entry.catalogPlacedAt = createdAt
         entry.applyFloorSupport(floorY: floorY)
         return entry

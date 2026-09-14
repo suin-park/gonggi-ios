@@ -68,6 +68,7 @@ struct VRSphereSpaceView: View {
     @State private var lockerAssets: [MobileAssetDTO] = []
     @State private var assetMetadata: [String: MobileAssetDTO] = [:]
     @State private var modelURLs: [String: URL] = [:]
+    @State private var catalogSpecsByPlacementId: [String: CatalogPlacementSpec] = [:]
     @State private var saveError: String?
     @State private var loadingAssets = false
     @State private var placementRequestToken = 0
@@ -832,6 +833,7 @@ struct VRSphereSpaceView: View {
             placementFloorY: draftLayout.floorY,
             assetMetadata: assetMetadata,
             modelURLs: modelURLs,
+            catalogSpecsByPlacementId: catalogSpecsByPlacementId,
             selectedId: selectedPlacementId,
             editTool: editTool,
             placementRequestToken: placementRequestToken,
@@ -996,13 +998,13 @@ struct VRSphereSpaceView: View {
                         let w = entry.catalogWidthMm ?? 0
                         let d = entry.catalogDepthMm ?? 0
                         let h = entry.catalogHeightMm ?? 0
-                        Text("상품 규격 W\(CatalogDimensionRuler.formatCm(w)) · D\(CatalogDimensionRuler.formatCm(d)) · H\(CatalogDimensionRuler.formatCm(h)) · 크기 잠금")
+                        Text("상품 규격 W \(CatalogDimensionRuler.formatMm(w)) · D \(CatalogDimensionRuler.formatMm(d)) · H \(CatalogDimensionRuler.formatMm(h)) · 크기 잠금")
                             .font(.caption2)
                             .foregroundStyle(.white.opacity(0.85))
                             .padding(.horizontal, 4)
                             .lineLimit(2)
                             .minimumScaleFactor(0.85)
-                            .accessibilityLabel("상품 실제 규격, 크기 조절 잠금")
+                            .accessibilityLabel("너비 \(w)밀리미터, 깊이 \(d)밀리미터, 높이 \(h)밀리미터, 크기 조절 잠금")
                     } else {
                         Text("한 손가락으로 이동, 두 손가락으로 회전/크기 조절")
                             .font(.caption2)
@@ -1086,10 +1088,10 @@ struct VRSphereSpaceView: View {
 
     private var saveErrorBanner: some View {
         HStack(spacing: 10) {
-            Text("배치를 저장하지 못했어요")
+            Text("배치를 저장하지 못했어요. 다시 시도해 주세요.")
                 .font(.footnote.weight(.medium))
             Button("다시 시도") {
-                Task { await saveAndFinishEditing() }
+                Task { await retrySavePlacement() }
             }
             .font(.footnote.weight(.semibold))
         }
@@ -1365,9 +1367,17 @@ struct VRSphereSpaceView: View {
             saveError = nil
         } catch {
             #if DEBUG
-            print("[vr-place66] PUT failed; keeping draft count=\(draftLayout.assets.count)")
+            let status: Int?
+            if case VRPlacementStoreError.server(let code) = error {
+                status = code
+            } else {
+                status = nil
+            }
+            print(
+                "[vr-place-catalog] PUT failed status=\(status.map(String.init) ?? "n/a") draftCount=\(draftLayout.assets.count) catalogCount=\(snapshot.assets.filter { $0.catalogAssetId != nil }.count)"
+            )
             #endif
-            saveError = "배치를 저장하지 못했어요"
+            saveError = "배치를 저장하지 못했어요. 다시 시도해 주세요."
         }
     }
 
@@ -1389,20 +1399,118 @@ struct VRSphereSpaceView: View {
             try? await placementStore.saveLocal(merged, sessionId: sessionId)
             applyStartInEditModeIfNeeded()
             await consumeExternalPendingPlacementIfNeeded()
+            await hydrateCatalogPlacements(in: merged)
 
             do {
                 let assets = try await assetsClient.fetchAssets()
                 guard !Task.isCancelled else { return }
                 lockerAssets = assets
-                assetMetadata = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+                for asset in assets {
+                    assetMetadata[asset.id] = asset
+                }
                 loadingAssets = false
                 AssetLibraryStore.shared.replaceIfNewer(assets)
                 await downloadModels(for: assets)
+                await hydrateCatalogPlacements(in: draftLayout)
                 await consumeExternalPendingPlacementIfNeeded()
             } catch {
                 loadingAssets = false
+                await hydrateCatalogPlacements(in: draftLayout)
                 await consumeExternalPendingPlacementIfNeeded()
             }
+        }
+    }
+
+    /// Re-download Catalog USDZ for saved `catalog:` placements (product API or space restore).
+    private func hydrateCatalogPlacements(in layout: VRPlacementLayout) async {
+        let catalogEntries = layout.assets.filter { $0.catalogAssetId != nil || $0.assetId.hasPrefix("catalog:") }
+        guard !catalogEntries.isEmpty else { return }
+
+        let client = CatalogAPIClient()
+        for entry in catalogEntries {
+            if modelURLs[entry.assetId] != nil { continue }
+            let catalogAssetId = entry.catalogAssetId
+                ?? String(entry.assetId.dropFirst("catalog:".count))
+            guard !catalogAssetId.isEmpty else { continue }
+
+            var resolvedSpec: CatalogPlacementSpec?
+            var displayName = entry.catalogDisplayName ?? "제휴 상품"
+            var thumb: String?
+
+            if let productId = entry.catalogProductId {
+                if let product = try? await client.fetchProduct(id: productId) {
+                    let variant = product.variants?.first(where: { $0.id == entry.catalogVariantId })
+                        ?? product.variants?.first(where: { $0.catalogAssetId == catalogAssetId })
+                        ?? product.primaryVariant
+                    if case .success(let spec) = CatalogPlacementSpecValidator.validate(variant?.placementSpec) {
+                        resolvedSpec = spec
+                    }
+                    displayName = product.productName
+                    thumb = product.resolvedThumbnailURL ?? variant?.thumbnailUrl
+                }
+            }
+
+            if resolvedSpec == nil {
+                resolvedSpec = try? await CatalogPlacementRestoreClient().fetchPlacementSpec(
+                    spaceId: sessionId,
+                    catalogAssetId: catalogAssetId
+                )
+            }
+
+            guard let spec = resolvedSpec,
+                  let remote = URL(string: spec.usdzSignedUrl),
+                  remote.scheme?.lowercased() == "https"
+            else { continue }
+
+            catalogSpecsByPlacementId[entry.id] = spec
+            let dto = MobileAssetDTO(
+                id: entry.assetId,
+                name: displayName,
+                thumbUrl: thumb,
+                usdzStatus: "READY",
+                usdzUrl: spec.usdzSignedUrl,
+                widthCm: Double(entry.catalogWidthMm ?? spec.dimensionsMm.widthMm) / 10.0,
+                heightCm: Double(entry.catalogHeightMm ?? spec.dimensionsMm.heightMm) / 10.0,
+                depthCm: Double(entry.catalogDepthMm ?? spec.dimensionsMm.depthMm) / 10.0,
+                availableForPlacement: true,
+                availability: "ready"
+            )
+            assetMetadata[entry.assetId] = dto
+            if let local = await usdzCache.localURL(assetId: entry.assetId, remoteURL: remote) {
+                modelURLs[entry.assetId] = local
+            }
+        }
+        placementRequestToken += 1
+    }
+
+    private func retrySavePlacement() async {
+        let snapshot = draftLayout
+        do {
+            let saved = try await placementStore.pushRemote(snapshot, sessionId: sessionId)
+            let responseIds = Set(saved.assets.map(\.id))
+            let snapshotIds = Set(snapshot.assets.map(\.id))
+            if saved.assets.count >= snapshot.assets.count
+                || responseIds == snapshotIds
+                || snapshot.assets.isEmpty {
+                draftLayout = saved
+                try? await placementStore.saveLocal(saved, sessionId: sessionId)
+            } else {
+                try? await placementStore.saveLocal(snapshot, sessionId: sessionId)
+            }
+            saveError = nil
+        } catch {
+            #if DEBUG
+            let status: Int?
+            if case VRPlacementStoreError.server(let code) = error {
+                status = code
+            } else {
+                status = nil
+            }
+            print(
+                "[vr-place-catalog] retry PUT failed status=\(status.map(String.init) ?? "n/a") draftCount=\(draftLayout.assets.count)"
+            )
+            #endif
+            saveError = "배치를 저장하지 못했어요. 다시 시도해 주세요."
         }
     }
 
@@ -1601,6 +1709,7 @@ struct VRSphereSpaceView: View {
             return
         }
         selectedPlacementId = entry.id
+        catalogSpecsByPlacementId[entry.id] = spec
         editTool = .none
         saveDraftLocally()
         placementRequestToken += 1
@@ -2869,6 +2978,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var placementFloorY: Float
     var assetMetadata: [String: MobileAssetDTO]
     var modelURLs: [String: URL]
+    var catalogSpecsByPlacementId: [String: CatalogPlacementSpec] = [:]
     var selectedId: String?
     var editTool: VREditTool
     var placementRequestToken: Int
@@ -2957,6 +3067,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             )
         }
         host.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
+        host.syncCatalogDimensionRulers(
+            entries: placementEntries,
+            specsByPlacementId: catalogSpecsByPlacementId,
+            enabled: editModeActive
+        )
         host.setLightingExperiment(
             mode: resolvedLightingMode,
             iblIntensity: resolvedLightingIBL,
@@ -3078,6 +3193,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             }
         }
         uiView.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
+        uiView.syncCatalogDimensionRulers(
+            entries: placementEntries,
+            specsByPlacementId: catalogSpecsByPlacementId,
+            enabled: editModeActive
+        )
         uiView.setLightingExperiment(
             mode: resolvedLightingMode,
             iblIntensity: resolvedLightingIBL,

@@ -196,9 +196,48 @@ final class CatalogModelsTests: XCTestCase {
         let json = String(data: data, encoding: .utf8) ?? ""
         XCTAssertFalse(json.contains("usdzSignedUrl"))
         XCTAssertFalse(json.contains("example.invalid"))
+        XCTAssertFalse(json.contains("catalogThumbnailUrl"))
         XCTAssertEqual(entry.catalogProductId, "p")
+        XCTAssertEqual(entry.catalogOwnedAssetId, CatalogMockData.roundCabinetPlacementSpec().catalogOwnedAssetId)
         XCTAssertEqual(entry.catalogWidthMm, 290)
         XCTAssertEqual(entry.uniformScale, 1)
+    }
+
+    func testDimensionsShortLabelUsesMm() {
+        let dims = CatalogDimensions(widthMm: 400, depthMm: 290, heightMm: 1084)
+        XCTAssertEqual(dims.shortLabelMm, "W 400 × D 290 × H 1084 mm")
+        XCTAssertEqual(dims.accessibilityLabel, "너비 400밀리미터, 깊이 290밀리미터, 높이 1084밀리미터")
+        XCTAssertEqual(CatalogDimensionRuler.formatMm(400), "400 mm")
+    }
+
+    func testThumbnailHTTPSFallbackPriority() {
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: "http://insecure.example/x.jpg"))
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: "javascript:alert(1)"))
+        XCTAssertNotNil(CatalogThumbnailURL.httpsURL(from: "https://cdn.example.com/a.jpg"))
+
+        var product = CatalogMockData.roundCabinetDetail()
+        product.thumbnailUrl = nil
+        if var variants = product.variants, !variants.isEmpty {
+            variants[0].thumbnailUrl = "https://cdn.example.com/variant.jpg"
+            product.variants = variants
+        }
+        XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/variant.jpg")
+
+        product.thumbnailUrl = "https://cdn.example.com/product.jpg"
+        XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/product.jpg")
+    }
+
+    func testRulerSpecFromStoredEntryAxis() {
+        var entry = VRPlacedAssetEntry(assetId: "catalog:a", position: .zero)
+        entry.catalogAssetId = "a"
+        entry.catalogWidthMm = 400
+        entry.catalogDepthMm = 290
+        entry.catalogHeightMm = 1084
+        let spec = try XCTUnwrap(CatalogDimensionRuler.rulerSpecFromStoredEntry(entry))
+        let ends = CatalogPlacementTransform.rulerEndpoints(spec: spec)
+        XCTAssertEqual(simd_length(ends.width.1 - ends.width.0), 0.4, accuracy: 1e-5)
+        XCTAssertEqual(simd_length(ends.depth.1 - ends.depth.0), 0.29, accuracy: 1e-5)
+        XCTAssertEqual(simd_length(ends.height.1 - ends.height.0), 1.084, accuracy: 1e-5)
     }
 
     func testExternalHTTPSAndDangerousURL() {

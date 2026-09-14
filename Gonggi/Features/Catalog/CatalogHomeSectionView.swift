@@ -14,6 +14,12 @@ struct CatalogHomeSectionView: View {
         Group {
             if viewModel.shouldShowSection {
                 VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                    Rectangle()
+                        .fill(GonggiColors.borderSubtle.opacity(0.85))
+                        .frame(height: 0.5)
+                        .padding(.horizontal, GonggiSpacing.lg)
+                        .padding(.bottom, GonggiSpacing.sm)
+                        .accessibilityHidden(true)
                     header
                     categoryChips
                     content

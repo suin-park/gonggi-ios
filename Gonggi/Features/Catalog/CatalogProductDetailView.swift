@@ -87,7 +87,7 @@ struct CatalogProductDetailView: View {
                         .font(GonggiTypography.body(14))
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
-                Text(product.dimensions.shortLabelCm)
+                Text(product.dimensions.shortLabelMm)
                     .font(GonggiTypography.body(14))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .accessibilityLabel(product.dimensions.accessibilityLabel)

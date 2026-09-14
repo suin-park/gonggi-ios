@@ -10,7 +10,7 @@ struct CatalogProductCardView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
                     .fill(GonggiColors.surfaceElevated)
-                if let urlString = product.thumbnailUrl, let url = URL(string: urlString) {
+                if let url = CatalogThumbnailURL.httpsURL(from: product.resolvedThumbnailURL) {
                     AsyncImage(url: url) { phase in
                         switch phase {
                         case .success(let image):
@@ -61,7 +61,7 @@ struct CatalogProductCardView: View {
                     .lineLimit(1)
             }
 
-            Text(product.dimensions.shortLabelCm)
+            Text(product.dimensions.shortLabelMm)
                 .font(GonggiTypography.caption(12))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .accessibilityLabel(product.dimensions.accessibilityLabel)
@@ -99,7 +99,7 @@ struct CatalogProductCardView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(product.dimensions.shortLabelCm)"
+            "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(product.dimensions.shortLabelMm)"
         )
         .accessibilityHint("두 번 탭하면 상품 상세를 엽니다")
     }

@@ -35,6 +35,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var spaceLinkDragDebugLogged = false
     #endif
     private var placementFloorY = VRPlacementLayout.defaultFloorY
+    private var catalogRulerSpecsByPlacementId: [String: CatalogPlacementSpec] = [:]
+    private var catalogRulerEntriesById: [String: VRPlacedAssetEntry] = [:]
+    private var catalogRulersEnabled = false
     private var gestureStartScale: Float = 1
     private var gestureStartRotationY: Float = 0
     private var oneFingerOwner: EditOneFingerOwner = .none
@@ -343,6 +346,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             unfreezeBakeAndReanchor()
         }
         applyLookToCamera()
+        refreshCatalogDimensionRulers()
     }
 
     func setEditTool(_ tool: VREditTool, selectedId: String?, floorY: Float) {
@@ -384,6 +388,37 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         // Re-apply contact opacity / castsShadow after membership rebuild (nodes reused for lights).
         lastLightingApplyKey = ""
         applyLightingExperimentIfNeeded(force: true)
+        refreshCatalogDimensionRulers()
+    }
+
+    /// Catalog W/H/D rulers — edit mode + selected catalog placement only.
+    func syncCatalogDimensionRulers(
+        entries: [VRPlacedAssetEntry],
+        specsByPlacementId: [String: CatalogPlacementSpec],
+        enabled: Bool
+    ) {
+        catalogRulerEntriesById = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+        catalogRulerSpecsByPlacementId = specsByPlacementId
+        catalogRulersEnabled = enabled
+        refreshCatalogDimensionRulers()
+    }
+
+    private func refreshCatalogDimensionRulers() {
+        for node in placedAssetsRoot.childNodes {
+            CatalogDimensionRuler.detach(from: node)
+        }
+        guard catalogRulersEnabled,
+              editModeActive,
+              let id = selectedPlacementID,
+              let assetNode = assetNode(id: id),
+              let entry = catalogRulerEntriesById[id],
+              entry.catalogAssetId != nil
+        else { return }
+
+        let spec = catalogRulerSpecsByPlacementId[id]
+            ?? CatalogDimensionRuler.rulerSpecFromStoredEntry(entry)
+        guard let spec else { return }
+        CatalogDimensionRuler.attach(to: assetNode, spec: spec, showDepth: true)
     }
 
     /// Sync 공간 연결 billboards (sibling of placedAssetsRoot — never under assets).
@@ -476,12 +511,16 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
               let assetNode = placedAssetsRoot.childNodes.first(where: {
                   VRPlacedAssetNodeFactory.placedAssetID(from: $0) == id
               })
-        else { return }
+        else {
+            refreshCatalogDimensionRulers()
+            return
+        }
 
         // Create-once (or unhide). Uses cached mesh bounds — never proxy-inflated root.boundingBox.
         let visual = VRPlacedAssetNodeFactory.ensureSelectionVisual(on: assetNode, visible: true)
         selectionIndicatorNode = visual
         selectedPlacementRoot = assetNode
+        refreshCatalogDimensionRulers()
     }
 
     func floorPointFromScreen(_ point: CGPoint, floorY: Float) -> SIMD3<Float> {

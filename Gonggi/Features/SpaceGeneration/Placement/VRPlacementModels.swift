@@ -103,6 +103,8 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
     var catalogProductId: String?
     var catalogVariantId: String?
     var catalogAssetId: String?
+    var catalogOwnedAssetId: String?
+    var catalogPartnerId: String?
     var catalogRevision: Int?
     var placementSpecVersion: Int?
     var catalogWidthMm: Int?
@@ -191,6 +193,8 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         case catalogProductId
         case catalogVariantId
         case catalogAssetId
+        case catalogOwnedAssetId
+        case catalogPartnerId
         case catalogRevision
         case placementSpecVersion
         case catalogWidthMm
@@ -242,6 +246,8 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         catalogProductId = try container.decodeIfPresent(String.self, forKey: .catalogProductId)
         catalogVariantId = try container.decodeIfPresent(String.self, forKey: .catalogVariantId)
         catalogAssetId = try container.decodeIfPresent(String.self, forKey: .catalogAssetId)
+        catalogOwnedAssetId = try container.decodeIfPresent(String.self, forKey: .catalogOwnedAssetId)
+        catalogPartnerId = try container.decodeIfPresent(String.self, forKey: .catalogPartnerId)
         catalogRevision = try container.decodeIfPresent(Int.self, forKey: .catalogRevision)
         placementSpecVersion = try container.decodeIfPresent(Int.self, forKey: .placementSpecVersion)
         catalogWidthMm = try container.decodeIfPresent(Int.self, forKey: .catalogWidthMm)
@@ -272,6 +278,8 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         try container.encodeIfPresent(catalogProductId, forKey: .catalogProductId)
         try container.encodeIfPresent(catalogVariantId, forKey: .catalogVariantId)
         try container.encodeIfPresent(catalogAssetId, forKey: .catalogAssetId)
+        try container.encodeIfPresent(catalogOwnedAssetId, forKey: .catalogOwnedAssetId)
+        try container.encodeIfPresent(catalogPartnerId, forKey: .catalogPartnerId)
         try container.encodeIfPresent(catalogRevision, forKey: .catalogRevision)
         try container.encodeIfPresent(placementSpecVersion, forKey: .placementSpecVersion)
         try container.encodeIfPresent(catalogWidthMm, forKey: .catalogWidthMm)
@@ -279,7 +287,7 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         try container.encodeIfPresent(catalogHeightMm, forKey: .catalogHeightMm)
         try container.encodeIfPresent(spaceProjectionKey, forKey: .spaceProjectionKey)
         try container.encodeIfPresent(catalogDisplayName, forKey: .catalogDisplayName)
-        try container.encodeIfPresent(catalogThumbnailUrl, forKey: .catalogThumbnailUrl)
+        // Durably omit thumbnail URLs (may be signed / ephemeral).
         try container.encodeIfPresent(catalogPlacedAt, forKey: .catalogPlacedAt)
         try container.encodeIfPresent(visualCorrectionScale, forKey: .visualCorrectionScale)
         // Intentionally omit any signed USDZ URL fields.
