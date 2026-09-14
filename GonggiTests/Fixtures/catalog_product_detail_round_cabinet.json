@@ -1,0 +1,68 @@
+{
+  "ok": true,
+  "product": {
+    "id": "prod_round_cabinet_fixture",
+    "partnerId": "jd-homedressing",
+    "partner": {
+      "id": "jd-homedressing",
+      "slug": "jd-homedressing",
+      "displayBrandName": "JD홈드레싱"
+    },
+    "productName": "3단 라운드 마감장",
+    "shortDescription": "Fixture decode sample",
+    "brandName": "JD홈드레싱",
+    "category": "FURNITURE",
+    "placementType": "FURNITURE_3D",
+    "displayPriceMinor": null,
+    "currency": "KRW",
+    "detailUrl": null,
+    "purchaseUrl": null,
+    "consultationUrl": null,
+    "widthMm": 290,
+    "depthMm": 290,
+    "heightMm": 1084,
+    "thumbnailUrl": "https://cdn.example.com/thumb.png",
+    "catalogRevision": 1,
+    "productRevision": "jd-rev-1",
+    "variants": [
+      {
+        "id": "var_round_default",
+        "sourceVariantKey": "default",
+        "name": "기본",
+        "hexCode": null,
+        "widthMm": 290,
+        "depthMm": 290,
+        "heightMm": 1084,
+        "thumbnailUrl": "https://cdn.example.com/thumb.png",
+        "usdzUrl": "https://cdn.example.com/catalog/round.usdz?sig=abc",
+        "usdzSignedUrlExpiresAt": "2026-09-14T14:00:00.000Z",
+        "catalogAssetId": "casset_round_01",
+        "catalogOwnedAssetId": "owned_round_01",
+        "availableForPlacement": true,
+        "placementSpec": {
+          "contractVersion": 1,
+          "coordinateConvention": "scenekit_y_up_front_neg_z_v1",
+          "placementType": "FURNITURE_3D",
+          "axisMapping": { "width": "x", "height": "y", "depth": "z" },
+          "orientation": { "x": 0, "y": 0, "z": 0, "w": 1 },
+          "scaleX": 1,
+          "scaleY": 1,
+          "scaleZ": 1,
+          "bottomOffsetMeters": 0,
+          "canonicalBounds": {
+            "min": { "x": -0.145, "y": 0, "z": -0.145 },
+            "max": { "x": 0.145, "y": 1.084, "z": 0.145 }
+          },
+          "dimensionsMm": { "widthMm": 290, "depthMm": 290, "heightMm": 1084 },
+          "catalogAssetId": "casset_round_01",
+          "catalogOwnedAssetId": "owned_round_01",
+          "catalogRevision": 1,
+          "productRevision": "jd-rev-1",
+          "variantRevision": "default",
+          "usdzSignedUrl": "https://cdn.example.com/catalog/round.usdz?sig=abc",
+          "usdzSignedUrlExpiresAt": "2026-09-14T14:00:00.000Z"
+        }
+      }
+    ]
+  }
+}

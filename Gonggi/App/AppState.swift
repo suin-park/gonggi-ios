@@ -15,6 +15,8 @@ final class AppState: ObservableObject {
     @Published var pendingViewerLaunch: SpaceViewerLaunch?
     /// Phase 2 — consume-once Asset Detail / Space Detail → VR Edit placement draft.
     @Published var pendingAssetPlacement: PendingAssetPlacement?
+    /// Catalog product → VR Edit placement draft (consume-once). Not persisted.
+    @Published var pendingCatalogPlacement: PendingCatalogPlacement?
     @Published var spaceLinkUserMessage: String?
     /// Bumped on account reset so views dismiss open VR covers.
     @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
@@ -103,6 +105,7 @@ final class AppState: ObservableObject {
         pendingViewerError = nil
         pendingViewerLaunch = nil
         pendingAssetPlacement = nil
+        pendingCatalogPlacement = nil
         spaceLinkUserMessage = nil
         preferredLibraryCategory = nil
         notificationUnreadCount = 0
@@ -559,6 +562,20 @@ final class AppState: ObservableObject {
         guard let pending = peekPendingAssetPlacement(matchingViewerSessionId: matchingViewerSessionId)
         else { return nil }
         pendingAssetPlacement = nil
+        return pending
+    }
+
+    func peekPendingCatalogPlacement(matchingViewerSessionId: String) -> PendingCatalogPlacement? {
+        guard let pending = pendingCatalogPlacement,
+              pending.matches(viewerSessionId: matchingViewerSessionId, spaces: spaces)
+        else { return nil }
+        return pending
+    }
+
+    func consumePendingCatalogPlacement(matchingViewerSessionId: String) -> PendingCatalogPlacement? {
+        guard let pending = peekPendingCatalogPlacement(matchingViewerSessionId: matchingViewerSessionId)
+        else { return nil }
+        pendingCatalogPlacement = nil
         return pending
     }
 }

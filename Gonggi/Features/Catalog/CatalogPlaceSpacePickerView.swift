@@ -1,0 +1,85 @@
+import SwiftUI
+
+struct CatalogPlaceSpacePickerView: View {
+    let spaces: [SpaceRecord]
+    var onSelect: (SpaceRecord) -> Void
+    var onClose: () -> Void
+
+    private var candidates: [SpaceRecord] {
+        Self.placeableSpaces(from: spaces)
+    }
+
+    static func placeableSpaces(from spaces: [SpaceRecord]) -> [SpaceRecord] {
+        spaces.filter { space in
+            guard space.canOpenExistingVR else { return false }
+            // Own / editable spaces only — public feed spaces are not in appState.spaces.
+            let hasLocal = SpaceLatLongStore.isValidLocalFile(at: space.localLatLongPath)
+            let hasRemote = !(space.remoteImageURL ?? space.viewerURL?.absoluteString ?? "").isEmpty
+            return hasLocal || hasRemote
+        }
+        .sorted { $0.capturedAt > $1.capturedAt }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if candidates.isEmpty {
+                    ContentUnavailableView(
+                        "배치할 수 있는 공간이 없어요",
+                        systemImage: "cube.transparent",
+                        description: Text("LatLong이 준비된 내 공간을 먼저 만들어 주세요.")
+                    )
+                } else {
+                    List(candidates) { space in
+                        Button {
+                            GonggiHaptics.light()
+                            onSelect(space)
+                        } label: {
+                            HStack(spacing: GonggiSpacing.md) {
+                                SpaceThumbnailView(
+                                    space: space,
+                                    height: 56,
+                                    width: 56,
+                                    cornerRadius: GonggiRadius.sm,
+                                    showsActivityOverlay: false
+                                )
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(space.name)
+                                        .font(GonggiTypography.body(16))
+                                        .foregroundStyle(GonggiColors.textPrimary)
+                                    Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
+                                        .font(GonggiTypography.caption(12))
+                                        .foregroundStyle(GonggiColors.textSecondary)
+                                    Text(CatalogFloorCalibrationStore.shared.status(
+                                        spaceId: space.id,
+                                        projectionKey: space.projectionKey
+                                    ).userFacingLabel)
+                                        .font(GonggiTypography.caption(12))
+                                        .foregroundStyle(GonggiColors.textTertiary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(GonggiColors.textTertiary)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(space.name), 배치할 공간으로 선택")
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle("배치할 공간 선택")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(GonggiColors.backgroundPrimary, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .background(GonggiColors.backgroundPrimary)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("취소") { onClose() }
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+            }
+        }
+    }
+}

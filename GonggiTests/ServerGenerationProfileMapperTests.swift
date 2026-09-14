@@ -92,7 +92,7 @@ final class CaptureDiagnosticsAccumulatorTests: XCTestCase {
         XCTAssertEqual(acc.events.count, 3)
         XCTAssertEqual(acc.events[0].action, GuidanceAction.continueCapture.rawValue)
         XCTAssertEqual(acc.events[1].action, GuidanceAction.returnToPreviousArea.rawValue)
-        XCTAssertEqual(acc.events[1].overlap, 0.19, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(acc.events[1].overlap), 0.19, accuracy: 0.001)
         XCTAssertEqual(acc.events[2].action, GuidanceAction.continueCapture.rawValue)
     }
 

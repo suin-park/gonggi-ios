@@ -42,10 +42,18 @@ final class ThreeDExpansionSupportTests: XCTestCase {
         )
 
         var space = SpaceRecord.sampleArchive[0]
-        space.id = "done-1"
-        space.sessionId = "done-1"
-        space.status = .ready
-        space.remoteImageURL = "https://example.com/a.jpg"
+        space = SpaceRecord(
+            id: "done-1",
+            name: space.name,
+            capturedAt: space.capturedAt,
+            status: .ready,
+            thumbnailSystemImage: space.thumbnailSystemImage,
+            note: space.note,
+            memo: space.memo,
+            viewerURL: space.viewerURL,
+            sessionId: "done-1",
+            remoteImageURL: "https://example.com/a.jpg"
+        )
 
         XCTAssertTrue(ThreeDExpansionSupport.is3DAlreadyComplete(sessionKey: "done-1", store: store))
         XCTAssertFalse(ThreeDExpansionSupport.isEligibleFor3DExpansion(space, store: store))
@@ -59,11 +67,19 @@ final class ThreeDExpansionSupportTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: tmp) }
         let store = AdvancedCaptureAnalysisStore(fileURL: tmp)
 
-        var space = SpaceRecord.sampleArchive[0]
-        space.id = "lat-1"
-        space.sessionId = "lat-1"
-        space.status = .ready
-        space.remoteImageURL = "https://example.com/a.jpg"
+        let sample = SpaceRecord.sampleArchive[0]
+        let space = SpaceRecord(
+            id: "lat-1",
+            name: sample.name,
+            capturedAt: sample.capturedAt,
+            status: .ready,
+            thumbnailSystemImage: sample.thumbnailSystemImage,
+            note: sample.note,
+            memo: sample.memo,
+            viewerURL: sample.viewerURL,
+            sessionId: "lat-1",
+            remoteImageURL: "https://example.com/a.jpg"
+        )
 
         XCTAssertTrue(ThreeDExpansionSupport.isEligibleFor3DExpansion(space, store: store))
         XCTAssertEqual(ThreeDExpansionSupport.expandableSpaces(from: [space], store: store).count, 1)
