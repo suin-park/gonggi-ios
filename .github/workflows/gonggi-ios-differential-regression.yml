@@ -35,7 +35,7 @@ on:
 
 concurrency:
   group: gonggi-ios-diff-reg-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -44,8 +44,9 @@ env:
   SCHEME: Gonggi
   PROJECT: Gonggi.xcodeproj
   OPENCV_VERSION: "4.10.0"
-  # Pin to match Feature CI success environment (Xcode 16.4 / iOS 18.5 sim).
-  XCODE_SELECT: /Applications/Xcode_16.4.app/Contents/Developer
+  # Prefer newest Xcode (matches Gonggi TestFlight 2.0(33) run 34732141730 → Xcode 26.3).
+  # Note: Xcode 16.4 cannot compile base 1bf88b2 (CaptureSummaryView opaque return);
+  # feature fixed that for 16.4, but baseline comparison must use a toolchain that builds base.
   BASE_SHA_DEFAULT: 1bf88b2d70018eae6461dfa4124dd5e292298f23
 
 jobs:
@@ -145,19 +146,24 @@ jobs:
           fi
           test -f "${DEST}/Info.plist"
 
-      - name: Select Xcode 16.4
+      - name: Select Xcode (newest; TF 2.0(33) parity)
         run: |
           set -euo pipefail
-          if [[ -d /Applications/Xcode_16.4.app ]]; then
-            echo "DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer" >> "$GITHUB_ENV"
-          elif [[ -d /Applications/Xcode.app ]]; then
-            echo "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer" >> "$GITHUB_ENV"
+          # Prefer same selection rule as gonggi-testflight.yml (newest installed).
+          if [[ -d /Applications/Xcode_26.3.0.app ]]; then
+            XCODE_APP=/Applications/Xcode_26.3.0.app
           else
             XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
-            echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
           fi
+          if [[ -z "${XCODE_APP}" || ! -d "${XCODE_APP}" ]]; then
+            echo "::error::No Xcode.app found on runner"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          echo "Using ${XCODE_APP}"
           xcodebuild -version
           sw_vers
+          uname -m
 
       - name: Install XcodeGen
         run: |
@@ -238,18 +244,35 @@ jobs:
           STATUS=${PIPESTATUS[0]}
           set -e
           echo "exit_code=${STATUS}" >> "$GITHUB_OUTPUT"
-          # Always extract failures for comparison (non-zero is expected on baseline).
+          export XCODE_STATUS="${STATUS}"
           python3 - <<'PY'
-          import re, pathlib, os
+          import re, pathlib, os, json
           label = os.environ["LABEL"]
           log = pathlib.Path(f"xcodebuild-{label}.log")
           text = log.read_text(encoding="utf-8", errors="replace")
+          compile_failed = "Testing cancelled because the build failed" in text
           pat = re.compile(r"Test Case '-\[(?P<suite>[A-Za-z0-9_.]+) (?P<name>[A-Za-z0-9_]+)]' failed")
           ids = sorted({f"{m.group('suite')}/{m.group('name')}" for m in pat.finditer(text)})
-          pathlib.Path(f"failures-{label}.txt").write_text("\n".join(ids) + ("\n" if ids else ""), encoding="utf-8")
-          print(f"{label}: {len(ids)} failures")
-          for i in ids:
-              print(i)
+          totals = re.findall(r"Executed (\d+) tests, with (\d+) failures", text)
+          suite_total = suite_fail = None
+          if totals:
+              suite_total, suite_fail = map(int, totals[-1])
+          meta = {
+              "label": label,
+              "compile_failed": compile_failed,
+              "xcodebuild_exit": int(os.environ.get("XCODE_STATUS", "0") or "0"),
+              "unique_failed_tests": ids,
+              "unique_failed_count": len(ids),
+              "reported_executed": suite_total,
+              "reported_failures": suite_fail,
+          }
+          pathlib.Path(f"failures-{label}.txt").write_text(
+              ("\n".join(ids) + "\n") if ids else "", encoding="utf-8"
+          )
+          pathlib.Path(f"meta-{label}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps(meta, indent=2))
+          if compile_failed:
+              print(f"::warning::{label} compile/build failed — cannot use as test baseline")
           PY
         env:
           LABEL: ${{ matrix.label }}
@@ -261,6 +284,7 @@ jobs:
           name: diff-ref-${{ matrix.label }}
           path: |
             failures-${{ matrix.label }}.txt
+            meta-${{ matrix.label }}.json
             xcodebuild-${{ matrix.label }}.log
             GonggiTests-${{ matrix.label }}.xcresult
             catalog-gate.log
@@ -293,11 +317,49 @@ jobs:
         id: cmp
         run: |
           set -euo pipefail
-          python3 scripts/compare-gonggi-test-failures.py \
-            --base-failures base-art/failures-base.txt \
-            --head-failures head-art/failures-head.txt \
-            --out-json differential-report.json \
-            --out-summary differential-summary.md
+          python3 - <<'PY'
+          import json, pathlib, subprocess, sys
+          base_meta_p = pathlib.Path("base-art/meta-base.json")
+          head_meta_p = pathlib.Path("head-art/meta-head.json")
+          base_meta = json.loads(base_meta_p.read_text()) if base_meta_p.exists() else {}
+          head_meta = json.loads(head_meta_p.read_text()) if head_meta_p.exists() else {}
+          if base_meta.get("compile_failed") or head_meta.get("compile_failed"):
+              report = {
+                  "pass": False,
+                  "unverified": True,
+                  "reason": "compile_failed",
+                  "base_meta": base_meta,
+                  "head_meta": head_meta,
+                  "new_regressions": [],
+                  "common_failures": [],
+                  "fixed_on_head": [],
+              }
+              pathlib.Path("differential-report.json").write_text(json.dumps(report, indent=2) + "\n")
+              md = (
+                  "## Differential regression gate\n\n"
+                  "### UNVERIFIED — compile failure prevented fair test comparison\n\n"
+                  f"- base compile_failed: {base_meta.get('compile_failed')}\n"
+                  f"- head compile_failed: {head_meta.get('compile_failed')}\n"
+              )
+              pathlib.Path("differential-summary.md").write_text(md)
+              print(md)
+              sys.exit(0)
+          rc = subprocess.call([
+              "python3", "scripts/compare-gonggi-test-failures.py",
+              "--base-failures", "base-art/failures-base.txt",
+              "--head-failures", "head-art/failures-head.txt",
+              "--out-json", "differential-report.json",
+              "--out-summary", "differential-summary.md",
+          ])
+          r = json.loads(pathlib.Path("differential-report.json").read_text())
+          r["base_meta"] = base_meta
+          r["head_meta"] = head_meta
+          r["unverified"] = False
+          pathlib.Path("differential-report.json").write_text(json.dumps(r, indent=2) + "\n")
+          print(pathlib.Path("differential-summary.md").read_text())
+          # Keep report even when new regressions; fail in next step.
+          sys.exit(0)
+          PY
           {
             echo "## Differential regression gate"
             cat differential-summary.md
@@ -313,16 +375,21 @@ jobs:
             differential-summary.md
             base-art/failures-base.txt
             head-art/failures-head.txt
+            base-art/meta-base.json
+            head-art/meta-head.json
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Fail if new regressions
+      - name: Fail if new regressions or unverified
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json, sys
           r = json.load(open("differential-report.json", encoding="utf-8"))
           print(json.dumps(r, indent=2))
+          if r.get("unverified"):
+              print("::error::Differential UNVERIFIED (compile failure on base or head).")
+              sys.exit(1)
           if not r.get("pass"):
               print("::error::New regressions detected vs 2.0(33) base; release blocked.")
               sys.exit(1)
