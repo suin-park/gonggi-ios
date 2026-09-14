@@ -1,4 +1,5 @@
 import XCTest
+import simd
 @testable import Gonggi
 
 final class CatalogModelsTests: XCTestCase {
@@ -129,11 +130,15 @@ final class CatalogModelsTests: XCTestCase {
 
         let axis = CatalogPlacementTransform.axisMappingMatrix(spec.axisMapping)
         let orient = CatalogPlacementTransform.quaternionMatrix(spec.orientation)
-        let scale = simd_float4x4(diagonal: SIMD4(2, 3, 4, 1))
-        let bottom = CatalogPlacementTransform.translationMatrix(SIMD3(0, 0.5, 0))
+        let scale = simd_float4x4(diagonal: SIMD4<Float>(2, 3, 4, 1))
+        let bottom = CatalogPlacementTransform.translationMatrix(SIMD3<Float>(0, 0.5, 0))
         let userR = CatalogPlacementTransform.rotationYMatrix(yaw)
         let userT = CatalogPlacementTransform.translationMatrix(userPos)
-        let expected = userT * userR * bottom * scale * orient * axis
+        let expectedStep1 = orient * axis
+        let expectedStep2 = scale * expectedStep1
+        let expectedStep3 = bottom * expectedStep2
+        let expectedStep4 = userR * expectedStep3
+        let expected = userT * expectedStep4
 
         let p = SIMD4<Float>(1, 1, 1, 1)
         let a = composed * p
@@ -151,7 +156,6 @@ final class CatalogModelsTests: XCTestCase {
         v = bottom * v
         XCTAssertEqual(v.y, 0.5, accuracy: 1e-4)
         v = userR * v
-        // +90° yaw around Y: x→z roughly for right-handed SceneKit R_y
         v = userT * v
         let final = composed * SIMD4<Float>(1, 0, 0, 1)
         XCTAssertEqual(v.x, final.x, accuracy: 1e-4)
