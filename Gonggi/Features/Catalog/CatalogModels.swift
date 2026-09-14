@@ -193,17 +193,27 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
     }
 
     var priceLabel: String {
-        guard let minor = displayPriceMinor, let currency else {
-            return "가격 정보 없음"
+        if let minor = displayPriceMinor, let currency {
+            if currency.uppercased() == "KRW" {
+                let won = minor
+                let formatter = NumberFormatter()
+                formatter.numberStyle = .decimal
+                let formatted = formatter.string(from: NSNumber(value: won)) ?? "\(won)"
+                return "\(formatted)원"
+            }
+            return "\(minor) \(currency)"
         }
-        if currency.uppercased() == "KRW" {
-            let won = minor
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .decimal
-            let formatted = formatter.string(from: NSNumber(value: won)) ?? "\(won)"
-            return "\(formatted)원"
+        if let consultationUrl, !consultationUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "가격 문의"
         }
-        return "\(minor) \(currency)"
+        return "가격 정보 없음"
+    }
+
+    /// VoiceOver / combined a11y — avoid "가격 가격 문의".
+    var priceAccessibilityLabel: String {
+        if priceLabel == "가격 문의" { return "가격 문의" }
+        if priceLabel == "가격 정보 없음" { return "가격 정보 없음" }
+        return "가격 \(priceLabel)"
     }
 }
 

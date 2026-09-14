@@ -52,7 +52,7 @@ struct CatalogProductCardView: View {
             Text(product.priceLabel)
                 .font(GonggiTypography.body(14))
                 .foregroundStyle(GonggiColors.textSecondary)
-                .accessibilityLabel("가격 \(product.priceLabel)")
+                .accessibilityLabel(product.priceAccessibilityLabel)
 
             if let variant = product.selectedVariantName {
                 Text("옵션 · \(variant)")

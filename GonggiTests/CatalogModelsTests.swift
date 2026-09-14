@@ -269,6 +269,24 @@ final class CatalogModelsTests: XCTestCase {
         XCTAssertTrue(type(of: a) == type(of: b))
     }
 
+    func testPriceInquiryLabelForConsultationWithoutPrice() {
+        var product = CatalogMockData.roundCabinetListCard()
+        product.displayPriceMinor = nil
+        product.currency = "KRW"
+        product.consultationUrl = "https://example.com/consult"
+        product.purchaseUrl = nil
+        XCTAssertEqual(product.priceLabel, "가격 문의")
+        XCTAssertEqual(product.priceAccessibilityLabel, "가격 문의")
+    }
+
+    func testNumericPriceLabelUnchanged() {
+        var product = CatalogMockData.roundCabinetListCard()
+        product.displayPriceMinor = 89000
+        product.currency = "KRW"
+        XCTAssertEqual(product.priceLabel, "89,000원")
+        XCTAssertEqual(product.priceAccessibilityLabel, "가격 89,000원")
+    }
+
     func testReadyGateBlocksMissingSpec() {
         let result = CatalogPlacementSpecValidator.validate(nil)
         XCTAssertEqual(result, .failure(.missingPlacementSpec))

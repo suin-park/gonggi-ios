@@ -81,7 +81,7 @@ struct CatalogProductDetailView: View {
                 Text(product.priceLabel)
                     .font(GonggiTypography.headline(18))
                     .foregroundStyle(GonggiColors.textPrimary)
-                    .accessibilityLabel("가격 \(product.priceLabel)")
+                    .accessibilityLabel(product.priceAccessibilityLabel)
                 if let variant {
                     Text("옵션 · \(variant.name)")
                         .font(GonggiTypography.body(14))
