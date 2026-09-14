@@ -112,6 +112,28 @@ jobs:
           ref: ${{ steps.ref.outputs.sha }}
           fetch-depth: 0
 
+      - name: Apply Simulator Debug compile shims (base only)
+        if: matrix.label == 'base'
+        run: |
+          set -euo pipefail
+          # Pure 1bf88b2 Release-archives for TestFlight, but Simulator Debug fails to compile:
+          # - CaptureSummaryView opaque return
+          # - ThreeDExpansionSupportTests mutates SpaceRecord.id (let)
+          # - ServerGenerationProfileMapperTests Optional Double XCTAssertEqual
+          # Apply ONLY those compile-only fixes from the feature branch (no Catalog sources).
+          git fetch --no-tags origin \
+            a7f14f9eaab7d998ab57a56673fa27f3cca2bf64 \
+            451e1856be062b6f25ce843039f86cc3237d7cdd \
+            f3f791d16f50f72a216d446047f92b89eaf17a55
+          git checkout a7f14f9eaab7d998ab57a56673fa27f3cca2bf64 -- \
+            Gonggi/Features/Capture/CaptureSummaryView.swift
+          git checkout 451e1856be062b6f25ce843039f86cc3237d7cdd -- \
+            GonggiTests/ThreeDExpansionSupportTests.swift
+          git checkout f3f791d16f50f72a216d446047f92b89eaf17a55 -- \
+            GonggiTests/ServerGenerationProfileMapperTests.swift
+          echo "baseline_shims=capture_summary_return,three_d_expansion_tests,profile_mapper_optional" >> "$GITHUB_OUTPUT"
+          echo "Applied Simulator Debug compile-only shims on base (Catalog sources NOT included)."
+
       - name: Guard build number 33 (no bump)
         run: |
           set -euo pipefail
@@ -265,6 +287,18 @@ jobs:
               "unique_failed_count": len(ids),
               "reported_executed": suite_total,
               "reported_failures": suite_fail,
+              "baseline_shims_applied": label == "base",
+              "baseline_shims": (
+                  ["capture_summary_return", "three_d_expansion_tests", "profile_mapper_optional"]
+                  if label == "base"
+                  else []
+              ),
+              "note": (
+                  "base uses compile-only Simulator Debug shims so suite can run; "
+                  "2.0(33) Release archive source remains 1bf88b2 without these for TF"
+                  if label == "base"
+                  else ""
+              ),
           }
           pathlib.Path(f"failures-{label}.txt").write_text(
               ("\n".join(ids) + "\n") if ids else "", encoding="utf-8"
