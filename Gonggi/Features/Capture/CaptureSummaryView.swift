@@ -174,7 +174,7 @@ struct CaptureSummaryView: View {
         let duration = max(summary.duration, 0.001)
         let limitedFrac = min(1, summary.trackingLimitedSec / duration)
         let normalFrac = max(0, 1 - limitedFrac)
-        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+        return VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
             Text("3DGS Data Foundation (DEBUG)")
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
