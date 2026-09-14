@@ -990,12 +990,27 @@ struct VRSphereSpaceView: View {
                         .foregroundStyle(.white.opacity(0.85))
                         .padding(.horizontal, 4)
                 } else if selectedPlacementId != nil {
-                    Text("한 손가락으로 이동, 두 손가락으로 회전/크기 조절")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.85))
-                        .padding(.horizontal, 4)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.85)
+                    if let selectedPlacementId,
+                       let entry = draftLayout.assets.first(where: { $0.id == selectedPlacementId }),
+                       entry.catalogAssetId != nil {
+                        let w = entry.catalogWidthMm ?? 0
+                        let d = entry.catalogDepthMm ?? 0
+                        let h = entry.catalogHeightMm ?? 0
+                        Text("상품 규격 W\(CatalogDimensionRuler.formatCm(w)) · D\(CatalogDimensionRuler.formatCm(d)) · H\(CatalogDimensionRuler.formatCm(h)) · 크기 잠금")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 4)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.85)
+                            .accessibilityLabel("상품 실제 규격, 크기 조절 잠금")
+                    } else {
+                        Text("한 손가락으로 이동, 두 손가락으로 회전/크기 조절")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 4)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.85)
+                    }
 
                     Button {
                         deleteSelectedPlacement()
@@ -1458,6 +1473,13 @@ struct VRSphereSpaceView: View {
     private func consumeExternalPendingPlacementIfNeeded() async {
         guard panoramaReady, didLoadPlacement else { return }
         guard !didConsumeExternalPending else { return }
+
+        if let catalogPending = appState.consumePendingCatalogPlacement(matchingViewerSessionId: sessionId) {
+            didConsumeExternalPending = true
+            await insertPendingCatalogPlacement(catalogPending)
+            return
+        }
+
         guard let pending = appState.consumePendingAssetPlacement(matchingViewerSessionId: sessionId)
         else { return }
         didConsumeExternalPending = true
@@ -1511,6 +1533,81 @@ struct VRSphereSpaceView: View {
 
         pendingPlacementAsset = asset
         placementRequestToken += 1
+    }
+
+    private func insertPendingCatalogPlacement(_ pending: PendingCatalogPlacement) async {
+        applyStartInEditModeIfNeeded()
+        if interactionMode != .edit {
+            enterEditMode(discardUnsavedOnCancel: false)
+        }
+        editBaselineLayout = draftLayout
+        discardDraftOnExitEdit = true
+
+        guard draftLayout.assets.count < VRPlacementLayout.maxAssets else {
+            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            return
+        }
+
+        switch CatalogPlacementSpecValidator.validate(pending.placementSpec) {
+        case .failure(let error):
+            placementBlockedMessage = error.errorDescription ?? "배치 정보가 올바르지 않아요"
+            return
+        case .success:
+            break
+        }
+
+        let spec = pending.placementSpec
+        let assetKey = pending.placementAssetKey
+        let remoteURL: URL
+        if let url = URL(string: spec.usdzSignedUrl), url.scheme?.lowercased() == "https" {
+            remoteURL = url
+        } else {
+            placementBlockedMessage = "3D 파일 주소를 확인할 수 없어요"
+            return
+        }
+
+        // Synthetic DTO for loader/UI — size locked from catalog mm (cm fields for legacy scale path).
+        let dto = MobileAssetDTO(
+            id: assetKey,
+            name: pending.displayName,
+            thumbUrl: pending.thumbnailUrl,
+            usdzStatus: "READY",
+            usdzUrl: spec.usdzSignedUrl,
+            widthCm: Double(pending.dimensionsMm.widthMm) / 10.0,
+            heightCm: Double(pending.dimensionsMm.heightMm) / 10.0,
+            depthCm: Double(pending.dimensionsMm.depthMm) / 10.0,
+            availableForPlacement: true,
+            availability: "ready"
+        )
+        assetMetadata[assetKey] = dto
+        if modelURLs[assetKey] == nil {
+            if let local = await usdzCache.localURL(assetId: assetKey, remoteURL: remoteURL) {
+                modelURLs[assetKey] = local
+            } else {
+                placementBlockedMessage = isMockModeCatalogURL(remoteURL)
+                    ? "Mock 3D URL은 실제 파일이 아닙니다. Production Catalog USDZ가 필요합니다."
+                    : "3D 모델을 다운로드하지 못했어요. 상품을 다시 열어 주세요."
+                return
+            }
+        }
+
+        let entry = pending.makeLayoutEntry(
+            position: SIMD3(0, draftLayout.floorY, -1.2),
+            rotationY: 0,
+            floorY: draftLayout.floorY
+        )
+        guard draftLayout.append(entry) else {
+            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            return
+        }
+        selectedPlacementId = entry.id
+        editTool = .none
+        saveDraftLocally()
+        placementRequestToken += 1
+    }
+
+    private func isMockModeCatalogURL(_ url: URL) -> Bool {
+        (url.host ?? "").contains("example.invalid")
     }
 
     private func downloadModels(for assets: [MobileAssetDTO]) async {
@@ -1579,7 +1676,12 @@ struct VRSphereSpaceView: View {
             draftLayout.assets[index].supportY = draftLayout.floorY
         }
         draftLayout.assets[index].rotationY = rotationY
-        draftLayout.assets[index].setUniformScale(scale)
+        if draftLayout.assets[index].catalogAssetId != nil {
+            // Catalog products: lock real W/D/H — no free rescale in build 34.
+            draftLayout.assets[index].setUniformScale(1)
+        } else {
+            draftLayout.assets[index].setUniformScale(scale)
+        }
         // Disk write only on gesture end / Done — not every pan.changed (Build 66).
         saveDraftLocally()
     }

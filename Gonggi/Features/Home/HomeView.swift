@@ -38,6 +38,9 @@ struct HomeView: View {
                     .padding(.bottom, GonggiSpacing.md)
 
                     exploreFeed
+
+                    CatalogHomeSectionView(isMockMode: appState.isMockMode)
+                        .environmentObject(appState)
                 }
                 .padding(.bottom, GonggiSpacing.xxl)
                 .frame(maxWidth: .infinity, alignment: .top)

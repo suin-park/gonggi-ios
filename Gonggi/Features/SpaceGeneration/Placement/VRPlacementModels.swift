@@ -98,6 +98,23 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
     /// Build 70: world Y of support plane. Absent → layout.floorY.
     var supportY: Float?
 
+    // Catalog placement metadata (optional — absent for user locker assets).
+    // Never persist signed USDZ URLs.
+    var catalogProductId: String?
+    var catalogVariantId: String?
+    var catalogAssetId: String?
+    var catalogRevision: Int?
+    var placementSpecVersion: Int?
+    var catalogWidthMm: Int?
+    var catalogDepthMm: Int?
+    var catalogHeightMm: Int?
+    var spaceProjectionKey: String?
+    var catalogDisplayName: String?
+    var catalogThumbnailUrl: String?
+    var catalogPlacedAt: Date?
+    /// Optional visual-only correction; product W/D/H remain locked in catalog*Mm.
+    var visualCorrectionScale: Float?
+
     init(
         id: String = UUID().uuidString,
         assetId: String,
@@ -171,6 +188,19 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         case sortIndex
         case supportMode
         case supportY
+        case catalogProductId
+        case catalogVariantId
+        case catalogAssetId
+        case catalogRevision
+        case placementSpecVersion
+        case catalogWidthMm
+        case catalogDepthMm
+        case catalogHeightMm
+        case spaceProjectionKey
+        case catalogDisplayName
+        case catalogThumbnailUrl
+        case catalogPlacedAt
+        case visualCorrectionScale
     }
 
     private struct Position: Codable {
@@ -209,6 +239,19 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
             supportMode = nil
         }
         supportY = try container.decodeIfPresent(Float.self, forKey: .supportY)
+        catalogProductId = try container.decodeIfPresent(String.self, forKey: .catalogProductId)
+        catalogVariantId = try container.decodeIfPresent(String.self, forKey: .catalogVariantId)
+        catalogAssetId = try container.decodeIfPresent(String.self, forKey: .catalogAssetId)
+        catalogRevision = try container.decodeIfPresent(Int.self, forKey: .catalogRevision)
+        placementSpecVersion = try container.decodeIfPresent(Int.self, forKey: .placementSpecVersion)
+        catalogWidthMm = try container.decodeIfPresent(Int.self, forKey: .catalogWidthMm)
+        catalogDepthMm = try container.decodeIfPresent(Int.self, forKey: .catalogDepthMm)
+        catalogHeightMm = try container.decodeIfPresent(Int.self, forKey: .catalogHeightMm)
+        spaceProjectionKey = try container.decodeIfPresent(String.self, forKey: .spaceProjectionKey)
+        catalogDisplayName = try container.decodeIfPresent(String.self, forKey: .catalogDisplayName)
+        catalogThumbnailUrl = try container.decodeIfPresent(String.self, forKey: .catalogThumbnailUrl)
+        catalogPlacedAt = try container.decodeIfPresent(Date.self, forKey: .catalogPlacedAt)
+        visualCorrectionScale = try container.decodeIfPresent(Float.self, forKey: .visualCorrectionScale)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -226,6 +269,20 @@ struct VRPlacedAssetEntry: Codable, Equatable, Identifiable, Sendable {
         try container.encode(sortIndex, forKey: .sortIndex)
         try container.encodeIfPresent(supportMode, forKey: .supportMode)
         try container.encodeIfPresent(supportY, forKey: .supportY)
+        try container.encodeIfPresent(catalogProductId, forKey: .catalogProductId)
+        try container.encodeIfPresent(catalogVariantId, forKey: .catalogVariantId)
+        try container.encodeIfPresent(catalogAssetId, forKey: .catalogAssetId)
+        try container.encodeIfPresent(catalogRevision, forKey: .catalogRevision)
+        try container.encodeIfPresent(placementSpecVersion, forKey: .placementSpecVersion)
+        try container.encodeIfPresent(catalogWidthMm, forKey: .catalogWidthMm)
+        try container.encodeIfPresent(catalogDepthMm, forKey: .catalogDepthMm)
+        try container.encodeIfPresent(catalogHeightMm, forKey: .catalogHeightMm)
+        try container.encodeIfPresent(spaceProjectionKey, forKey: .spaceProjectionKey)
+        try container.encodeIfPresent(catalogDisplayName, forKey: .catalogDisplayName)
+        try container.encodeIfPresent(catalogThumbnailUrl, forKey: .catalogThumbnailUrl)
+        try container.encodeIfPresent(catalogPlacedAt, forKey: .catalogPlacedAt)
+        try container.encodeIfPresent(visualCorrectionScale, forKey: .visualCorrectionScale)
+        // Intentionally omit any signed USDZ URL fields.
     }
 }
 

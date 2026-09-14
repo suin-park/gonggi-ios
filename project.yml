@@ -100,6 +100,10 @@ targets:
     platform: iOS
     sources:
       - path: GonggiTests
+        excludes:
+          - "Fixtures/**"
+    resources:
+      - path: GonggiTests/Fixtures
     dependencies:
       - target: Gonggi
     settings:
