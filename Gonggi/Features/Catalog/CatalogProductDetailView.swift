@@ -176,17 +176,29 @@ struct CatalogProductDetailView: View {
 
     private func hero(_ product: CatalogProduct) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: GonggiRadius.lg)
+            RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
                 .fill(GonggiColors.surfaceElevated)
-            if let s = product.thumbnailUrl, let url = URL(string: s) {
+            if let url = CatalogThumbnailURL.httpsURL(from: product.resolvedThumbnailURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
-                        image.resizable().scaledToFit()
-                    default:
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .padding(CatalogProductThumbnailLayout.imageInset)
+                    case .failure:
                         Image(systemName: "sofa.fill")
                             .font(.system(size: 48))
                             .foregroundStyle(GonggiColors.textTertiary)
+                            .accessibilityLabel(
+                                "\(product.productName) \(CatalogThumbnailDisplayState.loadFailed.accessibilitySuffix)"
+                            )
+                    case .empty:
+                        ProgressView()
+                            .tint(GonggiColors.accentCyan)
+                    @unknown default:
+                        ProgressView()
+                            .tint(GonggiColors.accentCyan)
                     }
                 }
             } else {
@@ -197,6 +209,7 @@ struct CatalogProductDetailView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
         .accessibilityLabel("\(product.productName) 대표 이미지")
     }
 

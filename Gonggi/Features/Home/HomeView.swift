@@ -42,14 +42,21 @@ struct HomeView: View {
                     CatalogHomeSectionView(isMockMode: appState.isMockMode)
                         .environmentObject(appState)
                 }
-                .padding(.bottom, GonggiSpacing.xxl)
+                // Token clearance (SpaceDetailView parity) + measured tab-bar/safe-area padding.
+                .padding(.bottom, GonggiTabBarLayout.homeScrollContentPadding)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .refreshable {
                 await loadExplore(reset: true)
                 await appState.refreshNotificationUnreadCount()
             }
-            .contentMargins(.bottom, GonggiSpacing.lg, for: .scrollContent)
+            .contentMargins(.bottom, GonggiSpacing.md, for: .scrollContent)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Stacks above TabView safe area so 「배치해보기」 clears chrome + home indicator.
+                Color.clear
+                    .frame(height: GonggiTabBarLayout.homeSafeAreaInsetHeight)
+                    .accessibilityHidden(true)
+            }
             .background(GonggiAmbientBackground())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

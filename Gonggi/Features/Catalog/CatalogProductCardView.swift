@@ -7,29 +7,10 @@ struct CatalogProductCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            ZStack {
-                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
-                    .fill(GonggiColors.surfaceElevated)
-                if let url = CatalogThumbnailURL.httpsURL(from: product.resolvedThumbnailURL) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFill()
-                        case .failure:
-                            placeholder
-                        default:
-                            ProgressView().tint(GonggiColors.accentCyan)
-                        }
-                    }
-                    .frame(width: 200, height: 140)
-                    .clipped()
-                } else {
-                    placeholder
-                }
-            }
-            .frame(width: 200, height: 140)
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-            .accessibilityHidden(true)
+            CatalogProductThumbnailView(
+                productName: product.productName,
+                thumbnailURLString: product.resolvedThumbnailURL
+            )
 
             Text(product.partnerDisplayName)
                 .font(GonggiTypography.caption(12))
@@ -82,7 +63,7 @@ struct CatalogProductCardView: View {
             .accessibilityLabel("\(product.productName) 배치해보기")
             .frame(minHeight: 44)
         }
-        .frame(width: 200, alignment: .leading)
+        .frame(width: CatalogProductThumbnailLayout.containerWidth, alignment: .leading)
         .padding(GonggiSpacing.sm)
         .background(
             RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
@@ -102,13 +83,5 @@ struct CatalogProductCardView: View {
             "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(product.dimensions.shortLabelMm)"
         )
         .accessibilityHint("두 번 탭하면 상품 상세를 엽니다")
-    }
-
-    private var placeholder: some View {
-        Image(systemName: "sofa.fill")
-            .font(.system(size: 36))
-            .foregroundStyle(GonggiColors.textTertiary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityLabel("\(product.productName) 이미지 없음")
     }
 }

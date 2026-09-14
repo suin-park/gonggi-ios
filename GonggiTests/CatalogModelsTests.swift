@@ -227,7 +227,7 @@ final class CatalogModelsTests: XCTestCase {
         XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/product.jpg")
     }
 
-    func testRulerSpecFromStoredEntryAxis() {
+    func testRulerSpecFromStoredEntryAxis() throws {
         var entry = VRPlacedAssetEntry(assetId: "catalog:a", position: .zero)
         entry.catalogAssetId = "a"
         entry.catalogWidthMm = 400
@@ -339,5 +339,139 @@ final class CatalogModelsTests: XCTestCase {
     func testReadyGateBlocksMissingSpec() {
         let result = CatalogPlacementSpecValidator.validate(nil)
         XCTAssertEqual(result, .failure(.missingPlacementSpec))
+    }
+
+    // MARK: - Thumbnail aspect-fit (no crop)
+
+    func testThumbnailContainerAspectIsStable() {
+        XCTAssertEqual(CatalogProductThumbnailLayout.containerWidth, 200, accuracy: 0.1)
+        XCTAssertEqual(CatalogProductThumbnailLayout.containerHeight, 140, accuracy: 0.1)
+        XCTAssertEqual(
+            CatalogProductThumbnailLayout.containerAspectRatio,
+            200.0 / 140.0,
+            accuracy: 1e-6
+        )
+        XCTAssertGreaterThanOrEqual(CatalogProductThumbnailLayout.imageInset, 8)
+        XCTAssertLessThanOrEqual(CatalogProductThumbnailLayout.imageInset, 12)
+    }
+
+    func testThumbnailAspectFitDoesNotClipPortraitLandscapeSquare() {
+        // 1) Tall cabinet (~0.4 W/H)
+        let portrait: CGFloat = 400.0 / 1084.0
+        // 2) Wide sofa (~2.2 W/H)
+        let landscape: CGFloat = 2200.0 / 1000.0
+        // 3) Square
+        let square: CGFloat = 1.0
+        // 4) Transparent product-like tall PNG aspect
+        let transparentProduct: CGFloat = 600.0 / 900.0
+
+        for (name, aspect) in [
+            ("portrait_cabinet", portrait),
+            ("landscape_sofa", landscape),
+            ("square", square),
+            ("transparent_product", transparentProduct),
+        ] {
+            XCTAssertTrue(
+                CatalogProductThumbnailLayout.fittedImageFitsWithoutClipping(
+                    sourceAspectWidthOverHeight: aspect
+                ),
+                "\(name) must fit without clipping"
+            )
+            let fitted = CatalogProductThumbnailLayout.fittedImageSize(
+                sourceAspectWidthOverHeight: aspect
+            )
+            let boxW = CatalogProductThumbnailLayout.containerWidth
+                - CatalogProductThumbnailLayout.imageInset * 2
+            let boxH = CatalogProductThumbnailLayout.containerHeight
+                - CatalogProductThumbnailLayout.imageInset * 2
+            XCTAssertLessThanOrEqual(fitted.width, boxW + 0.5, name)
+            XCTAssertLessThanOrEqual(fitted.height, boxH + 0.5, name)
+            // Aspect preserved
+            XCTAssertEqual(fitted.width / fitted.height, aspect, accuracy: 1e-5, name)
+        }
+    }
+
+    func testThumbnailInvalidOrMissingURLUsesPlaceholderState() {
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: "not a url"))
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: "http://insecure.example/x.png"))
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: nil))
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: ""))
+
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: false, phase: .empty),
+            .missingURL
+        )
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: true, phase: .empty),
+            .loading
+        )
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: true, phase: .failure),
+            .loadFailed
+        )
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: true, phase: .success),
+            .loaded
+        )
+        XCTAssertTrue(CatalogThumbnailDisplayState.missingURL.usesSofaPlaceholder)
+        XCTAssertTrue(CatalogThumbnailDisplayState.loadFailed.usesSofaPlaceholder)
+        XCTAssertFalse(CatalogThumbnailDisplayState.loading.usesSofaPlaceholder)
+
+        var noThumb = CatalogMockData.roundCabinetListCard()
+        noThumb.thumbnailUrl = nil
+        XCTAssertNil(noThumb.resolvedThumbnailURL)
+
+        var badThumb = CatalogMockData.roundCabinetListCard()
+        badThumb.thumbnailUrl = "https://example.invalid/does-not-exist-404.png"
+        // URL is HTTPS-valid; load failure is a separate display state (card must still render).
+        XCTAssertNotNil(CatalogThumbnailURL.httpsURL(from: badThumb.resolvedThumbnailURL))
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: true, phase: .failure),
+            .loadFailed
+        )
+    }
+
+    func testCardAccessibilityKeepsProductNameWhenThumbnailMissing() {
+        var product = CatalogMockData.roundCabinetListCard()
+        product.thumbnailUrl = nil
+        let label =
+            "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(product.dimensions.shortLabelMm)"
+        XCTAssertTrue(label.contains(product.productName))
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.missingURL.accessibilitySuffix,
+            "이미지 없음"
+        )
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.loadFailed.accessibilitySuffix,
+            "이미지를 불러오지 못함"
+        )
+    }
+
+    // MARK: - Tab bar / safe-area clearance
+
+    func testHomeScrollBottomPaddingClearsTabBarOnPlusAndCompact() {
+        // iPhone 14 Plus-class home indicator ~34pt; compact / older ~0–20pt.
+        let plus = GonggiTabBarLayout.homeScrollBottomPadding(safeAreaBottom: 34)
+        let compact = GonggiTabBarLayout.homeScrollBottomPadding(safeAreaBottom: 0)
+        let small = GonggiTabBarLayout.homeScrollBottomPadding(safeAreaBottom: 20)
+
+        XCTAssertGreaterThanOrEqual(plus, GonggiTabBarLayout.contentHeight + 34)
+        XCTAssertGreaterThanOrEqual(compact, GonggiTabBarLayout.contentHeight)
+        XCTAssertGreaterThanOrEqual(small, GonggiTabBarLayout.contentHeight + 20)
+        XCTAssertGreaterThanOrEqual(
+            GonggiTabBarLayout.homeSafeAreaInsetHeight,
+            GonggiTabBarLayout.contentHeight + GonggiSpacing.touchTarget - 0.1
+        )
+        XCTAssertEqual(
+            GonggiTabBarLayout.homeScrollContentPadding,
+            GonggiTabBarLayout.scrollClearance,
+            accuracy: 0.1
+        )
+        XCTAssertEqual(
+            GonggiTabBarLayout.detailScrollBottomPadding,
+            GonggiSpacing.xxl,
+            accuracy: 0.1
+        )
+        XCTAssertGreaterThan(plus, compact)
     }
 }

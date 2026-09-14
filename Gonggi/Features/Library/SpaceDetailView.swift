@@ -196,7 +196,7 @@ struct SpaceDetailView: View {
                 .padding(.horizontal, GonggiSpacing.lg)
                 .padding(.top, GonggiSpacing.lg)
                 // Bottom: stay clear of TabView chrome without double safe-area stacking.
-                .padding(.bottom, GonggiSpacing.xxl)
+                .padding(.bottom, GonggiTabBarLayout.detailScrollBottomPadding)
             }
             .contentMargins(.bottom, GonggiSpacing.md, for: .scrollContent)
             .onChange(of: showAdvancedAnalyzeConfirm) { _, show in

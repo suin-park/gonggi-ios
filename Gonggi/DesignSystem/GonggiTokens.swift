@@ -136,6 +136,38 @@ enum GonggiSpacing {
     static let touchTarget: CGFloat = 44
 }
 
+// MARK: - Tab bar scroll clearance (UITabBar + safe area)
+
+/// Shared bottom clearance for scroll content above `MainTabView` chrome.
+/// Mirrors `SpaceDetailView` intent: clear TabView without inventing one-off magic numbers.
+enum GonggiTabBarLayout {
+    /// Standard UIKit `UITabBar` item-row height (excludes home indicator).
+    static let contentHeight: CGFloat = 49
+
+    /// Extra breathing room above chrome (same token as SpaceDetail bottom padding).
+    static var scrollClearance: CGFloat { GonggiSpacing.xxl }
+
+    /// Home feed scroll content padding (token clearance; system safe area still applies).
+    static var homeScrollContentPadding: CGFloat { scrollClearance }
+
+    /// Additional `safeAreaInset` height so last CTAs clear tab chrome on small and Plus phones.
+    /// Combines tab-bar content row with one touch target (not a raw magic number alone).
+    static var homeSafeAreaInsetHeight: CGFloat {
+        contentHeight + GonggiSpacing.touchTarget
+    }
+
+    /// Total guaranteed clearance below last content for a given bottom safe-area inset.
+    /// Used by unit tests (iPhone 14 Plus ~34pt home indicator, compact ~0–20pt).
+    static func homeScrollBottomPadding(safeAreaBottom: CGFloat) -> CGFloat {
+        homeScrollContentPadding
+            + homeSafeAreaInsetHeight
+            + max(0, safeAreaBottom)
+    }
+
+    /// Space detail / shorter screens: clearance only (system safe area already includes tab bar).
+    static var detailScrollBottomPadding: CGFloat { scrollClearance }
+}
+
 // MARK: - Radius (Brand Book §19 — card 16 / control 12)
 
 enum GonggiRadius {
