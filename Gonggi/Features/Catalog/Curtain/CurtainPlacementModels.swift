@@ -53,6 +53,64 @@ struct CurtainPlacementCreateRequest: Codable, Sendable {
     var productRevision: String?
     var catalog2DAssetId: String?
     var seed: CurtainPlacementSeedPayload
+
+    /// Cloud POC accepts flat `seedU`/`seedV`/`spaceId` at the body root.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(aiConsentAccepted, forKey: .aiConsentAccepted)
+        try container.encode(catalogProductId, forKey: .catalogProductId)
+        try container.encodeIfPresent(catalogVariantId, forKey: .catalogVariantId)
+        try container.encodeIfPresent(productRevision, forKey: .productRevision)
+        try container.encodeIfPresent(catalog2DAssetId, forKey: .catalog2DAssetId)
+        try container.encode(seed, forKey: .seed)
+        try container.encode(seed.spaceId, forKey: .spaceId)
+        try container.encode(seed.baseRevisionId, forKey: .baseRevisionId)
+        try container.encode(seed.u, forKey: .seedU)
+        try container.encode(seed.v, forKey: .seedV)
+        try container.encode(seed.yawDeg, forKey: .yaw)
+        try container.encode(seed.pitchDeg, forKey: .pitch)
+    }
+
+    init(
+        aiConsentAccepted: Bool,
+        catalogProductId: String,
+        catalogVariantId: String?,
+        productRevision: String?,
+        catalog2DAssetId: String?,
+        seed: CurtainPlacementSeedPayload
+    ) {
+        self.aiConsentAccepted = aiConsentAccepted
+        self.catalogProductId = catalogProductId
+        self.catalogVariantId = catalogVariantId
+        self.productRevision = productRevision
+        self.catalog2DAssetId = catalog2DAssetId
+        self.seed = seed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        aiConsentAccepted = try container.decode(Bool.self, forKey: .aiConsentAccepted)
+        catalogProductId = try container.decode(String.self, forKey: .catalogProductId)
+        catalogVariantId = try container.decodeIfPresent(String.self, forKey: .catalogVariantId)
+        productRevision = try container.decodeIfPresent(String.self, forKey: .productRevision)
+        catalog2DAssetId = try container.decodeIfPresent(String.self, forKey: .catalog2DAssetId)
+        seed = try container.decode(CurtainPlacementSeedPayload.self, forKey: .seed)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case aiConsentAccepted
+        case catalogProductId
+        case catalogVariantId
+        case productRevision
+        case catalog2DAssetId
+        case seed
+        case spaceId
+        case baseRevisionId
+        case seedU
+        case seedV
+        case yaw
+        case pitch
+    }
 }
 
 struct CurtainPlacementJob: Codable, Sendable, Equatable {

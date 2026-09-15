@@ -160,11 +160,14 @@ actor CurtainPlacementMockClient: CurtainPlacementServing {
     }
 
     func reselectWindow(jobId: String, seedU: Double, seedV: Double) async throws -> CurtainPlacementJob {
+        _ = seedU
+        _ = seedV
         guard var job = jobs[jobId] else { throw CurtainPlacementAPIError.notFound }
         job.status = "DETECTING_WINDOW"
-        job.seedU = seedU
-        job.seedV = seedV
-        job.needsConfirmation = true
+        job.windowPolygon = nil
+        job.needsConfirmation = nil
+        job.confidence = nil
+        pollCounts[jobId] = 0
         jobs[jobId] = job
         return job
     }
