@@ -1,1 +1,130 @@
-name: Gonggi options:   bundleIdPrefix: com.whik   deploymentTarget:     iOS: "17.0"   xcodeVersion: "15.0"   createIntermediateGroups: true  settings:   base:     SWIFT_VERSION: "5.9"     DEVELOPMENT_TEAM: ""     MARKETING_VERSION: "2.0"     CURRENT_PROJECT_VERSION: "39"     GONGGI_BUILD_SHA: "local"  configs:   Debug: debug   Release: release  # Single source for Google iOS OAuth client id (Debug + Release). configFiles:   Debug: Config/Auth.xcconfig   Release: Config/Auth.xcconfig  targets:   Gonggi:     type: application     platform: iOS     sources:       - path: Gonggi         excludes:           - "**/*.md"     resources:       - path: NOTICE       - path: third_party/opencv/LICENSE       - path: Gonggi/Resources/Welcome/WelcomeLatLongSample_1774x887.jpg     dependencies:       - framework: Vendor/OpenCV/opencv2.xcframework         embed: false       - sdk: libc++.tbd       - sdk: Accelerate.framework     configFiles:       Debug: Config/Auth.xcconfig       Release: Config/Auth.xcconfig     settings:       base:         OTHER_LDFLAGS: "$(inherited) -framework opencv2 -lz"         OTHER_CPLUSPLUSFLAGS: "$(inherited) -frtti -fexceptions"         GCC_ENABLE_CPP_EXCEPTIONS: YES         GCC_ENABLE_CPP_RTTI: YES         CLANG_CXX_LANGUAGE_STANDARD: "c++17"         CLANG_CXX_LIBRARY: libc++         CLANG_ENABLE_MODULES: YES         ENABLE_BITCODE: NO         # macos-15 / Apple Silicon CI: OpenCV minimal xcframework is arm64(+sim arm64) only.         "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64         ONLY_ACTIVE_ARCH: NO         FRAMEWORK_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Vendor/OpenCV"         HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Gonggi/Capture/Quick360/Engine/OpenCV"         SWIFT_OBJC_BRIDGING_HEADER: Gonggi/Capture/Quick360/Engine/OpenCV/Gonggi-Bridging-Header.h         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon         INFOPLIST_KEY_CFBundleIconName: AppIcon         INFOPLIST_KEY_CFBundleDisplayName: 怨듦린         INFOPLIST_KEY_NSCameraUsageDescription: ?뚮끂?쇰쭏쨌怨듦컙 湲곕줉怨?AR濡?3D ?댁뀑??諛곗튂?섍린 ?꾪빐 移대찓?쇨? ?꾩슂?⑸땲??         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: 珥ъ쁺??怨듦컙???꾩튂瑜?湲곕줉?섍린 ?꾪빐 ?ъ슜?⑸땲??         INFOPLIST_KEY_NSMicrophoneUsageDescription: 怨듦컙???뚮━瑜??④퍡 湲곕줉?섍린 ?꾪빐 留덉씠???묎렐???꾩슂?⑸땲??         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES         INFOPLIST_KEY_UILaunchScreen_Generation: YES         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait         TARGETED_DEVICE_FAMILY: "1"         PRODUCT_BUNDLE_IDENTIFIER: com.whik.gonggi         CODE_SIGN_ENTITLEMENTS: Gonggi/Resources/Gonggi.entitlements     entitlements:       path: Gonggi/Resources/Gonggi.entitlements       properties:         com.apple.developer.applesignin:           - Default     info:       path: Gonggi/Resources/Info.plist       properties:         CFBundleShortVersionString: $(MARKETING_VERSION)         CFBundleVersion: $(CURRENT_PROJECT_VERSION)         GonggiBuildSHA: $(GONGGI_BUILD_SHA)         CFBundleIconName: AppIcon         UILaunchScreen: {}         NSCameraUsageDescription: ?뚮끂?쇰쭏쨌怨듦컙 湲곕줉, ?ъ쭊?쇰줈 3D 留뚮뱾湲? AR濡?3D ?댁뀑 諛곗튂瑜??꾪빐 移대찓?쇨? ?꾩슂?⑸땲??         NSLocationWhenInUseUsageDescription: 珥ъ쁺??怨듦컙???꾩튂瑜?湲곕줉?섍린 ?꾪빐 ?ъ슜?⑸땲??         NSMicrophoneUsageDescription: 怨듦컙???뚮━瑜??④퍡 湲곕줉?섍린 ?꾪빐 留덉씠???묎렐???꾩슂?⑸땲??         NSPhotoLibraryAddUsageDescription: 珥ъ쁺??怨듦컙????ν빀?덈떎.         # Injected from Config/Auth.xcconfig (Debug + Release) ??not hardcoded in Swift.         GoogleClientID: $(GOOGLE_IOS_CLIENT_ID)         CFBundleURLTypes:           - CFBundleURLName: google-oauth             CFBundleURLSchemes:               - $(GOOGLE_REVERSED_CLIENT_ID)    GonggiTests:     type: bundle.unit-test     platform: iOS     sources:       - path: GonggiTests         excludes:           - "Fixtures/**"     resources:       - path: GonggiTests/Fixtures     dependencies:       - target: Gonggi     settings:       base:         PRODUCT_BUNDLE_IDENTIFIER: com.whik.gonggi.tests         GENERATE_INFOPLIST_FILE: YES         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Gonggi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Gonggi"         BUNDLE_LOADER: "$(TEST_HOST)"  schemes:   Gonggi:     build:       targets:         Gonggi: all     run:       config: Debug     test:       config: Debug       targets:         - GonggiTests     profile:       config: Release     analyze:       config: Debug
+name: Gonggi
+options:
+  bundleIdPrefix: com.whik
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "2.0"
+    CURRENT_PROJECT_VERSION: "39"
+    GONGGI_BUILD_SHA: "local"
+
+configs:
+  Debug: debug
+  Release: release
+
+# Single source for Google iOS OAuth client id (Debug + Release).
+configFiles:
+  Debug: Config/Auth.xcconfig
+  Release: Config/Auth.xcconfig
+
+targets:
+  Gonggi:
+    type: application
+    platform: iOS
+    sources:
+      - path: Gonggi
+        excludes:
+          - "**/*.md"
+    resources:
+      - path: NOTICE
+      - path: third_party/opencv/LICENSE
+      - path: Gonggi/Resources/Welcome/WelcomeLatLongSample_1774x887.jpg
+    dependencies:
+      - framework: Vendor/OpenCV/opencv2.xcframework
+        embed: false
+      - sdk: libc++.tbd
+      - sdk: Accelerate.framework
+    configFiles:
+      Debug: Config/Auth.xcconfig
+      Release: Config/Auth.xcconfig
+    settings:
+      base:
+        OTHER_LDFLAGS: "$(inherited) -framework opencv2 -lz"
+        OTHER_CPLUSPLUSFLAGS: "$(inherited) -frtti -fexceptions"
+        GCC_ENABLE_CPP_EXCEPTIONS: YES
+        GCC_ENABLE_CPP_RTTI: YES
+        CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+        CLANG_CXX_LIBRARY: libc++
+        CLANG_ENABLE_MODULES: YES
+        ENABLE_BITCODE: NO
+        # macos-15 / Apple Silicon CI: OpenCV minimal xcframework is arm64(+sim arm64) only.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+        ONLY_ACTIVE_ARCH: NO
+        FRAMEWORK_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Vendor/OpenCV"
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/Gonggi/Capture/Quick360/Engine/OpenCV"
+        SWIFT_OBJC_BRIDGING_HEADER: Gonggi/Capture/Quick360/Engine/OpenCV/Gonggi-Bridging-Header.h
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_CFBundleIconName: AppIcon
+        INFOPLIST_KEY_CFBundleDisplayName: 공기
+        INFOPLIST_KEY_NSCameraUsageDescription: 파노라마·공간 기록과 AR로 3D 어셋을 배치하기 위해 카메라가 필요합니다.
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: 촬영한 공간의 위치를 기록하기 위해 사용합니다.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        TARGETED_DEVICE_FAMILY: "1"
+        PRODUCT_BUNDLE_IDENTIFIER: com.whik.gonggi
+        CODE_SIGN_ENTITLEMENTS: Gonggi/Resources/Gonggi.entitlements
+    entitlements:
+      path: Gonggi/Resources/Gonggi.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
+    info:
+      path: Gonggi/Resources/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        GonggiBuildSHA: $(GONGGI_BUILD_SHA)
+        CFBundleIconName: AppIcon
+        UILaunchScreen: {}
+        NSCameraUsageDescription: 파노라마·공간 기록, 사진으로 3D 만들기, AR로 3D 어셋 배치를 위해 카메라가 필요합니다.
+        NSLocationWhenInUseUsageDescription: 촬영한 공간의 위치를 기록하기 위해 사용합니다.
+        NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
+        NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
+        # Injected from Config/Auth.xcconfig (Debug + Release) — not hardcoded in Swift.
+        GoogleClientID: $(GOOGLE_IOS_CLIENT_ID)
+        CFBundleURLTypes:
+          - CFBundleURLName: google-oauth
+            CFBundleURLSchemes:
+              - $(GOOGLE_REVERSED_CLIENT_ID)
+
+  GonggiTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: GonggiTests
+        excludes:
+          - "Fixtures/**"
+    resources:
+      - path: GonggiTests/Fixtures
+    dependencies:
+      - target: Gonggi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.whik.gonggi.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Gonggi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Gonggi"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  Gonggi:
+    build:
+      targets:
+        Gonggi: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - GonggiTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug

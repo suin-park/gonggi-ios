@@ -1,1 +1,432 @@
-name: Gonggi iOS Differential Regression  # Compare full GonggiTests on release base (2.0/33 line) vs feature head. # Fails only on NEW regressions (failed on head, passed on base). # No archive / signing / TestFlight / build-number bump. on:   push:     branches:       - feature/gonggi-partner-catalog-ios     paths:       - 'Gonggi/**'       - 'GonggiTests/**'       - 'project.yml'       - 'scripts/compare-gonggi-test-failures.py'       - '.github/workflows/gonggi-ios-differential-regression.yml'   pull_request:     branches:       - design/brand-redesign-v1     paths:       - 'Gonggi/**'       - 'GonggiTests/**'       - 'project.yml'       - 'scripts/compare-gonggi-test-failures.py'       - '.github/workflows/gonggi-ios-differential-regression.yml'   workflow_dispatch:     inputs:       base_sha:         description: 'Base SHA (default: design/brand-redesign-v1 tip / 2.0(33) source)'         required: false         default: '1bf88b2d70018eae6461dfa4124dd5e292298f23'       head_sha:         description: 'Head SHA (default: current checkout SHA)'         required: false         default: ''  concurrency:   group: gonggi-ios-diff-reg-${{ github.ref }}   cancel-in-progress: true  permissions:   contents: read  env:   SCHEME: Gonggi   PROJECT: Gonggi.xcodeproj   OPENCV_VERSION: "4.10.0"   # Prefer newest Xcode (matches Gonggi TestFlight 2.0(33) run 34732141730 ??Xcode 26.3).   # Note: Xcode 16.4 cannot compile base 1bf88b2 (CaptureSummaryView opaque return);   # feature fixed that for 16.4, but baseline comparison must use a toolchain that builds base.   BASE_SHA_DEFAULT: 1bf88b2d70018eae6461dfa4124dd5e292298f23  jobs:   prepare-opencv:     name: Prepare OpenCV xcframework     runs-on: macos-15     timeout-minutes: 120     steps:       - uses: actions/checkout@v4       - name: Cache OpenCV xcframework         id: opencv-cache         uses: actions/cache@v4         with:           path: Vendor/OpenCV/opencv2.xcframework           key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1       - name: Ensure OpenCV xcframework         if: steps.opencv-cache.outputs.cache-hit != 'true'         run: |           set -euo pipefail           chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh           ./scripts/ensure_opencv_xcframework.sh       - uses: actions/upload-artifact@v4         with:           name: opencv2-xcframework-diff           path: Vendor/OpenCV/opencv2.xcframework           if-no-files-found: error           retention-days: 3    test-ref:     name: Full GonggiTests (${{ matrix.label }})     needs: prepare-opencv     runs-on: macos-15     timeout-minutes: 90     strategy:       fail-fast: false       matrix:         include:           - label: base             sha_source: base           - label: head             sha_source: head     steps:       - name: Resolve SHA         id: ref         run: |           set -euo pipefail           if [[ "${{ matrix.sha_source }}" == "base" ]]; then             SHA="${{ github.event.inputs.base_sha }}"             if [[ -z "${SHA}" ]]; then               SHA="${{ env.BASE_SHA_DEFAULT }}"             fi           else             SHA="${{ github.event.inputs.head_sha }}"             if [[ -z "${SHA}" ]]; then               SHA="${{ github.sha }}"             fi           fi           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"           echo "Testing ${{ matrix.label }} @ ${SHA}"        - uses: actions/checkout@v4         with:           ref: ${{ steps.ref.outputs.sha }}           fetch-depth: 0        - name: Apply Simulator Debug compile shims (base only)         if: matrix.label == 'base'         run: |           set -euo pipefail           # Pure 1bf88b2 Release-archives for TestFlight, but Simulator Debug fails to compile:           # - CaptureSummaryView opaque return           # - ThreeDExpansionSupportTests mutates SpaceRecord.id (let)           # - ServerGenerationProfileMapperTests Optional Double XCTAssertEqual           # Apply ONLY those compile-only fixes from the feature branch (no Catalog sources).           git fetch --no-tags origin \             a7f14f9eaab7d998ab57a56673fa27f3cca2bf64 \             451e1856be062b6f25ce843039f86cc3237d7cdd \             f3f791d16f50f72a216d446047f92b89eaf17a55           git checkout a7f14f9eaab7d998ab57a56673fa27f3cca2bf64 -- \             Gonggi/Features/Capture/CaptureSummaryView.swift           git checkout 451e1856be062b6f25ce843039f86cc3237d7cdd -- \             GonggiTests/ThreeDExpansionSupportTests.swift           git checkout f3f791d16f50f72a216d446047f92b89eaf17a55 -- \             GonggiTests/ServerGenerationProfileMapperTests.swift           echo "baseline_shims=capture_summary_return,three_d_expansion_tests,profile_mapper_optional" >> "$GITHUB_OUTPUT"           echo "Applied Simulator Debug compile-only shims on base (Catalog sources NOT included)."        - name: Guard marketing/build for this PR track         run: |           set -euo pipefail           grep -q 'CURRENT_PROJECT_VERSION: "39"' project.yml           grep -q 'MARKETING_VERSION: "2.0"' project.yml           echo "Build number 39; marketing 2.0 (TestFlight track)"        - name: Restore OpenCV cache         id: opencv-cache         uses: actions/cache@v4         with:           path: Vendor/OpenCV/opencv2.xcframework           key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1        - name: Download OpenCV if needed         if: steps.opencv-cache.outputs.cache-hit != 'true'         uses: actions/download-artifact@v4         with:           name: opencv2-xcframework-diff           path: /tmp/opencv-artifact        - name: Install OpenCV         run: |           set -euo pipefail           DEST="Vendor/OpenCV/opencv2.xcframework"           mkdir -p Vendor/OpenCV           if [[ -f "${DEST}/Info.plist" ]]; then             echo "cached"           else             FOUND="$(find /tmp/opencv-artifact -type d -name 'opencv2.xcframework' | head -n 1 || true)"             rm -rf "${DEST}"             cp -R "${FOUND}" "${DEST}"           fi           test -f "${DEST}/Info.plist"        - name: Select Xcode (newest; TF 2.0(33) parity)         run: |           set -euo pipefail           # Prefer same selection rule as gonggi-testflight.yml (newest installed).           if [[ -d /Applications/Xcode_26.3.0.app ]]; then             XCODE_APP=/Applications/Xcode_26.3.0.app           else             XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"           fi           if [[ -z "${XCODE_APP}" || ! -d "${XCODE_APP}" ]]; then             echo "::error::No Xcode.app found on runner"             exit 1           fi           echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"           echo "Using ${XCODE_APP}"           xcodebuild -version           sw_vers           uname -m        - name: Install XcodeGen         run: |           if ! command -v xcodegen >/dev/null 2>&1; then             brew install xcodegen           fi           xcodegen --version        - name: Generate project         run: |           set -euo pipefail           xcodegen generate           test -d "${{ env.PROJECT }}"        - name: Resolve Simulator (iOS 18.5 preferred)         id: sim         run: |           set -euo pipefail           UDID="$(python3 <<'PY'           import json, subprocess, sys           out = subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True)           data = json.loads(out)           # Prefer iOS 18.5 runtime, then any iOS; prefer iPhone 16/15           runtimes = list(data.get("devices", {}).keys())           preferred_rt = [r for r in runtimes if "18.5" in r] or sorted(               [r for r in runtimes if "iOS" in r], reverse=True           )           for rt in preferred_rt:               devices = data["devices"][rt]               phones = [d for d in devices if d.get("isAvailable") and "iPhone" in d.get("name", "")]               phones.sort(key=lambda d: d.get("name", ""))               for d in phones:                   if any(x in d.get("name", "") for x in ("iPhone 16", "iPhone 15", "iPhone 14")):                       print(d["udid"]); sys.exit(0)               if phones:                   print(phones[0]["udid"]); sys.exit(0)           sys.exit(1)           PY           )"           echo "udid=${UDID}" >> "$GITHUB_OUTPUT"           xcrun simctl list devices available | grep "${UDID}" || true        - name: CatalogModelsTests (head only, hard gate)         if: matrix.label == 'head'         run: |           set -euo pipefail           xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true           set +e           xcodebuild test \             -project "${{ env.PROJECT }}" \             -scheme "${{ env.SCHEME }}" \             -sdk iphonesimulator \             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \             -only-testing:GonggiTests/CatalogModelsTests \             ARCHS=arm64 EXCLUDED_ARCHS=x86_64 \             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \             2>&1 | tee catalog-gate.log           STATUS=${PIPESTATUS[0]}           set -e           exit "${STATUS}"        - name: Full GonggiTests         id: full         run: |           set -euo pipefail           xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true           set +e           xcodebuild test \             -project "${{ env.PROJECT }}" \             -scheme "${{ env.SCHEME }}" \             -sdk iphonesimulator \             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \             -only-testing:GonggiTests \             ARCHS=arm64 EXCLUDED_ARCHS=x86_64 \             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \             -resultBundlePath "GonggiTests-${{ matrix.label }}.xcresult" \             2>&1 | tee "xcodebuild-${{ matrix.label }}.log"           STATUS=${PIPESTATUS[0]}           set -e           echo "exit_code=${STATUS}" >> "$GITHUB_OUTPUT"           export XCODE_STATUS="${STATUS}"           python3 - <<'PY'           import re, pathlib, os, json           label = os.environ["LABEL"]           log = pathlib.Path(f"xcodebuild-{label}.log")           text = log.read_text(encoding="utf-8", errors="replace")           compile_failed = "Testing cancelled because the build failed" in text           pat = re.compile(r"Test Case '-\[(?P<suite>[A-Za-z0-9_.]+) (?P<name>[A-Za-z0-9_]+)]' failed")           ids = sorted({f"{m.group('suite')}/{m.group('name')}" for m in pat.finditer(text)})           totals = re.findall(r"Executed (\d+) tests, with (\d+) failures", text)           suite_total = suite_fail = None           if totals:               suite_total, suite_fail = map(int, totals[-1])           meta = {               "label": label,               "compile_failed": compile_failed,               "xcodebuild_exit": int(os.environ.get("XCODE_STATUS", "0") or "0"),               "unique_failed_tests": ids,               "unique_failed_count": len(ids),               "reported_executed": suite_total,               "reported_failures": suite_fail,               "baseline_shims_applied": label == "base",               "baseline_shims": (                   ["capture_summary_return", "three_d_expansion_tests", "profile_mapper_optional"]                   if label == "base"                   else []               ),               "note": (                   "base uses compile-only Simulator Debug shims so suite can run; "                   "2.0(33) Release archive source remains 1bf88b2 without these for TF"                   if label == "base"                   else ""               ),           }           pathlib.Path(f"failures-{label}.txt").write_text(               ("\n".join(ids) + "\n") if ids else "", encoding="utf-8"           )           pathlib.Path(f"meta-{label}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")           print(json.dumps(meta, indent=2))           if compile_failed:               print(f"::warning::{label} compile/build failed ??cannot use as test baseline")           PY         env:           LABEL: ${{ matrix.label }}        - name: Upload ref artifacts         if: always()         uses: actions/upload-artifact@v4         with:           name: diff-ref-${{ matrix.label }}           path: |             failures-${{ matrix.label }}.txt             meta-${{ matrix.label }}.json             xcodebuild-${{ matrix.label }}.log             GonggiTests-${{ matrix.label }}.xcresult             catalog-gate.log           if-no-files-found: warn           retention-days: 14    compare:     name: Differential compare (fail on new regressions)     needs: test-ref     runs-on: ubuntu-latest     timeout-minutes: 10     steps:       - uses: actions/checkout@v4         with:           sparse-checkout: |             scripts/compare-gonggi-test-failures.py           sparse-checkout-cone-mode: false        - uses: actions/download-artifact@v4         with:           name: diff-ref-base           path: base-art        - uses: actions/download-artifact@v4         with:           name: diff-ref-head           path: head-art        - name: Compare failure sets         id: cmp         run: |           set -euo pipefail           python3 - <<'PY'           import json, pathlib, subprocess, sys           base_meta_p = pathlib.Path("base-art/meta-base.json")           head_meta_p = pathlib.Path("head-art/meta-head.json")           base_meta = json.loads(base_meta_p.read_text()) if base_meta_p.exists() else {}           head_meta = json.loads(head_meta_p.read_text()) if head_meta_p.exists() else {}           if base_meta.get("compile_failed") or head_meta.get("compile_failed"):               report = {                   "pass": False,                   "unverified": True,                   "reason": "compile_failed",                   "base_meta": base_meta,                   "head_meta": head_meta,                   "new_regressions": [],                   "common_failures": [],                   "fixed_on_head": [],               }               pathlib.Path("differential-report.json").write_text(json.dumps(report, indent=2) + "\n")               md = (                   "## Differential regression gate\n\n"                   "### UNVERIFIED ??compile failure prevented fair test comparison\n\n"                   f"- base compile_failed: {base_meta.get('compile_failed')}\n"                   f"- head compile_failed: {head_meta.get('compile_failed')}\n"               )               pathlib.Path("differential-summary.md").write_text(md)               print(md)               sys.exit(0)           rc = subprocess.call([               "python3", "scripts/compare-gonggi-test-failures.py",               "--base-failures", "base-art/failures-base.txt",               "--head-failures", "head-art/failures-head.txt",               "--out-json", "differential-report.json",               "--out-summary", "differential-summary.md",           ])           r = json.loads(pathlib.Path("differential-report.json").read_text())           r["base_meta"] = base_meta           r["head_meta"] = head_meta           r["unverified"] = False           pathlib.Path("differential-report.json").write_text(json.dumps(r, indent=2) + "\n")           print(pathlib.Path("differential-summary.md").read_text())           # Keep report even when new regressions; fail in next step.           sys.exit(0)           PY           {             echo "## Differential regression gate"             cat differential-summary.md           } >> "$GITHUB_STEP_SUMMARY"        - name: Upload differential report         if: always()         uses: actions/upload-artifact@v4         with:           name: differential-regression-report           path: |             differential-report.json             differential-summary.md             base-art/failures-base.txt             head-art/failures-head.txt             base-art/meta-base.json             head-art/meta-head.json           if-no-files-found: warn           retention-days: 30        - name: Fail if new regressions or unverified         run: |           set -euo pipefail           python3 - <<'PY'           import json, sys           r = json.load(open("differential-report.json", encoding="utf-8"))           print(json.dumps(r, indent=2))           if r.get("unverified"):               print("::error::Differential UNVERIFIED (compile failure on base or head).")               sys.exit(1)           if not r.get("pass"):               print("::error::New regressions detected vs 2.0(33) base; release blocked.")               sys.exit(1)           print("No new regressions vs base.")           PY
+name: Gonggi iOS Differential Regression
+
+# Compare full GonggiTests on release base (2.0/33 line) vs feature head.
+# Fails only on NEW regressions (failed on head, passed on base).
+# No archive / signing / TestFlight / build-number bump.
+on:
+  push:
+    branches:
+      - feature/gonggi-partner-catalog-ios
+    paths:
+      - 'Gonggi/**'
+      - 'GonggiTests/**'
+      - 'project.yml'
+      - 'scripts/compare-gonggi-test-failures.py'
+      - '.github/workflows/gonggi-ios-differential-regression.yml'
+  pull_request:
+    branches:
+      - design/brand-redesign-v1
+    paths:
+      - 'Gonggi/**'
+      - 'GonggiTests/**'
+      - 'project.yml'
+      - 'scripts/compare-gonggi-test-failures.py'
+      - '.github/workflows/gonggi-ios-differential-regression.yml'
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: 'Base SHA (default: design/brand-redesign-v1 tip / 2.0(33) source)'
+        required: false
+        default: '1bf88b2d70018eae6461dfa4124dd5e292298f23'
+      head_sha:
+        description: 'Head SHA (default: current checkout SHA)'
+        required: false
+        default: ''
+
+concurrency:
+  group: gonggi-ios-diff-reg-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+  OPENCV_VERSION: "4.10.0"
+  # Prefer newest Xcode (matches Gonggi TestFlight 2.0(33) run 34732141730 → Xcode 26.3).
+  # Note: Xcode 16.4 cannot compile base 1bf88b2 (CaptureSummaryView opaque return);
+  # feature fixed that for 16.4, but baseline comparison must use a toolchain that builds base.
+  BASE_SHA_DEFAULT: 1bf88b2d70018eae6461dfa4124dd5e292298f23
+
+jobs:
+  prepare-opencv:
+    name: Prepare OpenCV xcframework
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache OpenCV xcframework
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+      - name: Ensure OpenCV xcframework
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh
+          ./scripts/ensure_opencv_xcframework.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencv2-xcframework-diff
+          path: Vendor/OpenCV/opencv2.xcframework
+          if-no-files-found: error
+          retention-days: 3
+
+  test-ref:
+    name: Full GonggiTests (${{ matrix.label }})
+    needs: prepare-opencv
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: base
+            sha_source: base
+          - label: head
+            sha_source: head
+    steps:
+      - name: Resolve SHA
+        id: ref
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.sha_source }}" == "base" ]]; then
+            SHA="${{ github.event.inputs.base_sha }}"
+            if [[ -z "${SHA}" ]]; then
+              SHA="${{ env.BASE_SHA_DEFAULT }}"
+            fi
+          else
+            SHA="${{ github.event.inputs.head_sha }}"
+            if [[ -z "${SHA}" ]]; then
+              SHA="${{ github.sha }}"
+            fi
+          fi
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "Testing ${{ matrix.label }} @ ${SHA}"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Apply Simulator Debug compile shims (base only)
+        if: matrix.label == 'base'
+        run: |
+          set -euo pipefail
+          # Pure 1bf88b2 Release-archives for TestFlight, but Simulator Debug fails to compile:
+          # - CaptureSummaryView opaque return
+          # - ThreeDExpansionSupportTests mutates SpaceRecord.id (let)
+          # - ServerGenerationProfileMapperTests Optional Double XCTAssertEqual
+          # Apply ONLY those compile-only fixes from the feature branch (no Catalog sources).
+          git fetch --no-tags origin \
+            a7f14f9eaab7d998ab57a56673fa27f3cca2bf64 \
+            451e1856be062b6f25ce843039f86cc3237d7cdd \
+            f3f791d16f50f72a216d446047f92b89eaf17a55
+          git checkout a7f14f9eaab7d998ab57a56673fa27f3cca2bf64 -- \
+            Gonggi/Features/Capture/CaptureSummaryView.swift
+          git checkout 451e1856be062b6f25ce843039f86cc3237d7cdd -- \
+            GonggiTests/ThreeDExpansionSupportTests.swift
+          git checkout f3f791d16f50f72a216d446047f92b89eaf17a55 -- \
+            GonggiTests/ServerGenerationProfileMapperTests.swift
+          echo "baseline_shims=capture_summary_return,three_d_expansion_tests,profile_mapper_optional" >> "$GITHUB_OUTPUT"
+          echo "Applied Simulator Debug compile-only shims on base (Catalog sources NOT included)."
+
+      - name: Guard marketing/build for this PR track
+        run: |
+          set -euo pipefail
+          grep -q 'CURRENT_PROJECT_VERSION: "39"' project.yml
+          grep -q 'MARKETING_VERSION: "2.0"' project.yml
+          echo "Build number 39; marketing 2.0 (TestFlight track)"
+
+      - name: Restore OpenCV cache
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Download OpenCV if needed
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: opencv2-xcframework-diff
+          path: /tmp/opencv-artifact
+
+      - name: Install OpenCV
+        run: |
+          set -euo pipefail
+          DEST="Vendor/OpenCV/opencv2.xcframework"
+          mkdir -p Vendor/OpenCV
+          if [[ -f "${DEST}/Info.plist" ]]; then
+            echo "cached"
+          else
+            FOUND="$(find /tmp/opencv-artifact -type d -name 'opencv2.xcframework' | head -n 1 || true)"
+            rm -rf "${DEST}"
+            cp -R "${FOUND}" "${DEST}"
+          fi
+          test -f "${DEST}/Info.plist"
+
+      - name: Select Xcode (newest; TF 2.0(33) parity)
+        run: |
+          set -euo pipefail
+          # Prefer same selection rule as gonggi-testflight.yml (newest installed).
+          if [[ -d /Applications/Xcode_26.3.0.app ]]; then
+            XCODE_APP=/Applications/Xcode_26.3.0.app
+          else
+            XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          fi
+          if [[ -z "${XCODE_APP}" || ! -d "${XCODE_APP}" ]]; then
+            echo "::error::No Xcode.app found on runner"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          echo "Using ${XCODE_APP}"
+          xcodebuild -version
+          sw_vers
+          uname -m
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Generate project
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+
+      - name: Resolve Simulator (iOS 18.5 preferred)
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID="$(python3 <<'PY'
+          import json, subprocess, sys
+          out = subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True)
+          data = json.loads(out)
+          # Prefer iOS 18.5 runtime, then any iOS; prefer iPhone 16/15
+          runtimes = list(data.get("devices", {}).keys())
+          preferred_rt = [r for r in runtimes if "18.5" in r] or sorted(
+              [r for r in runtimes if "iOS" in r], reverse=True
+          )
+          for rt in preferred_rt:
+              devices = data["devices"][rt]
+              phones = [d for d in devices if d.get("isAvailable") and "iPhone" in d.get("name", "")]
+              phones.sort(key=lambda d: d.get("name", ""))
+              for d in phones:
+                  if any(x in d.get("name", "") for x in ("iPhone 16", "iPhone 15", "iPhone 14")):
+                      print(d["udid"]); sys.exit(0)
+              if phones:
+                  print(phones[0]["udid"]); sys.exit(0)
+          sys.exit(1)
+          PY
+          )"
+          echo "udid=${UDID}" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "${UDID}" || true
+
+      - name: CatalogModelsTests (head only, hard gate)
+        if: matrix.label == 'head'
+        run: |
+          set -euo pipefail
+          xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
+          set +e
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GonggiTests/CatalogModelsTests \
+            ARCHS=arm64 EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee catalog-gate.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          exit "${STATUS}"
+
+      - name: Full GonggiTests
+        id: full
+        run: |
+          set -euo pipefail
+          xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
+          set +e
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GonggiTests \
+            ARCHS=arm64 EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -resultBundlePath "GonggiTests-${{ matrix.label }}.xcresult" \
+            2>&1 | tee "xcodebuild-${{ matrix.label }}.log"
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=${STATUS}" >> "$GITHUB_OUTPUT"
+          export XCODE_STATUS="${STATUS}"
+          python3 - <<'PY'
+          import re, pathlib, os, json
+          label = os.environ["LABEL"]
+          log = pathlib.Path(f"xcodebuild-{label}.log")
+          text = log.read_text(encoding="utf-8", errors="replace")
+          compile_failed = "Testing cancelled because the build failed" in text
+          pat = re.compile(r"Test Case '-\[(?P<suite>[A-Za-z0-9_.]+) (?P<name>[A-Za-z0-9_]+)]' failed")
+          ids = sorted({f"{m.group('suite')}/{m.group('name')}" for m in pat.finditer(text)})
+          totals = re.findall(r"Executed (\d+) tests, with (\d+) failures", text)
+          suite_total = suite_fail = None
+          if totals:
+              suite_total, suite_fail = map(int, totals[-1])
+          meta = {
+              "label": label,
+              "compile_failed": compile_failed,
+              "xcodebuild_exit": int(os.environ.get("XCODE_STATUS", "0") or "0"),
+              "unique_failed_tests": ids,
+              "unique_failed_count": len(ids),
+              "reported_executed": suite_total,
+              "reported_failures": suite_fail,
+              "baseline_shims_applied": label == "base",
+              "baseline_shims": (
+                  ["capture_summary_return", "three_d_expansion_tests", "profile_mapper_optional"]
+                  if label == "base"
+                  else []
+              ),
+              "note": (
+                  "base uses compile-only Simulator Debug shims so suite can run; "
+                  "2.0(33) Release archive source remains 1bf88b2 without these for TF"
+                  if label == "base"
+                  else ""
+              ),
+          }
+          pathlib.Path(f"failures-{label}.txt").write_text(
+              ("\n".join(ids) + "\n") if ids else "", encoding="utf-8"
+          )
+          pathlib.Path(f"meta-{label}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps(meta, indent=2))
+          if compile_failed:
+              print(f"::warning::{label} compile/build failed — cannot use as test baseline")
+          PY
+        env:
+          LABEL: ${{ matrix.label }}
+
+      - name: Upload ref artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-ref-${{ matrix.label }}
+          path: |
+            failures-${{ matrix.label }}.txt
+            meta-${{ matrix.label }}.json
+            xcodebuild-${{ matrix.label }}.log
+            GonggiTests-${{ matrix.label }}.xcresult
+            catalog-gate.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  compare:
+    name: Differential compare (fail on new regressions)
+    needs: test-ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/compare-gonggi-test-failures.py
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: diff-ref-base
+          path: base-art
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: diff-ref-head
+          path: head-art
+
+      - name: Compare failure sets
+        id: cmp
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, subprocess, sys
+          base_meta_p = pathlib.Path("base-art/meta-base.json")
+          head_meta_p = pathlib.Path("head-art/meta-head.json")
+          base_meta = json.loads(base_meta_p.read_text()) if base_meta_p.exists() else {}
+          head_meta = json.loads(head_meta_p.read_text()) if head_meta_p.exists() else {}
+          if base_meta.get("compile_failed") or head_meta.get("compile_failed"):
+              report = {
+                  "pass": False,
+                  "unverified": True,
+                  "reason": "compile_failed",
+                  "base_meta": base_meta,
+                  "head_meta": head_meta,
+                  "new_regressions": [],
+                  "common_failures": [],
+                  "fixed_on_head": [],
+              }
+              pathlib.Path("differential-report.json").write_text(json.dumps(report, indent=2) + "\n")
+              md = (
+                  "## Differential regression gate\n\n"
+                  "### UNVERIFIED — compile failure prevented fair test comparison\n\n"
+                  f"- base compile_failed: {base_meta.get('compile_failed')}\n"
+                  f"- head compile_failed: {head_meta.get('compile_failed')}\n"
+              )
+              pathlib.Path("differential-summary.md").write_text(md)
+              print(md)
+              sys.exit(0)
+          rc = subprocess.call([
+              "python3", "scripts/compare-gonggi-test-failures.py",
+              "--base-failures", "base-art/failures-base.txt",
+              "--head-failures", "head-art/failures-head.txt",
+              "--out-json", "differential-report.json",
+              "--out-summary", "differential-summary.md",
+          ])
+          r = json.loads(pathlib.Path("differential-report.json").read_text())
+          r["base_meta"] = base_meta
+          r["head_meta"] = head_meta
+          r["unverified"] = False
+          pathlib.Path("differential-report.json").write_text(json.dumps(r, indent=2) + "\n")
+          print(pathlib.Path("differential-summary.md").read_text())
+          # Keep report even when new regressions; fail in next step.
+          sys.exit(0)
+          PY
+          {
+            echo "## Differential regression gate"
+            cat differential-summary.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload differential report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: differential-regression-report
+          path: |
+            differential-report.json
+            differential-summary.md
+            base-art/failures-base.txt
+            head-art/failures-head.txt
+            base-art/meta-base.json
+            head-art/meta-head.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail if new regressions or unverified
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys
+          r = json.load(open("differential-report.json", encoding="utf-8"))
+          print(json.dumps(r, indent=2))
+          if r.get("unverified"):
+              print("::error::Differential UNVERIFIED (compile failure on base or head).")
+              sys.exit(1)
+          if not r.get("pass"):
+              print("::error::New regressions detected vs 2.0(33) base; release blocked.")
+              sys.exit(1)
+          print("No new regressions vs base.")
+          PY
