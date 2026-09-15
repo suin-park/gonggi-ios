@@ -137,7 +137,7 @@ jobs:
       - name: Guard marketing/build for this PR track
         run: |
           set -euo pipefail
-          grep -q 'CURRENT_PROJECT_VERSION: "39"' project.yml
+          grep -q 'CURRENT_PROJECT_VERSION: "40"' project.yml
           grep -q 'MARKETING_VERSION: "2.0"' project.yml
           echo "Build number 39; marketing 2.0 (TestFlight track)"
 
