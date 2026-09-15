@@ -79,11 +79,6 @@ struct CatalogProductDetailView: View {
                 Text(product.productName)
                     .font(GonggiTypography.headline(22))
                     .foregroundStyle(GonggiColors.textPrimary)
-                if let desc = product.shortDescription {
-                    Text(desc)
-                        .font(GonggiTypography.body(15))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
                 Text(product.priceLabel)
                     .font(GonggiTypography.headline(18))
                     .foregroundStyle(GonggiColors.textPrimary)
@@ -99,22 +94,19 @@ struct CatalogProductDetailView: View {
                         .foregroundStyle(GonggiColors.textSecondary)
                         .accessibilityLabel(product.dimensions.accessibilityLabel)
                 }
-                Text(placementMethodLabel(product))
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                Text("표시 치수는 상품 DB 실제 규격이며, 공간 실측을 보장하지 않습니다.")
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let variants = product.variants, !variants.isEmpty {
+                let currentName = resolvedVariant(product)?.name ?? variants[0].name
+                let hasExplicitSelection = selectedVariantId != nil
+                    && variants.contains(where: { $0.id == selectedVariantId })
                 Menu {
                     ForEach(variants) { v in
                         Button {
+                            GonggiHaptics.light()
                             selectedVariantId = v.id
                         } label: {
-                            if v.id == selectedVariantId || (selectedVariantId == nil && v.id == variants.first?.id) {
+                            if v.id == selectedVariantId || (!hasExplicitSelection && v.id == variants.first?.id) {
                                 Label(v.name, systemImage: "checkmark")
                             } else {
                                 Text(v.name)
@@ -122,20 +114,33 @@ struct CatalogProductDetailView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Text("옵션 · \(resolvedVariant(product)?.name ?? variants[0].name)")
+                    HStack(spacing: 8) {
+                        Text(hasExplicitSelection ? currentName : "옵션 선택")
                             .font(GonggiTypography.body(14))
-                            .foregroundStyle(GonggiColors.textSecondary)
+                            .foregroundStyle(GonggiColors.textPrimary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(GonggiColors.textTertiary)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(GonggiColors.accentCyan)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(
+                        Capsule()
+                            .fill(GonggiColors.surfaceElevated)
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(GonggiColors.accentCyan.opacity(0.85), lineWidth: 1.5)
+                    )
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("색상 옵션")
-                .accessibilityHint(variants.count == 1 ? "선택 가능한 색상 1개" : "색상을 선택합니다")
+                .accessibilityLabel("옵션 선택")
+                .accessibilityValue(hasExplicitSelection ? currentName : "미선택")
+                .accessibilityHint(variants.count == 1 ? "선택 가능한 옵션 1개" : "옵션을 선택합니다")
             }
 
             VStack(spacing: GonggiSpacing.sm) {
@@ -227,14 +232,6 @@ struct CatalogProductDetailView: View {
         .frame(height: 220)
         .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
         .accessibilityLabel("\(product.productName) 대표 이미지")
-    }
-
-    private func placementMethodLabel(_ product: CatalogProduct) -> String {
-        switch product.placementType {
-        case .furniture3D: return "배치 방식 · 3D 가구 (바닥 기준)"
-        case .curtain2D: return "배치 방식 · 커튼 (AI 2D 미리보기)"
-        case .unsupported: return "배치 방식 · 지원되지 않음"
-        }
     }
 
     private func resolvedVariant(_ product: CatalogProduct) -> CatalogVariant? {
