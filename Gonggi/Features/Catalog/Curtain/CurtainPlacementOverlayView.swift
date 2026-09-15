@@ -41,8 +41,10 @@ struct CurtainPlacementBanner: View {
     let message: String
     var warnings: [CurtainSeedWarning] = []
     var showConfirmActions: Bool = false
+    var showCreateFailureActions: Bool = false
     var onConfirm: (() -> Void)?
     var onReselect: (() -> Void)?
+    var onRetryCreate: (() -> Void)?
 
     var body: some View {
         VStack(spacing: GonggiSpacing.sm) {
@@ -70,6 +72,23 @@ struct CurtainPlacementBanner: View {
                     Button("이 위치로 만들기") {
                         GonggiHaptics.medium()
                         onConfirm?()
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.borderedProminent)
+                    .tint(GonggiColors.accentCyan)
+                }
+            } else if showCreateFailureActions {
+                HStack(spacing: GonggiSpacing.sm) {
+                    Button("창문 위치 다시 선택") {
+                        GonggiHaptics.light()
+                        onReselect?()
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .tint(.white)
+                    Button("다시 시도") {
+                        GonggiHaptics.medium()
+                        onRetryCreate?()
                     }
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(.borderedProminent)

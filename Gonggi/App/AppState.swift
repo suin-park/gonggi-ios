@@ -24,6 +24,10 @@ final class AppState: ObservableObject {
     @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
     /// One-shot Library segment preference after `exitVRToLibrary()` (consumed by LibraryView).
     @Published var preferredLibraryCategory: LibraryCategory?
+    /// Alias consumed by LibraryView when opening 배치 결과 after async curtain accept.
+    @Published var pendingLibraryTab: LibraryCategory?
+    /// Highlight a placement result card after navigation from VR accept.
+    @Published var pendingPlacementResultHighlightId: String?
     /// Soft Library refresh signal — does not block tab transition.
     @Published private(set) var libraryRefreshEpoch: UInt64 = 0
     /// Unread Gonggi notification badge (likes, comments, admin announcements).
@@ -111,6 +115,8 @@ final class AppState: ObservableObject {
         pendingCurtainPlacement = nil
         spaceLinkUserMessage = nil
         preferredLibraryCategory = nil
+        pendingLibraryTab = nil
+        pendingPlacementResultHighlightId = nil
         notificationUnreadCount = 0
         isExitingVRToLibrary = false
         isExitingVRToHome = false
@@ -137,6 +143,27 @@ final class AppState: ObservableObject {
 
     func selectTab(_ tab: AppTab) {
         selectedTab = tab
+    }
+
+    /// After curtain consent+create succeeds: dismiss VR and open Library → 배치 결과.
+    func openPlacementResults(resultId: String?) {
+        pendingViewerJobId = nil
+        pendingViewerError = nil
+        pendingViewerLaunch = nil
+        preferredLibraryCategory = .placementResults
+        pendingLibraryTab = .placementResults
+        pendingPlacementResultHighlightId = resultId
+        selectedTab = .library
+        forceDismissViewerEpoch &+= 1
+    }
+
+    /// Navigation contract alias for Library segment (`preferredLibraryCategory` / `pendingLibraryTab`).
+    var libraryCategory: LibraryCategory? {
+        get { preferredLibraryCategory ?? pendingLibraryTab }
+        set {
+            preferredLibraryCategory = newValue
+            pendingLibraryTab = newValue
+        }
     }
 
     /// One-tap VR exit: clear viewer presentation + hotspot stack (via cover dismiss),

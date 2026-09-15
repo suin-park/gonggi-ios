@@ -21,6 +21,7 @@ struct CatalogHomeSectionView: View {
                         .padding(.bottom, GonggiSpacing.sm)
                         .accessibilityHidden(true)
                     header
+                    typeFilterBar
                     content
                 }
                 .padding(.top, GonggiSpacing.xl)
@@ -36,9 +37,10 @@ struct CatalogHomeSectionView: View {
                 }
                 .navigationDestination(isPresented: $showAll) {
                     CatalogProductListView(
-                        categories: viewModel.categories,
+                        categories: viewModel.filteredCategoriesForList,
                         client: viewModel.detailClient(),
-                        isMockMode: appState.isMockMode
+                        isMockMode: appState.isMockMode,
+                        placementFilter: viewModel.selectedFilter
                     )
                     .environmentObject(appState)
                 }
@@ -53,13 +55,13 @@ struct CatalogHomeSectionView: View {
                     .font(GonggiTypography.headline(20))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .accessibilityAddTraits(.isHeader)
-                Text("내 공간에 실제 규격의 제휴 가구를 놓아보세요.")
+                Text(viewModel.sectionDescription)
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: GonggiSpacing.sm)
-            if case .loaded = viewModel.state, !viewModel.categories.isEmpty {
+            if case .loaded = viewModel.state, !viewModel.filteredProducts.isEmpty {
                 Button("전체 보기") {
                     GonggiHaptics.light()
                     showAll = true
@@ -70,6 +72,33 @@ struct CatalogHomeSectionView: View {
             }
         }
         .padding(.horizontal, GonggiSpacing.lg)
+    }
+
+    private var typeFilterBar: some View {
+        HStack(spacing: GonggiSpacing.sm) {
+            ForEach(CatalogHomePlacementFilter.allCases) { filter in
+                let isSelected = viewModel.selectedFilter == filter
+                Button {
+                    GonggiHaptics.selection()
+                    viewModel.selectFilter(filter)
+                } label: {
+                    Text(filter.title)
+                        .font(GonggiTypography.body(14))
+                        .foregroundStyle(isSelected ? GonggiColors.textOnAccent : GonggiColors.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule().fill(isSelected ? GonggiColors.accentCyan : GonggiColors.surfaceElevated)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(filter.title)
+                .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+        .padding(.horizontal, GonggiSpacing.lg)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("상품 유형")
     }
 
     @ViewBuilder
@@ -106,15 +135,25 @@ struct CatalogHomeSectionView: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, GonggiSpacing.lg)
         case .loaded:
-            let showTitles = CatalogListPayload.shouldShowCategoryTitles(viewModel.categories)
-            VStack(alignment: .leading, spacing: GonggiSpacing.xl) {
-                ForEach(viewModel.categories) { category in
-                    CatalogCategoryRowView(category: category, showTitle: showTitles) { product in
-                        detailRoute = CatalogProductRoute(id: product.id)
-                    } onPlace: { product in
-                        detailRoute = CatalogProductRoute(id: product.id)
+            if viewModel.showsTypeEmptyState {
+                Text("지금은 배치할 수 있는 제휴 상품이 없어요.")
+                    .font(GonggiTypography.body(14))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                    .padding(.horizontal, GonggiSpacing.lg)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: GonggiSpacing.md) {
+                        ForEach(viewModel.filteredProducts) { product in
+                            CatalogProductCardView(product: product) {
+                                detailRoute = CatalogProductRoute(id: product.id)
+                            } onPlace: {
+                                detailRoute = CatalogProductRoute(id: product.id)
+                            }
+                        }
                     }
+                    .padding(.horizontal, GonggiSpacing.lg)
                 }
+                .id(viewModel.productScrollResetToken)
             }
         }
     }
