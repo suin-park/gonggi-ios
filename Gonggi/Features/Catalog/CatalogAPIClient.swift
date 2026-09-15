@@ -34,7 +34,7 @@ enum CatalogAPIError: Error, Equatable {
 }
 
 protocol CatalogServing: Sendable {
-    func fetchProducts() async throws -> [CatalogProduct]
+    func fetchCatalogList() async throws -> CatalogListPayload
     func fetchProduct(id: String) async throws -> CatalogProduct
     func recordEvent(_ request: CatalogEventRequest) async
 }
@@ -42,7 +42,7 @@ protocol CatalogServing: Sendable {
 actor CatalogAPIClient: CatalogServing {
     private let config: AppConfiguration
     private let session: URLSession
-    private var inFlightList: Task<[CatalogProduct], Error>?
+    private var inFlightList: Task<CatalogListPayload, Error>?
     private var inFlightDetail: [String: Task<CatalogProduct, Error>] = [:]
 
     init(config: AppConfiguration = .production, session: URLSession? = nil) {
@@ -63,18 +63,21 @@ actor CatalogAPIClient: CatalogServing {
         }
     }
 
-    func fetchProducts() async throws -> [CatalogProduct] {
+    func fetchCatalogList() async throws -> CatalogListPayload {
         if let existing = inFlightList {
             return try await existing.value
         }
-        let task = Task { () throws -> [CatalogProduct] in
+        let task = Task { () throws -> CatalogListPayload in
             let data = try await get(path: ["api", "gonggi", "partner-catalog", "products"])
             let decoder = JSONDecoder()
             if let envelope = try? decoder.decode(CatalogProductListResponse.self, from: data) {
-                return envelope.products.filter { $0.placementType != .unsupported }
+                return CatalogListPayload.normalize(
+                    products: envelope.products,
+                    categories: envelope.categories
+                )
             }
             if let products = try? decoder.decode([CatalogProduct].self, from: data) {
-                return products.filter { $0.placementType != .unsupported }
+                return CatalogListPayload.normalize(products: products, categories: nil)
             }
             throw CatalogAPIError.invalidResponse
         }
@@ -171,8 +174,8 @@ actor CatalogAPIClient: CatalogServing {
 }
 
 actor CatalogMockClient: CatalogServing {
-    func fetchProducts() async throws -> [CatalogProduct] {
-        CatalogMockData.listProducts()
+    func fetchCatalogList() async throws -> CatalogListPayload {
+        CatalogMockData.listPayload()
     }
 
     func fetchProduct(id: String) async throws -> CatalogProduct {

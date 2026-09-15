@@ -232,6 +232,97 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
 struct CatalogProductListResponse: Codable, Sendable {
     var ok: Bool?
     var products: [CatalogProduct]
+    var categories: [CatalogCategory]?
+}
+
+struct CatalogCategory: Codable, Sendable, Equatable, Identifiable {
+    var id: String
+    var name: String
+    var sortOrder: Int?
+    var products: [CatalogProduct]
+}
+
+struct CatalogListPayload: Sendable, Equatable {
+    var products: [CatalogProduct]
+    var categories: [CatalogCategory]
+
+    /// Prefer server categories; otherwise one fallback section with all products.
+    /// Published products missing from every category become a trailing `기타` row.
+    static func normalize(products: [CatalogProduct], categories: [CatalogCategory]?) -> CatalogListPayload {
+        let filteredProducts = products.filter { $0.placementType != .unsupported }
+        let byId = Dictionary(uniqueKeysWithValues: filteredProducts.map { ($0.id, $0) })
+        if let categories, !categories.isEmpty {
+            var mapped = categories.compactMap { cat -> CatalogCategory? in
+                let items: [CatalogProduct]
+                if cat.products.isEmpty {
+                    items = []
+                } else {
+                    items = cat.products.compactMap { card in
+                        let resolved = byId[card.id] ?? card
+                        return resolved.placementType == .unsupported ? nil : resolved
+                    }
+                }
+                guard !items.isEmpty else { return nil }
+                return CatalogCategory(
+                    id: cat.id,
+                    name: cat.name,
+                    sortOrder: cat.sortOrder,
+                    products: items
+                )
+            }
+            if !mapped.isEmpty {
+                let assigned = Set(mapped.flatMap { $0.products.map(\.id) })
+                let leftover = filteredProducts.filter { !assigned.contains($0.id) }
+                if !leftover.isEmpty {
+                    // Prefer server-provided 기타 row when present; otherwise append.
+                    if let idx = mapped.firstIndex(where: { $0.id == "uncategorized" || $0.name == "기타" }) {
+                        let existingIds = Set(mapped[idx].products.map(\.id))
+                        let extras = leftover.filter { !existingIds.contains($0.id) }
+                        if !extras.isEmpty {
+                            var merged = mapped[idx]
+                            merged.products.append(contentsOf: extras)
+                            mapped[idx] = merged
+                        }
+                    } else {
+                        mapped.append(
+                            CatalogCategory(
+                                id: "uncategorized",
+                                name: "기타",
+                                sortOrder: 9999,
+                                products: leftover
+                            )
+                        )
+                    }
+                }
+                return CatalogListPayload(products: filteredProducts, categories: mapped)
+            }
+        }
+        guard !filteredProducts.isEmpty else {
+            return CatalogListPayload(products: [], categories: [])
+        }
+        // No merchandising categories → single section (UI hides row title).
+        return CatalogListPayload(
+            products: filteredProducts,
+            categories: [
+                CatalogCategory(
+                    id: "all",
+                    name: "제휴 상품",
+                    sortOrder: 0,
+                    products: filteredProducts
+                )
+            ]
+        )
+    }
+
+    /// True when categories are real merchandising shelves (show per-row titles).
+    static func shouldShowCategoryTitles(_ categories: [CatalogCategory]) -> Bool {
+        guard !categories.isEmpty else { return false }
+        if categories.count > 1 { return true }
+        let only = categories[0]
+        if only.id == "all" { return false }
+        if only.id == "uncategorized", only.name == "제휴 상품" { return false }
+        return true
+    }
 }
 
 struct CatalogProductDetailResponse: Codable, Sendable {

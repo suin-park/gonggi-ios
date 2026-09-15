@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CatalogProductListView: View {
-    let products: [CatalogProduct]
+    let categories: [CatalogCategory]
     let client: any CatalogServing
     let isMockMode: Bool
     @EnvironmentObject private var appState: AppState
@@ -9,17 +9,17 @@ struct CatalogProductListView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: GonggiSpacing.md) {
-                ForEach(products) { product in
-                    CatalogProductCardView(product: product) {
+            LazyVStack(alignment: .leading, spacing: GonggiSpacing.xl) {
+                let showTitles = CatalogListPayload.shouldShowCategoryTitles(categories)
+                ForEach(categories) { category in
+                    CatalogCategoryRowView(category: category, showTitle: showTitles) { product in
                         route = CatalogProductRoute(id: product.id)
-                    } onPlace: {
+                    } onPlace: { product in
                         route = CatalogProductRoute(id: product.id)
                     }
-                    .frame(maxWidth: .infinity)
                 }
             }
-            .padding(GonggiSpacing.lg)
+            .padding(.vertical, GonggiSpacing.lg)
         }
         .background(GonggiAmbientBackground())
         .navigationTitle("제휴 상품")

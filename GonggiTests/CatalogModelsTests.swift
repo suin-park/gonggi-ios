@@ -79,7 +79,8 @@ final class CatalogModelsTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertTrue(mockVM.shouldShowSection)
         XCTAssertFalse(mockVM.products.isEmpty)
-        XCTAssertEqual(mockVM.availableCategories.count, 2)
+        XCTAssertEqual(mockVM.categories.count, 2)
+        XCTAssertEqual(mockVM.categories.map(\.name), ["수납장", "커튼"])
 
         // Production empty policy: empty state hides section (non-mock).
         let prodVM = CatalogHomeViewModel(isMockMode: false)
@@ -339,6 +340,101 @@ final class CatalogModelsTests: XCTestCase {
     func testReadyGateBlocksMissingSpec() {
         let result = CatalogPlacementSpecValidator.validate(nil)
         XCTAssertEqual(result, .failure(.missingPlacementSpec))
+    }
+
+    // MARK: - Merchandising categories
+
+    func testNormalizeFallbackSingleSectionWhenCategoriesMissing() {
+        let products = CatalogMockData.listProducts()
+        let payload = CatalogListPayload.normalize(products: products, categories: nil)
+        XCTAssertEqual(payload.categories.count, 1)
+        XCTAssertEqual(payload.categories[0].id, "all")
+        XCTAssertEqual(payload.categories[0].name, "제휴 상품")
+        XCTAssertEqual(payload.categories[0].products.count, products.count)
+        XCTAssertFalse(CatalogListPayload.shouldShowCategoryTitles(payload.categories))
+    }
+
+    func testNormalizeAdds기타ForLeftoverProducts() {
+        let cabinet = CatalogMockData.roundCabinetListCard()
+        let curtain = CatalogMockData.mockCurtainPlaceholderCard()
+        let shelf = CatalogCategory(
+            id: "shelf-1",
+            name: "수납장",
+            sortOrder: 0,
+            products: [cabinet]
+        )
+        let payload = CatalogListPayload.normalize(
+            products: [cabinet, curtain],
+            categories: [shelf]
+        )
+        XCTAssertEqual(payload.categories.map(\.name), ["수납장", "기타"])
+        XCTAssertEqual(payload.categories[1].id, "uncategorized")
+        XCTAssertEqual(payload.categories[1].products.map(\.id), [curtain.id])
+        XCTAssertTrue(CatalogListPayload.shouldShowCategoryTitles(payload.categories))
+    }
+
+    func testNormalizeDropsEmptyCategoriesAndUnsupported() {
+        var unsupported = CatalogMockData.roundCabinetListCard()
+        unsupported.id = "bad"
+        unsupported.placementType = .unsupported
+        let empty = CatalogCategory(id: "empty", name: "빈", sortOrder: 0, products: [])
+        let good = CatalogCategory(
+            id: "good",
+            name: "수납장",
+            sortOrder: 1,
+            products: [CatalogMockData.roundCabinetListCard()]
+        )
+        let payload = CatalogListPayload.normalize(
+            products: [CatalogMockData.roundCabinetListCard(), unsupported],
+            categories: [empty, good]
+        )
+        XCTAssertEqual(payload.categories.map(\.name), ["수납장"])
+        XCTAssertFalse(payload.products.contains(where: { $0.placementType == .unsupported }))
+    }
+
+    func testDecodeListResponseWithCategories() throws {
+        let json = """
+        {
+          "ok": true,
+          "products": [
+            {
+              "id": "p1",
+              "partnerId": "jd",
+              "productName": "A",
+              "placementType": "FURNITURE_3D",
+              "widthMm": 100,
+              "depthMm": 100,
+              "heightMm": 100
+            }
+          ],
+          "categories": [
+            {
+              "id": "c1",
+              "name": "거실",
+              "sortOrder": 0,
+              "products": [
+                {
+                  "id": "p1",
+                  "partnerId": "jd",
+                  "productName": "A",
+                  "placementType": "FURNITURE_3D",
+                  "widthMm": 100,
+                  "depthMm": 100,
+                  "heightMm": 100
+                }
+              ]
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(CatalogProductListResponse.self, from: json)
+        let payload = CatalogListPayload.normalize(
+            products: decoded.products,
+            categories: decoded.categories
+        )
+        XCTAssertEqual(payload.categories.count, 1)
+        XCTAssertEqual(payload.categories[0].name, "거실")
+        XCTAssertTrue(CatalogListPayload.shouldShowCategoryTitles(payload.categories))
     }
 
     // MARK: - Thumbnail aspect-fit (no crop)
