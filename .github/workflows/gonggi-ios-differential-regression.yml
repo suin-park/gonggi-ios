@@ -137,6 +137,8 @@ jobs:
           echo "Applied Simulator Debug compile-only shims on base (Catalog sources NOT included)."
 
       - name: Guard marketing/build for this PR track
+        # Historical baseline SHA may predate the guard script / current build number.
+        if: matrix.label == 'head'
         env:
           PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
