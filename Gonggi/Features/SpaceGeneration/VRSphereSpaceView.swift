@@ -190,6 +190,24 @@ struct VRSphereSpaceView: View {
     }
 
     var body: some View {
+        viewerLifecycleBody
+            .modifier(
+                CurtainPlacementPresentationModifier(
+                    session: curtainSession,
+                    showCompare: $showCurtainCompare,
+                    sessionId: sessionId,
+                    onCompositeSaved: { url in
+                        textureURL = url
+                        textureGeneration += 1
+                        onRepairCompleted?(url)
+                    }
+                )
+            )
+    }
+
+    /// Split from `body` so curtain sheets do not blow the SwiftUI type-checker budget.
+    @ViewBuilder
+    private var viewerLifecycleBody: some View {
         mainChrome
             .statusBarHidden(true)
             .onChange(of: repairController.completedTextureURL) { _, newURL in
@@ -442,46 +460,6 @@ struct VRSphereSpaceView: View {
                 Button("확인", role: .cancel) { placementBlockedMessage = nil }
             } message: {
                 Text(placementBlockedMessage ?? "")
-            }
-            .sheet(isPresented: $curtainSession.showConsentSheet) {
-                CurtainPlacementConsentSheet(
-                    onAccept: { curtainSession.acceptConsentAndCreateJob() },
-                    onCancel: { curtainSession.cancelConsent() }
-                )
-            }
-            .sheet(isPresented: $showCurtainCompare) {
-                if case .comparing(let original, let result, _) = curtainSession.phase {
-                    CurtainPlacementCompareSheet(
-                        originalPath: original,
-                        resultPath: result,
-                        onSave: {
-                            Task {
-                                await curtainSession.saveCompositeRevision(originalTexturePath: original)
-                                if case .saved = curtainSession.phase,
-                                   let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: sessionId) {
-                                    textureURL = latest
-                                    textureGeneration += 1
-                                    onRepairCompleted?(latest)
-                                }
-                                showCurtainCompare = false
-                            }
-                        },
-                        onClose: { showCurtainCompare = false }
-                    )
-                }
-            }
-            .alert("커튼 미리보기", isPresented: Binding(
-                get: { curtainSession.errorMessage != nil },
-                set: { if !$0 { curtainSession.errorMessage = nil } }
-            )) {
-                Button("확인", role: .cancel) { curtainSession.errorMessage = nil }
-            } message: {
-                Text(curtainSession.errorMessage ?? "")
-            }
-            .onChange(of: curtainSession.phase) { _, phase in
-                if case .comparing = phase {
-                    showCurtainCompare = true
-                }
             }
     }
 

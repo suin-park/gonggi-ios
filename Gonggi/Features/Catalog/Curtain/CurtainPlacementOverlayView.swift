@@ -149,3 +149,58 @@ struct CurtainPlacementCompareSheet: View {
         }
     }
 }
+
+/// Hosted by `VRSphereSpaceView` so curtain sheets stay outside the main type-check graph.
+struct CurtainPlacementPresentationModifier: ViewModifier {
+    @ObservedObject var session: CurtainPlacementSession
+    @Binding var showCompare: Bool
+    let sessionId: String
+    var onCompositeSaved: (URL) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $session.showConsentSheet) {
+                CurtainPlacementConsentSheet(
+                    onAccept: { session.acceptConsentAndCreateJob() },
+                    onCancel: { session.cancelConsent() }
+                )
+            }
+            .sheet(isPresented: $showCompare) {
+                compareSheetContent
+            }
+            .alert("커튼 미리보기", isPresented: Binding(
+                get: { session.errorMessage != nil },
+                set: { if !$0 { session.errorMessage = nil } }
+            )) {
+                Button("확인", role: .cancel) { session.errorMessage = nil }
+            } message: {
+                Text(session.errorMessage ?? "")
+            }
+            .onChange(of: session.phase) { _, phase in
+                if case .comparing = phase {
+                    showCompare = true
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var compareSheetContent: some View {
+        if case .comparing(let original, let result, _) = session.phase {
+            CurtainPlacementCompareSheet(
+                originalPath: original,
+                resultPath: result,
+                onSave: {
+                    Task { @MainActor in
+                        await session.saveCompositeRevision(originalTexturePath: original)
+                        if case .saved = session.phase,
+                           let latest = try? SpaceLatLongStore.latestLatLongURL(sessionId: sessionId) {
+                            onCompositeSaved(latest)
+                        }
+                        showCompare = false
+                    }
+                },
+                onClose: { showCompare = false }
+            )
+        }
+    }
+}
