@@ -48,10 +48,18 @@ enum VRPlacedAssetNodeFactory {
            let loaded = loadModel(from: modelURL) {
             applyPhysicallyBasedMaterials(to: loaded)
             setCategoryRecursively(loaded, category: VRPlacedAssetCategory.asset)
-            let rawFootprint = normalizeBottom(of: loaded)
+            // Seat bottom at local Y=0, then scale to product height, then seat again.
+            // SceneKit: parentY = position.y + scale.y * localY — scaling after the first
+            // seat lifts/sinks the mesh off the contact shadow / selection ring plane.
+            _ = normalizeBottom(of: loaded)
             physicalScale = metadataScale(asset: asset, node: loaded)
-            footprint = rawFootprint * physicalScale
             loaded.scale = SCNVector3(physicalScale, physicalScale, physicalScale)
+            seatContentBottomOnOrigin(loaded)
+            let seated = computeVisualBounds(content: loaded)
+            footprint = SIMD2(
+                max(0.1, seated.max.x - seated.min.x),
+                max(0.1, seated.max.z - seated.min.z)
+            )
             content = loaded
         } else {
             let placeholder = makePlaceholder(asset: asset)
@@ -65,8 +73,8 @@ enum VRPlacedAssetNodeFactory {
         let bounds = computeVisualBounds(content: content)
         setVisualBounds(bounds, on: root)
 
-        let fallbackRadius = max(footprint.x, footprint.y) * 0.55
-        let shadowRadius = max(0.08, entry.shadowRadius ?? fallbackRadius)
+        let fallbackRadius = max(footprint.x, footprint.y) * 0.85
+        let shadowRadius = max(0.12, entry.shadowRadius ?? fallbackRadius)
         let shadow = makeShadow(
             radius: shadowRadius,
             opacity: entry.shadowOpacity ?? VRLightingExperimentPrefs.contactOpacityDirectionalInactive
@@ -303,6 +311,14 @@ enum VRPlacedAssetNodeFactory {
         return SIMD2(width, depth)
     }
 
+    /// After `node.scale` changes, re-align mesh AABB minY to parent Y=0.
+    private static func seatContentBottomOnOrigin(_ node: SCNNode) {
+        let bounds = node.boundingBox
+        let sy = abs(node.scale.y)
+        guard sy > 1e-6 else { return }
+        node.position.y = -bounds.min.y * sy
+    }
+
     private static func makePlaceholder(asset: MobileAssetDTO?) -> SCNNode {
         let width = meters(asset?.widthCm, fallback: 0.6)
         let height = meters(asset?.heightCm, fallback: 0.6)
@@ -348,8 +364,8 @@ enum VRPlacedAssetNodeFactory {
 
     private static func makeShadow(radius: Float, opacity: Float) -> SCNNode {
         let plane = SCNPlane(
-            width: CGFloat(radius * 2),
-            height: CGFloat(radius * 1.5)
+            width: CGFloat(radius * 2.4),
+            height: CGFloat(radius * 1.85)
         )
         let material = SCNMaterial()
         applyContactShadowMaterial(material, opacity: opacity)

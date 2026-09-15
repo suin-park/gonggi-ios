@@ -115,11 +115,21 @@ struct CaptureContainerView: View {
         .fullScreenCover(isPresented: Binding(
             get: { activeFlow == .directionCapture },
             set: { presented in
-                if !presented { activeFlow = .none }
+                if !presented {
+                    activeFlow = .none
+                    if !GonggiFeatureFlags.show3DGSCaptureFlows {
+                        appState.selectedTab = .home
+                    }
+                }
             }
         )) {
-            DirectionCaptureView(onClose: { activeFlow = .none })
-                .environmentObject(appState)
+            DirectionCaptureView(onClose: {
+                activeFlow = .none
+                if !GonggiFeatureFlags.show3DGSCaptureFlows {
+                    appState.selectedTab = .home
+                }
+            })
+            .environmentObject(appState)
         }
         .fullScreenCover(isPresented: Binding(
             get: {
@@ -145,6 +155,21 @@ struct CaptureContainerView: View {
             Quick360FlowView(onClose: { activeFlow = .none })
                 .environmentObject(appState)
         }
+        .onAppear {
+            autoStart360CaptureIfNeeded()
+        }
+        .onChange(of: appState.selectedTab) { _, tab in
+            if tab == .record {
+                autoStart360CaptureIfNeeded()
+            }
+        }
+    }
+
+    private func autoStart360CaptureIfNeeded() {
+        guard !GonggiFeatureFlags.show3DGSCaptureFlows else { return }
+        guard appState.selectedTab == .record else { return }
+        guard activeFlow == .none else { return }
+        activeFlow = .directionCapture
     }
 
     // MARK: - Selection
@@ -173,16 +198,18 @@ struct CaptureContainerView: View {
                     }
                 )
 
-                productionChoiceCard(
-                    icon: "figure.walk.motion",
-                    title: "3D 공간 기록",
-                    subtitle: "공간을 걸으며 촬영해\n자유롭게 이동할 수 있어요.",
-                    badge: "입체 기록",
-                    action: {
-                        GonggiHaptics.medium()
-                        activeFlow = .threeDSpaceRecord
-                    }
-                )
+                if GonggiFeatureFlags.show3DGSCaptureFlows {
+                    productionChoiceCard(
+                        icon: "figure.walk.motion",
+                        title: "3D 공간 기록",
+                        subtitle: "공간을 걸으며 촬영해\n자유롭게 이동할 수 있어요.",
+                        badge: "입체 기록",
+                        action: {
+                            GonggiHaptics.medium()
+                            activeFlow = .threeDSpaceRecord
+                        }
+                    )
+                }
 
                 #if DEBUG
                 debugModesSection

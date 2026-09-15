@@ -3,6 +3,8 @@ import SwiftUI
 struct CatalogHomeSectionView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel: CatalogHomeViewModel
+    @StateObject private var curtainPlace = CatalogCurtainListPlaceController()
+    @StateObject private var furnitureAR = CatalogFurnitureARController()
     @State private var detailRoute: CatalogProductRoute?
     @State private var showAll = false
 
@@ -14,8 +16,14 @@ struct CatalogHomeSectionView: View {
         Group {
             if viewModel.shouldShowSection {
                 VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                    Rectangle()
+                        .fill(GonggiColors.borderSubtle.opacity(0.85))
+                        .frame(height: 0.5)
+                        .padding(.horizontal, GonggiSpacing.lg)
+                        .padding(.bottom, GonggiSpacing.sm)
+                        .accessibilityHidden(true)
                     header
-                    categoryChips
+                    typeFilterBar
                     content
                 }
                 .padding(.top, GonggiSpacing.xl)
@@ -25,17 +33,75 @@ struct CatalogHomeSectionView: View {
                     CatalogProductDetailView(
                         productId: route.id,
                         client: viewModel.detailClient(),
-                        isMockMode: appState.isMockMode
+                        isMockMode: appState.isMockMode,
+                        initialVariantId: route.initialVariantId
                     )
                     .environmentObject(appState)
                 }
                 .navigationDestination(isPresented: $showAll) {
                     CatalogProductListView(
-                        products: viewModel.products,
+                        categories: viewModel.filteredCategoriesForList,
                         client: viewModel.detailClient(),
-                        isMockMode: appState.isMockMode
+                        isMockMode: appState.isMockMode,
+                        placementFilter: viewModel.selectedFilter
                     )
                     .environmentObject(appState)
+                }
+                .sheet(isPresented: Binding(
+                    get: { curtainPlace.showSpacePicker },
+                    set: { curtainPlace.showSpacePicker = $0 }
+                )) {
+                    CatalogPlaceSpacePickerView(
+                        spaces: appState.spaces,
+                        onSelect: { space in
+                            curtainPlace.confirmSpace(space, appState: appState)
+                        },
+                        onClose: { curtainPlace.showSpacePicker = false }
+                    )
+                }
+                .alert("배치", isPresented: Binding(
+                    get: { curtainPlace.errorMessage != nil || curtainPlace.startedMessage != nil },
+                    set: { if !$0 {
+                        curtainPlace.clearError()
+                        curtainPlace.clearStartedMessage()
+                    } }
+                )) {
+                    if curtainPlace.errorMessage != nil {
+                        Button("다시 시도") {
+                            curtainPlace.retry(
+                                client: viewModel.detailClient(),
+                                spaces: appState.spaces,
+                                appState: appState
+                            )
+                        }
+                        Button("닫기", role: .cancel) {
+                            curtainPlace.clearError()
+                        }
+                    } else {
+                        Button("확인", role: .cancel) {
+                            curtainPlace.clearStartedMessage()
+                        }
+                    }
+                } message: {
+                    Text(curtainPlace.errorMessage ?? curtainPlace.startedMessage ?? "")
+                }
+                .alert("AR", isPresented: Binding(
+                    get: { furnitureAR.errorMessage != nil },
+                    set: { if !$0 { furnitureAR.clearError() } }
+                )) {
+                    Button("다시 시도") {
+                        furnitureAR.retry(client: viewModel.detailClient())
+                    }
+                    Button("닫기", role: .cancel) {
+                        furnitureAR.clearError()
+                    }
+                } message: {
+                    Text(furnitureAR.errorMessage ?? "")
+                }
+                .fullScreenCover(item: $furnitureAR.presentedARItem, onDismiss: {
+                    furnitureAR.dismissAR()
+                }) { item in
+                    AssetARQuickLookView(localUsdzURL: item.url)
                 }
             }
         }
@@ -44,17 +110,17 @@ struct CatalogHomeSectionView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("제휴 상품 배치해보기")
+                Text("공간 꾸며보기")
                     .font(GonggiTypography.headline(20))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .accessibilityAddTraits(.isHeader)
-                Text("내 공간에 실제 규격의 제휴 가구를 놓아보세요.")
+                Text(viewModel.sectionDescription)
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: GonggiSpacing.sm)
-            if case .loaded = viewModel.state, !viewModel.products.isEmpty {
+            if case .loaded = viewModel.state, !viewModel.filteredProducts.isEmpty {
                 Button("전체 보기") {
                     GonggiHaptics.light()
                     showAll = true
@@ -67,36 +133,31 @@ struct CatalogHomeSectionView: View {
         .padding(.horizontal, GonggiSpacing.lg)
     }
 
-    @ViewBuilder
-    private var categoryChips: some View {
-        let cats = viewModel.availableCategories
-        if cats.count > 1 {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: GonggiSpacing.sm) {
-                    ForEach(cats, id: \.self) { type in
-                        let selected = viewModel.selectedPlacementType == type
-                        Button {
-                            GonggiHaptics.light()
-                            viewModel.selectCategory(type)
-                        } label: {
-                            Text(type.displayCategoryTitle)
-                                .font(GonggiTypography.caption(13))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(
-                                    Capsule()
-                                        .fill(selected ? GonggiColors.accentCyan : GonggiColors.surfaceElevated)
-                                )
-                                .foregroundStyle(selected ? GonggiColors.textOnAccent : GonggiColors.textSecondary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(type.displayCategoryTitle) 카테고리")
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                    }
+    private var typeFilterBar: some View {
+        HStack(spacing: GonggiSpacing.sm) {
+            ForEach(CatalogHomePlacementFilter.allCases) { filter in
+                let isSelected = viewModel.selectedFilter == filter
+                Button {
+                    GonggiHaptics.selection()
+                    viewModel.selectFilter(filter)
+                } label: {
+                    Text(filter.title)
+                        .font(GonggiTypography.body(14))
+                        .foregroundStyle(isSelected ? GonggiColors.textOnAccent : GonggiColors.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule().fill(isSelected ? GonggiColors.accentCyan : GonggiColors.surfaceElevated)
+                        )
                 }
-                .padding(.horizontal, GonggiSpacing.lg)
+                .buttonStyle(.plain)
+                .accessibilityLabel(filter.title)
+                .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             }
         }
+        .padding(.horizontal, GonggiSpacing.lg)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("상품 유형")
     }
 
     @ViewBuilder
@@ -133,22 +194,66 @@ struct CatalogHomeSectionView: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, GonggiSpacing.lg)
         case .loaded:
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: GonggiSpacing.md) {
-                    ForEach(viewModel.visibleProducts) { product in
-                        CatalogProductCardView(product: product) {
-                            detailRoute = CatalogProductRoute(id: product.id)
-                        } onPlace: {
-                            detailRoute = CatalogProductRoute(id: product.id)
+            if viewModel.showsTypeEmptyState {
+                Text("지금은 배치할 수 있는 제휴 상품이 없어요.")
+                    .font(GonggiTypography.body(14))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                    .padding(.horizontal, GonggiSpacing.lg)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: GonggiSpacing.md) {
+                        ForEach(viewModel.filteredProducts) { product in
+                            CatalogProductCardView(
+                                product: product,
+                                selectedVariantId: viewModel.selectedVariantIds[product.id],
+                                onSelectVariant: { variantId in
+                                    viewModel.selectVariant(productId: product.id, variantId: variantId)
+                                },
+                                isPlaceLoading: curtainPlace.loadingProductId == product.id,
+                                isARLoading: furnitureAR.loadingProductId == product.id,
+                                onOpen: {
+                                    detailRoute = CatalogProductRoute(
+                                        id: product.id,
+                                        initialVariantId: viewModel.selectedVariantId(for: product)
+                                    )
+                                },
+                                onPlace: {
+                                    handlePlace(product)
+                                },
+                                onOpenAR: {
+                                    furnitureAR.openAR(
+                                        listProduct: product,
+                                        client: viewModel.detailClient(),
+                                        preferredVariantId: viewModel.selectedVariantId(for: product)
+                                    )
+                                }
+                            )
                         }
                     }
+                    .padding(.horizontal, GonggiSpacing.lg)
                 }
-                .padding(.horizontal, GonggiSpacing.lg)
+                .id(viewModel.productScrollResetToken)
             }
+        }
+    }
+
+    private func handlePlace(_ product: CatalogProduct) {
+        let variantId = viewModel.selectedVariantId(for: product)
+        if product.placementType == .curtain2D {
+            curtainPlace.placeTapped(
+                listProduct: product,
+                client: viewModel.detailClient(),
+                spaces: appState.spaces,
+                appState: appState,
+                preferredVariantId: variantId
+            )
+        } else {
+            detailRoute = CatalogProductRoute(id: product.id, initialVariantId: variantId)
         }
     }
 }
 
 struct CatalogProductRoute: Identifiable, Hashable {
     var id: String
+    var initialVariantId: String? = nil
 }

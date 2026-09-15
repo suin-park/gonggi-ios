@@ -16,11 +16,13 @@ on:
   pull_request:
     branches:
       - design/brand-redesign-v1
+      - feature/gonggi-placement-ui-save-fix
     paths:
       - 'Gonggi/**'
       - 'GonggiTests/**'
       - 'project.yml'
       - 'scripts/compare-gonggi-test-failures.py'
+      - 'scripts/ci-guard-project-version.sh'
       - '.github/workflows/gonggi-ios-differential-regression.yml'
   workflow_dispatch:
     inputs:
@@ -134,11 +136,15 @@ jobs:
           echo "baseline_shims=capture_summary_return,three_d_expansion_tests,profile_mapper_optional" >> "$GITHUB_OUTPUT"
           echo "Applied Simulator Debug compile-only shims on base (Catalog sources NOT included)."
 
-      - name: Guard build number 33 (no bump)
+      - name: Guard marketing/build for this PR track
+        # Historical baseline SHA may predate the guard script / current build number.
+        if: matrix.label == 'head'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
           set -euo pipefail
-          grep -q 'CURRENT_PROJECT_VERSION: "33"' project.yml
-          grep -q 'MARKETING_VERSION: "2.0"' project.yml
+          chmod +x scripts/ci-guard-project-version.sh
+          ./scripts/ci-guard-project-version.sh
 
       - name: Restore OpenCV cache
         id: opencv-cache

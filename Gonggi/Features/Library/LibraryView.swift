@@ -12,41 +12,24 @@ struct LibraryView: View {
     @State private var showImportSheet = false
     @State private var gaussianViewerSpaceId: String?
     @State private var showGaussianViewer = false
+    @State private var placementHighlightId: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
                     categoryPicker
-                    if category == .spaces {
-                        if appState.spaces.isEmpty {
-                            Text("아직 만든 공간이 없어요.")
-                                .font(GonggiTypography.body(15))
-                                .foregroundStyle(GonggiColors.textSecondary)
-                                .padding(.top, GonggiSpacing.sm)
-                            Button {
-                                showImportSheet = true
-                            } label: {
-                                Label("외부에서 가져오기", systemImage: "square.and.arrow.down")
-                            }
-                            .padding(.top, GonggiSpacing.sm)
-                        } else {
-                            LazyVStack(spacing: GonggiSpacing.md) {
-                                ForEach(appState.spaces) { space in
-                                    MemoryArchiveCard(
-                                        space: space,
-                                        onOpenDetail: {
-                                            selectedSpace = space
-                                        },
-                                        onViewSpace: {
-                                            Task { await openViewer(jobId: space.id) }
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    } else {
+                    switch category {
+                    case .spaces:
+                        spacesContent
+                    case .assets:
                         AssetLibraryView(store: assetStore)
+                    case .placementResults:
+                        PlacementResultsView(
+                            isMockMode: appState.isMockMode,
+                            highlightId: placementHighlightId
+                        )
+                        .environmentObject(appState)
                     }
                 }
                 .padding(GonggiSpacing.lg)
@@ -101,12 +84,16 @@ struct LibraryView: View {
                 selectedSpace = nil
             }
             .onChange(of: appState.preferredLibraryCategory) { _, category in
-                guard let category else { return }
-                self.category = category
-                appState.preferredLibraryCategory = nil
+                applyPreferredLibraryCategory(category)
+            }
+            .onChange(of: appState.pendingLibraryTab) { _, category in
+                applyPreferredLibraryCategory(category)
             }
             .onChange(of: appState.libraryRefreshEpoch) { _, _ in
-                category = .spaces
+                if appState.preferredLibraryCategory == nil,
+                   appState.pendingLibraryTab == nil {
+                    category = .spaces
+                }
                 appState.ensureSpaceGenerationPolling()
             }
             .overlay {
@@ -143,6 +130,37 @@ struct LibraryView: View {
             }
             .onAppear {
                 appState.ensureSpaceGenerationPolling()
+                applyPreferredLibraryCategory(appState.preferredLibraryCategory ?? appState.pendingLibraryTab)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var spacesContent: some View {
+        if appState.spaces.isEmpty {
+            Text("아직 만든 공간이 없어요.")
+                .font(GonggiTypography.body(15))
+                .foregroundStyle(GonggiColors.textSecondary)
+                .padding(.top, GonggiSpacing.sm)
+            Button {
+                showImportSheet = true
+            } label: {
+                Label("외부에서 가져오기", systemImage: "square.and.arrow.down")
+            }
+            .padding(.top, GonggiSpacing.sm)
+        } else {
+            LazyVStack(spacing: GonggiSpacing.md) {
+                ForEach(appState.spaces) { space in
+                    MemoryArchiveCard(
+                        space: space,
+                        onOpenDetail: {
+                            selectedSpace = space
+                        },
+                        onViewSpace: {
+                            Task { await openViewer(jobId: space.id) }
+                        }
+                    )
+                }
             }
         }
     }
@@ -154,6 +172,17 @@ struct LibraryView: View {
             }
         }
         .pickerStyle(.segmented)
+    }
+
+    private func applyPreferredLibraryCategory(_ category: LibraryCategory?) {
+        guard let category else { return }
+        self.category = category
+        if category == .placementResults {
+            placementHighlightId = appState.pendingPlacementResultHighlightId
+            appState.pendingPlacementResultHighlightId = nil
+        }
+        appState.preferredLibraryCategory = nil
+        appState.pendingLibraryTab = nil
     }
 
     private func openViewer(jobId: String) async {

@@ -37,7 +37,7 @@ final class ServiceIATests: XCTestCase {
     }
 
     func testLibraryCategories() {
-        XCTAssertEqual(LibraryCategory.allCases.map(\.title), ["공간", "3D 자산"])
+        XCTAssertEqual(LibraryCategory.allCases.map(\.title), ["공간", "3D 자산", "배치 결과"])
     }
 
     @MainActor

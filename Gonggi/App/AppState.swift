@@ -17,11 +17,17 @@ final class AppState: ObservableObject {
     @Published var pendingAssetPlacement: PendingAssetPlacement?
     /// Catalog product → VR Edit placement draft (consume-once). Not persisted.
     @Published var pendingCatalogPlacement: PendingCatalogPlacement?
+    /// Catalog curtain → LatLong seed/composite flow (consume-once). Not persisted.
+    @Published var pendingCurtainPlacement: PendingCurtainPlacement?
     @Published var spaceLinkUserMessage: String?
     /// Bumped on account reset so views dismiss open VR covers.
     @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
     /// One-shot Library segment preference after `exitVRToLibrary()` (consumed by LibraryView).
     @Published var preferredLibraryCategory: LibraryCategory?
+    /// Alias consumed by LibraryView when opening 배치 결과 after async curtain accept.
+    @Published var pendingLibraryTab: LibraryCategory?
+    /// Highlight a placement result card after navigation from VR accept.
+    @Published var pendingPlacementResultHighlightId: String?
     /// Soft Library refresh signal — does not block tab transition.
     @Published private(set) var libraryRefreshEpoch: UInt64 = 0
     /// Unread Gonggi notification badge (likes, comments, admin announcements).
@@ -106,8 +112,11 @@ final class AppState: ObservableObject {
         pendingViewerLaunch = nil
         pendingAssetPlacement = nil
         pendingCatalogPlacement = nil
+        pendingCurtainPlacement = nil
         spaceLinkUserMessage = nil
         preferredLibraryCategory = nil
+        pendingLibraryTab = nil
+        pendingPlacementResultHighlightId = nil
         notificationUnreadCount = 0
         isExitingVRToLibrary = false
         isExitingVRToHome = false
@@ -134,6 +143,27 @@ final class AppState: ObservableObject {
 
     func selectTab(_ tab: AppTab) {
         selectedTab = tab
+    }
+
+    /// After curtain consent+create succeeds: dismiss VR and open Library → 배치 결과.
+    func openPlacementResults(resultId: String?) {
+        pendingViewerJobId = nil
+        pendingViewerError = nil
+        pendingViewerLaunch = nil
+        preferredLibraryCategory = .placementResults
+        pendingLibraryTab = .placementResults
+        pendingPlacementResultHighlightId = resultId
+        selectedTab = .library
+        forceDismissViewerEpoch &+= 1
+    }
+
+    /// Navigation contract alias for Library segment (`preferredLibraryCategory` / `pendingLibraryTab`).
+    var libraryCategory: LibraryCategory? {
+        get { preferredLibraryCategory ?? pendingLibraryTab }
+        set {
+            preferredLibraryCategory = newValue
+            pendingLibraryTab = newValue
+        }
     }
 
     /// One-tap VR exit: clear viewer presentation + hotspot stack (via cover dismiss),
@@ -576,6 +606,20 @@ final class AppState: ObservableObject {
         guard let pending = peekPendingCatalogPlacement(matchingViewerSessionId: matchingViewerSessionId)
         else { return nil }
         pendingCatalogPlacement = nil
+        return pending
+    }
+
+    func peekPendingCurtainPlacement(matchingViewerSessionId: String) -> PendingCurtainPlacement? {
+        guard let pending = pendingCurtainPlacement,
+              pending.matches(viewerSessionId: matchingViewerSessionId, spaces: spaces)
+        else { return nil }
+        return pending
+    }
+
+    func consumePendingCurtainPlacement(matchingViewerSessionId: String) -> PendingCurtainPlacement? {
+        guard let pending = peekPendingCurtainPlacement(matchingViewerSessionId: matchingViewerSessionId)
+        else { return nil }
+        pendingCurtainPlacement = nil
         return pending
     }
 }

@@ -2,34 +2,63 @@ import SwiftUI
 
 struct CatalogProductCardView: View {
     let product: CatalogProduct
+    var selectedVariantId: String?
+    var onSelectVariant: ((String) -> Void)?
+    var isPlaceLoading: Bool = false
+    var isARLoading: Bool = false
     var onOpen: () -> Void
     var onPlace: () -> Void
+    var onOpenAR: (() -> Void)? = nil
+
+    private var placeEnabled: Bool {
+        if isPlaceLoading { return false }
+        if product.placementType == .curtain2D {
+            return CatalogCurtainListCTA.isEnabled(product: product)
+        }
+        return product.availableForPlacement != false
+    }
+
+    private var showsARButton: Bool {
+        product.placementType == .furniture3D
+    }
+
+    private var arEnabled: Bool {
+        guard showsARButton else { return false }
+        if isARLoading { return false }
+        return CatalogFurnitureARController.isEnabled(product: product)
+    }
+
+    private var variantOptions: [CatalogVariantOption] {
+        product.resolvedVariantOptions
+    }
+
+    private var activeOption: CatalogVariantOption? {
+        product.variantOption(id: effectiveVariantId)
+    }
+
+    /// Same id used for image, dimensions, and place/AR handoff from the card.
+    private var effectiveVariantId: String? {
+        product.effectiveVariantId(selectedVariantId: selectedVariantId)
+    }
+
+    private var cardThumbnailURLString: String? {
+        product.cardThumbnailURL(selectedVariantId: effectiveVariantId)
+    }
+
+    private var dimensionsLabel: String {
+        activeOption?.dimensions?.shortLabelMm ?? product.dimensions.shortLabelMm
+    }
+
+    private var dimensionsA11y: String {
+        activeOption?.dimensions?.accessibilityLabel ?? product.dimensions.accessibilityLabel
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            ZStack {
-                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
-                    .fill(GonggiColors.surfaceElevated)
-                if let urlString = product.thumbnailUrl, let url = URL(string: urlString) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image.resizable().scaledToFill()
-                        case .failure:
-                            placeholder
-                        default:
-                            ProgressView().tint(GonggiColors.accentCyan)
-                        }
-                    }
-                    .frame(width: 200, height: 140)
-                    .clipped()
-                } else {
-                    placeholder
-                }
-            }
-            .frame(width: 200, height: 140)
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-            .accessibilityHidden(true)
+            CatalogProductThumbnailView(
+                productName: product.productName,
+                thumbnailURLString: cardThumbnailURLString
+            )
 
             Text(product.partnerDisplayName)
                 .font(GonggiTypography.caption(12))
@@ -42,47 +71,41 @@ struct CatalogProductCardView: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let desc = product.shortDescription, !desc.isEmpty {
-                Text(desc)
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                    .lineLimit(2)
-            }
-
             Text(product.priceLabel)
                 .font(GonggiTypography.body(14))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .accessibilityLabel(product.priceAccessibilityLabel)
 
-            if let variant = product.selectedVariantName {
-                Text("옵션 · \(variant)")
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                    .lineLimit(1)
+            if !variantOptions.isEmpty {
+                variantDropdown
             }
 
-            Text(product.dimensions.shortLabelCm)
+            Text(dimensionsLabel)
                 .font(GonggiTypography.caption(12))
                 .foregroundStyle(GonggiColors.textSecondary)
-                .accessibilityLabel(product.dimensions.accessibilityLabel)
+                .accessibilityLabel(dimensionsA11y)
 
-            Button {
-                GonggiHaptics.light()
+            catalogCTAButton(
+                title: product.placementType == .curtain2D ? "적용해보기" : "배치해보기",
+                isLoading: isPlaceLoading,
+                isEnabled: placeEnabled,
+                accessibilityName: product.productName + (product.placementType == .curtain2D ? " 적용해보기" : " 배치해보기")
+            ) {
                 onPlace()
-            } label: {
-                Text("배치해보기")
-                    .font(GonggiTypography.body(14))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(GonggiColors.accentCyan))
-                    .foregroundStyle(GonggiColors.textOnAccent)
             }
-            .buttonStyle(.plain)
-            .disabled(product.availableForPlacement == false && product.placementType == .curtain2D)
-            .accessibilityLabel("\(product.productName) 배치해보기")
-            .frame(minHeight: 44)
+
+            if showsARButton {
+                catalogCTAButton(
+                    title: "AR 보기",
+                    isLoading: isARLoading,
+                    isEnabled: arEnabled,
+                    accessibilityName: "\(product.productName) AR 보기"
+                ) {
+                    onOpenAR?()
+                }
+            }
         }
-        .frame(width: 200, alignment: .leading)
+        .frame(width: CatalogProductThumbnailLayout.containerWidth, alignment: .leading)
         .padding(GonggiSpacing.sm)
         .background(
             RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
@@ -99,16 +122,107 @@ struct CatalogProductCardView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(product.dimensions.shortLabelCm)"
+            "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(dimensionsLabel)"
         )
         .accessibilityHint("두 번 탭하면 상품 상세를 엽니다")
     }
 
-    private var placeholder: some View {
-        Image(systemName: "sofa.fill")
-            .font(.system(size: 36))
-            .foregroundStyle(GonggiColors.textTertiary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityLabel("\(product.productName) 이미지 없음")
+    @ViewBuilder
+    private var variantDropdown: some View {
+        let options = variantOptions
+        let current = activeOption
+        let hasExplicitSelection = selectedVariantId != nil
+            && options.contains(where: { $0.id == selectedVariantId })
+        let buttonTitle = hasExplicitSelection
+            ? (current?.name ?? "옵션 선택")
+            : "옵션 선택"
+        Menu {
+            ForEach(options) { option in
+                Button {
+                    GonggiHaptics.light()
+                    onSelectVariant?(option.id)
+                } label: {
+                    if option.id == current?.id, hasExplicitSelection {
+                        Label(option.name, systemImage: "checkmark")
+                    } else {
+                        Text(option.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(buttonTitle)
+                    .font(GonggiTypography.body(14))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(GonggiColors.accentCyan)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(
+                Capsule()
+                    .fill(GonggiColors.surfaceElevated)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(GonggiColors.accentCyan.opacity(0.85), lineWidth: 1.5)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        // Prevent card onTapGesture from also opening detail when picking a color.
+        .simultaneousGesture(TapGesture().onEnded { })
+        .accessibilityLabel("옵션 선택")
+        .accessibilityValue(hasExplicitSelection ? (current?.name ?? "") : "미선택")
+        .accessibilityHint(options.count == 1 ? "선택 가능한 색상 1개" : "색상을 선택합니다")
+    }
+
+    @ViewBuilder
+    private func catalogCTAButton(
+        title: String,
+        isLoading: Bool,
+        isEnabled: Bool,
+        accessibilityName: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            GonggiHaptics.light()
+            action()
+        } label: {
+            Group {
+                if isLoading {
+                    ProgressView()
+                        .tint(GonggiColors.textOnAccent)
+                } else {
+                    Text(title)
+                        .font(GonggiTypography.body(14))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                Capsule().fill(
+                    isEnabled || isLoading
+                        ? GonggiColors.accentCyan
+                        : GonggiColors.surfaceElevated
+                )
+            )
+            .foregroundStyle(
+                isEnabled || isLoading
+                    ? GonggiColors.textOnAccent
+                    : GonggiColors.textTertiary
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .accessibilityLabel(
+            isLoading ? "\(accessibilityName) 준비 중" : accessibilityName
+        )
+        .accessibilityValue(isEnabled || isLoading ? "활성화됨" : "비활성화됨")
+        .frame(minHeight: 44)
     }
 }
