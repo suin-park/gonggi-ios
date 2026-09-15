@@ -109,7 +109,7 @@ struct CatalogHomeSectionView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("제휴 상품 배치해보기")
+                Text("공간 꾸며보기")
                     .font(GonggiTypography.headline(20))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .accessibilityAddTraits(.isHeader)

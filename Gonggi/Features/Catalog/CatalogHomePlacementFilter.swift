@@ -19,9 +19,9 @@ enum CatalogHomePlacementFilter: String, CaseIterable, Identifiable, Sendable {
     var sectionDescription: String {
         switch self {
         case .curtain:
-            return "내 공간의 창문에 제휴 커튼을 적용해보세요."
+            return "내 공간의 창문에 커튼을 미리 배치해보세요."
         case .furniture:
-            return "내 공간에 실제 규격의 제휴 가구를 놓아보세요."
+            return "내 공간에 가구를 미리 배치해보세요."
         }
     }
 
