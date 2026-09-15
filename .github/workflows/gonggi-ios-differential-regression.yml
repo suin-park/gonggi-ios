@@ -134,11 +134,12 @@ jobs:
           echo "baseline_shims=capture_summary_return,three_d_expansion_tests,profile_mapper_optional" >> "$GITHUB_OUTPUT"
           echo "Applied Simulator Debug compile-only shims on base (Catalog sources NOT included)."
 
-      - name: Guard build number 33 (no bump)
+      - name: Guard marketing/build for this PR track
         run: |
           set -euo pipefail
-          grep -q 'CURRENT_PROJECT_VERSION: "33"' project.yml
+          grep -q 'CURRENT_PROJECT_VERSION: "35"' project.yml
           grep -q 'MARKETING_VERSION: "2.0"' project.yml
+          echo "Build number 35; marketing 2.0 (TestFlight track)"
 
       - name: Restore OpenCV cache
         id: opencv-cache

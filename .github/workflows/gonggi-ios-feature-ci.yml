@@ -78,13 +78,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Guard non-release (no TF / no build bump)
+      - name: Guard marketing/build for this PR track
         run: |
           set -euo pipefail
           test ! -f ExportOptions.plist || true
-          grep -q 'CURRENT_PROJECT_VERSION: "33"' project.yml
+          grep -q 'CURRENT_PROJECT_VERSION: "35"' project.yml
           grep -q 'MARKETING_VERSION: "2.0"' project.yml
-          echo "Build number remains 33; marketing 2.0"
+          echo "Build number 35; marketing 2.0 (TestFlight track)"
 
       - name: Restore OpenCV xcframework cache
         id: opencv-cache
