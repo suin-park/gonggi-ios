@@ -1643,7 +1643,6 @@ struct VRSphereSpaceView: View {
 
         pendingPlacementAsset = asset
         placementRequestToken += 1
-        schedulePlacementSpawnRetryIfNeeded()
     }
 
     private func insertPendingCatalogPlacement(_ pending: PendingCatalogPlacement) async {
@@ -1706,16 +1705,6 @@ struct VRSphereSpaceView: View {
         pendingCatalogInsert = pending
         pendingPlacementAsset = dto
         placementRequestToken += 1
-        schedulePlacementSpawnRetryIfNeeded()
-    }
-
-    /// Cold VR enter can resolve the spawn token before SCNHost has a real viewport; retry once.
-    private func schedulePlacementSpawnRetryIfNeeded() {
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            guard pendingCatalogInsert != nil || pendingPlacementAsset != nil else { return }
-            placementRequestToken += 1
-        }
     }
 
     private func isMockModeCatalogURL(_ url: URL) -> Bool {
@@ -1746,17 +1735,18 @@ struct VRSphereSpaceView: View {
     }
 
     private func addPendingAsset(at point: SIMD3<Float>) {
+        // Consume pending first so overlapping spawn callbacks cannot insert twice
+        // (viewport-wait retries + token bumps previously created duplicate furniture).
         if let catalogPending = pendingCatalogInsert {
+            pendingCatalogInsert = nil
+            pendingPlacementAsset = nil
             finishPendingCatalogInsert(catalogPending, at: point)
             return
         }
 
-        guard let asset = pendingPlacementAsset,
-              draftLayout.assets.count < VRPlacementLayout.maxAssets
-        else {
-            pendingPlacementAsset = nil
-            return
-        }
+        guard let asset = pendingPlacementAsset else { return }
+        pendingPlacementAsset = nil
+        guard draftLayout.assets.count < VRPlacementLayout.maxAssets else { return }
         let entry = VRPlacedAssetEntry(
             assetId: asset.id,
             position: SIMD3(point.x, draftLayout.floorY, point.z),
@@ -1766,16 +1756,12 @@ struct VRSphereSpaceView: View {
             supportY: draftLayout.floorY
         )
         guard draftLayout.append(entry) else { return }
-        pendingPlacementAsset = nil
         selectedPlacementId = entry.id
         editTool = .none
         saveDraftLocally()
     }
 
     private func finishPendingCatalogInsert(_ pending: PendingCatalogPlacement, at point: SIMD3<Float>) {
-        pendingCatalogInsert = nil
-        pendingPlacementAsset = nil
-
         guard draftLayout.assets.count < VRPlacementLayout.maxAssets else {
             placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
             return

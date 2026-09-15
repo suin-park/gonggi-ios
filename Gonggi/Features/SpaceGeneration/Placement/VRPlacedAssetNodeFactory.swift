@@ -73,8 +73,8 @@ enum VRPlacedAssetNodeFactory {
         let bounds = computeVisualBounds(content: content)
         setVisualBounds(bounds, on: root)
 
-        let fallbackRadius = max(footprint.x, footprint.y) * 0.55
-        let shadowRadius = max(0.08, entry.shadowRadius ?? fallbackRadius)
+        let fallbackRadius = max(footprint.x, footprint.y) * 0.85
+        let shadowRadius = max(0.12, entry.shadowRadius ?? fallbackRadius)
         let shadow = makeShadow(
             radius: shadowRadius,
             opacity: entry.shadowOpacity ?? VRLightingExperimentPrefs.contactOpacityDirectionalInactive
@@ -364,8 +364,8 @@ enum VRPlacedAssetNodeFactory {
 
     private static func makeShadow(radius: Float, opacity: Float) -> SCNNode {
         let plane = SCNPlane(
-            width: CGFloat(radius * 2),
-            height: CGFloat(radius * 1.5)
+            width: CGFloat(radius * 2.4),
+            height: CGFloat(radius * 1.85)
         )
         let material = SCNMaterial()
         applyContactShadowMaterial(material, opacity: opacity)
