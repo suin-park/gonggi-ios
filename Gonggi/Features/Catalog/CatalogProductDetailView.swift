@@ -78,20 +78,23 @@ struct CatalogProductDetailView: View {
                 Text(product.productName)
                     .font(GonggiTypography.headline(22))
                     .foregroundStyle(GonggiColors.textPrimary)
-                if let desc = product.shortDescription {
+                if let variants = product.variants, variants.count > 1 {
+                    variantChips(variants)
+                } else if let variant {
+                    Text("옵션 · \(variant.name)")
+                        .font(GonggiTypography.body(14))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+                if let desc = CatalogPlainText.nonEmpty(product.shortDescription) {
                     Text(desc)
                         .font(GonggiTypography.body(15))
                         .foregroundStyle(GonggiColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(product.priceLabel)
                     .font(GonggiTypography.headline(18))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .accessibilityLabel(product.priceAccessibilityLabel)
-                if let variant {
-                    Text("옵션 · \(variant.name)")
-                        .font(GonggiTypography.body(14))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
                 Text(product.dimensions.shortLabelMm)
                     .font(GonggiTypography.body(14))
                     .foregroundStyle(GonggiColors.textSecondary)
@@ -103,32 +106,6 @@ struct CatalogProductDetailView: View {
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let variants = product.variants, variants.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        ForEach(variants) { v in
-                            Button(v.name) {
-                                selectedVariantId = v.id
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule().fill(
-                                    selectedVariantId == v.id || (selectedVariantId == nil && v.id == variants.first?.id)
-                                        ? GonggiColors.accentCyan
-                                        : GonggiColors.surfaceElevated
-                                )
-                            )
-                            .foregroundStyle(
-                                selectedVariantId == v.id || (selectedVariantId == nil && v.id == variants.first?.id)
-                                    ? GonggiColors.textOnAccent
-                                    : GonggiColors.textSecondary
-                            )
-                        }
-                    }
-                }
             }
 
             VStack(spacing: GonggiSpacing.sm) {
@@ -184,10 +161,11 @@ struct CatalogProductDetailView: View {
     }
 
     private func hero(_ product: CatalogProduct) -> some View {
-        ZStack {
+        let heroURL = product.heroThumbnailURL(selectedVariantId: selectedVariantId)
+        return ZStack {
             RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
                 .fill(GonggiColors.surfaceElevated)
-            if let url = CatalogThumbnailURL.httpsURL(from: product.resolvedThumbnailURL) {
+            if let url = CatalogThumbnailURL.httpsURL(from: heroURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
@@ -220,6 +198,45 @@ struct CatalogProductDetailView: View {
         .frame(height: 220)
         .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
         .accessibilityLabel("\(product.productName) 대표 이미지")
+    }
+
+    @ViewBuilder
+    private func variantChips(_ variants: [CatalogVariant]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: GonggiSpacing.sm) {
+                ForEach(variants) { v in
+                    let selected = selectedVariantId == v.id
+                        || (selectedVariantId == nil && v.id == variants.first?.id)
+                    Button {
+                        selectedVariantId = v.id
+                    } label: {
+                        HStack(spacing: 8) {
+                            if let hex = CatalogColorHex.normalized(v.hexCode),
+                               let chip = CatalogColorHex.swiftUIColor(hex) {
+                                Circle()
+                                    .fill(chip)
+                                    .frame(width: 14, height: 14)
+                                    .overlay(Circle().strokeBorder(GonggiColors.borderSubtle, lineWidth: 1))
+                            }
+                            Text(v.name)
+                                .font(GonggiTypography.body(14))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule().fill(
+                                selected ? GonggiColors.accentCyan : GonggiColors.surfaceElevated
+                            )
+                        )
+                        .foregroundStyle(
+                            selected ? GonggiColors.textOnAccent : GonggiColors.textSecondary
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("옵션 \(v.name)")
+                }
+            }
+        }
     }
 
     private func placementMethodLabel(_ product: CatalogProduct) -> String {

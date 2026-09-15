@@ -23,13 +23,6 @@ struct CatalogProductCardView: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let desc = product.shortDescription, !desc.isEmpty {
-                Text(desc)
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                    .lineLimit(2)
-            }
-
             Text(product.priceLabel)
                 .font(GonggiTypography.body(14))
                 .foregroundStyle(GonggiColors.textSecondary)

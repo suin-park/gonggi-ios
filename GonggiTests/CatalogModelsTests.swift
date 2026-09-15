@@ -228,6 +228,41 @@ final class CatalogModelsTests: XCTestCase {
         XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/product.jpg")
     }
 
+    func testHeroThumbnailPrefersSelectedVariant() {
+        var product = CatalogMockData.roundCabinetDetail()
+        product.thumbnailUrl = "https://cdn.example.com/product.jpg"
+        guard var variants = product.variants, variants.count >= 1 else {
+            XCTFail("expected variants")
+            return
+        }
+        variants[0].thumbnailUrl = "https://cdn.example.com/variant-oak.jpg"
+        product.variants = variants
+        let selectedId = variants[0].id
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: selectedId),
+            "https://cdn.example.com/variant-oak.jpg"
+        )
+        variants[0].thumbnailUrl = nil
+        product.variants = variants
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: selectedId),
+            "https://cdn.example.com/product.jpg"
+        )
+    }
+
+    func testColorHexNormalizationAndPlainDescription() {
+        XCTAssertEqual(CatalogColorHex.normalized("#abc"), "#AABBCC")
+        XCTAssertEqual(CatalogColorHex.normalized("C2A87A"), "#C2A87A")
+        XCTAssertNil(CatalogColorHex.normalized("not-a-color"))
+        XCTAssertNil(CatalogColorHex.normalized("  "))
+        XCTAssertEqual(
+            CatalogPlainText.nonEmpty("  <b>설명</b> 줄1<br/>줄2  "),
+            "설명 줄1\n줄2"
+        )
+        XCTAssertNil(CatalogPlainText.nonEmpty("   "))
+        XCTAssertEqual(CatalogPlainText.nonEmpty("<script>alert(1)</script>"), "alert(1)")
+    }
+
     func testRulerSpecFromStoredEntryAxis() throws {
         var entry = VRPlacedAssetEntry(assetId: "catalog:a", position: .zero)
         entry.catalogAssetId = "a"

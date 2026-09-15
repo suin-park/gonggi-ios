@@ -227,6 +227,20 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
             .compactMap { CatalogThumbnailURL.sanitizedHTTPSString($0.thumbnailUrl) }
             .first
     }
+
+    /// Detail/card hero when a color option is selected:
+    /// selectedVariant.thumbnailUrl → product.thumbnailUrl → placeholder
+    func heroThumbnailURL(selectedVariantId: String?) -> String? {
+        if let selectedVariantId,
+           let selected = variants?.first(where: { $0.id == selectedVariantId }),
+           let url = CatalogThumbnailURL.sanitizedHTTPSString(selected.thumbnailUrl) {
+            return url
+        }
+        if let product = CatalogThumbnailURL.sanitizedHTTPSString(thumbnailUrl) {
+            return product
+        }
+        return resolvedThumbnailURL
+    }
 }
 
 struct CatalogProductListResponse: Codable, Sendable {
