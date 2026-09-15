@@ -95,9 +95,9 @@ jobs:
           BUNDLE_ID: ${{ env.BUNDLE_ID }}
         run: |
           set -euo pipefail
-          python3 -m pip install --quiet 'PyJWT[crypto]>=2.8'
+          python -m pip install --quiet 'PyJWT[crypto]>=2.8'
           set +e
-          python3 scripts/check-asc-build-exists.py
+          python scripts/check-asc-build-exists.py
           code=$?
           set -e
           if [[ $code -eq 2 ]]; then
