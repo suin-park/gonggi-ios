@@ -82,9 +82,9 @@ jobs:
         run: |
           set -euo pipefail
           test ! -f ExportOptions.plist || true
-          grep -q 'CURRENT_PROJECT_VERSION: "38"' project.yml
+          grep -q 'CURRENT_PROJECT_VERSION: "39"' project.yml
           grep -q 'MARKETING_VERSION: "2.0"' project.yml
-          echo "Build number 38; marketing 2.0 (TestFlight track)"
+          echo "Build number 39; marketing 2.0 (TestFlight track)"
 
       - name: Restore OpenCV xcframework cache
         id: opencv-cache
@@ -213,7 +213,7 @@ jobs:
       - name: Boot simulator
         run: xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
 
-      - name: Unit tests — CatalogModelsTests (required gate)
+      - name: Unit tests ??CatalogModelsTests (required gate)
         run: |
           set -euo pipefail
           set +e
@@ -237,7 +237,7 @@ jobs:
           echo "::endgroup::"
           exit "${STATUS}"
 
-      - name: Unit tests — full GonggiTests (report only; pre-existing failures allowed)
+      - name: Unit tests ??full GonggiTests (report only; pre-existing failures allowed)
         continue-on-error: true
         run: |
           set -euo pipefail

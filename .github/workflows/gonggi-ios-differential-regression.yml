@@ -44,7 +44,7 @@ env:
   SCHEME: Gonggi
   PROJECT: Gonggi.xcodeproj
   OPENCV_VERSION: "4.10.0"
-  # Prefer newest Xcode (matches Gonggi TestFlight 2.0(33) run 34732141730 → Xcode 26.3).
+  # Prefer newest Xcode (matches Gonggi TestFlight 2.0(33) run 34732141730 ??Xcode 26.3).
   # Note: Xcode 16.4 cannot compile base 1bf88b2 (CaptureSummaryView opaque return);
   # feature fixed that for 16.4, but baseline comparison must use a toolchain that builds base.
   BASE_SHA_DEFAULT: 1bf88b2d70018eae6461dfa4124dd5e292298f23
@@ -137,9 +137,9 @@ jobs:
       - name: Guard marketing/build for this PR track
         run: |
           set -euo pipefail
-          grep -q 'CURRENT_PROJECT_VERSION: "38"' project.yml
+          grep -q 'CURRENT_PROJECT_VERSION: "39"' project.yml
           grep -q 'MARKETING_VERSION: "2.0"' project.yml
-          echo "Build number 38; marketing 2.0 (TestFlight track)"
+          echo "Build number 39; marketing 2.0 (TestFlight track)"
 
       - name: Restore OpenCV cache
         id: opencv-cache
@@ -307,7 +307,7 @@ jobs:
           pathlib.Path(f"meta-{label}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
           print(json.dumps(meta, indent=2))
           if compile_failed:
-              print(f"::warning::{label} compile/build failed — cannot use as test baseline")
+              print(f"::warning::{label} compile/build failed ??cannot use as test baseline")
           PY
         env:
           LABEL: ${{ matrix.label }}
@@ -372,7 +372,7 @@ jobs:
               pathlib.Path("differential-report.json").write_text(json.dumps(report, indent=2) + "\n")
               md = (
                   "## Differential regression gate\n\n"
-                  "### UNVERIFIED — compile failure prevented fair test comparison\n\n"
+                  "### UNVERIFIED ??compile failure prevented fair test comparison\n\n"
                   f"- base compile_failed: {base_meta.get('compile_failed')}\n"
                   f"- head compile_failed: {head_meta.get('compile_failed')}\n"
               )
