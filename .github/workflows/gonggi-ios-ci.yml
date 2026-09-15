@@ -305,6 +305,8 @@ jobs:
             -only-testing:GonggiTests/PlacementResultsPollingTests \
             -only-testing:GonggiTests/CatalogHomePlacementFilterTests \
             -only-testing:GonggiTests/CatalogModelsTests \
+            -only-testing:GonggiTests/CatalogFurnitureARControllerTests \
+            -only-testing:GonggiTests/CatalogVariantOptionTests \
             ARCHS=arm64 \
             EXCLUDED_ARCHS=x86_64 \
             CODE_SIGNING_ALLOWED=NO \

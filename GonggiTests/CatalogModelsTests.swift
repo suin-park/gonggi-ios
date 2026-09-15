@@ -228,6 +228,121 @@ final class CatalogModelsTests: XCTestCase {
         XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/product.jpg")
     }
 
+    func testHeroThumbnailPrefersSelectedVariant() {
+        var product = CatalogMockData.roundCabinetDetail()
+        product.thumbnailUrl = "https://cdn.example.com/product.jpg"
+        guard var variants = product.variants, variants.count >= 1 else {
+            XCTFail("expected variants")
+            return
+        }
+        variants[0].thumbnailUrl = "https://cdn.example.com/variant-oak.jpg"
+        product.variants = variants
+        let selectedId = variants[0].id
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: selectedId),
+            "https://cdn.example.com/variant-oak.jpg"
+        )
+        // nil selection → effectiveVariantId = first → still first variant thumb
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: nil),
+            "https://cdn.example.com/variant-oak.jpg"
+        )
+        variants[0].thumbnailUrl = nil
+        product.variants = variants
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: selectedId),
+            "https://cdn.example.com/product.jpg"
+        )
+    }
+
+    func testEffectiveVariantIdAndCardThumbnail() {
+        var product = CatalogMockData.roundCabinetDetail()
+        product.thumbnailUrl = "https://cdn.example.com/product.jpg"
+        product.displayThumbnailUrl = "https://cdn.example.com/display-fallback.jpg"
+        guard var variants = product.variants, !variants.isEmpty else {
+            XCTFail("expected variants")
+            return
+        }
+        let firstId = variants[0].id
+        XCTAssertEqual(product.effectiveVariantId(selectedVariantId: nil), firstId)
+        variants[0].thumbnailUrl = "https://cdn.example.com/v1.jpg"
+        if variants.count > 1 {
+            variants[1].thumbnailUrl = "https://cdn.example.com/v2.jpg"
+            product.variants = variants
+            XCTAssertEqual(
+                product.cardThumbnailURL(selectedVariantId: variants[1].id),
+                "https://cdn.example.com/v2.jpg"
+            )
+            XCTAssertEqual(product.effectiveVariantId(selectedVariantId: variants[1].id), variants[1].id)
+        } else {
+            product.variants = variants
+        }
+        variants[0].thumbnailUrl = nil
+        product.variants = variants
+        XCTAssertEqual(
+            product.cardThumbnailURL(selectedVariantId: nil),
+            "https://cdn.example.com/display-fallback.jpg"
+        )
+    }
+
+    func testHomesFrontOnlyDisplayThumbnailMapsToProductImage() throws {
+        // Cloud mobile DTO after Homes front-only publish: thumbnailUrl/displayThumbnailUrl = front.
+        let json = """
+        {
+          "id": "curtain-front-only",
+          "partnerId": "homes",
+          "productName": "리넨 커튼",
+          "shortDescription": "원단 설명",
+          "placementType": "CURTAIN_2D",
+          "thumbnailUrl": "https://cdn.example.com/front.jpg",
+          "displayThumbnailUrl": "https://cdn.example.com/front.jpg",
+          "widthMm": 2400,
+          "depthMm": 50,
+          "heightMm": 2200,
+          "variants": [
+            {
+              "id": "v-default",
+              "name": "기본",
+              "hexCode": null,
+              "widthMm": 2400,
+              "depthMm": 50,
+              "heightMm": 2200,
+              "thumbnailUrl": null,
+              "availableForPlacement": true
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let product = try JSONDecoder().decode(CatalogProduct.self, from: json)
+        XCTAssertEqual(product.displayProductThumbnailURL, "https://cdn.example.com/front.jpg")
+        XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/front.jpg")
+        XCTAssertEqual(
+            product.cardThumbnailURL(selectedVariantId: nil),
+            "https://cdn.example.com/front.jpg"
+        )
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: nil),
+            "https://cdn.example.com/front.jpg"
+        )
+        XCTAssertFalse(product.shortDescription?.isEmpty ?? true)
+    }
+
+    func testColorHexNormalizationAndPlainDescription() {
+        XCTAssertEqual(CatalogColorHex.normalized("#abc"), "#AABBCC")
+        XCTAssertEqual(CatalogColorHex.normalized("C2A87A"), "#C2A87A")
+        XCTAssertNil(CatalogColorHex.normalized("not-a-color"))
+        XCTAssertNil(CatalogColorHex.normalized("  "))
+        XCTAssertEqual(
+            CatalogPlainText.nonEmpty("  <b>설명</b> 줄1<br/>줄2  "),
+            "설명 줄1\n줄2"
+        )
+        XCTAssertNil(CatalogPlainText.nonEmpty("   "))
+        XCTAssertNil(CatalogPlainText.nonEmpty("<script>alert(1)</script>"))
+        XCTAssertEqual(CatalogPlainText.nonEmpty("설명<script>alert(1)</script>"), "설명")
+        XCTAssertEqual(CatalogPlainText.nonEmpty("<style>.x{color:red}</style>설명"), "설명")
+        XCTAssertEqual(CatalogPlainText.nonEmpty("A&amp;B"), "A&B")
+    }
+
     func testRulerSpecFromStoredEntryAxis() throws {
         var entry = VRPlacedAssetEntry(assetId: "catalog:a", position: .zero)
         entry.catalogAssetId = "a"

@@ -61,7 +61,8 @@ struct CatalogProductDetailView: View {
 
     @ViewBuilder
     private func detailBody(_ product: CatalogProduct) -> some View {
-        let variant = resolvedVariant(product)
+        let effectiveId = product.effectiveVariantId(selectedVariantId: selectedVariantId)
+        let variant = resolvedVariant(product, effectiveId: effectiveId)
         let placeOK = product.placementType == .curtain2D
             ? CatalogCurtainPlacementValidator.canPlace(product: product, variant: variant)
             : CatalogPlacementSpecValidator.validate(variant?.placementSpec).isSuccess
@@ -71,7 +72,7 @@ struct CatalogProductDetailView: View {
             : (placeOK ? "배치해보기" : "배치 준비 중")
 
         VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-            hero(product)
+            hero(product, effectiveId: effectiveId)
             VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
                 Text(product.partnerDisplayName)
                     .font(GonggiTypography.caption(13))
@@ -97,7 +98,7 @@ struct CatalogProductDetailView: View {
             }
 
             if let variants = product.variants, !variants.isEmpty {
-                let currentName = resolvedVariant(product)?.name ?? variants[0].name
+                let currentName = variant?.name ?? variants[0].name
                 let hasExplicitSelection = selectedVariantId != nil
                     && variants.contains(where: { $0.id == selectedVariantId })
                 Menu {
@@ -106,15 +107,30 @@ struct CatalogProductDetailView: View {
                             GonggiHaptics.light()
                             selectedVariantId = v.id
                         } label: {
-                            if v.id == selectedVariantId || (!hasExplicitSelection && v.id == variants.first?.id) {
-                                Label(v.name, systemImage: "checkmark")
-                            } else {
-                                Text(v.name)
+                            HStack {
+                                if let hex = CatalogColorHex.normalized(v.hexCode),
+                                   let chip = CatalogColorHex.swiftUIColor(hex) {
+                                    Circle()
+                                        .fill(chip)
+                                        .frame(width: 12, height: 12)
+                                }
+                                if v.id == effectiveId {
+                                    Label(v.name, systemImage: "checkmark")
+                                } else {
+                                    Text(v.name)
+                                }
                             }
                         }
                     }
                 } label: {
                     HStack(spacing: 8) {
+                        if let hex = CatalogColorHex.normalized(variant?.hexCode),
+                           let chip = CatalogColorHex.swiftUIColor(hex) {
+                            Circle()
+                                .fill(chip)
+                                .frame(width: 14, height: 14)
+                                .overlay(Circle().strokeBorder(GonggiColors.borderSubtle, lineWidth: 1))
+                        }
                         Text(hasExplicitSelection ? currentName : "옵션 선택")
                             .font(GonggiTypography.body(14))
                             .foregroundStyle(GonggiColors.textPrimary)
@@ -141,6 +157,13 @@ struct CatalogProductDetailView: View {
                 .accessibilityLabel("옵션 선택")
                 .accessibilityValue(hasExplicitSelection ? currentName : "미선택")
                 .accessibilityHint(variants.count == 1 ? "선택 가능한 옵션 1개" : "옵션을 선택합니다")
+            }
+
+            if let desc = CatalogPlainText.nonEmpty(product.shortDescription) {
+                Text(desc)
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(spacing: GonggiSpacing.sm) {
@@ -195,11 +218,12 @@ struct CatalogProductDetailView: View {
         .padding(GonggiSpacing.lg)
     }
 
-    private func hero(_ product: CatalogProduct) -> some View {
-        ZStack {
+    private func hero(_ product: CatalogProduct, effectiveId: String?) -> some View {
+        let heroURL = product.heroThumbnailURL(selectedVariantId: effectiveId)
+        return ZStack {
             RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
                 .fill(GonggiColors.surfaceElevated)
-            if let url = CatalogThumbnailURL.httpsURL(from: product.resolvedThumbnailURL) {
+            if let url = CatalogThumbnailURL.httpsURL(from: heroURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
@@ -234,11 +258,11 @@ struct CatalogProductDetailView: View {
         .accessibilityLabel("\(product.productName) 대표 이미지")
     }
 
-    private func resolvedVariant(_ product: CatalogProduct) -> CatalogVariant? {
-        if let id = selectedVariantId {
-            return product.variants?.first(where: { $0.id == id })
+    private func resolvedVariant(_ product: CatalogProduct, effectiveId: String?) -> CatalogVariant? {
+        if let effectiveId {
+            return product.variants?.first(where: { $0.id == effectiveId })
         }
-        return product.primaryVariant
+        return product.primaryVariant ?? product.variants?.first
     }
 
     private func handlePlaceTap(product: CatalogProduct, placeOK: Bool) {
@@ -259,7 +283,8 @@ struct CatalogProductDetailView: View {
 
     private func beginPlacement(in space: SpaceRecord) {
         guard let product else { return }
-        guard let variant = resolvedVariant(product) else {
+        let effectiveId = product.effectiveVariantId(selectedVariantId: selectedVariantId)
+        guard let variant = resolvedVariant(product, effectiveId: effectiveId) else {
             placeMessage = "배치 정보가 준비되지 않았어요."
             return
         }
@@ -285,7 +310,7 @@ struct CatalogProductDetailView: View {
                 productRevision: product.productRevision,
                 displayName: product.productName,
                 partnerName: product.partnerDisplayName,
-                thumbnailUrl: product.thumbnailUrl ?? variant.thumbnailUrl,
+                thumbnailUrl: product.displayProductThumbnailURL ?? variant.thumbnailUrl,
                 targetSpaceId: space.id,
                 targetSessionId: space.sessionId,
                 projectionKey: space.projectionKey,
@@ -308,7 +333,7 @@ struct CatalogProductDetailView: View {
             dimensionsMm: spec.dimensionsMm,
             displayName: product.productName,
             partnerName: product.partnerDisplayName,
-            thumbnailUrl: product.thumbnailUrl ?? variant.thumbnailUrl,
+            thumbnailUrl: product.displayProductThumbnailURL ?? variant.thumbnailUrl,
             placementSpec: spec,
             targetSpaceId: space.id,
             targetSessionId: space.sessionId,
@@ -329,7 +354,8 @@ struct CatalogProductDetailView: View {
                loaded.variants?.contains(where: { $0.id == initialVariantId }) == true {
                 selectedVariantId = initialVariantId
             } else {
-                selectedVariantId = loaded.primaryVariant?.id
+                // Leave nil so effectiveVariantId = variants.first?.id (first thumb shows immediately).
+                selectedVariantId = nil
             }
             await client.recordEvent(event(type: "DETAIL_VIEW", product: loaded, outbound: nil))
         } catch let error as CatalogAPIError {
@@ -343,7 +369,7 @@ struct CatalogProductDetailView: View {
         CatalogEventRequest(
             type: type,
             productId: product.id,
-            variantId: selectedVariantId ?? product.primaryVariant?.id,
+            variantId: product.effectiveVariantId(selectedVariantId: selectedVariantId),
             spaceId: nil,
             payload: CatalogEventPayload(
                 channel: "gonggi_ios",

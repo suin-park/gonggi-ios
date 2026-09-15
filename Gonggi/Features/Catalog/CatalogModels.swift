@@ -161,6 +161,7 @@ struct CatalogVariantOption: Codable, Sendable, Equatable, Identifiable {
     var id: String
     var name: String
     var hexCode: String?
+    var thumbnailUrl: String? = nil
     var widthMm: Int?
     var depthMm: Int?
     var heightMm: Int?
@@ -176,6 +177,7 @@ struct CatalogVariantOption: Codable, Sendable, Equatable, Identifiable {
                 id: $0.id,
                 name: $0.name,
                 hexCode: $0.hexCode,
+                thumbnailUrl: $0.thumbnailUrl,
                 widthMm: $0.widthMm,
                 depthMm: $0.depthMm,
                 heightMm: $0.heightMm
@@ -196,6 +198,8 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
     var displayPriceMinor: Int?
     var currency: String?
     var thumbnailUrl: String?
+    /// Cloud mobile display fallback (admin thumb → front → preview). Prefer over raw asset when present.
+    var displayThumbnailUrl: String? = nil
     var widthMm: Int
     var depthMm: Int
     var heightMm: Int
@@ -269,9 +273,20 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
         return "가격 \(priceLabel)"
     }
 
-    /// Final card thumbnail: product URL → primary variant URL (HTTPS only).
+    /// Single source of truth for option selection / hero / place / AR.
+    func effectiveVariantId(selectedVariantId: String?) -> String? {
+        selectedVariantId ?? variants?.first?.id ?? resolvedVariantOptions.first?.id
+    }
+
+    /// Product-level display image after Cloud fallback (not placement Catalog2D asset key).
+    var displayProductThumbnailURL: String? {
+        CatalogThumbnailURL.sanitizedHTTPSString(displayThumbnailUrl)
+            ?? CatalogThumbnailURL.sanitizedHTTPSString(thumbnailUrl)
+    }
+
+    /// Final card thumbnail without selection: product display → primary/first variant.
     var resolvedThumbnailURL: String? {
-        if let product = CatalogThumbnailURL.sanitizedHTTPSString(thumbnailUrl) {
+        if let product = displayProductThumbnailURL {
             return product
         }
         if let variant = CatalogThumbnailURL.sanitizedHTTPSString(primaryVariant?.thumbnailUrl) {
@@ -281,6 +296,28 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
             .lazy
             .compactMap { CatalogThumbnailURL.sanitizedHTTPSString($0.thumbnailUrl) }
             .first
+    }
+
+    /// Card/detail hero for an option:
+    /// selectedVariant.thumbnailUrl → product display thumbnail → placeholder
+    func heroThumbnailURL(selectedVariantId: String?) -> String? {
+        let eid = effectiveVariantId(selectedVariantId: selectedVariantId)
+        if let eid {
+            if let selected = variants?.first(where: { $0.id == eid }),
+               let url = CatalogThumbnailURL.sanitizedHTTPSString(selected.thumbnailUrl) {
+                return url
+            }
+            if let option = resolvedVariantOptions.first(where: { $0.id == eid }),
+               let url = CatalogThumbnailURL.sanitizedHTTPSString(option.thumbnailUrl) {
+                return url
+            }
+        }
+        return displayProductThumbnailURL
+    }
+
+    /// Alias for card image path (same priority as hero).
+    func cardThumbnailURL(selectedVariantId: String?) -> String? {
+        heroThumbnailURL(selectedVariantId: selectedVariantId)
     }
 }
 
