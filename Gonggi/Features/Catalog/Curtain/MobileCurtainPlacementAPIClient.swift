@@ -4,7 +4,7 @@ protocol CurtainPlacementServing: Sendable {
     func createJob(request: CurtainPlacementCreateRequest, idempotencyKey: String?) async throws -> CurtainPlacementJob
     func fetchJob(id: String) async throws -> CurtainPlacementJob
     func confirmWindow(jobId: String) async throws -> CurtainPlacementJob
-    func rejectWindow(jobId: String) async throws -> CurtainPlacementJob
+    func reselectWindow(jobId: String, seedU: Double, seedV: Double) async throws -> CurtainPlacementJob
     func composite(jobId: String) async throws -> CurtainPlacementJob
 }
 
@@ -19,7 +19,7 @@ actor MobileCurtainPlacementAPIClient: CurtainPlacementServing {
 
     func createJob(request: CurtainPlacementCreateRequest, idempotencyKey: String?) async throws -> CurtainPlacementJob {
         guard request.aiConsentAccepted else { throw CurtainPlacementAPIError.consentRequired }
-        var req = try makeRequest(path: ["api", "gonggi", "curtain-placements"], method: "POST")
+        var req = try makeRequest(path: ["api", "gonggi", "curtain-composites"], method: "POST")
         req.httpBody = try JSONEncoder().encode(request)
         if let idempotencyKey, !idempotencyKey.isEmpty {
             req.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
@@ -28,31 +28,32 @@ actor MobileCurtainPlacementAPIClient: CurtainPlacementServing {
     }
 
     func fetchJob(id: String) async throws -> CurtainPlacementJob {
-        let req = try makeRequest(path: ["api", "gonggi", "curtain-placements", id], method: "GET")
+        let req = try makeRequest(path: ["api", "gonggi", "curtain-composites", id], method: "GET")
         return try await decodeJob(from: req)
     }
 
     func confirmWindow(jobId: String) async throws -> CurtainPlacementJob {
-        let req = try makeRequest(
-            path: ["api", "gonggi", "curtain-placements", jobId, "confirm-window"],
+        var req = try makeRequest(
+            path: ["api", "gonggi", "curtain-composites", jobId, "confirm"],
             method: "POST"
         )
         req.httpBody = Data("{}".utf8)
         return try await decodeJob(from: req)
     }
 
-    func rejectWindow(jobId: String) async throws -> CurtainPlacementJob {
-        let req = try makeRequest(
-            path: ["api", "gonggi", "curtain-placements", jobId, "reject-window"],
+    func reselectWindow(jobId: String, seedU: Double, seedV: Double) async throws -> CurtainPlacementJob {
+        var req = try makeRequest(
+            path: ["api", "gonggi", "curtain-composites", jobId, "reselect"],
             method: "POST"
         )
-        req.httpBody = Data("{}".utf8)
+        let body: [String: Double] = ["seedU": seedU, "seedV": seedV]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
         return try await decodeJob(from: req)
     }
 
     func composite(jobId: String) async throws -> CurtainPlacementJob {
-        let req = try makeRequest(
-            path: ["api", "gonggi", "curtain-placements", jobId, "composite"],
+        var req = try makeRequest(
+            path: ["api", "gonggi", "curtain-composites", jobId, "composite"],
             method: "POST"
         )
         req.httpBody = Data("{}".utf8)
@@ -158,9 +159,12 @@ actor CurtainPlacementMockClient: CurtainPlacementServing {
         return job
     }
 
-    func rejectWindow(jobId: String) async throws -> CurtainPlacementJob {
+    func reselectWindow(jobId: String, seedU: Double, seedV: Double) async throws -> CurtainPlacementJob {
         guard var job = jobs[jobId] else { throw CurtainPlacementAPIError.notFound }
-        job.status = "DETECTION_REJECTED"
+        job.status = "DETECTING_WINDOW"
+        job.seedU = seedU
+        job.seedV = seedV
+        job.needsConfirmation = true
         jobs[jobId] = job
         return job
     }

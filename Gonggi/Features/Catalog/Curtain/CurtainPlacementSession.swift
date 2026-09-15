@@ -112,7 +112,16 @@ final class CurtainPlacementSession: ObservableObject {
         pollTask?.cancel()
         pollTask = Task { @MainActor in
             do {
-                let created = try await client.createJob(request: request, idempotencyKey: idempotencyKey)
+                let created: CurtainPlacementJob
+                if let existingId = job?.id {
+                    created = try await client.reselectWindow(
+                        jobId: existingId,
+                        seedU: capture.seed.u,
+                        seedV: capture.seed.v
+                    )
+                } else {
+                    created = try await client.createJob(request: request, idempotencyKey: idempotencyKey)
+                }
                 job = created
                 warnings = CurtainSeedMath.mergedWarnings(client: capture.clientWarnings, server: created.warnings)
                 beginPolling(jobId: created.id)
@@ -127,12 +136,7 @@ final class CurtainPlacementSession: ObservableObject {
     func reselectWindow() {
         pollTask?.cancel()
         pollTask = nil
-        if let jobId = job?.id, let client {
-            Task {
-                try? await client.rejectWindow(jobId: jobId)
-            }
-        }
-        job = nil
+        // Keep job id for Cloud reselect with the next seed; clear detection UI only.
         windowPolygon = nil
         markerYawDeg = nil
         markerPitchDeg = nil
