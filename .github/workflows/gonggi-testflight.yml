@@ -85,6 +85,27 @@ jobs:
       - name: Validate AppIcon sources
         run: python3 scripts/validate-app-icon-sources.py
 
+      - name: Fail if ASC already has this marketing/build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          BUNDLE_ID: ${{ env.BUNDLE_ID }}
+        run: |
+          set -euo pipefail
+          pip install --quiet 'PyJWT[crypto]>=2.8'
+          set +e
+          python3 scripts/check-asc-build-exists.py
+          code=$?
+          set -e
+          if [[ $code -eq 2 ]]; then
+            echo "::error::Build ${MARKETING_VERSION} (${BUILD_NUMBER}) already exists in App Store Connect — aborting before archive"
+            exit 1
+          fi
+          exit "${code}"
+
       - name: Select Xcode
         run: |
           set -euo pipefail

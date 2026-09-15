@@ -17,12 +17,14 @@ on:
     branches:
       - design/brand-redesign-v1
       - main
+      - feature/gonggi-placement-ui-save-fix
     paths:
       - 'Gonggi/**'
       - 'GonggiTests/**'
       - 'project.yml'
       - 'Vendor/OpenCV/**'
       - 'third_party/**'
+      - 'scripts/ci-guard-project-version.sh'
       - '.github/workflows/gonggi-ios-feature-ci.yml'
   workflow_dispatch:
 
@@ -79,12 +81,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Guard marketing/build for this PR track
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
           set -euo pipefail
           test ! -f ExportOptions.plist || true
-          grep -q 'CURRENT_PROJECT_VERSION: "40"' project.yml
-          grep -q 'MARKETING_VERSION: "2.0"' project.yml
-          echo "Build number 39; marketing 2.0 (TestFlight track)"
+          chmod +x scripts/ci-guard-project-version.sh
+          ./scripts/ci-guard-project-version.sh
 
       - name: Restore OpenCV xcframework cache
         id: opencv-cache
