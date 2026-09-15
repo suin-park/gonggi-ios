@@ -42,7 +42,6 @@ struct VRSphereSpaceView: View {
     @StateObject private var spaceCleanupSession = SpaceCleanupSession()
     @State private var showCurtainCompare = false
     @State private var cleanupCenterSampleToken = 0
-    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var spaceAudio = SpaceAudioManager.shared
     @State private var pendingTarget: RepairTarget?
     @State private var showConfirmSheet = false
@@ -206,6 +205,7 @@ struct VRSphereSpaceView: View {
                     }
                 )
             )
+            .modifier(SpaceCleanupLifecycleModifier(session: spaceCleanupSession))
     }
 
     /// Split from `body` so curtain sheets do not blow the SwiftUI type-checker budget.
@@ -240,26 +240,6 @@ struct VRSphereSpaceView: View {
                             preferredURL: preferredAudioURL
                         )
                     }
-                }
-                if spaceCleanupSession.isActive {
-                    spaceCleanupSession.onSelectionUIAppear()
-                }
-            }
-            .onChange(of: scenePhase) { _, phase in
-                switch phase {
-                case .active:
-                    spaceCleanupSession.onScenePhaseActive()
-                case .background:
-                    spaceCleanupSession.onScenePhaseBackground()
-                default:
-                    break
-                }
-            }
-            .onChange(of: spaceCleanupSession.isActive) { _, active in
-                if active {
-                    spaceCleanupSession.onSelectionUIAppear()
-                } else {
-                    spaceCleanupSession.onSelectionUIDisappear()
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
@@ -305,7 +285,6 @@ struct VRSphereSpaceView: View {
                 placementTask = nil
                 spaceLinkTask?.cancel()
                 spaceLinkTask = nil
-                spaceCleanupSession.onSelectionUIDisappear()
             }
             .sheet(isPresented: $showConfirmSheet, onDismiss: {
                 if captureTarget == nil {
