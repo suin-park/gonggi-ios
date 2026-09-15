@@ -137,9 +137,9 @@ jobs:
       - name: Guard marketing/build for this PR track
         run: |
           set -euo pipefail
-          grep -q 'CURRENT_PROJECT_VERSION: "36"' project.yml
+          grep -q 'CURRENT_PROJECT_VERSION: "37"' project.yml
           grep -q 'MARKETING_VERSION: "2.0"' project.yml
-          echo "Build number 36; marketing 2.0 (TestFlight track)"
+          echo "Build number 37; marketing 2.0 (TestFlight track)"
 
       - name: Restore OpenCV cache
         id: opencv-cache
