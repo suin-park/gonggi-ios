@@ -1,6 +1,7 @@
 import XCTest
 @testable import Gonggi
 
+@MainActor
 final class CatalogFurnitureARControllerTests: XCTestCase {
     private func furniture(available: Bool?) -> CatalogProduct {
         CatalogProduct(

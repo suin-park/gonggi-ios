@@ -1,6 +1,7 @@
 import XCTest
 @testable import Gonggi
 
+@MainActor
 final class CatalogVariantOptionTests: XCTestCase {
     func testResolvedOptionsPreferAPIOptions() {
         var product = sampleProduct(name: "우드", options: nil, variants: nil)
