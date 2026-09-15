@@ -213,7 +213,48 @@ final class PlacementResultsPollingTests: XCTestCase {
 
         func confirmCurtainJob(jobId: String) async throws {}
 
-        func deleteResult(id: String) async throws {}
+        func deleteResult(id: String) async throws {
+            results.removeAll { $0.id == id }
+        }
+    }
+
+    func testDeleteResultRemovesFromList() async {
+        let client = FlakyListClient(results: [
+            ProductPlacementResultDTO(
+                id: "pr-del",
+                type: .curtain2D,
+                status: .completed,
+                sourceSpaceId: "s1",
+                sourceRevisionId: nil,
+                resultRevisionId: nil,
+                curtainCompositeJobId: "j1",
+                catalogPartnerId: nil,
+                catalogProductId: nil,
+                catalogVariantId: nil,
+                productName: nil,
+                partnerName: nil,
+                optionName: nil,
+                productNameSnapshot: "커튼",
+                partnerNameSnapshot: "브랜드",
+                optionNameSnapshot: nil,
+                widthMm: nil,
+                depthMm: nil,
+                heightMm: nil,
+                previewUrl: nil,
+                originalPreviewUrl: nil,
+                resultPreviewUrl: nil,
+                progress: 1,
+                failureCode: nil,
+                createdAt: nil,
+                updatedAt: nil
+            ),
+        ])
+        let vm = PlacementResultsViewModel(client: client)
+        await vm.refresh(forceLoading: true)
+        XCTAssertEqual(vm.results.count, 1)
+        let target = vm.results[0]
+        await vm.deleteResult(target)
+        XCTAssertTrue(vm.results.isEmpty)
     }
 
     func testPollingCancelledOnDisappear() async {

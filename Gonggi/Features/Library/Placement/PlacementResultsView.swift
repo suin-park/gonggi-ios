@@ -109,6 +109,24 @@ final class PlacementResultsViewModel: ObservableObject {
         }
     }
 
+    func deleteResult(_ result: ProductPlacementResultDTO) async {
+        do {
+            try await client.deleteResult(id: result.id)
+            results.removeAll { $0.id == result.id }
+            if highlightId == result.id {
+                highlightId = nil
+            }
+            if results.isEmpty {
+                phase = .loaded
+            }
+            startPollingIfNeeded()
+        } catch let error as MobilePlacementResultsAPIError {
+            actionError = error.userMessage
+        } catch {
+            actionError = MobilePlacementResultsAPIError.invalidResponse.userMessage
+        }
+    }
+
     /// Fresh detail (signed preview URL) for opening a completed curtain composite.
     func fetchDetail(id: String) async throws -> ProductPlacementResultDTO {
         let detailed = try await client.fetchResult(id: id)
@@ -153,6 +171,7 @@ struct PlacementResultsView: View {
     @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
+    @State private var pendingDelete: ProductPlacementResultDTO?
 
     init(isMockMode: Bool, highlightId: String? = nil) {
         let client: any PlacementResultsServing = isMockMode
@@ -189,6 +208,19 @@ struct PlacementResultsView: View {
             Button("확인", role: .cancel) { viewModel.actionError = nil }
         } message: {
             Text(viewModel.actionError ?? "")
+        }
+        .alert("배치 결과 삭제", isPresented: Binding(
+            get: { pendingDelete != nil },
+            set: { if !$0 { pendingDelete = nil } }
+        )) {
+            Button("취소", role: .cancel) { pendingDelete = nil }
+            Button("삭제", role: .destructive) {
+                guard let target = pendingDelete else { return }
+                pendingDelete = nil
+                Task { await viewModel.deleteResult(target) }
+            }
+        } message: {
+            Text("「\(pendingDelete?.displayProductName ?? "이 결과")」를 목록에서 삭제할까요?")
         }
         .fullScreenCover(item: $viewerLaunch) { launch in
             SpaceVRNavigationHost(
@@ -262,6 +294,9 @@ struct PlacementResultsView: View {
                             },
                             onConfirm: {
                                 Task { await viewModel.confirmNeedsConfirmation(result) }
+                            },
+                            onDelete: {
+                                pendingDelete = result
                             }
                         )
                     }
@@ -451,6 +486,7 @@ private struct PlacementResultCardView: View {
     var onRetry: () -> Void
     var onReselect: () -> Void
     var onConfirm: () -> Void
+    var onDelete: () -> Void
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -468,6 +504,19 @@ private struct PlacementResultCardView: View {
                     HStack(spacing: 6) {
                         badge(result.type.badgeTitle)
                         badge(result.status.statusTitle, emphasized: true)
+                        Spacer(minLength: 0)
+                        Button {
+                            GonggiHaptics.light()
+                            onDelete()
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(GonggiColors.textTertiary)
+                                .frame(width: 36, height: 36)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("배치 결과 삭제")
                     }
                     Text(result.displayProductName)
                         .font(GonggiTypography.body(15))
@@ -539,6 +588,9 @@ private struct PlacementResultCardView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: Text("삭제")) {
+            onDelete()
+        }
     }
 
     private var accessibilityLabel: String {
