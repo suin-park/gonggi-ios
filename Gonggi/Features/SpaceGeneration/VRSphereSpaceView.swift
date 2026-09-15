@@ -1643,6 +1643,7 @@ struct VRSphereSpaceView: View {
 
         pendingPlacementAsset = asset
         placementRequestToken += 1
+        schedulePlacementSpawnRetryIfNeeded()
     }
 
     private func insertPendingCatalogPlacement(_ pending: PendingCatalogPlacement) async {
@@ -1705,6 +1706,16 @@ struct VRSphereSpaceView: View {
         pendingCatalogInsert = pending
         pendingPlacementAsset = dto
         placementRequestToken += 1
+        schedulePlacementSpawnRetryIfNeeded()
+    }
+
+    /// Cold VR enter can resolve the spawn token before SCNHost has a real viewport; retry once.
+    private func schedulePlacementSpawnRetryIfNeeded() {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard pendingCatalogInsert != nil || pendingPlacementAsset != nil else { return }
+            placementRequestToken += 1
+        }
     }
 
     private func isMockModeCatalogURL(_ url: URL) -> Bool {
@@ -3232,13 +3243,29 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         }
         if placementRequestToken != context.coordinator.lastPlacementRequestToken {
             context.coordinator.lastPlacementRequestToken = placementRequestToken
-            let size = uiView.viewportSize
-            let point = uiView.floorPointFromScreen(
-                CGPoint(x: size.width * 0.5, y: size.height * 0.55),
-                floorY: placementFloorY
-            )
+            // Cold enter often hits updateUIView before SCNHost has a real viewport; wait for
+            // layout so the asset spawns at screen-center floor instead of an off-screen ray.
+            let floorY = placementFloorY
             DispatchQueue.main.async {
-                onPlacementPointResolved?(point)
+                func tryResolve(attempt: Int) {
+                    uiView.setNeedsLayout()
+                    uiView.layoutIfNeeded()
+                    let size = uiView.viewportSize
+                    if size.width < 2 || size.height < 2 {
+                        if attempt < 10 {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                tryResolve(attempt: attempt + 1)
+                            }
+                        }
+                        return
+                    }
+                    let point = uiView.floorPointFromScreen(
+                        CGPoint(x: size.width * 0.5, y: size.height * 0.55),
+                        floorY: floorY
+                    )
+                    onPlacementPointResolved?(point)
+                }
+                tryResolve(attempt: 0)
             }
         }
         if spaceLinkSpawnToken != context.coordinator.lastSpaceLinkSpawnToken {
