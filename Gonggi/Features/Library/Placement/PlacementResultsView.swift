@@ -84,7 +84,16 @@ final class PlacementResultsViewModel: ObservableObject {
 
     func retryFailed(_ result: ProductPlacementResultDTO) async {
         do {
-            let updated = try await client.retryCurtain(placementResultId: result.id)
+            let updated: ProductPlacementResultDTO
+            if result.type == .spaceCleanup {
+                guard let jobId = result.spaceCleanupJobId, !jobId.isEmpty else {
+                    actionError = "다시 시도에 필요한 작업 정보가 없어요"
+                    return
+                }
+                updated = try await client.retrySpaceCleanupJob(jobId: jobId)
+            } else {
+                updated = try await client.retryCurtain(placementResultId: result.id)
+            }
             upsert(updated)
             startPollingIfNeeded()
         } catch let error as MobilePlacementResultsAPIError {
@@ -95,6 +104,21 @@ final class PlacementResultsViewModel: ObservableObject {
     }
 
     func confirmNeedsConfirmation(_ result: ProductPlacementResultDTO) async {
+        if result.type == .spaceCleanup {
+            guard let jobId = result.spaceCleanupJobId, !jobId.isEmpty else {
+                actionError = "확인에 필요한 작업 정보가 없어요"
+                return
+            }
+            do {
+                try await client.confirmSpaceCleanupJob(jobId: jobId)
+                await refresh(forceLoading: false)
+            } catch let error as MobilePlacementResultsAPIError {
+                actionError = error.userMessage
+            } catch {
+                actionError = "확인 요청에 실패했어요"
+            }
+            return
+        }
         guard let jobId = result.curtainCompositeJobId, !jobId.isEmpty else {
             actionError = "확인에 필요한 작업 정보가 없어요"
             return
@@ -297,6 +321,9 @@ struct PlacementResultsView: View {
                             },
                             onDelete: {
                                 pendingDelete = result
+                            },
+                            onPlaceFromCleanupVersion: {
+                                placeFromCleanupVersion(result)
                             }
                         )
                     }
@@ -320,8 +347,8 @@ struct PlacementResultsView: View {
 
     private func openCompleted(_ result: ProductPlacementResultDTO) {
         Task {
-            if result.type == .curtain2D {
-                await openCompletedCurtain(result)
+            if result.type == .curtain2D || result.type == .spaceCleanup {
+                await openCompletedResultRevision(result)
             } else {
                 await openSourceSpaceViewer(result)
             }
@@ -351,13 +378,19 @@ struct PlacementResultsView: View {
                     projectionKey: nil,
                     baseRevisionId: result.sourceRevisionId ?? "rev-0-base"
                 )
+            } else if result.type == .spaceCleanup {
+                appState.pendingSpaceCleanup = PendingSpaceCleanup(
+                    spaceId: jobId,
+                    sourceRevisionId: result.sourceRevisionId ?? "rev-0-base",
+                    targetSessionId: jobId
+                )
             }
             await openViewer(jobId: jobId)
         }
     }
 
-    /// Completed curtain → download signed composite lat-long and open VR.
-    private func openCompletedCurtain(_ result: ProductPlacementResultDTO) async {
+    /// Completed curtain / cleanup → download signed result lat-long and open VR.
+    private func openCompletedResultRevision(_ result: ProductPlacementResultDTO) async {
         isPreparingViewer = true
         defer { isPreparingViewer = false }
 
@@ -368,7 +401,6 @@ struct PlacementResultsView: View {
             }
             guard let urlString = PlacementResultOpenPolicy.compositePreviewURLString(for: detailed),
                   let remote = URL(string: urlString) else {
-                // No composite URL — fall back to source space (session-resolved).
                 isPreparingViewer = false
                 await openSourceSpaceViewer(result)
                 return
@@ -383,17 +415,18 @@ struct PlacementResultsView: View {
                 return
             }
 
+            // Always open the exact result revision card — never auto-promote latest.
+            let viewerId = result.resultRevisionId ?? result.id
             let audioKey = await resolveViewerJobId(from: result)
             viewerLaunch = SpaceViewerLaunch(
                 single: SpaceViewerSession(
-                    id: result.id,
+                    id: viewerId,
                     fileURL: dest,
                     audioURL: AppState.preferredAudioURL(for: audioKey),
                     videoURL: AppState.preferredVideoURL(for: audioKey)
                 )
             )
         } catch {
-            // Composite download failed — try opening the source space instead.
             await openSourceSpaceViewer(result)
             if viewerLaunch == nil, viewerError == nil {
                 viewerError = SpaceViewerError.downloadFailed.userMessage
@@ -477,6 +510,30 @@ struct PlacementResultsView: View {
             viewerError = error.userMessage
         }
     }
+
+    /// Explicitly pass cleanup resultRevisionId — never auto-use as space latest.
+    private func placeFromCleanupVersion(_ result: ProductPlacementResultDTO) {
+        guard let revisionId = result.resultRevisionId, !revisionId.isEmpty else {
+            viewModel.actionError = "정리된 공간 버전을 찾을 수 없어요"
+            return
+        }
+        Task {
+            let jobId = await resolveViewerJobId(from: result)
+            guard !jobId.isEmpty else {
+                viewModel.actionError = "연결된 공간을 찾을 수 없어요"
+                return
+            }
+            // Open catalog from Library — caller must pass resultRevisionId explicitly later.
+            appState.preferredLibraryCategory = .assets
+            appState.pendingLibraryTab = .assets
+            appState.selectTab(.library)
+            // Stash explicit revision for the next placement start.
+            PlacementResultOpenPolicy.stashCleanupBaseRevision(
+                spaceKey: jobId,
+                resultRevisionId: revisionId
+            )
+        }
+    }
 }
 
 private struct PlacementResultCardView: View {
@@ -487,6 +544,7 @@ private struct PlacementResultCardView: View {
     var onReselect: () -> Void
     var onConfirm: () -> Void
     var onDelete: () -> Void
+    var onPlaceFromCleanupVersion: () -> Void = {}
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -536,7 +594,9 @@ private struct PlacementResultCardView: View {
                     if result.status.isInFlight {
                         ProgressView(value: min(max(result.progress ?? 0.15, 0.05), 1))
                             .tint(GonggiColors.accentCyan)
-                            .accessibilityLabel("배치 진행 중")
+                            .accessibilityLabel(
+                                result.type == .spaceCleanup ? "공간을 정리하고 있어요" : "배치 진행 중"
+                            )
                     }
                 }
                 Spacer(minLength: 0)
@@ -551,7 +611,7 @@ private struct PlacementResultCardView: View {
                     .font(GonggiTypography.caption(13))
                     .buttonStyle(.borderedProminent)
                     .tint(GonggiColors.accentCyan)
-                    Button("창문 위치 다시 선택") {
+                    Button(result.type == .spaceCleanup ? "다시 선택" : "창문 위치 다시 선택") {
                         GonggiHaptics.light()
                         onReselect()
                     }
@@ -559,13 +619,26 @@ private struct PlacementResultCardView: View {
                     .buttonStyle(.bordered)
                 }
             } else if result.status == .needsConfirmation {
-                Button("창문 위치 확인") {
+                Button(result.type == .spaceCleanup ? "선택한 가구 확인" : "창문 위치 확인") {
                     GonggiHaptics.medium()
                     onConfirm()
                 }
                 .font(GonggiTypography.caption(13))
                 .buttonStyle(.borderedProminent)
                 .tint(GonggiColors.accentCyan)
+            } else if result.status == .completed, result.type == .spaceCleanup {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("정리된 공간 360° 보기")
+                        .font(GonggiTypography.caption(12))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                    Button("이 버전에서 상품 배치하기") {
+                        GonggiHaptics.medium()
+                        onPlaceFromCleanupVersion()
+                    }
+                    .font(GonggiTypography.caption(13))
+                    .buttonStyle(.borderedProminent)
+                    .tint(GonggiColors.accentCyan)
+                }
             }
         }
         .padding(GonggiSpacing.md)
@@ -638,7 +711,13 @@ private struct PlacementResultCardView: View {
     private var placeholder: some View {
         ZStack {
             GonggiColors.surfaceElevated
-            Image(systemName: result.type == .curtain2D ? "window.vertical.closed" : "sofa.fill")
+            Image(systemName: {
+                switch result.type {
+                case .curtain2D: return "window.vertical.closed"
+                case .spaceCleanup: return "sofa"
+                default: return "sofa.fill"
+                }
+            }())
                 .foregroundStyle(GonggiColors.textTertiary)
         }
     }
