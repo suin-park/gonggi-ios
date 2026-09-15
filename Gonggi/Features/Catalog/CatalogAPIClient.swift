@@ -44,6 +44,8 @@ actor CatalogAPIClient: CatalogServing {
     private let session: URLSession
     private var inFlightList: Task<CatalogListPayload, Error>?
     private var inFlightDetail: [String: Task<CatalogProduct, Error>] = [:]
+    /// Session-scoped detail cache (survives across list CTA / detail screen).
+    private var detailCache: [String: CatalogProduct] = [:]
 
     init(config: AppConfiguration = .production, session: URLSession? = nil) {
         self.config = config
@@ -87,6 +89,9 @@ actor CatalogAPIClient: CatalogServing {
     }
 
     func fetchProduct(id: String) async throws -> CatalogProduct {
+        if let cached = detailCache[id] {
+            return cached
+        }
         if let existing = inFlightDetail[id] {
             return try await existing.value
         }
@@ -103,13 +108,16 @@ actor CatalogAPIClient: CatalogServing {
         }
         inFlightDetail[id] = task
         defer { inFlightDetail[id] = nil }
-        return try await task.value
+        let product = try await task.value
+        detailCache[id] = product
+        return product
     }
 
     /// Refetch detail once when USDZ signed URL appears expired.
     func refreshProductForExpiredURL(id: String) async throws -> CatalogProduct {
         inFlightDetail[id]?.cancel()
         inFlightDetail[id] = nil
+        detailCache[id] = nil
         return try await fetchProduct(id: id)
     }
 
@@ -174,14 +182,22 @@ actor CatalogAPIClient: CatalogServing {
 }
 
 actor CatalogMockClient: CatalogServing {
+    private var detailCache: [String: CatalogProduct] = [:]
+    private(set) var fetchProductCallCount: [String: Int] = [:]
+
     func fetchCatalogList() async throws -> CatalogListPayload {
         CatalogMockData.listPayload()
     }
 
     func fetchProduct(id: String) async throws -> CatalogProduct {
+        fetchProductCallCount[id, default: 0] += 1
+        if let cached = detailCache[id] {
+            return cached
+        }
         guard let product = CatalogMockData.detailProduct(id: id) else {
             throw CatalogAPIError.notFound
         }
+        detailCache[id] = product
         return product
     }
 

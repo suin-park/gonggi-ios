@@ -420,7 +420,9 @@ struct SpaceDetailView: View {
                 }
                 .accessibilityLabel("360° 보기")
 
-                advancedCaptureActions
+                if GonggiFeatureFlags.show3DGSCaptureFlows {
+                    advancedCaptureActions
+                }
             }
 
             switch liveSpace.status {

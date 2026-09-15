@@ -161,6 +161,8 @@ enum CatalogMockData {
 
     static func mockCurtainDetail() -> CatalogProduct {
         var card = mockCurtainPlaceholderCard()
+        card.catalog2DAssetId = "mock-curtain-2d-asset"
+        card.catalog2DAssetStatus = "READY"
         card.variants = [
             CatalogVariant(
                 id: "mock-curtain-variant",

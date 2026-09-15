@@ -28,7 +28,7 @@ struct HomeView: View {
                         .padding(.top, GonggiSpacing.md)
                         .padding(.bottom, GonggiSpacing.sm)
 
-                    Picker("둘러보기", selection: $exploreSegment) {
+                    Picker("콘텐츠", selection: $exploreSegment) {
                         ForEach(ExploreSegment.allCases) { segment in
                             Text(segment.title).tag(segment)
                         }
@@ -170,10 +170,6 @@ struct HomeView: View {
         HStack(alignment: .center, spacing: GonggiSpacing.md) {
             GonggiBrandMark()
             Spacer(minLength: 0)
-            Text("둘러보기")
-                .font(GonggiTypography.headline(17))
-                .foregroundStyle(GonggiColors.textSecondary)
-                .accessibilityAddTraits(.isHeader)
         }
     }
 

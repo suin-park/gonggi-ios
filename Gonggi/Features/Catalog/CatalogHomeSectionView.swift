@@ -3,6 +3,8 @@ import SwiftUI
 struct CatalogHomeSectionView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var viewModel: CatalogHomeViewModel
+    @StateObject private var curtainPlace = CatalogCurtainListPlaceController()
+    @StateObject private var furnitureAR = CatalogFurnitureARController()
     @State private var detailRoute: CatalogProductRoute?
     @State private var showAll = false
 
@@ -43,6 +45,62 @@ struct CatalogHomeSectionView: View {
                         placementFilter: viewModel.selectedFilter
                     )
                     .environmentObject(appState)
+                }
+                .sheet(isPresented: Binding(
+                    get: { curtainPlace.showSpacePicker },
+                    set: { curtainPlace.showSpacePicker = $0 }
+                )) {
+                    CatalogPlaceSpacePickerView(
+                        spaces: appState.spaces,
+                        onSelect: { space in
+                            curtainPlace.confirmSpace(space, appState: appState)
+                        },
+                        onClose: { curtainPlace.showSpacePicker = false }
+                    )
+                }
+                .alert("배치", isPresented: Binding(
+                    get: { curtainPlace.errorMessage != nil || curtainPlace.startedMessage != nil },
+                    set: { if !$0 {
+                        curtainPlace.clearError()
+                        curtainPlace.clearStartedMessage()
+                    } }
+                )) {
+                    if curtainPlace.errorMessage != nil {
+                        Button("다시 시도") {
+                            curtainPlace.retry(
+                                client: viewModel.detailClient(),
+                                spaces: appState.spaces,
+                                appState: appState
+                            )
+                        }
+                        Button("닫기", role: .cancel) {
+                            curtainPlace.clearError()
+                        }
+                    } else {
+                        Button("확인", role: .cancel) {
+                            curtainPlace.clearStartedMessage()
+                        }
+                    }
+                } message: {
+                    Text(curtainPlace.errorMessage ?? curtainPlace.startedMessage ?? "")
+                }
+                .alert("AR", isPresented: Binding(
+                    get: { furnitureAR.errorMessage != nil },
+                    set: { if !$0 { furnitureAR.clearError() } }
+                )) {
+                    Button("다시 시도") {
+                        furnitureAR.retry(client: viewModel.detailClient())
+                    }
+                    Button("닫기", role: .cancel) {
+                        furnitureAR.clearError()
+                    }
+                } message: {
+                    Text(furnitureAR.errorMessage ?? "")
+                }
+                .fullScreenCover(item: $furnitureAR.presentedARItem, onDismiss: {
+                    furnitureAR.dismissAR()
+                }) { item in
+                    AssetARQuickLookView(localUsdzURL: item.url)
                 }
             }
         }
@@ -144,17 +202,42 @@ struct CatalogHomeSectionView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: GonggiSpacing.md) {
                         ForEach(viewModel.filteredProducts) { product in
-                            CatalogProductCardView(product: product) {
-                                detailRoute = CatalogProductRoute(id: product.id)
-                            } onPlace: {
-                                detailRoute = CatalogProductRoute(id: product.id)
-                            }
+                            CatalogProductCardView(
+                                product: product,
+                                isPlaceLoading: curtainPlace.loadingProductId == product.id,
+                                isARLoading: furnitureAR.loadingProductId == product.id,
+                                onOpen: {
+                                    detailRoute = CatalogProductRoute(id: product.id)
+                                },
+                                onPlace: {
+                                    handlePlace(product)
+                                },
+                                onOpenAR: {
+                                    furnitureAR.openAR(
+                                        listProduct: product,
+                                        client: viewModel.detailClient()
+                                    )
+                                }
+                            )
                         }
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
                 }
                 .id(viewModel.productScrollResetToken)
             }
+        }
+    }
+
+    private func handlePlace(_ product: CatalogProduct) {
+        if product.placementType == .curtain2D {
+            curtainPlace.placeTapped(
+                listProduct: product,
+                client: viewModel.detailClient(),
+                spaces: appState.spaces,
+                appState: appState
+            )
+        } else {
+            detailRoute = CatalogProductRoute(id: product.id)
         }
     }
 }

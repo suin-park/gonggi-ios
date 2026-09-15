@@ -274,7 +274,9 @@ struct CatalogProductDetailView: View {
             appState.pendingCurtainPlacement = PendingCurtainPlacement(
                 productId: product.id,
                 variantId: variant.id,
-                catalog2DAssetId: variant.catalogAssetId ?? variant.catalogOwnedAssetId,
+                catalog2DAssetId: product.catalog2DAssetId
+                    ?? variant.catalogAssetId
+                    ?? variant.catalogOwnedAssetId,
                 catalogRevision: product.catalogRevision,
                 productRevision: product.productRevision,
                 displayName: product.productName,

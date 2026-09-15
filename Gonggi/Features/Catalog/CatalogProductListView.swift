@@ -6,6 +6,8 @@ struct CatalogProductListView: View {
     let isMockMode: Bool
     var placementFilter: CatalogHomePlacementFilter?
     @EnvironmentObject private var appState: AppState
+    @StateObject private var curtainPlace = CatalogCurtainListPlaceController()
+    @StateObject private var furnitureAR = CatalogFurnitureARController()
     @State private var route: CatalogProductRoute?
 
     private var displayCategories: [CatalogCategory] {
@@ -25,11 +27,21 @@ struct CatalogProductListView: View {
                         .padding(.horizontal, GonggiSpacing.lg)
                 } else {
                     ForEach(cats) { category in
-                        CatalogCategoryRowView(category: category, showTitle: showTitles) { product in
-                            route = CatalogProductRoute(id: product.id)
-                        } onPlace: { product in
-                            route = CatalogProductRoute(id: product.id)
-                        }
+                        CatalogCategoryRowView(
+                            category: category,
+                            showTitle: showTitles,
+                            loadingProductId: curtainPlace.loadingProductId,
+                            arLoadingProductId: furnitureAR.loadingProductId,
+                            onOpen: { product in
+                                route = CatalogProductRoute(id: product.id)
+                            },
+                            onPlace: { product in
+                                handlePlace(product)
+                            },
+                            onOpenAR: { product in
+                                furnitureAR.openAR(listProduct: product, client: client)
+                            }
+                        )
                     }
                 }
             }
@@ -46,6 +58,58 @@ struct CatalogProductListView: View {
             )
             .environmentObject(appState)
         }
+        .sheet(isPresented: Binding(
+            get: { curtainPlace.showSpacePicker },
+            set: { curtainPlace.showSpacePicker = $0 }
+        )) {
+            CatalogPlaceSpacePickerView(
+                spaces: appState.spaces,
+                onSelect: { space in
+                    curtainPlace.confirmSpace(space, appState: appState)
+                },
+                onClose: { curtainPlace.showSpacePicker = false }
+            )
+        }
+        .alert("배치", isPresented: Binding(
+            get: { curtainPlace.errorMessage != nil || curtainPlace.startedMessage != nil },
+            set: { if !$0 {
+                curtainPlace.clearError()
+                curtainPlace.clearStartedMessage()
+            } }
+        )) {
+            if curtainPlace.errorMessage != nil {
+                Button("다시 시도") {
+                    curtainPlace.retry(client: client, spaces: appState.spaces, appState: appState)
+                }
+                Button("닫기", role: .cancel) {
+                    curtainPlace.clearError()
+                }
+            } else {
+                Button("확인", role: .cancel) {
+                    curtainPlace.clearStartedMessage()
+                }
+            }
+        } message: {
+            Text(curtainPlace.errorMessage ?? curtainPlace.startedMessage ?? "")
+        }
+        .alert("AR", isPresented: Binding(
+            get: { furnitureAR.errorMessage != nil },
+            set: { if !$0 { furnitureAR.clearError() } }
+        )) {
+            Button("다시 시도") {
+                furnitureAR.retry(client: client)
+            }
+            Button("닫기", role: .cancel) {
+                furnitureAR.clearError()
+            }
+        } message: {
+            Text(furnitureAR.errorMessage ?? "")
+        }
+        .fullScreenCover(item: $furnitureAR.presentedARItem, onDismiss: {
+            furnitureAR.dismissAR()
+        }) { item in
+            AssetARQuickLookView(localUsdzURL: item.url)
+        }
     }
 
     private var navigationTitle: String {
@@ -53,6 +117,19 @@ struct CatalogProductListView: View {
         case .curtain: return "제휴 커튼"
         case .furniture: return "제휴 가구"
         case .none: return "제휴 상품"
+        }
+    }
+
+    private func handlePlace(_ product: CatalogProduct) {
+        if product.placementType == .curtain2D {
+            curtainPlace.placeTapped(
+                listProduct: product,
+                client: client,
+                spaces: appState.spaces,
+                appState: appState
+            )
+        } else {
+            route = CatalogProductRoute(id: product.id)
         }
     }
 }

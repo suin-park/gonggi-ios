@@ -180,6 +180,9 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
     var purchaseUrl: String?
     var consultationUrl: String?
     var variants: [CatalogVariant]?
+    /// Present on detail responses for CURTAIN_2D; omitted from list cards.
+    var catalog2DAssetId: String? = nil
+    var catalog2DAssetStatus: String? = nil
 
     var partnerDisplayName: String {
         partner?.displayBrandName ?? brandName ?? "제휴 업체"
