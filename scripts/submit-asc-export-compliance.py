@@ -127,6 +127,19 @@ def main() -> int:
     if before.get("processingState") not in ("VALID", "PROCESSED"):
         die(f"Refusing to patch non-VALID build: {before.get('processingState')}")
 
+    internal_before = (before.get("internalBuildState") or "").upper()
+    already_ok = (
+        before.get("usesNonExemptEncryption") is False
+        and "MISSING_EXPORT_COMPLIANCE" not in internal_before
+    )
+    if already_ok:
+        print("already exempt / no MISSING_EXPORT_COMPLIANCE — skip PATCH")
+        print(f"processingState={before.get('processingState')}")
+        print(f"usesNonExemptEncryption={before.get('usesNonExemptEncryption')}")
+        print(f"internalBuildState={before.get('internalBuildState')}")
+        print("EXPORT_COMPLIANCE_OK=YES")
+        return 0
+
     # Exempt encryption only (HTTPS / OS Keychain / hashing) → false.
     body = {
         "data": {
