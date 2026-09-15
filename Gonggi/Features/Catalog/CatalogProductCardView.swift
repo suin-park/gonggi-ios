@@ -33,7 +33,16 @@ struct CatalogProductCardView: View {
     }
 
     private var activeOption: CatalogVariantOption? {
-        product.variantOption(id: selectedVariantId)
+        product.variantOption(id: effectiveVariantId)
+    }
+
+    /// Same id used for image, dimensions, and place/AR handoff from the card.
+    private var effectiveVariantId: String? {
+        product.effectiveVariantId(selectedVariantId: selectedVariantId)
+    }
+
+    private var cardThumbnailURLString: String? {
+        product.cardThumbnailURL(selectedVariantId: effectiveVariantId)
     }
 
     private var dimensionsLabel: String {
@@ -48,7 +57,7 @@ struct CatalogProductCardView: View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
             CatalogProductThumbnailView(
                 productName: product.productName,
-                thumbnailURLString: product.resolvedThumbnailURL
+                thumbnailURLString: cardThumbnailURLString
             )
 
             Text(product.partnerDisplayName)
