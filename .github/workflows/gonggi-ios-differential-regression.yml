@@ -16,11 +16,13 @@ on:
   pull_request:
     branches:
       - design/brand-redesign-v1
+      - feature/gonggi-placement-ui-save-fix
     paths:
       - 'Gonggi/**'
       - 'GonggiTests/**'
       - 'project.yml'
       - 'scripts/compare-gonggi-test-failures.py'
+      - 'scripts/ci-guard-project-version.sh'
       - '.github/workflows/gonggi-ios-differential-regression.yml'
   workflow_dispatch:
     inputs:
