@@ -12,7 +12,7 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
         switch self {
         case .spaces: return "공간"
         case .assets: return "3D 자산"
-        case .placementResults: return "배치 결과"
+        case .placementResults: return "작업 결과"
         }
     }
 }

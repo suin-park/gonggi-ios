@@ -3,6 +3,7 @@ import Foundation
 enum ProductPlacementResultType: String, Codable, Sendable, Equatable {
     case furniture3D = "FURNITURE_3D"
     case curtain2D = "CURTAIN_2D"
+    case spaceCleanup = "SPACE_CLEANUP"
     case unsupported = "UNSUPPORTED"
 
     init(from decoder: Decoder) throws {
@@ -14,7 +15,8 @@ enum ProductPlacementResultType: String, Codable, Sendable, Equatable {
         switch self {
         case .curtain2D: return "커튼"
         case .furniture3D: return "가구"
-        case .unsupported: return "배치"
+        case .spaceCleanup: return "공간 정리"
+        case .unsupported: return "작업"
         }
     }
 }
@@ -46,10 +48,10 @@ enum ProductPlacementResultStatus: String, Codable, Sendable, Equatable {
 
     var statusTitle: String {
         switch self {
-        case .queued, .inProgress: return "배치 중"
+        case .queued, .inProgress: return "처리 중"
         case .needsConfirmation: return "확인 필요"
-        case .completed: return "배치 완료"
-        case .failed: return "배치 실패"
+        case .completed: return "완료"
+        case .failed: return "실패"
         case .unsupported: return "상태 확인 중"
         }
     }
@@ -65,6 +67,7 @@ struct ProductPlacementResultDTO: Codable, Sendable, Equatable, Identifiable {
     var sourceRevisionId: String?
     var resultRevisionId: String?
     var curtainCompositeJobId: String?
+    var spaceCleanupJobId: String? = nil
     var catalogPartnerId: String?
     var catalogProductId: String?
     var catalogVariantId: String?
@@ -86,7 +89,10 @@ struct ProductPlacementResultDTO: Codable, Sendable, Equatable, Identifiable {
     var updatedAt: String?
 
     var displayProductName: String {
-        productNameSnapshot ?? productName ?? "제휴 상품"
+        if type == .spaceCleanup {
+            return productNameSnapshot ?? productName ?? "공간 정리 결과"
+        }
+        return productNameSnapshot ?? productName ?? "제휴 상품"
     }
 
     var displayPartnerName: String {
@@ -161,6 +167,8 @@ protocol PlacementResultsServing: Sendable {
     func fetchResult(id: String) async throws -> ProductPlacementResultDTO
     func retryCurtain(placementResultId: String) async throws -> ProductPlacementResultDTO
     func confirmCurtainJob(jobId: String) async throws
+    func confirmSpaceCleanupJob(jobId: String) async throws
+    func retrySpaceCleanupJob(jobId: String) async throws -> ProductPlacementResultDTO
     func deleteResult(id: String) async throws
 }
 
@@ -232,6 +240,32 @@ actor MobilePlacementResultsAPIClient: PlacementResultsServing {
         req.httpBody = Data("{}".utf8)
         let (data, http) = try await perform(req)
         try throwIfNeeded(http: http, data: data)
+    }
+
+    func confirmSpaceCleanupJob(jobId: String) async throws {
+        var req = try makeRequest(
+            path: ["api", "gonggi", "space-cleanups", jobId, "confirm"],
+            method: "POST"
+        )
+        req.httpBody = Data("{}".utf8)
+        let (data, http) = try await perform(req)
+        try throwIfNeeded(http: http, data: data)
+    }
+
+    func retrySpaceCleanupJob(jobId: String) async throws -> ProductPlacementResultDTO {
+        var req = try makeRequest(
+            path: ["api", "gonggi", "space-cleanups", jobId, "retry"],
+            method: "POST"
+        )
+        req.httpBody = Data("{}".utf8)
+        let (data, http) = try await perform(req)
+        try throwIfNeeded(http: http, data: data)
+        if let envelope = try? JSONDecoder().decode(ProductPlacementResultDetailResponse.self, from: data),
+           let result = envelope.result {
+            return result
+        }
+        // Server returns job envelope; refresh placement card via list/detail separately.
+        throw MobilePlacementResultsAPIError.invalidResponse
     }
 
     func deleteResult(id: String) async throws {
@@ -368,6 +402,23 @@ actor PlacementResultsMockClient: PlacementResultsServing {
             results[idx].status = .inProgress
             results[idx].progress = 0.6
         }
+    }
+
+    func confirmSpaceCleanupJob(jobId: String) async throws {
+        if let idx = results.firstIndex(where: { $0.spaceCleanupJobId == jobId }) {
+            results[idx].status = .inProgress
+            results[idx].progress = 0.6
+        }
+    }
+
+    func retrySpaceCleanupJob(jobId: String) async throws -> ProductPlacementResultDTO {
+        guard let idx = results.firstIndex(where: { $0.spaceCleanupJobId == jobId }) else {
+            throw MobilePlacementResultsAPIError.notFound
+        }
+        results[idx].status = .inProgress
+        results[idx].failureCode = nil
+        results[idx].progress = 0.1
+        return results[idx]
     }
 
     func deleteResult(id: String) async throws {

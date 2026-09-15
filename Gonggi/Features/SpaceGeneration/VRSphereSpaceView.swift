@@ -39,7 +39,9 @@ struct VRSphereSpaceView: View {
 
     @StateObject private var repairController: RepairSessionController
     @StateObject private var curtainSession = CurtainPlacementSession()
+    @StateObject private var spaceCleanupSession = SpaceCleanupSession()
     @State private var showCurtainCompare = false
+    @State private var cleanupCenterSampleToken = 0
     @ObservedObject private var spaceAudio = SpaceAudioManager.shared
     @State private var pendingTarget: RepairTarget?
     @State private var showConfirmSheet = false
@@ -577,6 +579,34 @@ struct VRSphereSpaceView: View {
                 .zIndex(4)
             }
 
+            if spaceCleanupSession.isActive {
+                // Center reticle for aim-based multi-select.
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .shadow(radius: 2)
+                    .allowsHitTesting(false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                SpaceCleanupSelectionBanner(
+                    session: spaceCleanupSession,
+                    poleWarning: spaceCleanupSession.poleWarningActive,
+                    onAddCenter: { cleanupCenterSampleToken += 1 },
+                    onSubmit: {
+                        Task { await spaceCleanupSession.submitSelected() }
+                    },
+                    onConfirm: {
+                        Task { await spaceCleanupSession.confirmMasks() }
+                    },
+                    onCancel: {
+                        spaceCleanupSession.deactivate()
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, interactionMode == .edit ? 96 : 28)
+                .zIndex(5)
+            }
+
             if interactionMode == .edit {
                 editBottomBar
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -863,6 +893,10 @@ struct VRSphereSpaceView: View {
         return false
     }
 
+    private var spaceCleanupTapActive: Bool {
+        spaceCleanupSession.isActive && spaceCleanupSession.job?.isAwaitingConfirmation != true
+    }
+
     private var panoramaHost: some View {
         Panorama360SceneOnlyView(
             imageURL: textureURL,
@@ -883,11 +917,13 @@ struct VRSphereSpaceView: View {
                 && videoURL == nil
                 && interactionMode == .view
                 && !spaceLinkTransitionLocked
-                && !curtainSession.isActive,
+                && !curtainSession.isActive
+                && !spaceCleanupSession.isActive,
             curtainSeedTapEnabled: allowsOwnerControls
                 && interactionMode == .view
                 && !spaceLinkTransitionLocked
-                && curtainSeedTapActive,
+                && (curtainSeedTapActive || spaceCleanupTapActive),
+            cleanupCenterSampleToken: cleanupCenterSampleToken,
             placementEntries: draftLayout.assets,
             placementFloorY: draftLayout.floorY,
             assetMetadata: assetMetadata,
@@ -951,6 +987,16 @@ struct VRSphereSpaceView: View {
                 showConfirmSheet = true
             },
             onSingleTapEquirect: { yaw, pitch, point in
+                if spaceCleanupTapActive {
+                    GonggiHaptics.light()
+                    hideMotionHintImmediate()
+                    spaceCleanupSession.addCenterAim(
+                        yawDeg: yaw,
+                        pitchDeg: pitch,
+                        screen: point
+                    )
+                    return
+                }
                 guard curtainSeedTapActive else { return }
                 GonggiHaptics.light()
                 hideMotionHintImmediate()
@@ -961,6 +1007,11 @@ struct VRSphereSpaceView: View {
                     tapPoint: point,
                     viewSize: viewSize
                 )
+            },
+            onCleanupCenterSample: { yaw, pitch in
+                guard spaceCleanupTapActive else { return }
+                GonggiHaptics.light()
+                spaceCleanupSession.addCenterAim(yawDeg: yaw, pitchDeg: pitch, screen: nil)
             },
             onMotionHardwareAvailable: { available in
                 motionHardwareOK = available
@@ -1667,6 +1718,25 @@ struct VRSphereSpaceView: View {
                 )
             }
             curtainSession.start(with: curtainPending, sessionId: sessionId)
+            return
+        }
+
+        if let cleanupPending = appState.consumePendingSpaceCleanup(matchingViewerSessionId: sessionId) {
+            didConsumeExternalPending = true
+            #if DEBUG
+            if appState.isMockMode {
+                spaceCleanupSession.configure(client: SpaceCleanupMockClient())
+            }
+            #endif
+            let state = appState
+            spaceCleanupSession.onAccepted = { resultId in
+                state.openPlacementResults(resultId: resultId)
+            }
+            spaceCleanupSession.activateSelectedMode(
+                spaceId: cleanupPending.spaceId,
+                sourceRevisionId: cleanupPending.sourceRevisionId,
+                consentAccepted: true
+            )
             return
         }
 
@@ -3080,6 +3150,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var editModeActive: Bool
     var repairLongPressEnabled: Bool
     var curtainSeedTapEnabled: Bool = false
+    var cleanupCenterSampleToken: Int = 0
     var placementEntries: [VRPlacedAssetEntry]
     var placementFloorY: Float
     var assetMetadata: [String: MobileAssetDTO]
@@ -3107,6 +3178,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
     var onSingleTapEquirect: ((Float, Float, CGPoint) -> Void)? = nil
+    var onCleanupCenterSample: ((Float, Float) -> Void)? = nil
     var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
     var onPlacedAssetTapped: ((String?) -> Void)? = nil
     var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)? = nil
@@ -3360,6 +3432,15 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             uiView.recenterKeepingVisual()
             context.coordinator.lastRecenterToken = recenterToken
         }
+        if cleanupCenterSampleToken != context.coordinator.lastCleanupCenterSampleToken {
+            context.coordinator.lastCleanupCenterSampleToken = cleanupCenterSampleToken
+            if cleanupCenterSampleToken > 0 {
+                let center = uiView.currentEquirectCenterDegrees()
+                DispatchQueue.main.async {
+                    onCleanupCenterSample?(center.yawDeg, center.pitchDeg)
+                }
+            }
+        }
         uiView.updateSelection(
             yawDeg: markerYawDeg,
             pitchDeg: markerPitchDeg,
@@ -3421,6 +3502,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         var lastRecenterToken: Int = 0
         var lastMotionDesired: Bool = true
         var lastPlacementRequestToken: Int = 0
+        var lastCleanupCenterSampleToken: Int = 0
         var lastPlacementFingerprint: String = ""
         var lastLightingLabel: String = ""
         var lastSupportLiveRevision: Int = 0

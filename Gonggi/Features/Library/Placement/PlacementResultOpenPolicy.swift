@@ -3,10 +3,12 @@ import Foundation
 /// Resolves how a placement-result card opens VR.
 ///
 /// Cloud `sourceSpaceId` is `GonggiSpace.id` (cuid). Local jobs / `prepareSpaceViewer`
-/// are keyed by `sessionId` (= jobId). Completed curtain rows must open the composite
-/// lat-long (`previewUrl`), not the unmodified source space.
+/// are keyed by `sessionId` (= jobId). Completed curtain / cleanup rows must open the
+/// result lat-long (`previewUrl`), not the unmodified source space.
 enum PlacementResultOpenPolicy {
-    /// Prefer composite / result preview URLs for completed curtain opens.
+    private static let cleanupRevisionDefaultsKey = "gonggi.cleanup.baseRevisionBySpace"
+
+    /// Prefer composite / result preview URLs for completed curtain / cleanup opens.
     static func compositePreviewURLString(for result: ProductPlacementResultDTO) -> String? {
         let candidates = [result.resultPreviewUrl, result.previewUrl]
         for raw in candidates {
@@ -42,7 +44,7 @@ enum PlacementResultOpenPolicy {
         return key
     }
 
-    /// Durable cache path for a downloaded curtain composite lat-long.
+    /// Durable cache path for a downloaded curtain / cleanup result lat-long.
     static func compositeCacheURL(resultId: String) throws -> URL {
         let root = try FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -56,5 +58,26 @@ enum PlacementResultOpenPolicy {
             .appendingPathComponent(resultId, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("composite_latlong.jpg")
+    }
+
+    /// Explicit cleanup→placement base revision (never mutates space latestRevisionId).
+    static func stashCleanupBaseRevision(spaceKey: String, resultRevisionId: String) {
+        var map = UserDefaults.standard.dictionary(forKey: cleanupRevisionDefaultsKey) as? [String: String] ?? [:]
+        map[spaceKey] = resultRevisionId
+        UserDefaults.standard.set(map, forKey: cleanupRevisionDefaultsKey)
+    }
+
+    static func consumeCleanupBaseRevision(spaceKey: String) -> String? {
+        var map = UserDefaults.standard.dictionary(forKey: cleanupRevisionDefaultsKey) as? [String: String] ?? [:]
+        let value = map.removeValue(forKey: spaceKey)
+        UserDefaults.standard.set(map, forKey: cleanupRevisionDefaultsKey)
+        return value
+    }
+
+    /// Resolved result revision for a completed cleanup card open.
+    static func resolvedResultRevisionId(for result: ProductPlacementResultDTO) -> String? {
+        guard result.type == .spaceCleanup, result.status == .completed else { return nil }
+        let trimmed = result.resultRevisionId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
