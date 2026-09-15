@@ -135,11 +135,12 @@ jobs:
           echo "Applied Simulator Debug compile-only shims on base (Catalog sources NOT included)."
 
       - name: Guard marketing/build for this PR track
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
         run: |
           set -euo pipefail
-          grep -q 'CURRENT_PROJECT_VERSION: "40"' project.yml
-          grep -q 'MARKETING_VERSION: "2.0"' project.yml
-          echo "Build number 39; marketing 2.0 (TestFlight track)"
+          chmod +x scripts/ci-guard-project-version.sh
+          ./scripts/ci-guard-project-version.sh
 
       - name: Restore OpenCV cache
         id: opencv-cache
