@@ -12,7 +12,7 @@ enum CatalogPlacementType: String, Codable, Sendable, Equatable {
         self = CatalogPlacementType(rawValue: raw) ?? .unsupported
     }
 
-    var isSupportedForPlacement: Bool { self == .furniture3D }
+    var isSupportedForPlacement: Bool { self == .furniture3D || self == .curtain2D }
 
     var displayCategoryTitle: String {
         switch self {

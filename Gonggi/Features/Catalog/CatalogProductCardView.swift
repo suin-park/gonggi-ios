@@ -51,7 +51,7 @@ struct CatalogProductCardView: View {
                 GonggiHaptics.light()
                 onPlace()
             } label: {
-                Text("배치해보기")
+                Text(product.placementType == .curtain2D ? "적용해보기" : "배치해보기")
                     .font(GonggiTypography.body(14))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
@@ -59,7 +59,14 @@ struct CatalogProductCardView: View {
                     .foregroundStyle(GonggiColors.textOnAccent)
             }
             .buttonStyle(.plain)
-            .disabled(product.availableForPlacement == false && product.placementType == .curtain2D)
+            .disabled(
+                product.placementType == .curtain2D
+                    ? !CatalogCurtainPlacementValidator.canPlace(
+                        product: product,
+                        variant: product.primaryVariant
+                    )
+                    : product.availableForPlacement == false
+            )
             .accessibilityLabel("\(product.productName) 배치해보기")
             .frame(minHeight: 44)
         }

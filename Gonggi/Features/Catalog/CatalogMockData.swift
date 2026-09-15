@@ -85,7 +85,7 @@ enum CatalogMockData {
                 displayBrandName: "JD홈드레싱"
             ),
             productName: "커튼 샘플 (Mock)",
-            shortDescription: "Mock 전용 · 배치는 아직 미지원",
+            shortDescription: "Mock 전용 · AI 커튼 미리보기 POC",
             brandName: "JD홈드레싱",
             category: .curtain,
             placementType: .curtain2D,
@@ -99,7 +99,7 @@ enum CatalogMockData {
             selectedVariantName: "기본",
             catalogRevision: 1,
             productRevision: "mock-curtain-1",
-            availableForPlacement: false,
+            availableForPlacement: true,
             detailUrl: nil,
             purchaseUrl: nil,
             consultationUrl: nil,
@@ -173,10 +173,10 @@ enum CatalogMockData {
                 thumbnailUrl: nil,
                 usdzUrl: nil,
                 usdzSignedUrlExpiresAt: nil,
-                catalogAssetId: nil,
-                catalogOwnedAssetId: nil,
+                catalogAssetId: "mock-curtain-2d-asset",
+                catalogOwnedAssetId: "mock-curtain-owned-2d",
                 placementSpec: nil,
-                availableForPlacement: false
+                availableForPlacement: true
             ),
         ]
         return card
