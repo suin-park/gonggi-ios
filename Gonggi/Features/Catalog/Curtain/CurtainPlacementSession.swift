@@ -303,7 +303,7 @@ final class CurtainPlacementSession: ObservableObject {
         try data.write(to: dest, options: .atomic)
     }
 
-    static func idempotencyKey(
+    nonisolated static func idempotencyKey(
         spaceId: String,
         baseRevisionId: String,
         productId: String,
@@ -314,7 +314,7 @@ final class CurtainPlacementSession: ObservableObject {
         return "curtain-\(stableHash(raw))"
     }
 
-    private static func stableHash(_ string: String) -> String {
+    nonisolated private static func stableHash(_ string: String) -> String {
         var hash: UInt64 = 5381
         for byte in string.utf8 {
             hash = ((hash &<< 5) &+ hash) &+ UInt64(byte)
