@@ -396,13 +396,26 @@ struct PlacementResultsView: View {
 
         do {
             var detailed = result
-            if PlacementResultOpenPolicy.compositePreviewURLString(for: detailed) == nil {
+            if PlacementResultOpenPolicy.compositePreviewURLString(for: detailed) == nil
+                || (result.type == .spaceCleanup
+                    && PlacementResultOpenPolicy.resolvedResultRevisionId(for: detailed) == nil) {
                 detailed = try await viewModel.fetchDetail(id: result.id)
             }
+
+            if result.type == .spaceCleanup {
+                guard PlacementResultOpenPolicy.canOpenCleanupResult(detailed) else {
+                    viewerError = "정리 결과를 불러오지 못했습니다"
+                    return
+                }
+            }
+
             guard let urlString = PlacementResultOpenPolicy.compositePreviewURLString(for: detailed),
                   let remote = URL(string: urlString) else {
-                isPreparingViewer = false
-                await openSourceSpaceViewer(result)
+                if result.type == .spaceCleanup {
+                    viewerError = "정리 결과를 불러오지 못했습니다"
+                } else {
+                    await openSourceSpaceViewer(result)
+                }
                 return
             }
 
@@ -411,22 +424,29 @@ struct PlacementResultsView: View {
                 try await downloadComposite(from: remote, to: dest)
             }
             guard SpaceLatLongStore.isValidLocalFile(at: dest.path) else {
-                viewerError = SpaceViewerError.downloadFailed.userMessage
+                viewerError = result.type == .spaceCleanup
+                    ? "정리 결과를 불러오지 못했습니다"
+                    : SpaceViewerError.downloadFailed.userMessage
                 return
             }
 
             // Always open the exact result revision card — never auto-promote latest.
-            let viewerId = result.resultRevisionId ?? result.id
-            let audioKey = await resolveViewerJobId(from: result)
+            let viewerId = detailed.resultRevisionId ?? detailed.id
+            let audioKey = await resolveViewerJobId(from: detailed)
             viewerLaunch = SpaceViewerLaunch(
                 single: SpaceViewerSession(
                     id: viewerId,
                     fileURL: dest,
                     audioURL: AppState.preferredAudioURL(for: audioKey),
-                    videoURL: AppState.preferredVideoURL(for: audioKey)
+                    videoURL: AppState.preferredVideoURL(for: audioKey),
+                    baseRevisionId: detailed.resultRevisionId ?? "rev-0-base"
                 )
             )
         } catch {
+            if result.type == .spaceCleanup {
+                viewerError = "정리 결과를 불러오지 못했습니다"
+                return
+            }
             await openSourceSpaceViewer(result)
             if viewerLaunch == nil, viewerError == nil {
                 viewerError = SpaceViewerError.downloadFailed.userMessage
@@ -523,15 +543,14 @@ struct PlacementResultsView: View {
                 viewModel.actionError = "연결된 공간을 찾을 수 없어요"
                 return
             }
-            // Open catalog from Library — caller must pass resultRevisionId explicitly later.
-            appState.preferredLibraryCategory = .assets
-            appState.pendingLibraryTab = .assets
-            appState.selectTab(.library)
-            // Stash explicit revision for the next placement start.
-            PlacementResultOpenPolicy.stashCleanupBaseRevision(
-                spaceKey: jobId,
+            appState.pendingCleanupBaseRevision = PendingCleanupBaseRevision(
+                spaceId: result.sourceSpaceId ?? jobId,
+                sessionId: result.sourceSessionId ?? jobId,
                 resultRevisionId: revisionId
             )
+            // Hand off to catalog / explore so furniture or curtain create uses the revision.
+            appState.preferredLibraryCategory = .assets
+            appState.selectTab(.home)
         }
     }
 }

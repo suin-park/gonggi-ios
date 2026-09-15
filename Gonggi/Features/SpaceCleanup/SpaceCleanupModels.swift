@@ -63,6 +63,7 @@ struct SpaceCleanupJobDTO: Codable, Sendable, Equatable, Identifiable {
     var spaceId: String
     var sourceRevisionId: String
     var resultRevisionId: String?
+    /// 0...100 from Cloud (locker progress may normalize to 0...1).
     var progress: Int?
     var selectionPoints: [SpaceCleanupSelectionPoint]?
     var detectedObjects: [SpaceCleanupDetectedObject]?
@@ -70,6 +71,7 @@ struct SpaceCleanupJobDTO: Codable, Sendable, Equatable, Identifiable {
     var failureMessageSafe: String?
     var outsideMaskDiff: Double?
     var placementResultId: String?
+    var maskPreviewUrl: String?
     var createdAt: String?
     var updatedAt: String?
 
@@ -78,6 +80,13 @@ struct SpaceCleanupJobDTO: Codable, Sendable, Equatable, Identifiable {
     var isFailed: Bool { status == "FAILED" }
     var isInFlight: Bool {
         ["QUEUED", "DETECTING", "PROCESSING"].contains(status)
+    }
+
+    /// Normalized 0...1 for ProgressView.
+    var progressFraction: Double {
+        guard let progress else { return 0.15 }
+        if progress <= 1 { return max(0.05, Double(progress)) }
+        return min(1, max(0.05, Double(progress) / 100))
     }
 }
 

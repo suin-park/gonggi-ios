@@ -42,6 +42,7 @@ struct VRSphereSpaceView: View {
     @StateObject private var spaceCleanupSession = SpaceCleanupSession()
     @State private var showCurtainCompare = false
     @State private var cleanupCenterSampleToken = 0
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var spaceAudio = SpaceAudioManager.shared
     @State private var pendingTarget: RepairTarget?
     @State private var showConfirmSheet = false
@@ -240,6 +241,26 @@ struct VRSphereSpaceView: View {
                         )
                     }
                 }
+                if spaceCleanupSession.isActive {
+                    spaceCleanupSession.onSelectionUIAppear()
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .active:
+                    spaceCleanupSession.onScenePhaseActive()
+                case .background:
+                    spaceCleanupSession.onScenePhaseBackground()
+                default:
+                    break
+                }
+            }
+            .onChange(of: spaceCleanupSession.isActive) { _, active in
+                if active {
+                    spaceCleanupSession.onSelectionUIAppear()
+                } else {
+                    spaceCleanupSession.onSelectionUIDisappear()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
                 let deletedSession = note.userInfo?["sessionId"] as? String
@@ -284,6 +305,7 @@ struct VRSphereSpaceView: View {
                 placementTask = nil
                 spaceLinkTask?.cancel()
                 spaceLinkTask = nil
+                spaceCleanupSession.onSelectionUIDisappear()
             }
             .sheet(isPresented: $showConfirmSheet, onDismiss: {
                 if captureTarget == nil {
@@ -587,6 +609,24 @@ struct VRSphereSpaceView: View {
                     .shadow(radius: 2)
                     .allowsHitTesting(false)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: false)) { timeline in
+                    SpaceCleanupVROverlay(
+                        points: spaceCleanupSession.points,
+                        polygons: spaceCleanupSession.detectedPolygons,
+                        maskPreviewURL: spaceCleanupSession.job?.maskPreviewUrl.flatMap(URL.init(string:)),
+                        projectEquirectDegrees: { yaw, pitch in
+                            SpaceLinkTransitionBridge.shared.activeHost?
+                                .screenPointForEquirectDegrees(yawDeg: yaw, pitchDeg: pitch)
+                        },
+                        onMaskPreviewLoaded: { ready in
+                            spaceCleanupSession.markMaskOverlayReady(ready)
+                        },
+                        refreshEpoch: UInt64(timeline.date.timeIntervalSinceReferenceDate * 15)
+                    )
+                }
+                .allowsHitTesting(false)
+                .zIndex(4)
 
                 SpaceCleanupSelectionBanner(
                     session: spaceCleanupSession,

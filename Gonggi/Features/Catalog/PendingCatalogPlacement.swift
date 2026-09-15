@@ -15,6 +15,8 @@ struct PendingCatalogPlacement: Equatable, Sendable {
     var targetSessionId: String?
     var projectionKey: String?
     var calibrationStatusText: String
+    /// Explicit base revision for placement create (cleanup result when handed off).
+    var baseRevisionId: String
     var createdAt: Date
 
     init(
@@ -32,6 +34,7 @@ struct PendingCatalogPlacement: Equatable, Sendable {
         targetSessionId: String?,
         projectionKey: String?,
         calibrationStatusText: String,
+        baseRevisionId: String,
         createdAt: Date = Date()
     ) {
         self.productId = productId
@@ -48,6 +51,7 @@ struct PendingCatalogPlacement: Equatable, Sendable {
         self.targetSessionId = targetSessionId
         self.projectionKey = projectionKey
         self.calibrationStatusText = calibrationStatusText
+        self.baseRevisionId = baseRevisionId
         self.createdAt = createdAt
     }
 

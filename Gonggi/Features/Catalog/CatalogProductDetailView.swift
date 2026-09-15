@@ -300,6 +300,7 @@ struct CatalogProductDetailView: View {
                 placeMessage = "이 상품은 아직 미리보기할 수 없어요."
                 return
             }
+            let baseRevisionId = resolvedBaseRevisionId(for: space)
             appState.pendingCurtainPlacement = PendingCurtainPlacement(
                 productId: product.id,
                 variantId: variant.id,
@@ -314,7 +315,7 @@ struct CatalogProductDetailView: View {
                 targetSpaceId: space.id,
                 targetSessionId: space.sessionId,
                 projectionKey: space.projectionKey,
-                baseRevisionId: space.latestRevisionId ?? "rev-0-base"
+                baseRevisionId: baseRevisionId
             )
             appState.pendingViewerJobId = space.id
             placeMessage = "\(space.name)에서 커튼 미리보기를 시작합니다."
@@ -324,6 +325,7 @@ struct CatalogProductDetailView: View {
             placeMessage = "배치 정보가 준비되지 않았어요."
             return
         }
+        let baseRevisionId = resolvedBaseRevisionId(for: space)
         appState.pendingCatalogPlacement = PendingCatalogPlacement(
             productId: product.id,
             variantId: variant.id,
@@ -338,10 +340,19 @@ struct CatalogProductDetailView: View {
             targetSpaceId: space.id,
             targetSessionId: space.sessionId,
             projectionKey: space.projectionKey,
-            calibrationStatusText: cal.userFacingLabel
+            calibrationStatusText: cal.userFacingLabel,
+            baseRevisionId: baseRevisionId
         )
         appState.pendingViewerJobId = space.id
         placeMessage = "\(space.name)에 배치를 시작합니다.\n\(cal.userFacingLabel)"
+    }
+
+    /// Prefer consume-once cleanup result revision when handed off for this space.
+    private func resolvedBaseRevisionId(for space: SpaceRecord) -> String {
+        if let pending = appState.consumePendingCleanupBaseRevision(matchingSpace: space) {
+            return pending.resultRevisionId
+        }
+        return space.latestRevisionId ?? "rev-0-base"
     }
 
     private func load() async {

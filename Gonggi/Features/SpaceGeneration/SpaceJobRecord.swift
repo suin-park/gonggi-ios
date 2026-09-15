@@ -194,6 +194,8 @@ struct SpaceViewerSession: Identifiable, Equatable {
     var audioURL: URL? = nil
     /// Equirectangular panorama video (optional). When set, VR uses AVPlayer sphere texture.
     var videoURL: URL? = nil
+    /// Explicit revision under the open space (cleanup result, repair, etc.).
+    var baseRevisionId: String = "rev-0-base"
     /// Phase 2 — open directly in Edit (Asset Detail / Space Detail placement).
     var startInEditMode: Bool = false
     /// Public / guest viewers must disable edit, repair, delete, and owner audio chrome.

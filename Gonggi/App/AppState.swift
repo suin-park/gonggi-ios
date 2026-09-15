@@ -21,6 +21,8 @@ final class AppState: ObservableObject {
     @Published var pendingCurtainPlacement: PendingCurtainPlacement?
     /// Space Detail → VR multi-point space cleanup (consume-once). Not persisted.
     @Published var pendingSpaceCleanup: PendingSpaceCleanup?
+    /// Cleanup result → catalog placement base revision (consume-once, space-scoped).
+    @Published var pendingCleanupBaseRevision: PendingCleanupBaseRevision?
     @Published var spaceLinkUserMessage: String?
     /// Bumped on account reset so views dismiss open VR covers.
     @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
@@ -116,6 +118,7 @@ final class AppState: ObservableObject {
         pendingCatalogPlacement = nil
         pendingCurtainPlacement = nil
         pendingSpaceCleanup = nil
+        pendingCleanupBaseRevision = nil
         spaceLinkUserMessage = nil
         preferredLibraryCategory = nil
         pendingLibraryTab = nil
@@ -637,6 +640,18 @@ final class AppState: ObservableObject {
         guard let pending = peekPendingSpaceCleanup(matchingViewerSessionId: matchingViewerSessionId)
         else { return nil }
         pendingSpaceCleanup = nil
+        return pending
+    }
+
+    func peekPendingCleanupBaseRevision(matchingSpace: SpaceRecord) -> PendingCleanupBaseRevision? {
+        guard let pending = pendingCleanupBaseRevision, pending.matches(space: matchingSpace)
+        else { return nil }
+        return pending
+    }
+
+    func consumePendingCleanupBaseRevision(matchingSpace: SpaceRecord) -> PendingCleanupBaseRevision? {
+        guard let pending = peekPendingCleanupBaseRevision(matchingSpace: matchingSpace) else { return nil }
+        pendingCleanupBaseRevision = nil
         return pending
     }
 }

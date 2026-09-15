@@ -264,7 +264,26 @@ actor MobilePlacementResultsAPIClient: PlacementResultsServing {
            let result = envelope.result {
             return result
         }
-        // Server returns job envelope; refresh placement card via list/detail separately.
+        // Cloud retry returns `{ ok, job }` (job envelope). Refresh locker card by job id.
+        struct JobEnvelope: Codable {
+            var ok: Bool?
+            var job: SpaceCleanupJobDTO?
+        }
+        if let jobEnv = try? JSONDecoder().decode(JobEnvelope.self, from: data),
+           jobEnv.job != nil {
+            if let placementId = jobEnv.job?.placementResultId,
+               let refreshed = try? await fetchResult(id: placementId) {
+                return refreshed
+            }
+            let listed = try await listResults()
+            if let match = listed.first(where: { $0.spaceCleanupJobId == jobId }) {
+                return match
+            }
+        }
+        let listed = try await listResults()
+        if let match = listed.first(where: { $0.spaceCleanupJobId == jobId }) {
+            return match
+        }
         throw MobilePlacementResultsAPIError.invalidResponse
     }
 

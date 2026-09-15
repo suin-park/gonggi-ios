@@ -6,8 +6,6 @@ import Foundation
 /// are keyed by `sessionId` (= jobId). Completed curtain / cleanup rows must open the
 /// result lat-long (`previewUrl`), not the unmodified source space.
 enum PlacementResultOpenPolicy {
-    private static let cleanupRevisionDefaultsKey = "gonggi.cleanup.baseRevisionBySpace"
-
     /// Prefer composite / result preview URLs for completed curtain / cleanup opens.
     static func compositePreviewURLString(for result: ProductPlacementResultDTO) -> String? {
         let candidates = [result.resultPreviewUrl, result.previewUrl]
@@ -60,24 +58,16 @@ enum PlacementResultOpenPolicy {
         return dir.appendingPathComponent("composite_latlong.jpg")
     }
 
-    /// Explicit cleanup→placement base revision (never mutates space latestRevisionId).
-    static func stashCleanupBaseRevision(spaceKey: String, resultRevisionId: String) {
-        var map = UserDefaults.standard.dictionary(forKey: cleanupRevisionDefaultsKey) as? [String: String] ?? [:]
-        map[spaceKey] = resultRevisionId
-        UserDefaults.standard.set(map, forKey: cleanupRevisionDefaultsKey)
-    }
-
-    static func consumeCleanupBaseRevision(spaceKey: String) -> String? {
-        var map = UserDefaults.standard.dictionary(forKey: cleanupRevisionDefaultsKey) as? [String: String] ?? [:]
-        let value = map.removeValue(forKey: spaceKey)
-        UserDefaults.standard.set(map, forKey: cleanupRevisionDefaultsKey)
-        return value
-    }
-
     /// Resolved result revision for a completed cleanup card open.
     static func resolvedResultRevisionId(for result: ProductPlacementResultDTO) -> String? {
         guard result.type == .spaceCleanup, result.status == .completed else { return nil }
         let trimmed = result.resultRevisionId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Cleanup completed open requires both revision id and preview — never fall back to source space.
+    static func canOpenCleanupResult(_ result: ProductPlacementResultDTO) -> Bool {
+        resolvedResultRevisionId(for: result) != nil
+            && compositePreviewURLString(for: result) != nil
     }
 }

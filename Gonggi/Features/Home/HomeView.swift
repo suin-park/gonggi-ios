@@ -377,12 +377,18 @@ struct HomeView: View {
         let result = await appState.prepareSpaceViewer(jobId: jobId)
         switch result {
         case .success(let url):
+            let baseRevisionId = appState.peekPendingCurtainPlacement(matchingViewerSessionId: jobId)?.baseRevisionId
+                ?? appState.peekPendingCatalogPlacement(matchingViewerSessionId: jobId)?.baseRevisionId
+                ?? "rev-0-base"
             viewerLaunch = SpaceViewerLaunch(
                 single: SpaceViewerSession(
                     id: jobId,
                     fileURL: url,
                     audioURL: AppState.preferredAudioURL(for: jobId),
-                    videoURL: AppState.preferredVideoURL(for: jobId)
+                    videoURL: AppState.preferredVideoURL(for: jobId),
+                    baseRevisionId: baseRevisionId,
+                    startInEditMode: appState.peekPendingCatalogPlacement(matchingViewerSessionId: jobId) != nil
+                        || appState.peekPendingAssetPlacement(matchingViewerSessionId: jobId) != nil
                 )
             )
         case .failure(let error):
