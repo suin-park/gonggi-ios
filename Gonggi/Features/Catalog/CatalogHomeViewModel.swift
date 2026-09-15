@@ -11,8 +11,8 @@ final class CatalogHomeViewModel: ObservableObject {
     }
 
     @Published private(set) var products: [CatalogProduct] = []
+    @Published private(set) var categories: [CatalogCategory] = []
     @Published private(set) var state: LoadState = .idle
-    @Published var selectedPlacementType: CatalogPlacementType?
 
     private let isMockMode: Bool
     private let client: any CatalogServing
@@ -21,19 +21,6 @@ final class CatalogHomeViewModel: ObservableObject {
     init(isMockMode: Bool) {
         self.isMockMode = isMockMode
         self.client = isMockMode ? CatalogMockClient() : CatalogAPIClient()
-    }
-
-    /// Production: categories present in API results only.
-    /// Mock: may include furniture + curtain for expansion checks.
-    var availableCategories: [CatalogPlacementType] {
-        let types = Set(products.map(\.placementType)).filter { $0 != .unsupported }
-        let order: [CatalogPlacementType] = [.furniture3D, .curtain2D]
-        return order.filter { types.contains($0) }
-    }
-
-    var visibleProducts: [CatalogProduct] {
-        guard let selectedPlacementType else { return products }
-        return products.filter { $0.placementType == selectedPlacementType }
     }
 
     var shouldShowSection: Bool {
@@ -65,28 +52,12 @@ final class CatalogHomeViewModel: ObservableObject {
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let list = try await client.fetchProducts()
+                let payload = try await client.fetchCatalogList()
                 guard !Task.isCancelled else { return }
-                // Defensive: drop unsupported / non-READY-ish cards for Production UX.
-                let filtered = list.filter { product in
-                    if product.placementType == .unsupported { return false }
-                    if !isMockMode, product.availableForPlacement == false,
-                       product.placementType == .furniture3D {
-                        // Still show furniture cards that are published even if placement not ready,
-                        // so users can open detail — but prefer READY when flag present.
-                        return true
-                    }
-                    return true
-                }
-                products = filtered
-                if selectedPlacementType == nil {
-                    selectedPlacementType = availableCategories.first
-                } else if let selected = selectedPlacementType,
-                          !availableCategories.contains(selected) {
-                    selectedPlacementType = availableCategories.first
-                }
-                state = filtered.isEmpty ? .empty : .loaded
-                for product in filtered.prefix(8) {
+                products = payload.products
+                categories = payload.categories
+                state = payload.categories.isEmpty ? .empty : .loaded
+                for product in payload.products.prefix(8) {
                     await client.recordEvent(
                         CatalogEventRequest(
                             type: "IMPRESSION",
@@ -107,6 +78,7 @@ final class CatalogHomeViewModel: ObservableObject {
             } catch let error as CatalogAPIError {
                 if case .empty = error {
                     products = []
+                    categories = []
                     state = .empty
                 } else {
                     state = .error(error.userMessage)
@@ -115,10 +87,6 @@ final class CatalogHomeViewModel: ObservableObject {
                 state = .error(CatalogAPIError.invalidResponse.userMessage)
             }
         }
-    }
-
-    func selectCategory(_ type: CatalogPlacementType) {
-        selectedPlacementType = type
     }
 
     func detailClient() -> any CatalogServing { client }

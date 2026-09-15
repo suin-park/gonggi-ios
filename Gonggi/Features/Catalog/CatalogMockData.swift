@@ -10,6 +10,27 @@ enum CatalogMockData {
         [roundCabinetListCard(), mockCurtainPlaceholderCard()]
     }
 
+    static func listPayload() -> CatalogListPayload {
+        let products = listProducts()
+        return CatalogListPayload(
+            products: products,
+            categories: [
+                CatalogCategory(
+                    id: "mock-furniture",
+                    name: "수납장",
+                    sortOrder: 0,
+                    products: [roundCabinetListCard()]
+                ),
+                CatalogCategory(
+                    id: "mock-curtain",
+                    name: "커튼",
+                    sortOrder: 1,
+                    products: [mockCurtainPlaceholderCard()]
+                ),
+            ]
+        )
+    }
+
     static func detailProduct(id: String) -> CatalogProduct? {
         switch id {
         case roundCabinetProductId:

@@ -21,7 +21,6 @@ struct CatalogHomeSectionView: View {
                         .padding(.bottom, GonggiSpacing.sm)
                         .accessibilityHidden(true)
                     header
-                    categoryChips
                     content
                 }
                 .padding(.top, GonggiSpacing.xl)
@@ -37,7 +36,7 @@ struct CatalogHomeSectionView: View {
                 }
                 .navigationDestination(isPresented: $showAll) {
                     CatalogProductListView(
-                        products: viewModel.products,
+                        categories: viewModel.categories,
                         client: viewModel.detailClient(),
                         isMockMode: appState.isMockMode
                     )
@@ -60,7 +59,7 @@ struct CatalogHomeSectionView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: GonggiSpacing.sm)
-            if case .loaded = viewModel.state, !viewModel.products.isEmpty {
+            if case .loaded = viewModel.state, !viewModel.categories.isEmpty {
                 Button("전체 보기") {
                     GonggiHaptics.light()
                     showAll = true
@@ -71,38 +70,6 @@ struct CatalogHomeSectionView: View {
             }
         }
         .padding(.horizontal, GonggiSpacing.lg)
-    }
-
-    @ViewBuilder
-    private var categoryChips: some View {
-        let cats = viewModel.availableCategories
-        if cats.count > 1 {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: GonggiSpacing.sm) {
-                    ForEach(cats, id: \.self) { type in
-                        let selected = viewModel.selectedPlacementType == type
-                        Button {
-                            GonggiHaptics.light()
-                            viewModel.selectCategory(type)
-                        } label: {
-                            Text(type.displayCategoryTitle)
-                                .font(GonggiTypography.caption(13))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(
-                                    Capsule()
-                                        .fill(selected ? GonggiColors.accentCyan : GonggiColors.surfaceElevated)
-                                )
-                                .foregroundStyle(selected ? GonggiColors.textOnAccent : GonggiColors.textSecondary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(type.displayCategoryTitle) 카테고리")
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                    }
-                }
-                .padding(.horizontal, GonggiSpacing.lg)
-            }
-        }
     }
 
     @ViewBuilder
@@ -139,17 +106,15 @@ struct CatalogHomeSectionView: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, GonggiSpacing.lg)
         case .loaded:
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: GonggiSpacing.md) {
-                    ForEach(viewModel.visibleProducts) { product in
-                        CatalogProductCardView(product: product) {
-                            detailRoute = CatalogProductRoute(id: product.id)
-                        } onPlace: {
-                            detailRoute = CatalogProductRoute(id: product.id)
-                        }
+            let showTitles = CatalogListPayload.shouldShowCategoryTitles(viewModel.categories)
+            VStack(alignment: .leading, spacing: GonggiSpacing.xl) {
+                ForEach(viewModel.categories) { category in
+                    CatalogCategoryRowView(category: category, showTitle: showTitles) { product in
+                        detailRoute = CatalogProductRoute(id: product.id)
+                    } onPlace: { product in
+                        detailRoute = CatalogProductRoute(id: product.id)
                     }
                 }
-                .padding(.horizontal, GonggiSpacing.lg)
             }
         }
     }
