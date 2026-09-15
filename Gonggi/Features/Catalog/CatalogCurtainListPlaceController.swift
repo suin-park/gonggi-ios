@@ -66,7 +66,7 @@ final class CatalogCurtainListPlaceController: ObservableObject {
         spaces: [SpaceRecord],
         appState: AppState
     ) {
-        guard CatalogCurtainListCTA.isEnabled(listProduct) else { return }
+        guard CatalogCurtainListCTA.isEnabled(product: listProduct) else { return }
         if case .loading = phase { return }
         lastListProduct = listProduct
         inFlight?.cancel()
