@@ -33,7 +33,8 @@ struct CatalogHomeSectionView: View {
                     CatalogProductDetailView(
                         productId: route.id,
                         client: viewModel.detailClient(),
-                        isMockMode: appState.isMockMode
+                        isMockMode: appState.isMockMode,
+                        initialVariantId: route.initialVariantId
                     )
                     .environmentObject(appState)
                 }
@@ -204,10 +205,17 @@ struct CatalogHomeSectionView: View {
                         ForEach(viewModel.filteredProducts) { product in
                             CatalogProductCardView(
                                 product: product,
+                                selectedVariantId: viewModel.selectedVariantId(for: product),
+                                onSelectVariant: { variantId in
+                                    viewModel.selectVariant(productId: product.id, variantId: variantId)
+                                },
                                 isPlaceLoading: curtainPlace.loadingProductId == product.id,
                                 isARLoading: furnitureAR.loadingProductId == product.id,
                                 onOpen: {
-                                    detailRoute = CatalogProductRoute(id: product.id)
+                                    detailRoute = CatalogProductRoute(
+                                        id: product.id,
+                                        initialVariantId: viewModel.selectedVariantId(for: product)
+                                    )
                                 },
                                 onPlace: {
                                     handlePlace(product)
@@ -215,7 +223,8 @@ struct CatalogHomeSectionView: View {
                                 onOpenAR: {
                                     furnitureAR.openAR(
                                         listProduct: product,
-                                        client: viewModel.detailClient()
+                                        client: viewModel.detailClient(),
+                                        preferredVariantId: viewModel.selectedVariantId(for: product)
                                     )
                                 }
                             )
@@ -229,19 +238,22 @@ struct CatalogHomeSectionView: View {
     }
 
     private func handlePlace(_ product: CatalogProduct) {
+        let variantId = viewModel.selectedVariantId(for: product)
         if product.placementType == .curtain2D {
             curtainPlace.placeTapped(
                 listProduct: product,
                 client: viewModel.detailClient(),
                 spaces: appState.spaces,
-                appState: appState
+                appState: appState,
+                preferredVariantId: variantId
             )
         } else {
-            detailRoute = CatalogProductRoute(id: product.id)
+            detailRoute = CatalogProductRoute(id: product.id, initialVariantId: variantId)
         }
     }
 }
 
 struct CatalogProductRoute: Identifiable, Hashable {
     var id: String
+    var initialVariantId: String? = nil
 }

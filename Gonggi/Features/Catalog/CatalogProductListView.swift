@@ -9,6 +9,7 @@ struct CatalogProductListView: View {
     @StateObject private var curtainPlace = CatalogCurtainListPlaceController()
     @StateObject private var furnitureAR = CatalogFurnitureARController()
     @State private var route: CatalogProductRoute?
+    @State private var selectedVariantIds: [String: String] = [:]
 
     private var displayCategories: [CatalogCategory] {
         guard let placementFilter else { return categories }
@@ -32,14 +33,27 @@ struct CatalogProductListView: View {
                             showTitle: showTitles,
                             loadingProductId: curtainPlace.loadingProductId,
                             arLoadingProductId: furnitureAR.loadingProductId,
+                            selectedVariantId: { product in
+                                selectedVariantId(for: product)
+                            },
+                            onSelectVariant: { product, variantId in
+                                selectedVariantIds[product.id] = variantId
+                            },
                             onOpen: { product in
-                                route = CatalogProductRoute(id: product.id)
+                                route = CatalogProductRoute(
+                                    id: product.id,
+                                    initialVariantId: selectedVariantId(for: product)
+                                )
                             },
                             onPlace: { product in
                                 handlePlace(product)
                             },
                             onOpenAR: { product in
-                                furnitureAR.openAR(listProduct: product, client: client)
+                                furnitureAR.openAR(
+                                    listProduct: product,
+                                    client: client,
+                                    preferredVariantId: selectedVariantId(for: product)
+                                )
                             }
                         )
                     }
@@ -50,11 +64,13 @@ struct CatalogProductListView: View {
         .background(GonggiAmbientBackground())
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { seedDefaultSelections() }
         .navigationDestination(item: $route) { r in
             CatalogProductDetailView(
                 productId: r.id,
                 client: client,
-                isMockMode: isMockMode
+                isMockMode: isMockMode,
+                initialVariantId: r.initialVariantId
             )
             .environmentObject(appState)
         }
@@ -120,16 +136,39 @@ struct CatalogProductListView: View {
         }
     }
 
+    private func selectedVariantId(for product: CatalogProduct) -> String? {
+        if let id = selectedVariantIds[product.id],
+           product.resolvedVariantOptions.contains(where: { $0.id == id }) {
+            return id
+        }
+        return product.resolvedVariantOptions.first?.id
+    }
+
+    private func seedDefaultSelections() {
+        var next = selectedVariantIds
+        for category in displayCategories {
+            for product in category.products {
+                if next[product.id] == nil,
+                   let first = product.resolvedVariantOptions.first?.id {
+                    next[product.id] = first
+                }
+            }
+        }
+        selectedVariantIds = next
+    }
+
     private func handlePlace(_ product: CatalogProduct) {
+        let variantId = selectedVariantId(for: product)
         if product.placementType == .curtain2D {
             curtainPlace.placeTapped(
                 listProduct: product,
                 client: client,
                 spaces: appState.spaces,
-                appState: appState
+                appState: appState,
+                preferredVariantId: variantId
             )
         } else {
-            route = CatalogProductRoute(id: product.id)
+            route = CatalogProductRoute(id: product.id, initialVariantId: variantId)
         }
     }
 }

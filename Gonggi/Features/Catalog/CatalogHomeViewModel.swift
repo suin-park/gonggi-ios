@@ -15,11 +15,14 @@ final class CatalogHomeViewModel: ObservableObject {
     @Published private(set) var state: LoadState = .idle
     @Published private(set) var selectedFilter: CatalogHomePlacementFilter = .curtain
     @Published private(set) var productScrollResetToken: UInt64 = 0
+    /// Home / list card color selection keyed by product id.
+    @Published private(set) var selectedVariantIds: [String: String] = [:]
 
     private let isMockMode: Bool
     private let client: any CatalogServing
     private let defaults: UserDefaults
     private var loadTask: Task<Void, Never>?
+    private var enrichTask: Task<Void, Never>?
 
     init(isMockMode: Bool, defaults: UserDefaults = .standard) {
         self.isMockMode = isMockMode
@@ -88,6 +91,7 @@ final class CatalogHomeViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 products = payload.products
                 categories = payload.categories
+                seedDefaultVariantSelections()
                 applyFilterAfterLoad()
                 if products.isEmpty {
                     state = .empty
@@ -99,12 +103,13 @@ final class CatalogHomeViewModel: ObservableObject {
                 } else {
                     state = .loaded
                 }
+                scheduleVariantOptionEnrichment()
                 for product in filteredProducts.prefix(8) {
                     await client.recordEvent(
                         CatalogEventRequest(
                             type: "IMPRESSION",
                             productId: product.id,
-                            variantId: nil,
+                            variantId: selectedVariantId(for: product),
                             spaceId: nil,
                             payload: CatalogEventPayload(
                                 channel: "gonggi_ios_home",
@@ -150,7 +155,64 @@ final class CatalogHomeViewModel: ObservableObject {
         resolved.persist(defaults: defaults)
     }
 
+    func selectedVariantId(for product: CatalogProduct) -> String? {
+        if let id = selectedVariantIds[product.id],
+           product.resolvedVariantOptions.contains(where: { $0.id == id }) {
+            return id
+        }
+        return product.resolvedVariantOptions.first?.id
+    }
+
+    func selectVariant(productId: String, variantId: String) {
+        selectedVariantIds[productId] = variantId
+    }
+
     func detailClient() -> any CatalogServing { client }
+
+    private func seedDefaultVariantSelections() {
+        var next = selectedVariantIds
+        for product in products {
+            if next[product.id] == nil,
+               let first = product.resolvedVariantOptions.first?.id {
+                next[product.id] = first
+            }
+        }
+        selectedVariantIds = next
+    }
+
+    /// When list payload lacks `variantOptions`, fill from detail (colors for dropdown).
+    private func scheduleVariantOptionEnrichment() {
+        enrichTask?.cancel()
+        enrichTask = Task { [weak self] in
+            guard let self else { return }
+            let targets = self.products.filter {
+                ($0.variantOptions?.isEmpty ?? true) && ($0.variants?.isEmpty ?? true)
+            }
+            guard !targets.isEmpty else { return }
+            for product in targets {
+                guard !Task.isCancelled else { return }
+                do {
+                    let detailed = try await self.client.fetchProduct(id: product.id)
+                    guard !Task.isCancelled else { return }
+                    let options = CatalogVariantOption.from(variants: detailed.variants)
+                    guard !options.isEmpty else { continue }
+                    if let idx = self.products.firstIndex(where: { $0.id == product.id }) {
+                        self.products[idx].variantOptions = options
+                        if self.selectedVariantIds[product.id] == nil {
+                            self.selectedVariantIds[product.id] = options.first?.id
+                        }
+                    }
+                    for catIdx in self.categories.indices {
+                        if let pIdx = self.categories[catIdx].products.firstIndex(where: { $0.id == product.id }) {
+                            self.categories[catIdx].products[pIdx].variantOptions = options
+                        }
+                    }
+                } catch {
+                    continue
+                }
+            }
+        }
+    }
 }
 
 extension AppConfiguration {

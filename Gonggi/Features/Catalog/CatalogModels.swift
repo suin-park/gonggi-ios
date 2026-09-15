@@ -156,6 +156,34 @@ struct CatalogVariant: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// Lightweight color/option row for list cards (home / 전체 보기).
+struct CatalogVariantOption: Codable, Sendable, Equatable, Identifiable {
+    var id: String
+    var name: String
+    var hexCode: String?
+    var widthMm: Int?
+    var depthMm: Int?
+    var heightMm: Int?
+
+    var dimensions: CatalogDimensions? {
+        guard let widthMm, let depthMm, let heightMm else { return nil }
+        return CatalogDimensions(widthMm: widthMm, depthMm: depthMm, heightMm: heightMm)
+    }
+
+    static func from(variants: [CatalogVariant]?) -> [CatalogVariantOption] {
+        (variants ?? []).map {
+            CatalogVariantOption(
+                id: $0.id,
+                name: $0.name,
+                hexCode: $0.hexCode,
+                widthMm: $0.widthMm,
+                depthMm: $0.depthMm,
+                heightMm: $0.heightMm
+            )
+        }
+    }
+}
+
 struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
     var id: String
     var partnerId: String
@@ -173,6 +201,8 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
     var heightMm: Int
     var variantCount: Int?
     var selectedVariantName: String?
+    /// List-card color options (id + name). Detail still uses full `variants`.
+    var variantOptions: [CatalogVariantOption]? = nil
     var catalogRevision: Int?
     var productRevision: String?
     var availableForPlacement: Bool?
@@ -194,6 +224,28 @@ struct CatalogProduct: Codable, Sendable, Equatable, Identifiable {
 
     var primaryVariant: CatalogVariant? {
         variants?.first(where: { $0.availableForPlacement }) ?? variants?.first
+    }
+
+    /// Options for list-card dropdown: API options → detail variants → single selected name.
+    var resolvedVariantOptions: [CatalogVariantOption] {
+        if let variantOptions, !variantOptions.isEmpty {
+            return variantOptions
+        }
+        let fromVariants = CatalogVariantOption.from(variants: variants)
+        if !fromVariants.isEmpty { return fromVariants }
+        if let name = selectedVariantName?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+            return [CatalogVariantOption(id: "list-\(id)", name: name, hexCode: nil, widthMm: widthMm, depthMm: depthMm, heightMm: heightMm)]
+        }
+        return []
+    }
+
+    func variantOption(id: String?) -> CatalogVariantOption? {
+        let options = resolvedVariantOptions
+        guard !options.isEmpty else { return nil }
+        if let id, let match = options.first(where: { $0.id == id }) {
+            return match
+        }
+        return options.first
     }
 
     var priceLabel: String {

@@ -5,6 +5,8 @@ struct CatalogCategoryRowView: View {
     var showTitle: Bool = true
     var loadingProductId: String? = nil
     var arLoadingProductId: String? = nil
+    var selectedVariantId: ((CatalogProduct) -> String?)? = nil
+    var onSelectVariant: ((CatalogProduct, String) -> Void)? = nil
     var onOpen: (CatalogProduct) -> Void
     var onPlace: (CatalogProduct) -> Void
     var onOpenAR: ((CatalogProduct) -> Void)? = nil
@@ -24,6 +26,10 @@ struct CatalogCategoryRowView: View {
                     ForEach(category.products) { product in
                         CatalogProductCardView(
                             product: product,
+                            selectedVariantId: selectedVariantId?(product) ?? product.resolvedVariantOptions.first?.id,
+                            onSelectVariant: { variantId in
+                                onSelectVariant?(product, variantId)
+                            },
                             isPlaceLoading: loadingProductId == product.id,
                             isARLoading: arLoadingProductId == product.id,
                             onOpen: { onOpen(product) },

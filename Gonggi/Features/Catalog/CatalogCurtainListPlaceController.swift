@@ -16,6 +16,7 @@ final class CatalogCurtainListPlaceController: ObservableObject {
     private var detailCache: [String: CatalogProduct] = [:]
     private var inFlight: Task<Void, Never>?
     private var lastListProduct: CatalogProduct?
+    private var lastPreferredVariantId: String?
 
     var loadingProductId: String? {
         if case .loading(let id) = phase { return id }
@@ -64,11 +65,13 @@ final class CatalogCurtainListPlaceController: ObservableObject {
         listProduct: CatalogProduct,
         client: any CatalogServing,
         spaces: [SpaceRecord],
-        appState: AppState
+        appState: AppState,
+        preferredVariantId: String? = nil
     ) {
         guard CatalogCurtainListCTA.isEnabled(product: listProduct) else { return }
         if case .loading = phase { return }
         lastListProduct = listProduct
+        lastPreferredVariantId = preferredVariantId
         inFlight?.cancel()
         let productId = listProduct.id
         phase = .loading(productId: productId)
@@ -77,7 +80,8 @@ final class CatalogCurtainListPlaceController: ObservableObject {
                 listProduct: listProduct,
                 client: client,
                 spaces: spaces,
-                appState: appState
+                appState: appState,
+                preferredVariantId: preferredVariantId
             )
         }
     }
@@ -87,7 +91,13 @@ final class CatalogCurtainListPlaceController: ObservableObject {
             clearError()
             return
         }
-        placeTapped(listProduct: product, client: client, spaces: spaces, appState: appState)
+        placeTapped(
+            listProduct: product,
+            client: client,
+            spaces: spaces,
+            appState: appState,
+            preferredVariantId: lastPreferredVariantId
+        )
     }
 
     func confirmSpace(_ space: SpaceRecord, appState: AppState) {
@@ -100,7 +110,8 @@ final class CatalogCurtainListPlaceController: ObservableObject {
         listProduct: CatalogProduct,
         client: any CatalogServing,
         spaces: [SpaceRecord],
-        appState: AppState
+        appState: AppState,
+        preferredVariantId: String?
     ) async {
         let productId = listProduct.id
         do {
@@ -113,7 +124,7 @@ final class CatalogCurtainListPlaceController: ObservableObject {
                 detailed = fetched
             }
 
-            guard let variant = detailed.primaryVariant else {
+            guard let variant = Self.resolveVariant(in: detailed, preferredId: preferredVariantId) else {
                 // Do not cache unusable payloads — retry must refetch.
                 detailCache[productId] = nil
                 phase = .error(
@@ -167,6 +178,14 @@ final class CatalogCurtainListPlaceController: ObservableObject {
                 message: CatalogAPIError.invalidResponse.userMessage
             )
         }
+    }
+
+    static func resolveVariant(in product: CatalogProduct, preferredId: String?) -> CatalogVariant? {
+        if let preferredId,
+           let match = product.variants?.first(where: { $0.id == preferredId }) {
+            return match
+        }
+        return product.primaryVariant
     }
 
     func beginCurtainPlacement(

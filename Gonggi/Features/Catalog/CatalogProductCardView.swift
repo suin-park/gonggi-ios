@@ -2,6 +2,8 @@ import SwiftUI
 
 struct CatalogProductCardView: View {
     let product: CatalogProduct
+    var selectedVariantId: String?
+    var onSelectVariant: ((String) -> Void)?
     var isPlaceLoading: Bool = false
     var isARLoading: Bool = false
     var onOpen: () -> Void
@@ -24,6 +26,22 @@ struct CatalogProductCardView: View {
         guard showsARButton else { return false }
         if isARLoading { return false }
         return CatalogFurnitureARController.isEnabled(product: product)
+    }
+
+    private var variantOptions: [CatalogVariantOption] {
+        product.resolvedVariantOptions
+    }
+
+    private var activeOption: CatalogVariantOption? {
+        product.variantOption(id: selectedVariantId)
+    }
+
+    private var dimensionsLabel: String {
+        activeOption?.dimensions?.shortLabelMm ?? product.dimensions.shortLabelMm
+    }
+
+    private var dimensionsA11y: String {
+        activeOption?.dimensions?.accessibilityLabel ?? product.dimensions.accessibilityLabel
     }
 
     var body: some View {
@@ -56,17 +74,14 @@ struct CatalogProductCardView: View {
                 .foregroundStyle(GonggiColors.textSecondary)
                 .accessibilityLabel(product.priceAccessibilityLabel)
 
-            if let variant = product.selectedVariantName {
-                Text("옵션 · \(variant)")
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                    .lineLimit(1)
+            if !variantOptions.isEmpty {
+                variantDropdown
             }
 
-            Text(product.dimensions.shortLabelMm)
+            Text(dimensionsLabel)
                 .font(GonggiTypography.caption(12))
                 .foregroundStyle(GonggiColors.textSecondary)
-                .accessibilityLabel(product.dimensions.accessibilityLabel)
+                .accessibilityLabel(dimensionsA11y)
 
             catalogCTAButton(
                 title: product.placementType == .curtain2D ? "적용해보기" : "배치해보기",
@@ -105,9 +120,47 @@ struct CatalogProductCardView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(product.dimensions.shortLabelMm)"
+            "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(dimensionsLabel)"
         )
         .accessibilityHint("두 번 탭하면 상품 상세를 엽니다")
+    }
+
+    @ViewBuilder
+    private var variantDropdown: some View {
+        let options = variantOptions
+        let current = activeOption
+        Menu {
+            ForEach(options) { option in
+                Button {
+                    GonggiHaptics.light()
+                    onSelectVariant?(option.id)
+                } label: {
+                    if option.id == current?.id {
+                        Label(option.name, systemImage: "checkmark")
+                    } else {
+                        Text(option.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text("옵션 · \(current?.name ?? options.first?.name ?? "")")
+                    .font(GonggiTypography.caption(12))
+                    .foregroundStyle(GonggiColors.textTertiary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(GonggiColors.textTertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // Prevent card onTapGesture from also opening detail when picking a color.
+        .simultaneousGesture(TapGesture().onEnded { })
+        .accessibilityLabel("색상 옵션")
+        .accessibilityValue(current?.name ?? "")
+        .accessibilityHint(options.count == 1 ? "선택 가능한 색상 1개" : "색상을 선택합니다")
     }
 
     @ViewBuilder

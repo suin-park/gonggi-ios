@@ -16,6 +16,7 @@ final class CatalogFurnitureARController: ObservableObject {
     private var detailCache: [String: CatalogProduct] = [:]
     private var inFlight: Task<Void, Never>?
     private var lastProduct: CatalogProduct?
+    private var lastPreferredVariantId: String?
 
     var loadingProductId: String? {
         if case .loading(let id) = phase { return id }
@@ -40,15 +41,24 @@ final class CatalogFurnitureARController: ObservableObject {
         product.placementType == .furniture3D && product.availableForPlacement != false
     }
 
-    func openAR(listProduct: CatalogProduct, client: any CatalogServing) {
+    func openAR(
+        listProduct: CatalogProduct,
+        client: any CatalogServing,
+        preferredVariantId: String? = nil
+    ) {
         guard Self.isEnabled(product: listProduct) else { return }
         if case .loading = phase { return }
         lastProduct = listProduct
+        lastPreferredVariantId = preferredVariantId
         inFlight?.cancel()
         let productId = listProduct.id
         phase = .loading(productId: productId)
         inFlight = Task { [weak self] in
-            await self?.resolveAndDownload(listProduct: listProduct, client: client)
+            await self?.resolveAndDownload(
+                listProduct: listProduct,
+                client: client,
+                preferredVariantId: preferredVariantId
+            )
         }
     }
 
@@ -57,10 +67,14 @@ final class CatalogFurnitureARController: ObservableObject {
             clearError()
             return
         }
-        openAR(listProduct: product, client: client)
+        openAR(listProduct: product, client: client, preferredVariantId: lastPreferredVariantId)
     }
 
-    private func resolveAndDownload(listProduct: CatalogProduct, client: any CatalogServing) async {
+    private func resolveAndDownload(
+        listProduct: CatalogProduct,
+        client: any CatalogServing,
+        preferredVariantId: String?
+    ) async {
         let productId = listProduct.id
         do {
             let detailed: CatalogProduct
@@ -72,7 +86,10 @@ final class CatalogFurnitureARController: ObservableObject {
                 detailed = fetched
             }
 
-            guard let variant = detailed.primaryVariant else {
+            guard let variant = CatalogCurtainListPlaceController.resolveVariant(
+                in: detailed,
+                preferredId: preferredVariantId
+            ) else {
                 detailCache[productId] = nil
                 phase = .error(
                     productId: productId,
@@ -97,7 +114,7 @@ final class CatalogFurnitureARController: ObservableObject {
             detailCache[productId] = detailed
             let cacheKey = variant.catalogOwnedAssetId
                 ?? variant.catalogAssetId
-                ?? detailed.id
+                ?? "\(detailed.id)-\(variant.id)"
             guard let local = await VRUsdzCache().localURL(assetId: cacheKey, remoteURL: remote) else {
                 phase = .error(
                     productId: productId,

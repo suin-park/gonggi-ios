@@ -4,6 +4,7 @@ struct CatalogProductDetailView: View {
     let productId: String
     let client: any CatalogServing
     let isMockMode: Bool
+    var initialVariantId: String? = nil
 
     @EnvironmentObject private var appState: AppState
     @State private var product: CatalogProduct?
@@ -87,15 +88,17 @@ struct CatalogProductDetailView: View {
                     .font(GonggiTypography.headline(18))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .accessibilityLabel(product.priceAccessibilityLabel)
-                if let variant {
-                    Text("옵션 · \(variant.name)")
+                if let dims = variant?.dimensions {
+                    Text(dims.shortLabelMm)
                         .font(GonggiTypography.body(14))
                         .foregroundStyle(GonggiColors.textSecondary)
+                        .accessibilityLabel(dims.accessibilityLabel)
+                } else {
+                    Text(product.dimensions.shortLabelMm)
+                        .font(GonggiTypography.body(14))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .accessibilityLabel(product.dimensions.accessibilityLabel)
                 }
-                Text(product.dimensions.shortLabelMm)
-                    .font(GonggiTypography.body(14))
-                    .foregroundStyle(GonggiColors.textSecondary)
-                    .accessibilityLabel(product.dimensions.accessibilityLabel)
                 Text(placementMethodLabel(product))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
@@ -105,30 +108,34 @@ struct CatalogProductDetailView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let variants = product.variants, variants.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        ForEach(variants) { v in
-                            Button(v.name) {
-                                selectedVariantId = v.id
+            if let variants = product.variants, !variants.isEmpty {
+                Menu {
+                    ForEach(variants) { v in
+                        Button {
+                            selectedVariantId = v.id
+                        } label: {
+                            if v.id == selectedVariantId || (selectedVariantId == nil && v.id == variants.first?.id) {
+                                Label(v.name, systemImage: "checkmark")
+                            } else {
+                                Text(v.name)
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule().fill(
-                                    selectedVariantId == v.id || (selectedVariantId == nil && v.id == variants.first?.id)
-                                        ? GonggiColors.accentCyan
-                                        : GonggiColors.surfaceElevated
-                                )
-                            )
-                            .foregroundStyle(
-                                selectedVariantId == v.id || (selectedVariantId == nil && v.id == variants.first?.id)
-                                    ? GonggiColors.textOnAccent
-                                    : GonggiColors.textSecondary
-                            )
                         }
                     }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("옵션 · \(resolvedVariant(product)?.name ?? variants[0].name)")
+                            .font(GonggiTypography.body(14))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(GonggiColors.textTertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("색상 옵션")
+                .accessibilityHint(variants.count == 1 ? "선택 가능한 색상 1개" : "색상을 선택합니다")
             }
 
             VStack(spacing: GonggiSpacing.sm) {
@@ -321,7 +328,12 @@ struct CatalogProductDetailView: View {
         do {
             let loaded = try await client.fetchProduct(id: productId)
             product = loaded
-            selectedVariantId = loaded.primaryVariant?.id
+            if let initialVariantId,
+               loaded.variants?.contains(where: { $0.id == initialVariantId }) == true {
+                selectedVariantId = initialVariantId
+            } else {
+                selectedVariantId = loaded.primaryVariant?.id
+            }
             await client.recordEvent(event(type: "DETAIL_VIEW", product: loaded, outbound: nil))
         } catch let error as CatalogAPIError {
             errorMessage = error.userMessage
