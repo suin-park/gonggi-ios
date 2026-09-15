@@ -235,7 +235,7 @@ struct CatalogProductListResponse: Codable, Sendable {
     var categories: [CatalogCategory]?
 }
 
-struct CatalogCategory: Codable, Sendable, Equatable, Identifiable, Hashable {
+struct CatalogCategory: Codable, Sendable, Equatable, Identifiable {
     var id: String
     var name: String
     var sortOrder: Int?
