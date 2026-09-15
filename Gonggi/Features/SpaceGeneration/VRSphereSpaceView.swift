@@ -73,6 +73,8 @@ struct VRSphereSpaceView: View {
     @State private var loadingAssets = false
     @State private var placementRequestToken = 0
     @State private var pendingPlacementAsset: MobileAssetDTO?
+    /// Catalog pending insert — resolved at screen-center floor like locker assets.
+    @State private var pendingCatalogInsert: PendingCatalogPlacement?
     @State private var didLoadPlacement = false
     @State private var placementTask: Task<Void, Never>?
     /// Phase 2 — external pending insert consume-once + cancel rollback.
@@ -1699,19 +1701,9 @@ struct VRSphereSpaceView: View {
             }
         }
 
-        let entry = pending.makeLayoutEntry(
-            position: SIMD3(0, draftLayout.floorY, -1.2),
-            rotationY: 0,
-            floorY: draftLayout.floorY
-        )
-        guard draftLayout.append(entry) else {
-            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
-            return
-        }
-        selectedPlacementId = entry.id
-        catalogSpecsByPlacementId[entry.id] = spec
-        editTool = .none
-        saveDraftLocally()
+        // Same path as locker assets: bump token → SCNHost samples screen-center floor → insert.
+        pendingCatalogInsert = pending
+        pendingPlacementAsset = dto
         placementRequestToken += 1
     }
 
@@ -1743,6 +1735,11 @@ struct VRSphereSpaceView: View {
     }
 
     private func addPendingAsset(at point: SIMD3<Float>) {
+        if let catalogPending = pendingCatalogInsert {
+            finishPendingCatalogInsert(catalogPending, at: point)
+            return
+        }
+
         guard let asset = pendingPlacementAsset,
               draftLayout.assets.count < VRPlacementLayout.maxAssets
         else {
@@ -1760,6 +1757,30 @@ struct VRSphereSpaceView: View {
         guard draftLayout.append(entry) else { return }
         pendingPlacementAsset = nil
         selectedPlacementId = entry.id
+        editTool = .none
+        saveDraftLocally()
+    }
+
+    private func finishPendingCatalogInsert(_ pending: PendingCatalogPlacement, at point: SIMD3<Float>) {
+        pendingCatalogInsert = nil
+        pendingPlacementAsset = nil
+
+        guard draftLayout.assets.count < VRPlacementLayout.maxAssets else {
+            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            return
+        }
+
+        let entry = pending.makeLayoutEntry(
+            position: SIMD3(point.x, draftLayout.floorY, point.z),
+            rotationY: 0,
+            floorY: draftLayout.floorY
+        )
+        guard draftLayout.append(entry) else {
+            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            return
+        }
+        selectedPlacementId = entry.id
+        catalogSpecsByPlacementId[entry.id] = pending.placementSpec
         editTool = .none
         saveDraftLocally()
     }
