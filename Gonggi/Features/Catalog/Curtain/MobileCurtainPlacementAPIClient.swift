@@ -67,15 +67,41 @@ actor MobileCurtainPlacementAPIClient: CurtainPlacementServing {
         }
         if http.statusCode == 401 { throw CurtainPlacementAPIError.unauthorized }
         if http.statusCode == 404 { throw CurtainPlacementAPIError.notFound }
+        // 202 Accepted (async create) and 2xx success.
         if !(200..<300).contains(http.statusCode) {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let code = json?["error"] as? String ?? json?["code"] as? String
             throw CurtainPlacementAPIError.server(status: http.statusCode, code: code)
         }
         let decoder = JSONDecoder()
-        if let envelope = try? decoder.decode(CurtainPlacementJobResponse.self, from: data),
-           let job = envelope.job {
-            return job
+        if let envelope = try? decoder.decode(CurtainPlacementJobResponse.self, from: data) {
+            if var job = envelope.job {
+                if job.placementResultId == nil {
+                    job.placementResultId = envelope.placementResultId
+                }
+                if job.id.isEmpty, let jobId = envelope.jobId {
+                    job.id = jobId
+                }
+                return job
+            }
+            if let jobId = envelope.jobId {
+                return CurtainPlacementJob(
+                    id: jobId,
+                    status: envelope.status ?? "QUEUED",
+                    detectionId: nil,
+                    windowPolygon: nil,
+                    windowMaskAssetId: nil,
+                    confidence: nil,
+                    needsConfirmation: nil,
+                    warnings: nil,
+                    compositeImageUrl: nil,
+                    originalImageUrl: nil,
+                    revisionId: nil,
+                    userFacingSummaryKo: nil,
+                    errorCode: nil,
+                    placementResultId: envelope.placementResultId
+                )
+            }
         }
         if let job = try? decoder.decode(CurtainPlacementJob.self, from: data) {
             return job
@@ -109,11 +135,12 @@ actor CurtainPlacementMockClient: CurtainPlacementServing {
             return existing
         }
         let id = "mock-curtain-\(UUID().uuidString.prefix(8))"
+        let resultId = "mock-pr-\(UUID().uuidString.prefix(8))"
         let warnings = CurtainSeedMath.clientWarnings(u: request.seed.u, pitchDeg: request.seed.pitchDeg)
             .map(\.rawValue)
         let job = CurtainPlacementJob(
             id: id,
-            status: "DETECTING_WINDOW",
+            status: "QUEUED",
             detectionId: "mock-det-\(id)",
             windowPolygon: nil,
             windowMaskAssetId: nil,
@@ -124,7 +151,8 @@ actor CurtainPlacementMockClient: CurtainPlacementServing {
             originalImageUrl: nil,
             revisionId: nil,
             userFacingSummaryKo: nil,
-            errorCode: nil
+            errorCode: nil,
+            placementResultId: resultId
         )
         jobs[id] = job
         pollCounts[id] = 0

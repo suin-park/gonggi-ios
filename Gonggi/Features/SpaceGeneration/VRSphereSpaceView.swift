@@ -567,8 +567,10 @@ struct VRSphereSpaceView: View {
                         if case .awaitingConfirmation = curtainSession.phase { return true }
                         return false
                     }(),
+                    showCreateFailureActions: curtainSession.showsCreateFailureActions,
                     onConfirm: { curtainSession.confirmWindowAndComposite() },
-                    onReselect: { curtainSession.reselectWindow() }
+                    onReselect: { curtainSession.reselectWindow() },
+                    onRetryCreate: { curtainSession.retryCreateAfterFailure() }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .padding(.bottom, interactionMode == .edit ? 96 : 28)
@@ -1654,6 +1656,10 @@ struct VRSphereSpaceView: View {
         if let curtainPending = appState.consumePendingCurtainPlacement(matchingViewerSessionId: sessionId) {
             didConsumeExternalPending = true
             curtainSession.configure(useMock: appState.isMockMode)
+            let state = appState
+            curtainSession.onPlacementAccepted = { resultId in
+                state.openPlacementResults(resultId: resultId)
+            }
             if let validated = SpaceLatLongStore.validateImage(at: textureURL) {
                 curtainSession.updateLatLongDimensions(
                     width: validated.width,

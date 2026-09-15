@@ -5,7 +5,10 @@ enum CurtainPlacementPhase: Equatable {
     case idle
     case awaitingSeed
     case seedSelected(CurtainSeedCapture)
+    /// Short submitting state while POST create is in flight (not long detect polling).
     case creatingJob
+    /// Create accepted (202/200) — hand off to Library → 배치 결과; server continues async.
+    case accepted(placementResultId: String?)
     case polling(String)
     case awaitingConfirmation(CurtainPlacementJob)
     case compositing
@@ -25,17 +28,28 @@ final class CurtainPlacementSession: ObservableObject {
     @Published var showConsentSheet = false
     @Published var bannerMessage: String?
     @Published var errorMessage: String?
+    /// Last accepted placement result id (for navigation / tests).
+    @Published private(set) var lastPlacementResultId: String?
 
     private var job: CurtainPlacementJob?
+    private var lastSeedCapture: CurtainSeedCapture?
     private var pollTask: Task<Void, Never>?
     private var client: (any CurtainPlacementServing)?
     private var sessionId: String = ""
     private var latLongWidth: Int = 3840
     private var latLongHeight: Int = 1920
     private var aiConsentAccepted = false
+    private var failedDuringCreate = false
+    /// Invoked on MainActor after create succeeds — navigate to Library 배치 결과.
+    var onPlacementAccepted: ((String?) -> Void)?
 
     func configure(useMock: Bool) {
         client = useMock ? CurtainPlacementMockClient() : MobileCurtainPlacementAPIClient()
+    }
+
+    /// Test injection.
+    func configure(client: any CurtainPlacementServing) {
+        self.client = client
     }
 
     func start(with pending: PendingCurtainPlacement, sessionId: String) {
@@ -48,16 +62,25 @@ final class CurtainPlacementSession: ObservableObject {
         windowPolygon = nil
         warnings = []
         job = nil
+        lastSeedCapture = nil
+        lastPlacementResultId = nil
         aiConsentAccepted = false
+        failedDuringCreate = false
         showConsentSheet = false
         errorMessage = nil
     }
 
     var isActive: Bool {
         switch phase {
-        case .idle, .saved: return false
+        case .idle, .saved, .accepted: return false
         default: return true
         }
+    }
+
+    /// True while create failed and the user can retry without leaving VR.
+    var showsCreateFailureActions: Bool {
+        if case .failed = phase { return failedDuringCreate }
+        return false
     }
 
     func handleSeedTap(yawDeg: Float, pitchDeg: Float, tapPoint: CGPoint?, viewSize: CGSize) {
@@ -75,6 +98,7 @@ final class CurtainPlacementSession: ObservableObject {
         markerYawDeg = yawDeg
         markerPitchDeg = pitchDeg
         warnings = capture.clientWarnings
+        lastSeedCapture = capture
         phase = .seedSelected(capture)
         showConsentSheet = true
     }
@@ -90,10 +114,31 @@ final class CurtainPlacementSession: ObservableObject {
 
     func acceptConsentAndCreateJob() {
         guard case .seedSelected(let capture) = phase, let pending, let client else { return }
+        submitCreate(capture: capture, pending: pending, client: client)
+    }
+
+    /// Retry create after failure without forcing a new seed tap.
+    func retryCreateAfterFailure() {
+        guard case .failed = phase,
+              let capture = lastSeedCapture,
+              let pending,
+              let client
+        else { return }
+        submitCreate(capture: capture, pending: pending, client: client)
+    }
+
+    private func submitCreate(
+        capture: CurtainSeedCapture,
+        pending: PendingCurtainPlacement,
+        client: any CurtainPlacementServing
+    ) {
         aiConsentAccepted = true
         showConsentSheet = false
+        failedDuringCreate = false
         phase = .creatingJob
-        bannerMessage = "창문을 찾고 있어요…"
+        bannerMessage = "요청을 보내는 중…"
+        errorMessage = nil
+        lastSeedCapture = capture
         let request = CurtainPlacementCreateRequest(
             aiConsentAccepted: true,
             catalogProductId: pending.productId,
@@ -109,6 +154,7 @@ final class CurtainPlacementSession: ObservableObject {
             variantId: pending.variantId,
             seed: capture.seed
         )
+        // Cancel any leftover detect polling — create success must not wait on VR.
         pollTask?.cancel()
         pollTask = Task { @MainActor in
             do {
@@ -122,13 +168,24 @@ final class CurtainPlacementSession: ObservableObject {
                 } else {
                     created = try await client.createJob(request: request, idempotencyKey: idempotencyKey)
                 }
+                guard !Task.isCancelled else { return }
                 job = created
                 warnings = CurtainSeedMath.mergedWarnings(client: capture.clientWarnings, server: created.warnings)
-                beginPolling(jobId: created.id)
-            } catch {
-                phase = .failed(error.localizedDescription)
-                errorMessage = (error as? CurtainPlacementAPIError)?.userMessage ?? error.localizedDescription
+                let resultId = created.placementResultId
+                lastPlacementResultId = resultId
+                // Do NOT begin long DETECTING_WINDOW polling on VR.
+                pollTask?.cancel()
+                pollTask = nil
+                phase = .accepted(placementResultId: resultId)
                 bannerMessage = nil
+                onPlacementAccepted?(resultId)
+            } catch {
+                guard !Task.isCancelled else { return }
+                failedDuringCreate = true
+                phase = .failed((error as? CurtainPlacementAPIError)?.userMessage ?? error.localizedDescription)
+                // Banner carries retry/reselect — avoid duplicate system alert.
+                bannerMessage = (error as? CurtainPlacementAPIError)?.userMessage ?? error.localizedDescription
+                errorMessage = nil
             }
         }
     }
@@ -141,12 +198,17 @@ final class CurtainPlacementSession: ObservableObject {
         markerYawDeg = nil
         markerPitchDeg = nil
         warnings = []
+        lastSeedCapture = nil
+        lastPlacementResultId = nil
+        failedDuringCreate = false
         phase = .awaitingSeed
         bannerMessage = "커튼을 설치할 창문을 눌러주세요"
+        errorMessage = nil
     }
 
     func confirmWindowAndComposite() {
         guard let job, let client else { return }
+        failedDuringCreate = false
         phase = .compositing
         bannerMessage = "커튼 미리보기를 만들고 있어요…"
         pollTask?.cancel()
@@ -156,6 +218,7 @@ final class CurtainPlacementSession: ObservableObject {
                 _ = try await client.composite(jobId: job.id)
                 beginPolling(jobId: job.id)
             } catch {
+                failedDuringCreate = false
                 phase = .failed(error.localizedDescription)
                 errorMessage = (error as? CurtainPlacementAPIError)?.userMessage ?? error.localizedDescription
                 bannerMessage = nil
@@ -200,6 +263,8 @@ final class CurtainPlacementSession: ObservableObject {
         phase = .idle
         pending = nil
         bannerMessage = nil
+        errorMessage = nil
+        lastSeedCapture = nil
     }
 
     func updateLatLongDimensions(width: Int, height: Int) {

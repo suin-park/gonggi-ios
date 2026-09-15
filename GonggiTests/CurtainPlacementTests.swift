@@ -107,7 +107,32 @@ final class CurtainPlacementTests: XCTestCase {
             ),
             idempotencyKey: "test-key"
         )
-        XCTAssertEqual(job.status, "DETECTING_WINDOW")
+        XCTAssertEqual(job.status, "QUEUED")
+        XCTAssertNotNil(job.placementResultId)
+    }
+
+    func testCreateResponseParsesPlacementResultIdAnd202Fields() throws {
+        let json = """
+        {
+          "ok": true,
+          "jobId": "job-abc",
+          "placementResultId": "pr-xyz",
+          "status": "IN_PROGRESS",
+          "createdAt": "2026-09-15T00:00:00Z",
+          "job": {
+            "id": "job-abc",
+            "status": "QUEUED"
+          }
+        }
+        """.data(using: .utf8)!
+        let envelope = try JSONDecoder().decode(CurtainPlacementJobResponse.self, from: json)
+        XCTAssertEqual(envelope.placementResultId, "pr-xyz")
+        XCTAssertEqual(envelope.jobId, "job-abc")
+        var job = try XCTUnwrap(envelope.job)
+        if job.placementResultId == nil {
+            job.placementResultId = envelope.placementResultId
+        }
+        XCTAssertEqual(job.placementResultId, "pr-xyz")
     }
 
     func testSeedMathRoundTripAndWarnings() {

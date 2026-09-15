@@ -127,10 +127,16 @@ struct CurtainPlacementJob: Codable, Sendable, Equatable {
     var revisionId: String?
     var userFacingSummaryKo: String?
     var errorCode: String?
+    /// Linked async locker row (`ProductPlacementResult.id`).
+    var placementResultId: String?
 }
 
 struct CurtainPlacementJobResponse: Codable, Sendable {
     var ok: Bool?
+    var jobId: String?
+    var placementResultId: String?
+    var status: String?
+    var createdAt: String?
     var job: CurtainPlacementJob?
 }
 

@@ -13,14 +13,19 @@ final class CatalogHomeViewModel: ObservableObject {
     @Published private(set) var products: [CatalogProduct] = []
     @Published private(set) var categories: [CatalogCategory] = []
     @Published private(set) var state: LoadState = .idle
+    @Published private(set) var selectedFilter: CatalogHomePlacementFilter = .curtain
+    @Published private(set) var productScrollResetToken: UInt64 = 0
 
     private let isMockMode: Bool
     private let client: any CatalogServing
+    private let defaults: UserDefaults
     private var loadTask: Task<Void, Never>?
 
-    init(isMockMode: Bool) {
+    init(isMockMode: Bool, defaults: UserDefaults = .standard) {
         self.isMockMode = isMockMode
         self.client = isMockMode ? CatalogMockClient() : CatalogAPIClient()
+        self.defaults = defaults
+        self.selectedFilter = CatalogHomePlacementFilter.loadPersisted(defaults: defaults)
     }
 
     var shouldShowSection: Bool {
@@ -35,6 +40,22 @@ final class CatalogHomeViewModel: ObservableObject {
         }
     }
 
+    var sectionDescription: String {
+        selectedFilter.sectionDescription
+    }
+
+    var filteredProducts: [CatalogProduct] {
+        CatalogHomePlacementFilter.filterProducts(products, by: selectedFilter)
+    }
+
+    var filteredCategoriesForList: [CatalogCategory] {
+        CatalogHomePlacementFilter.filterCategories(categories, by: selectedFilter)
+    }
+
+    var showsTypeEmptyState: Bool {
+        state == .loaded && filteredProducts.isEmpty
+    }
+
     func onAppear() {
         if products.isEmpty, state == .idle || state == .empty || hasError {
             reload()
@@ -44,6 +65,17 @@ final class CatalogHomeViewModel: ObservableObject {
     private var hasError: Bool {
         if case .error = state { return true }
         return false
+    }
+
+    func selectFilter(_ filter: CatalogHomePlacementFilter) {
+        guard filter != selectedFilter else { return }
+        let previous = selectedFilter
+        selectedFilter = filter
+        filter.persist(defaults: defaults)
+        productScrollResetToken = CatalogHomePlacementFilter.nextScrollResetToken(
+            previous: productScrollResetToken,
+            didChangeFilter: previous != filter
+        )
     }
 
     func reload() {
@@ -56,8 +88,18 @@ final class CatalogHomeViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 products = payload.products
                 categories = payload.categories
-                state = payload.categories.isEmpty ? .empty : .loaded
-                for product in payload.products.prefix(8) {
+                applyFilterAfterLoad()
+                if products.isEmpty {
+                    state = .empty
+                } else if CatalogHomePlacementFilter.resolveSelection(
+                    products: products,
+                    preferred: selectedFilter
+                ) == nil {
+                    state = .empty
+                } else {
+                    state = .loaded
+                }
+                for product in filteredProducts.prefix(8) {
                     await client.recordEvent(
                         CatalogEventRequest(
                             type: "IMPRESSION",
@@ -87,6 +129,25 @@ final class CatalogHomeViewModel: ObservableObject {
                 state = .error(CatalogAPIError.invalidResponse.userMessage)
             }
         }
+    }
+
+    /// In-memory filter only — no network. Adjusts selection if preferred type has no rows.
+    func applyFilterAfterLoad() {
+        let preferred = CatalogHomePlacementFilter.loadPersisted(defaults: defaults)
+        guard let resolved = CatalogHomePlacementFilter.resolveSelection(
+            products: products,
+            preferred: preferred
+        ) else {
+            return
+        }
+        if resolved != selectedFilter {
+            productScrollResetToken = CatalogHomePlacementFilter.nextScrollResetToken(
+                previous: productScrollResetToken,
+                didChangeFilter: true
+            )
+        }
+        selectedFilter = resolved
+        resolved.persist(defaults: defaults)
     }
 
     func detailClient() -> any CatalogServing { client }
