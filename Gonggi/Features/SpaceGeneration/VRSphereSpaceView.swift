@@ -38,6 +38,8 @@ struct VRSphereSpaceView: View {
     var onViewerReady: (() -> Void)? = nil
 
     @StateObject private var repairController: RepairSessionController
+    @StateObject private var curtainSession = CurtainPlacementSession()
+    @State private var showCurtainCompare = false
     @ObservedObject private var spaceAudio = SpaceAudioManager.shared
     @State private var pendingTarget: RepairTarget?
     @State private var showConfirmSheet = false
@@ -188,6 +190,24 @@ struct VRSphereSpaceView: View {
     }
 
     var body: some View {
+        viewerLifecycleBody
+            .modifier(
+                CurtainPlacementPresentationModifier(
+                    session: curtainSession,
+                    showCompare: $showCurtainCompare,
+                    sessionId: sessionId,
+                    onCompositeSaved: { url in
+                        textureURL = url
+                        textureGeneration += 1
+                        onRepairCompleted?(url)
+                    }
+                )
+            )
+    }
+
+    /// Split from `body` so curtain sheets do not blow the SwiftUI type-checker budget.
+    @ViewBuilder
+    private var viewerLifecycleBody: some View {
         mainChrome
             .statusBarHidden(true)
             .onChange(of: repairController.completedTextureURL) { _, newURL in
@@ -539,6 +559,22 @@ struct VRSphereSpaceView: View {
                 .padding(.bottom, 28)
                 .allowsHitTesting(true)
 
+            if curtainSession.isActive, let banner = curtainSession.bannerMessage {
+                CurtainPlacementBanner(
+                    message: banner,
+                    warnings: curtainSession.warnings,
+                    showConfirmActions: {
+                        if case .awaitingConfirmation = curtainSession.phase { return true }
+                        return false
+                    }(),
+                    onConfirm: { curtainSession.confirmWindowAndComposite() },
+                    onReselect: { curtainSession.reselectWindow() }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, interactionMode == .edit ? 96 : 28)
+                .zIndex(4)
+            }
+
             if interactionMode == .edit {
                 editBottomBar
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -812,13 +848,27 @@ struct VRSphereSpaceView: View {
         appState.exitVRToHome()
     }
 
+    private var displayMarkerYawDeg: Float? {
+        curtainSession.isActive ? curtainSession.markerYawDeg : markerYawDeg
+    }
+
+    private var displayMarkerPitchDeg: Float? {
+        curtainSession.isActive ? curtainSession.markerPitchDeg : markerPitchDeg
+    }
+
+    private var curtainSeedTapActive: Bool {
+        if case .awaitingSeed = curtainSession.phase { return true }
+        return false
+    }
+
     private var panoramaHost: some View {
         Panorama360SceneOnlyView(
             imageURL: textureURL,
             videoURL: videoURL,
             textureGeneration: textureGeneration,
-            markerYawDeg: markerYawDeg,
-            markerPitchDeg: markerPitchDeg,
+            markerYawDeg: displayMarkerYawDeg,
+            markerPitchDeg: displayMarkerPitchDeg,
+            curtainWindowPolygon: curtainSession.windowPolygon,
             maskRadiusYawDeg: Float(pendingTarget?.radiusYawDeg
                 ?? Double(VRSphereEquirectBridge.defaultYawRadiusDeg)),
             maskRadiusPitchDeg: Float(pendingTarget?.radiusPitchDeg
@@ -830,7 +880,12 @@ struct VRSphereSpaceView: View {
             repairLongPressEnabled: allowsOwnerControls
                 && videoURL == nil
                 && interactionMode == .view
-                && !spaceLinkTransitionLocked,
+                && !spaceLinkTransitionLocked
+                && !curtainSession.isActive,
+            curtainSeedTapEnabled: allowsOwnerControls
+                && interactionMode == .view
+                && !spaceLinkTransitionLocked
+                && curtainSeedTapActive,
             placementEntries: draftLayout.assets,
             placementFloorY: draftLayout.floorY,
             assetMetadata: assetMetadata,
@@ -892,6 +947,18 @@ struct VRSphereSpaceView: View {
                 )
                 #endif
                 showConfirmSheet = true
+            },
+            onSingleTapEquirect: { yaw, pitch, point in
+                guard curtainSeedTapActive else { return }
+                GonggiHaptics.light()
+                hideMotionHintImmediate()
+                let viewSize = UIScreen.main.bounds.size
+                curtainSession.handleSeedTap(
+                    yawDeg: yaw,
+                    pitchDeg: pitch,
+                    tapPoint: point,
+                    viewSize: viewSize
+                )
             },
             onMotionHardwareAvailable: { available in
                 motionHardwareOK = available
@@ -1583,6 +1650,19 @@ struct VRSphereSpaceView: View {
     private func consumeExternalPendingPlacementIfNeeded() async {
         guard panoramaReady, didLoadPlacement else { return }
         guard !didConsumeExternalPending else { return }
+
+        if let curtainPending = appState.consumePendingCurtainPlacement(matchingViewerSessionId: sessionId) {
+            didConsumeExternalPending = true
+            curtainSession.configure(useMock: appState.isMockMode)
+            if let validated = SpaceLatLongStore.validateImage(at: textureURL) {
+                curtainSession.updateLatLongDimensions(
+                    width: validated.width,
+                    height: validated.height
+                )
+            }
+            curtainSession.start(with: curtainPending, sessionId: sessionId)
+            return
+        }
 
         if let catalogPending = appState.consumePendingCatalogPlacement(matchingViewerSessionId: sessionId) {
             didConsumeExternalPending = true
@@ -2985,6 +3065,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var textureGeneration: Int
     var markerYawDeg: Float?
     var markerPitchDeg: Float?
+    var curtainWindowPolygon: [CurtainUVPoint]? = nil
     var maskRadiusYawDeg: Float
     var maskRadiusPitchDeg: Float
     var motionDesiredEnabled: Bool
@@ -2992,6 +3073,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var recenterToken: Int
     var editModeActive: Bool
     var repairLongPressEnabled: Bool
+    var curtainSeedTapEnabled: Bool = false
     var placementEntries: [VRPlacedAssetEntry]
     var placementFloorY: Float
     var assetMetadata: [String: MobileAssetDTO]
@@ -3018,6 +3100,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var deferSecondaryLoads: Bool = false
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
+    var onSingleTapEquirect: ((Float, Float, CGPoint) -> Void)? = nil
     var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
     var onPlacedAssetTapped: ((String?) -> Void)? = nil
     var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)? = nil
@@ -3043,6 +3126,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         let tHost = CFAbsoluteTimeGetCurrent()
         SpaceLink82Timing.log("scnHostCreate start")
         host.onLongPressEquirect = onLongPress
+        host.onSingleTapEquirect = onSingleTapEquirect
         host.onMotionAvailabilityChanged = { available in
             onMotionHardwareAvailable?(available)
         }
@@ -3068,6 +3152,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.setConfirmSheetPresented(confirmSheetPresented)
         host.setEditModeActive(editModeActive)
         host.setRepairLongPressEnabled(repairLongPressEnabled)
+        host.setCurtainSeedTapEnabled(curtainSeedTapEnabled)
         host.syncPlacedAssets(
             placementEntries,
             floorY: placementFloorY,
@@ -3099,7 +3184,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             yawDeg: markerYawDeg,
             pitchDeg: markerPitchDeg,
             radiusYawDeg: maskRadiusYawDeg,
-            radiusPitchDeg: maskRadiusPitchDeg
+            radiusPitchDeg: maskRadiusPitchDeg,
+            windowPolygonUV: curtainWindowPolygon
         )
         context.coordinator.lastGeneration = textureGeneration
         context.coordinator.lastURL = imageURL
@@ -3146,6 +3232,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
 
     func updateUIView(_ uiView: SCNHostView, context: Context) {
         uiView.onLongPressEquirect = onLongPress
+        uiView.onSingleTapEquirect = onSingleTapEquirect
         uiView.onMotionAvailabilityChanged = { available in
             onMotionHardwareAvailable?(available)
         }
@@ -3184,6 +3271,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         uiView.setConfirmSheetPresented(confirmSheetPresented)
         uiView.setEditModeActive(editModeActive)
         uiView.setRepairLongPressEnabled(repairLongPressEnabled)
+        uiView.setCurtainSeedTapEnabled(curtainSeedTapEnabled)
         // Rebuild nodes only when membership / models change — not on every transform drag.
         let placementFingerprint = placementEntries.map { "\($0.id):\($0.assetId)" }.joined(separator: ",")
             + "|" + modelURLs.keys.sorted().joined(separator: ",")
@@ -3270,7 +3358,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             yawDeg: markerYawDeg,
             pitchDeg: markerPitchDeg,
             radiusYawDeg: maskRadiusYawDeg,
-            radiusPitchDeg: maskRadiusPitchDeg
+            radiusPitchDeg: maskRadiusPitchDeg,
+            windowPolygonUV: curtainWindowPolygon
         )
         let snap = uiView.lightingExperimentDebugSnapshot()
         let selectedSupportY: Float? = {

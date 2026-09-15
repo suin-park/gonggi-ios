@@ -61,8 +61,13 @@ struct CatalogProductDetailView: View {
     @ViewBuilder
     private func detailBody(_ product: CatalogProduct) -> some View {
         let variant = resolvedVariant(product)
-        let placeOK = CatalogPlacementSpecValidator.validate(variant?.placementSpec).isSuccess
-            && product.placementType.isSupportedForPlacement
+        let placeOK = product.placementType == .curtain2D
+            ? CatalogCurtainPlacementValidator.canPlace(product: product, variant: variant)
+            : CatalogPlacementSpecValidator.validate(variant?.placementSpec).isSuccess
+                && product.placementType.isSupportedForPlacement
+        let placeCTA = product.placementType == .curtain2D
+            ? "내 공간에 적용해보기"
+            : (placeOK ? "배치해보기" : "배치 준비 중")
 
         VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
             hero(product)
@@ -131,7 +136,7 @@ struct CatalogProductDetailView: View {
                     GonggiHaptics.medium()
                     handlePlaceTap(product: product, placeOK: placeOK)
                 } label: {
-                    Text(placeOK ? "배치해보기" : "배치 준비 중")
+                    Text(placeCTA)
                         .font(GonggiTypography.body(16))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -139,7 +144,11 @@ struct CatalogProductDetailView: View {
                         .foregroundStyle(placeOK ? GonggiColors.textOnAccent : GonggiColors.textTertiary)
                 }
                 .disabled(!placeOK)
-                .accessibilityLabel(placeOK ? "공간에 배치해보기" : "배치 아직 불가")
+                .accessibilityLabel(
+                    placeOK
+                        ? (product.placementType == .curtain2D ? "내 공간에 커튼 적용해보기" : "공간에 배치해보기")
+                        : "배치 아직 불가"
+                )
 
                 if let purchase = safeHTTPS(product.purchaseUrl) {
                     Button("구매하기") {
@@ -216,7 +225,7 @@ struct CatalogProductDetailView: View {
     private func placementMethodLabel(_ product: CatalogProduct) -> String {
         switch product.placementType {
         case .furniture3D: return "배치 방식 · 3D 가구 (바닥 기준)"
-        case .curtain2D: return "배치 방식 · 커튼 (추후 지원)"
+        case .curtain2D: return "배치 방식 · 커튼 (AI 2D 미리보기)"
         case .unsupported: return "배치 방식 · 지원되지 않음"
         }
     }
@@ -246,9 +255,7 @@ struct CatalogProductDetailView: View {
 
     private func beginPlacement(in space: SpaceRecord) {
         guard let product else { return }
-        guard let variant = resolvedVariant(product),
-              case .success(let spec) = CatalogPlacementSpecValidator.validate(variant.placementSpec)
-        else {
+        guard let variant = resolvedVariant(product) else {
             placeMessage = "배치 정보가 준비되지 않았어요."
             return
         }
@@ -259,6 +266,33 @@ struct CatalogProductDetailView: View {
             spaceId: space.id,
             projectionKey: space.projectionKey
         )
+        if product.placementType == .curtain2D {
+            guard CatalogCurtainPlacementValidator.canPlace(product: product, variant: variant) else {
+                placeMessage = "이 상품은 아직 미리보기할 수 없어요."
+                return
+            }
+            appState.pendingCurtainPlacement = PendingCurtainPlacement(
+                productId: product.id,
+                variantId: variant.id,
+                catalog2DAssetId: variant.catalogAssetId ?? variant.catalogOwnedAssetId,
+                catalogRevision: product.catalogRevision,
+                productRevision: product.productRevision,
+                displayName: product.productName,
+                partnerName: product.partnerDisplayName,
+                thumbnailUrl: product.thumbnailUrl ?? variant.thumbnailUrl,
+                targetSpaceId: space.id,
+                targetSessionId: space.sessionId,
+                projectionKey: space.projectionKey,
+                baseRevisionId: space.latestRevisionId ?? "rev-0-base"
+            )
+            appState.pendingViewerJobId = space.id
+            placeMessage = "\(space.name)에서 커튼 미리보기를 시작합니다."
+            return
+        }
+        guard case .success(let spec) = CatalogPlacementSpecValidator.validate(variant.placementSpec) else {
+            placeMessage = "배치 정보가 준비되지 않았어요."
+            return
+        }
         appState.pendingCatalogPlacement = PendingCatalogPlacement(
             productId: product.id,
             variantId: variant.id,
