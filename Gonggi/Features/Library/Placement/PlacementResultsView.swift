@@ -109,6 +109,13 @@ final class PlacementResultsViewModel: ObservableObject {
         }
     }
 
+    /// Fresh detail (signed preview URL) for opening a completed curtain composite.
+    func fetchDetail(id: String) async throws -> ProductPlacementResultDTO {
+        let detailed = try await client.fetchResult(id: id)
+        upsert(detailed)
+        return detailed
+    }
+
     private func upsert(_ result: ProductPlacementResultDTO) {
         if let idx = results.firstIndex(where: { $0.id == result.id }) {
             results[idx] = result
@@ -277,36 +284,145 @@ struct PlacementResultsView: View {
     }
 
     private func openCompleted(_ result: ProductPlacementResultDTO) {
-        guard let spaceId = result.sourceSpaceId, !spaceId.isEmpty else {
-            viewModel.actionError = "연결된 공간을 찾을 수 없어요"
-            return
+        Task {
+            if result.type == .curtain2D {
+                await openCompletedCurtain(result)
+            } else {
+                await openSourceSpaceViewer(result)
+            }
         }
-        Task { await openViewer(jobId: spaceId) }
     }
 
     private func openSpaceForReselect(_ result: ProductPlacementResultDTO) {
-        guard let spaceId = result.sourceSpaceId, !spaceId.isEmpty else {
+        Task {
+            let jobId = await resolveViewerJobId(from: result)
+            guard !jobId.isEmpty else {
+                viewModel.actionError = "연결된 공간을 찾을 수 없어요"
+                return
+            }
+            if result.type == .curtain2D,
+               let productId = result.catalogProductId {
+                appState.pendingCurtainPlacement = PendingCurtainPlacement(
+                    productId: productId,
+                    variantId: result.catalogVariantId ?? "",
+                    catalog2DAssetId: nil,
+                    catalogRevision: nil,
+                    productRevision: nil,
+                    displayName: result.displayProductName,
+                    partnerName: result.displayPartnerName,
+                    thumbnailUrl: result.cardPreviewURLString,
+                    targetSpaceId: jobId,
+                    targetSessionId: jobId,
+                    projectionKey: nil,
+                    baseRevisionId: result.sourceRevisionId ?? "rev-0-base"
+                )
+            }
+            await openViewer(jobId: jobId)
+        }
+    }
+
+    /// Completed curtain → download signed composite lat-long and open VR.
+    private func openCompletedCurtain(_ result: ProductPlacementResultDTO) async {
+        isPreparingViewer = true
+        defer { isPreparingViewer = false }
+
+        do {
+            var detailed = result
+            if PlacementResultOpenPolicy.compositePreviewURLString(for: detailed) == nil {
+                detailed = try await viewModel.fetchDetail(id: result.id)
+            }
+            guard let urlString = PlacementResultOpenPolicy.compositePreviewURLString(for: detailed),
+                  let remote = URL(string: urlString) else {
+                // No composite URL — fall back to source space (session-resolved).
+                isPreparingViewer = false
+                await openSourceSpaceViewer(result)
+                return
+            }
+
+            let dest = try PlacementResultOpenPolicy.compositeCacheURL(resultId: result.id)
+            if !SpaceLatLongStore.isValidLocalFile(at: dest.path) {
+                try await downloadComposite(from: remote, to: dest)
+            }
+            guard SpaceLatLongStore.isValidLocalFile(at: dest.path) else {
+                viewerError = SpaceViewerError.downloadFailed.userMessage
+                return
+            }
+
+            let audioKey = await resolveViewerJobId(from: result)
+            viewerLaunch = SpaceViewerLaunch(
+                single: SpaceViewerSession(
+                    id: result.id,
+                    fileURL: dest,
+                    audioURL: AppState.preferredAudioURL(for: audioKey),
+                    videoURL: AppState.preferredVideoURL(for: audioKey)
+                )
+            )
+        } catch {
+            // Composite download failed — try opening the source space instead.
+            await openSourceSpaceViewer(result)
+            if viewerLaunch == nil, viewerError == nil {
+                viewerError = SpaceViewerError.downloadFailed.userMessage
+            }
+        }
+    }
+
+    private func openSourceSpaceViewer(_ result: ProductPlacementResultDTO) async {
+        let jobId = await resolveViewerJobId(from: result)
+        guard !jobId.isEmpty else {
             viewModel.actionError = "연결된 공간을 찾을 수 없어요"
             return
         }
-        if result.type == .curtain2D,
-           let productId = result.catalogProductId {
-            appState.pendingCurtainPlacement = PendingCurtainPlacement(
-                productId: productId,
-                variantId: result.catalogVariantId ?? "",
-                catalog2DAssetId: nil,
-                catalogRevision: nil,
-                productRevision: nil,
-                displayName: result.displayProductName,
-                partnerName: result.displayPartnerName,
-                thumbnailUrl: result.cardPreviewURLString,
-                targetSpaceId: spaceId,
-                targetSessionId: spaceId,
-                projectionKey: nil,
-                baseRevisionId: result.sourceRevisionId ?? "rev-0-base"
-            )
+        await openViewer(jobId: jobId)
+    }
+
+    private func resolveViewerJobId(from result: ProductPlacementResultDTO) async -> String {
+        let sessionHint = result.sourceSessionId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let spaceKey = result.sourceSpaceId?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let preferredKey: String
+        if let sessionHint, !sessionHint.isEmpty {
+            preferredKey = sessionHint
+        } else if let spaceKey, !spaceKey.isEmpty {
+            preferredKey = spaceKey
+        } else {
+            return ""
         }
-        Task { await openViewer(jobId: spaceId) }
+
+        let localJobs = appState.jobStore.jobs
+        let resolvedLocal = PlacementResultOpenPolicy.resolveViewerJobId(
+            spaceKey: preferredKey,
+            jobs: localJobs
+        )
+        if localJobs.contains(where: { $0.jobId == resolvedLocal || $0.sessionId == resolvedLocal }) {
+            return resolvedLocal
+        }
+
+        // `sourceSpaceId` is often GonggiSpace.id — map via owner catalog.
+        guard let spaceKey, !spaceKey.isEmpty else {
+            return resolvedLocal
+        }
+        var catalogRows: [[String: Any]] = []
+        if let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty {
+            catalogRows = (try? await MobileAuthAPIClient().listSpaces(accessToken: token)) ?? []
+        }
+        return PlacementResultOpenPolicy.resolveViewerJobId(
+            spaceKey: spaceKey,
+            jobs: localJobs,
+            catalogRows: catalogRows
+        )
+    }
+
+    private func downloadComposite(from remote: URL, to destination: URL) async throws {
+        let (tmp, response) = try await URLSession.shared.download(from: remote)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw SpaceViewerError.downloadFailed
+        }
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try? FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.moveItem(at: tmp, to: destination)
     }
 
     private func openViewer(jobId: String) async {

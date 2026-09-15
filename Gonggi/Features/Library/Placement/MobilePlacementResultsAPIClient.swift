@@ -60,6 +60,8 @@ struct ProductPlacementResultDTO: Codable, Sendable, Equatable, Identifiable {
     var type: ProductPlacementResultType
     var status: ProductPlacementResultStatus
     var sourceSpaceId: String?
+    /// GonggiSpace.sessionId when provided by API — preferred viewer / local job key.
+    var sourceSessionId: String? = nil
     var sourceRevisionId: String?
     var resultRevisionId: String?
     var curtainCompositeJobId: String?
