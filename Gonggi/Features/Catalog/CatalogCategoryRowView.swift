@@ -26,7 +26,7 @@ struct CatalogCategoryRowView: View {
                     ForEach(category.products) { product in
                         CatalogProductCardView(
                             product: product,
-                            selectedVariantId: selectedVariantId?(product) ?? product.resolvedVariantOptions.first?.id,
+                            selectedVariantId: selectedVariantId?(product),
                             onSelectVariant: { variantId in
                                 onSelectVariant?(product, variantId)
                             },

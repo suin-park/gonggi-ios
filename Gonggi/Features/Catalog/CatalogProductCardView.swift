@@ -62,13 +62,6 @@ struct CatalogProductCardView: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let desc = product.shortDescription, !desc.isEmpty {
-                Text(desc)
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                    .lineLimit(2)
-            }
-
             Text(product.priceLabel)
                 .font(GonggiTypography.body(14))
                 .foregroundStyle(GonggiColors.textSecondary)
@@ -129,13 +122,18 @@ struct CatalogProductCardView: View {
     private var variantDropdown: some View {
         let options = variantOptions
         let current = activeOption
+        let hasExplicitSelection = selectedVariantId != nil
+            && options.contains(where: { $0.id == selectedVariantId })
+        let buttonTitle = hasExplicitSelection
+            ? (current?.name ?? "옵션 선택")
+            : "옵션 선택"
         Menu {
             ForEach(options) { option in
                 Button {
                     GonggiHaptics.light()
                     onSelectVariant?(option.id)
                 } label: {
-                    if option.id == current?.id {
+                    if option.id == current?.id, hasExplicitSelection {
                         Label(option.name, systemImage: "checkmark")
                     } else {
                         Text(option.name)
@@ -143,23 +141,34 @@ struct CatalogProductCardView: View {
                 }
             }
         } label: {
-            HStack(spacing: 4) {
-                Text("옵션 · \(current?.name ?? options.first?.name ?? "")")
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
+            HStack(spacing: 8) {
+                Text(buttonTitle)
+                    .font(GonggiTypography.body(14))
+                    .foregroundStyle(GonggiColors.textPrimary)
                     .lineLimit(1)
+                Spacer(minLength: 0)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(GonggiColors.textTertiary)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(GonggiColors.accentCyan)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(
+                Capsule()
+                    .fill(GonggiColors.surfaceElevated)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(GonggiColors.accentCyan.opacity(0.85), lineWidth: 1.5)
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         // Prevent card onTapGesture from also opening detail when picking a color.
         .simultaneousGesture(TapGesture().onEnded { })
-        .accessibilityLabel("색상 옵션")
-        .accessibilityValue(current?.name ?? "")
+        .accessibilityLabel("옵션 선택")
+        .accessibilityValue(hasExplicitSelection ? (current?.name ?? "") : "미선택")
         .accessibilityHint(options.count == 1 ? "선택 가능한 색상 1개" : "색상을 선택합니다")
     }
 

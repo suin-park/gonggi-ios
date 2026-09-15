@@ -34,7 +34,7 @@ struct CatalogProductListView: View {
                             loadingProductId: curtainPlace.loadingProductId,
                             arLoadingProductId: furnitureAR.loadingProductId,
                             selectedVariantId: { product in
-                                selectedVariantId(for: product)
+                                selectedVariantIds[product.id]
                             },
                             onSelectVariant: { product, variantId in
                                 selectedVariantIds[product.id] = variantId
@@ -64,7 +64,6 @@ struct CatalogProductListView: View {
         .background(GonggiAmbientBackground())
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { seedDefaultSelections() }
         .navigationDestination(item: $route) { r in
             CatalogProductDetailView(
                 productId: r.id,
@@ -142,19 +141,6 @@ struct CatalogProductListView: View {
             return id
         }
         return product.resolvedVariantOptions.first?.id
-    }
-
-    private func seedDefaultSelections() {
-        var next = selectedVariantIds
-        for category in displayCategories {
-            for product in category.products {
-                if next[product.id] == nil,
-                   let first = product.resolvedVariantOptions.first?.id {
-                    next[product.id] = first
-                }
-            }
-        }
-        selectedVariantIds = next
     }
 
     private func handlePlace(_ product: CatalogProduct) {

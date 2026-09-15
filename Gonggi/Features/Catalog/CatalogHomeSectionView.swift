@@ -205,7 +205,7 @@ struct CatalogHomeSectionView: View {
                         ForEach(viewModel.filteredProducts) { product in
                             CatalogProductCardView(
                                 product: product,
-                                selectedVariantId: viewModel.selectedVariantId(for: product),
+                                selectedVariantId: viewModel.selectedVariantIds[product.id],
                                 onSelectVariant: { variantId in
                                     viewModel.selectVariant(productId: product.id, variantId: variantId)
                                 },

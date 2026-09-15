@@ -91,7 +91,6 @@ final class CatalogHomeViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 products = payload.products
                 categories = payload.categories
-                seedDefaultVariantSelections()
                 applyFilterAfterLoad()
                 if products.isEmpty {
                     state = .empty
@@ -169,17 +168,6 @@ final class CatalogHomeViewModel: ObservableObject {
 
     func detailClient() -> any CatalogServing { client }
 
-    private func seedDefaultVariantSelections() {
-        var next = selectedVariantIds
-        for product in products {
-            if next[product.id] == nil,
-               let first = product.resolvedVariantOptions.first?.id {
-                next[product.id] = first
-            }
-        }
-        selectedVariantIds = next
-    }
-
     /// When list payload lacks `variantOptions`, fill from detail (colors for dropdown).
     private func scheduleVariantOptionEnrichment() {
         enrichTask?.cancel()
@@ -198,9 +186,6 @@ final class CatalogHomeViewModel: ObservableObject {
                     guard !options.isEmpty else { continue }
                     if let idx = self.products.firstIndex(where: { $0.id == product.id }) {
                         self.products[idx].variantOptions = options
-                        if self.selectedVariantIds[product.id] == nil {
-                            self.selectedVariantIds[product.id] = options.first?.id
-                        }
                     }
                     for catIdx in self.categories.indices {
                         if let pIdx = self.categories[catIdx].products.firstIndex(where: { $0.id == product.id }) {
