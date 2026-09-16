@@ -35,10 +35,11 @@ final class ProcessingViewModel: ObservableObject {
             }
 
             do {
+                let foundation = summary.dataFoundation
                 let useSpatialPackage =
                     GonggiFeatureFlags.show3DGSCaptureFlows
-                    && (summary.spatialCapturePackageValid == true)
-                let packageRoot = summary.spatialCapturePackageURL
+                    && (foundation?.spatialCapturePackageValid == true)
+                let packageRoot = foundation?.spatialCapturePackageURL
                     ?? (try? CaptureSessionStore.spatialCapturePackageDirectory(sessionId: summary.sessionId))
 
                 let uploadURL: URL

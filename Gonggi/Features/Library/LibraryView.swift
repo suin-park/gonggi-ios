@@ -156,7 +156,7 @@ struct LibraryView: View {
                         .foregroundStyle(GonggiColors.textPrimary)
                         .padding(GonggiSpacing.md)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(GonggiColors.surfaceSecondary.opacity(0.6))
+                        .background(GonggiColors.surfaceElevated.opacity(0.6))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .onAppear {
                             Task {
