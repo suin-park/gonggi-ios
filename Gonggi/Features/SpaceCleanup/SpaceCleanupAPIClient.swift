@@ -23,7 +23,7 @@ enum SpaceCleanupAPIError: Error, Equatable {
 protocol SpaceCleanupServing: Sendable {
     func createJob(request: SpaceCleanupCreateRequest, idempotencyKey: String) async throws -> SpaceCleanupJobDTO
     func fetchJob(id: String) async throws -> SpaceCleanupJobDTO
-    func confirmJob(id: String) async throws -> SpaceCleanupJobDTO
+    func confirmJob(id: String, removalTarget: String) async throws -> SpaceCleanupJobDTO
     func retryJob(id: String) async throws -> SpaceCleanupJobDTO
 }
 
@@ -48,12 +48,15 @@ actor SpaceCleanupAPIClient: SpaceCleanupServing {
         return try await decodeJob(req)
     }
 
-    func confirmJob(id: String) async throws -> SpaceCleanupJobDTO {
+    func confirmJob(id: String, removalTarget: String) async throws -> SpaceCleanupJobDTO {
         var req = try makeRequest(
             path: ["api", "gonggi", "space-cleanups", id, "confirm"],
             method: "POST"
         )
-        req.httpBody = Data("{}".utf8)
+        struct Body: Encodable {
+            var removalTarget: String
+        }
+        req.httpBody = try JSONEncoder().encode(Body(removalTarget: removalTarget))
         return try await decodeJob(req)
     }
 

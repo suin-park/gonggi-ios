@@ -592,7 +592,7 @@ struct VRSphereSpaceView: View {
                 TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: false)) { timeline in
                     SpaceCleanupVROverlay(
                         points: spaceCleanupSession.points,
-                        polygons: spaceCleanupSession.detectedPolygons,
+                        polygons: [],
                         projectEquirectDegrees: { yaw, pitch in
                             SpaceLinkTransitionBridge.shared.activeHost?
                                 .screenPointForEquirectDegrees(yawDeg: yaw, pitchDeg: pitch)

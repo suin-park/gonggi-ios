@@ -50,6 +50,12 @@ struct SpaceCleanupSelectionBanner: View {
             }
 
             if session.job?.isAwaitingConfirmation == true {
+                TextField("무엇을 제거하시겠습니까? (예: 쇼파, 거울)", text: $session.removalTargetText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.footnote)
+                    .submitLabel(.done)
+                    .accessibilityLabel("제거할 대상")
+
                 HStack(spacing: GonggiSpacing.sm) {
                     Button("다시 선택") {
                         GonggiHaptics.light()
@@ -134,8 +140,8 @@ struct SpaceCleanupSelectionBanner: View {
     private var bannerMessage: String {
         if session.job?.isAwaitingConfirmation == true {
             return session.canConfirm
-                ? "선택한 가구를 확인해주세요"
-                : "감지된 영역을 불러오는 중…"
+                ? "제거할 대상을 확인한 뒤 「이 가구 비우기」를 눌러 주세요"
+                : "핀 위치를 확인하고, 아래에 제거할 가구 이름을 입력해 주세요"
         }
         if session.job?.isInFlight == true {
             return "선택한 가구를 찾는 중…"
