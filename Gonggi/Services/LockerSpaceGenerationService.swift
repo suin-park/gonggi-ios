@@ -56,9 +56,17 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         var idempotencyKey: String?
     }
 
-    init(config: AppConfiguration = .production, session: URLSession = .shared) {
+    init(config: AppConfiguration = .production, session: URLSession? = nil) {
         self.config = config
-        self.session = session
+        if let session {
+            self.session = session
+        } else {
+            let cfg = URLSessionConfiguration.default
+            cfg.timeoutIntervalForRequest = 120
+            cfg.timeoutIntervalForResource = 900
+            cfg.waitsForConnectivity = true
+            self.session = URLSession(configuration: cfg)
+        }
     }
 
     private static func apiURL(base: URL, path: String) throws -> URL {
@@ -152,12 +160,24 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         let byteSize = (attrs[.size] as? NSNumber)?.intValue ?? 0
         guard byteSize > 0 else { throw SpaceGenerationError.uploadFailed }
 
+        // Stream from file — never load full MOV into memory (103MB+ caused NSURLErrorNetworkConnectionLost).
         var put = URLRequest(url: uploadURL)
         put.httpMethod = "PUT"
         put.setValue("video/quicktime", forHTTPHeaderField: "Content-Type")
-        put.httpBody = try Data(contentsOf: fileURL)
+        put.setValue("\(byteSize)", forHTTPHeaderField: "Content-Length")
+        put.timeoutInterval = 600
 
-        let (_, putResponse) = try await session.data(for: put)
+        let (_, putResponse): (Data, URLResponse)
+        do {
+            (_, putResponse) = try await session.upload(for: put, fromFile: fileURL)
+        } catch {
+            let ns = error as NSError
+            throw SpaceGenerationError.unknown(
+                ns.domain == NSURLErrorDomain
+                    ? ns.localizedDescription
+                    : "upload_failed"
+            )
+        }
         guard let http = putResponse as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw SpaceGenerationError.uploadFailed
         }

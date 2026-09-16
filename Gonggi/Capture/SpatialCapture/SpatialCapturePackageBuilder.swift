@@ -47,6 +47,7 @@ enum SpatialCapturePackageBuilder {
         var supportsSceneReconstruction: Bool
         var decisions: [SpatialCaptureKeyframeDecision]
         var telemetry: SpatialCaptureTelemetryReport?
+        var reconstructionMetrics: CaptureReconstructionMetricsSnapshot?
     }
 
     static func prepareDirectories(sessionId: String) throws -> SpatialCapturePackagePaths {
@@ -169,7 +170,8 @@ enum SpatialCapturePackageBuilder {
                 qualityCoverage: input.qualityCoverage,
                 viewAngleDiversity: input.viewAngleDiversity,
                 captureDurationSec: duration,
-                translationBaselineGrade: input.translationBaselineGrade
+                translationBaselineGrade: input.translationBaselineGrade,
+                reconstructionMetrics: input.reconstructionMetrics
             ),
             frames: keyframes.map(\.quality)
         )

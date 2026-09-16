@@ -112,7 +112,8 @@ final class SpatialCaptureRuntimeTelemetry: @unchecked Sendable {
         observedCoverage: Double,
         packageBytes: Int?,
         averageJPEGBytes: Int?,
-        averageTranslationBetweenKeyframesM: Double?
+        averageTranslationBetweenKeyframesM: Double?,
+        reconstructionMetrics: CaptureReconstructionMetricsSnapshot? = nil
     ) -> SpatialCaptureTelemetryReport {
         lock.lock()
         defer { lock.unlock() }
@@ -148,7 +149,8 @@ final class SpatialCaptureRuntimeTelemetry: @unchecked Sendable {
             jpegQueueDepthAtFinish: jpegQueueDepth,
             ARCallbackAverageMs: Self.average(captureCallbackMsSamples),
             ARCallbackP95Ms: Self.percentile(captureCallbackMsSamples, 0.95),
-            backpressurePolicy: "reject_when_pending_ge_\(SpatialCaptureConfig.jpegQueueMaxDepth)"
+            backpressurePolicy: "reject_when_pending_ge_\(SpatialCaptureConfig.jpegQueueMaxDepth)",
+            reconstructionMetrics: reconstructionMetrics
         )
     }
 
@@ -195,4 +197,5 @@ struct SpatialCaptureTelemetryReport: Codable, Equatable, Sendable {
     var ARCallbackAverageMs: Double?
     var ARCallbackP95Ms: Double?
     var backpressurePolicy: String
+    var reconstructionMetrics: CaptureReconstructionMetricsSnapshot?
 }

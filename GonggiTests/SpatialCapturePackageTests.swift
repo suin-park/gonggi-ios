@@ -405,6 +405,34 @@ final class SpatialCapturePackageTests: XCTestCase {
         XCTAssertThrowsError(try SpatialCapturePackageValidator.validate(packageRoot: paths.root))
     }
 
+    func testCircularYawSpanDoesNotTreatWrapAsFullCircle() {
+        // Buckets covering ~350°→20° (buckets 11,0) should be ~60°, not ~330°.
+        let wrap = CaptureReconstructionSessionMetrics.circularCoveredSpanDegrees(
+            buckets: [11, 0],
+            bucketCount: 12
+        )
+        XCTAssertEqual(wrap.spanDeg, 60, accuracy: 0.01)
+        XCTAssertLessThan(wrap.spanDeg, 180)
+
+        let contiguous = CaptureReconstructionSessionMetrics.circularCoveredSpanDegrees(
+            buckets: [0, 1, 2],
+            bucketCount: 12
+        )
+        XCTAssertEqual(contiguous.spanDeg, 90, accuracy: 0.01)
+
+        let empty = CaptureReconstructionSessionMetrics.circularCoveredSpanDegrees(
+            buckets: [],
+            bucketCount: 12
+        )
+        XCTAssertEqual(empty.spanDeg, 0)
+
+        let full = CaptureReconstructionSessionMetrics.circularCoveredSpanDegrees(
+            buckets: Set(0..<12),
+            bucketCount: 12
+        )
+        XCTAssertEqual(full.spanDeg, 360, accuracy: 0.01)
+    }
+
     private func makeTinyJPEG() throws -> Data {
         let color = UIColor.gray
         let size = CGSize(width: 2, height: 2)

@@ -43,6 +43,7 @@ final class CaptureSessionController {
     private let spatialStateLock = NSLock()
     private var acceptingSpatialKeyframes = true
     private var pendingDepthByFrameId: [String: String] = [:]
+    private var reconstructionMetrics = CaptureReconstructionSessionMetrics()
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -82,6 +83,7 @@ final class CaptureSessionController {
         orientationContract = nil
         acceptingSpatialKeyframes = true
         pendingDepthByFrameId = [:]
+        reconstructionMetrics.reset()
         runtimeTelemetry.reset()
         jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -122,7 +124,7 @@ final class CaptureSessionController {
             coverageSpatialIndex.replace(cells: coverage.snapshotCells())
             let cellId = CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform))
             _ = overlapAnalyzer.ingest(currentCellId: cellId, isKeyframe: false)
-            updatePhaseAndCompletion(trackingNormal: trackingNormal)
+            updatePhaseAndCompletion(trackingNormal: trackingNormal, transform: transform)
             let trackingLimited = !trackingNormal
             let decision = guidanceRules.evaluateDecision(
                 quality: qualityState(trackingLimited: trackingLimited),
@@ -218,7 +220,7 @@ final class CaptureSessionController {
 
         let cellId = CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform))
         _ = overlapAnalyzer.ingest(currentCellId: cellId, isKeyframe: isKeyframe)
-        updatePhaseAndCompletion(trackingNormal: trackingNormal)
+        updatePhaseAndCompletion(trackingNormal: trackingNormal, transform: transform)
 
         let sample = CaptureFrameSample(
             frameIndex: written.videoFrameIndex,
@@ -584,6 +586,11 @@ final class CaptureSessionController {
         let quality = qualityState(trackingLimited: false)
 
         CaptureDiagnosticsStore.writeGuidanceHistory(diagnostics.events, sessionId: sessionId)
+        let reconSnap = reconstructionMetrics.snapshot(
+            coverage: coverage,
+            totalTravelDistanceM: Double(translationBaseline.totalPathLengthM),
+            meanCellAngleDiversity: coverage.angleDiversityScore
+        )
         let info = Bundle.main.infoDictionary
         let diagSummary = CaptureSessionSummaryDiagnostics(
             sessionId: sessionId,
@@ -605,7 +612,8 @@ final class CaptureSessionController {
             finishedBy: finishedBy.rawValue,
             generation: CaptureDiagnosticsStore.loadGenerationDiagnostics(sessionId: sessionId),
             appVersion: info?["CFBundleShortVersionString"] as? String ?? "0",
-            buildNumber: info?["CFBundleVersion"] as? String ?? "0"
+            buildNumber: info?["CFBundleVersion"] as? String ?? "0",
+            reconstructionMetrics: reconSnap
         )
         CaptureDiagnosticsStore.writeSessionSummary(diagSummary, sessionId: sessionId)
 
@@ -658,7 +666,8 @@ final class CaptureSessionController {
                     observedCoverage: coverage.observedCoverage,
                     packageBytes: packageBytes,
                     averageJPEGBytes: avgJPEGBytes,
-                    averageTranslationBetweenKeyframesM: avgTranslationBetween
+                    averageTranslationBetweenKeyframesM: avgTranslationBetween,
+                    reconstructionMetrics: reconSnap
                 )
 
                 let built = try SpatialCapturePackageBuilder.build(
@@ -682,7 +691,8 @@ final class CaptureSessionController {
                         supportsSmoothedSceneDepth: ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth),
                         supportsSceneReconstruction: ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
                         decisions: finalizedDecisions,
-                        telemetry: telemetryReport
+                        telemetry: telemetryReport,
+                        reconstructionMetrics: reconSnap
                     )
                 )
                 packageURL = built.root
@@ -799,7 +809,7 @@ final class CaptureSessionController {
         )
     }
 
-    private func updatePhaseAndCompletion(trackingNormal: Bool) {
+    private func updatePhaseAndCompletion(trackingNormal: Bool, transform: simd_float4x4) {
         let elapsed = Date().timeIntervalSince(startedAt)
         let qCov = coverage.qualityCoverage
         if elapsed < CapturePhaseConfig.stabilizingSec {
@@ -824,6 +834,12 @@ final class CaptureSessionController {
             sharpnessBlurryFraction: sharp.blurryFraction,
             trackingNormal: trackingNormal,
             baselineGrade: translationBaseline.bestGrade
+        )
+        // Observability only — does not change CaptureCompletionGate thresholds.
+        reconstructionMetrics.ingest(
+            transform: transform,
+            elapsedSec: elapsed,
+            completionState: completionState
         )
     }
 

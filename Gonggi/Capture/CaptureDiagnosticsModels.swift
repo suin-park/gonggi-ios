@@ -221,4 +221,6 @@ struct CaptureSessionSummaryDiagnostics: Codable, Equatable, Sendable {
     var generation: CaptureGenerationDiagnostics
     var appVersion: String
     var buildNumber: String
+    /// Observability only — not used by CaptureCompletionGate in build 54.
+    var reconstructionMetrics: CaptureReconstructionMetricsSnapshot?
 }
