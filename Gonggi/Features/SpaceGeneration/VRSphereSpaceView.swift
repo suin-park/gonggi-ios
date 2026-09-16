@@ -593,7 +593,6 @@ struct VRSphereSpaceView: View {
                     SpaceCleanupVROverlay(
                         points: spaceCleanupSession.points,
                         polygons: spaceCleanupSession.detectedPolygons,
-                        maskPreviewURL: spaceCleanupSession.job?.maskPreviewUrl.flatMap(URL.init(string:)),
                         projectEquirectDegrees: { yaw, pitch in
                             SpaceLinkTransitionBridge.shared.activeHost?
                                 .screenPointForEquirectDegrees(yawDeg: yaw, pitchDeg: pitch)

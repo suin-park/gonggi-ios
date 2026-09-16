@@ -4,12 +4,17 @@ import XCTest
 final class SpaceCleanupTests: XCTestCase {
     @MainActor
     func testModeTitlesAvoidDeleteWording() {
-        XCTAssertEqual(SpaceCleanupMode.allFurniture.title, "전체 가구 비우기")
         XCTAssertEqual(SpaceCleanupMode.selectedObjects.title, "가구 선택해서 비우기")
-        for mode in SpaceCleanupMode.allCases {
-            XCTAssertFalse(mode.title.contains("삭제"))
-            XCTAssertFalse(mode.subtitle.contains("삭제"))
-        }
+        XCTAssertFalse(SpaceCleanupMode.selectedObjects.title.contains("삭제"))
+        XCTAssertFalse(SpaceCleanupMode.selectedObjects.subtitle.contains("삭제"))
+        // ALL_FURNITURE remains in the API enum for older jobs but is removed from the menu.
+        XCTAssertEqual(SpaceCleanupMode.allFurniture.title, "전체 가구 비우기")
+    }
+
+    @MainActor
+    func testMenuExposesSelectedModeOnly() {
+        XCTAssertEqual(SpaceCleanupMode.selectedObjects.title, "가구 선택해서 비우기")
+        XCTAssertNotEqual(SpaceCleanupMode.selectedObjects, .allFurniture)
     }
 
     @MainActor
@@ -97,6 +102,8 @@ final class SpaceCleanupTests: XCTestCase {
         mock.detectPollsBeforeReady = 0
         let session = SpaceCleanupSession()
         session.configure(client: mock)
+        var acceptedId: String?
+        session.onAccepted = { acceptedId = $0 }
         session.activateSelectedMode(
             spaceId: "space-1",
             sourceRevisionId: "rev-0-base",
@@ -105,13 +112,14 @@ final class SpaceCleanupTests: XCTestCase {
         session.addCenterAim(yawDeg: 10, pitchDeg: 5)
         await session.submitSelected()
         XCTAssertEqual(session.job?.status, "AWAITING_CONFIRMATION")
-        XCTAssertFalse(session.canConfirm)
-
-        session.markMaskOverlayReady(true)
         XCTAssertTrue(session.canConfirm)
+
         await session.confirmMasks()
         XCTAssertEqual(mock.confirmCalls, 1)
         XCTAssertTrue(mock.editWouldHaveBeenCalled)
+        XCTAssertNotNil(acceptedId)
+        XCTAssertFalse(session.isActive)
+        XCTAssertFalse(session.isPolling)
     }
 
     @MainActor
@@ -120,6 +128,8 @@ final class SpaceCleanupTests: XCTestCase {
         mock.detectPollsBeforeReady = 0
         let session = SpaceCleanupSession()
         session.configure(client: mock)
+        var accepted = false
+        session.onAccepted = { _ in accepted = true }
         session.activateSelectedMode(
             spaceId: "space-1",
             sourceRevisionId: "rev-0-base",
@@ -128,10 +138,10 @@ final class SpaceCleanupTests: XCTestCase {
         session.addCenterAim(yawDeg: 0, pitchDeg: 0)
         await session.submitSelected()
         session.job?.detectedObjects = []
-        session.markMaskOverlayReady(true)
         XCTAssertFalse(session.canConfirm)
         await session.confirmMasks()
         XCTAssertEqual(mock.confirmCalls, 0)
+        XCTAssertFalse(accepted)
     }
 
     @MainActor
@@ -450,7 +460,6 @@ final class SpaceCleanupTests: XCTestCase {
                 ),
             ],
             polygons: [poly],
-            maskPreviewURL: nil,
             projectEquirectDegrees: { yaw, pitch in
                 CGPoint(x: CGFloat(yaw + 180), y: CGFloat(90 - pitch))
             }

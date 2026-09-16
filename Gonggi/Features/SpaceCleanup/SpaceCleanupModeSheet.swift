@@ -4,7 +4,6 @@ struct SpaceCleanupModeSheet: View {
     @ObservedObject var session: SpaceCleanupSession
     var onClose: () -> Void
     var onContinueSelected: () -> Void
-    var onRunAll: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -19,36 +18,33 @@ struct SpaceCleanupModeSheet: View {
                 }
                 .tint(GonggiColors.accentTeal)
 
-                ForEach(SpaceCleanupMode.allCases, id: \.rawValue) { mode in
-                    Button {
-                        GonggiHaptics.light()
-                        guard session.consentAccepted else { return }
-                        session.selectMode(mode)
-                        if mode == .allFurniture {
-                            onRunAll()
-                        } else {
-                            onContinueSelected()
-                        }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(mode.title)
-                                .font(GonggiTypography.headline(17))
-                                .foregroundStyle(GonggiColors.textPrimary)
-                            Text(mode.subtitle)
-                                .font(GonggiTypography.body(14))
-                                .foregroundStyle(GonggiColors.textSecondary)
-                                .multilineTextAlignment(.leading)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(GonggiSpacing.md)
-                        .background(GonggiColors.surfaceElevated)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .opacity(session.consentAccepted ? 1 : 0.45)
+                Button {
+                    GonggiHaptics.light()
+                    guard session.consentAccepted else { return }
+                    session.selectMode(.selectedObjects)
+                    onContinueSelected()
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(SpaceCleanupMode.selectedObjects.title)
+                            .font(GonggiTypography.headline(17))
+                            .foregroundStyle(GonggiColors.textPrimary)
+                        Text(SpaceCleanupMode.selectedObjects.subtitle)
+                            .font(GonggiTypography.body(14))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                            .multilineTextAlignment(.leading)
+                        Text("확인 후 보관함에서 비동기로 처리됩니다.")
+                            .font(GonggiTypography.caption(12))
+                            .foregroundStyle(GonggiColors.textSecondary)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!session.consentAccepted)
-                    .accessibilityLabel(mode.title)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(GonggiSpacing.md)
+                    .background(GonggiColors.surfaceElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .opacity(session.consentAccepted ? 1 : 0.45)
                 }
+                .buttonStyle(.plain)
+                .disabled(!session.consentAccepted)
+                .accessibilityLabel(SpaceCleanupMode.selectedObjects.title)
 
                 Spacer(minLength: 0)
             }
