@@ -28,7 +28,7 @@ struct HomeView: View {
                         .padding(.top, GonggiSpacing.md)
                         .padding(.bottom, GonggiSpacing.sm)
 
-                    Picker("둘러보기", selection: $exploreSegment) {
+                    Picker("콘텐츠", selection: $exploreSegment) {
                         ForEach(ExploreSegment.allCases) { segment in
                             Text(segment.title).tag(segment)
                         }
@@ -42,14 +42,21 @@ struct HomeView: View {
                     CatalogHomeSectionView(isMockMode: appState.isMockMode)
                         .environmentObject(appState)
                 }
-                .padding(.bottom, GonggiSpacing.xxl)
+                // Token clearance (SpaceDetailView parity) + measured tab-bar/safe-area padding.
+                .padding(.bottom, GonggiTabBarLayout.homeScrollContentPadding)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .refreshable {
                 await loadExplore(reset: true)
                 await appState.refreshNotificationUnreadCount()
             }
-            .contentMargins(.bottom, GonggiSpacing.lg, for: .scrollContent)
+            .contentMargins(.bottom, GonggiSpacing.md, for: .scrollContent)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Stacks above TabView safe area so 「배치해보기」 clears chrome + home indicator.
+                Color.clear
+                    .frame(height: GonggiTabBarLayout.homeSafeAreaInsetHeight)
+                    .accessibilityHidden(true)
+            }
             .background(GonggiAmbientBackground())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -163,10 +170,6 @@ struct HomeView: View {
         HStack(alignment: .center, spacing: GonggiSpacing.md) {
             GonggiBrandMark()
             Spacer(minLength: 0)
-            Text("둘러보기")
-                .font(GonggiTypography.headline(17))
-                .foregroundStyle(GonggiColors.textSecondary)
-                .accessibilityAddTraits(.isHeader)
         }
     }
 
@@ -374,12 +377,18 @@ struct HomeView: View {
         let result = await appState.prepareSpaceViewer(jobId: jobId)
         switch result {
         case .success(let url):
+            let baseRevisionId = appState.peekPendingCurtainPlacement(matchingViewerSessionId: jobId)?.baseRevisionId
+                ?? appState.peekPendingCatalogPlacement(matchingViewerSessionId: jobId)?.baseRevisionId
+                ?? "rev-0-base"
             viewerLaunch = SpaceViewerLaunch(
                 single: SpaceViewerSession(
                     id: jobId,
                     fileURL: url,
                     audioURL: AppState.preferredAudioURL(for: jobId),
-                    videoURL: AppState.preferredVideoURL(for: jobId)
+                    videoURL: AppState.preferredVideoURL(for: jobId),
+                    baseRevisionId: baseRevisionId,
+                    startInEditMode: appState.peekPendingCatalogPlacement(matchingViewerSessionId: jobId) != nil
+                        || appState.peekPendingAssetPlacement(matchingViewerSessionId: jobId) != nil
                 )
             )
         case .failure(let error):

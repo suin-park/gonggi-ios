@@ -10,6 +10,27 @@ enum CatalogMockData {
         [roundCabinetListCard(), mockCurtainPlaceholderCard()]
     }
 
+    static func listPayload() -> CatalogListPayload {
+        let products = listProducts()
+        return CatalogListPayload(
+            products: products,
+            categories: [
+                CatalogCategory(
+                    id: "mock-furniture",
+                    name: "수납장",
+                    sortOrder: 0,
+                    products: [roundCabinetListCard()]
+                ),
+                CatalogCategory(
+                    id: "mock-curtain",
+                    name: "커튼",
+                    sortOrder: 1,
+                    products: [mockCurtainPlaceholderCard()]
+                ),
+            ]
+        )
+    }
+
     static func detailProduct(id: String) -> CatalogProduct? {
         switch id {
         case roundCabinetProductId:
@@ -41,8 +62,12 @@ enum CatalogMockData {
             widthMm: 290,
             depthMm: 290,
             heightMm: 1084,
-            variantCount: 1,
+            variantCount: 2,
             selectedVariantName: "기본",
+            variantOptions: [
+                CatalogVariantOption(id: roundCabinetVariantId, name: "기본", hexCode: nil, widthMm: 290, depthMm: 290, heightMm: 1084),
+                CatalogVariantOption(id: "\(roundCabinetVariantId)-wood", name: "우드", hexCode: "#C4A574", widthMm: 290, depthMm: 290, heightMm: 1084),
+            ],
             catalogRevision: 1,
             productRevision: "mock-rev-1",
             availableForPlacement: true,
@@ -64,7 +89,7 @@ enum CatalogMockData {
                 displayBrandName: "JD홈드레싱"
             ),
             productName: "커튼 샘플 (Mock)",
-            shortDescription: "Mock 전용 · 배치는 아직 미지원",
+            shortDescription: "Mock 전용 · AI 커튼 미리보기 POC",
             brandName: "JD홈드레싱",
             category: .curtain,
             placementType: .curtain2D,
@@ -74,11 +99,15 @@ enum CatalogMockData {
             widthMm: 2000,
             depthMm: 50,
             heightMm: 2400,
-            variantCount: 1,
+            variantCount: 2,
             selectedVariantName: "기본",
+            variantOptions: [
+                CatalogVariantOption(id: "mock-curtain-variant", name: "기본", hexCode: nil, widthMm: 2000, depthMm: 50, heightMm: 2400),
+                CatalogVariantOption(id: "mock-curtain-variant-ivory", name: "아이보리", hexCode: "#FFFFF0", widthMm: 2000, depthMm: 50, heightMm: 2400),
+            ],
             catalogRevision: 1,
             productRevision: "mock-curtain-1",
-            availableForPlacement: false,
+            availableForPlacement: true,
             detailUrl: nil,
             purchaseUrl: nil,
             consultationUrl: nil,
@@ -134,12 +163,30 @@ enum CatalogMockData {
                 placementSpec: spec,
                 availableForPlacement: true
             ),
+            CatalogVariant(
+                id: "\(roundCabinetVariantId)-wood",
+                sourceVariantKey: "wood",
+                name: "우드",
+                hexCode: "#C4A574",
+                widthMm: 290,
+                depthMm: 290,
+                heightMm: 1084,
+                thumbnailUrl: nil,
+                usdzUrl: spec.usdzSignedUrl,
+                usdzSignedUrlExpiresAt: spec.usdzSignedUrlExpiresAt,
+                catalogAssetId: roundCabinetAssetId,
+                catalogOwnedAssetId: "\(roundCabinetOwnedId)-wood",
+                placementSpec: spec,
+                availableForPlacement: true
+            ),
         ]
         return card
     }
 
     static func mockCurtainDetail() -> CatalogProduct {
         var card = mockCurtainPlaceholderCard()
+        card.catalog2DAssetId = "mock-curtain-2d-asset"
+        card.catalog2DAssetStatus = "READY"
         card.variants = [
             CatalogVariant(
                 id: "mock-curtain-variant",
@@ -152,10 +199,10 @@ enum CatalogMockData {
                 thumbnailUrl: nil,
                 usdzUrl: nil,
                 usdzSignedUrlExpiresAt: nil,
-                catalogAssetId: nil,
-                catalogOwnedAssetId: nil,
+                catalogAssetId: "mock-curtain-2d-asset",
+                catalogOwnedAssetId: "mock-curtain-owned-2d",
                 placementSpec: nil,
-                availableForPlacement: false
+                availableForPlacement: true
             ),
         ]
         return card

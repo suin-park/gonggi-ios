@@ -66,6 +66,7 @@ struct SpaceVRNavigationHost: View {
                     imageURL: session.fileURL,
                     videoURL: session.videoURL,
                     sessionId: session.id,
+                    baseRevisionId: session.baseRevisionId,
                     preferredAudioURL: session.allowsOwnerControls ? session.audioURL : nil,
                     suppressAutoAudio: suppressStackAudio || isCrossfading || deferSourceHold || !session.allowsOwnerControls,
                     initialFieldOfView: isTop ? targetEntryFOV : SpaceLinkTransitionMath.baseFOV,

@@ -79,7 +79,8 @@ final class CatalogModelsTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertTrue(mockVM.shouldShowSection)
         XCTAssertFalse(mockVM.products.isEmpty)
-        XCTAssertEqual(mockVM.availableCategories.count, 2)
+        XCTAssertEqual(mockVM.categories.count, 2)
+        XCTAssertEqual(mockVM.categories.map(\.name), ["수납장", "커튼"])
 
         // Production empty policy: empty state hides section (non-mock).
         let prodVM = CatalogHomeViewModel(isMockMode: false)
@@ -189,16 +190,171 @@ final class CatalogModelsTests: XCTestCase {
             targetSpaceId: "space1",
             targetSessionId: "sess1",
             projectionKey: "sess1",
-            calibrationStatusText: "치수 보정 없음"
+            calibrationStatusText: "치수 보정 없음",
+            baseRevisionId: "rev-0-base"
         )
         let entry = pending.makeLayoutEntry(position: SIMD3(0, -1.35, -1), rotationY: 0.1, floorY: -1.35)
         let data = try JSONEncoder().encode(entry)
         let json = String(data: data, encoding: .utf8) ?? ""
         XCTAssertFalse(json.contains("usdzSignedUrl"))
         XCTAssertFalse(json.contains("example.invalid"))
+        XCTAssertFalse(json.contains("catalogThumbnailUrl"))
         XCTAssertEqual(entry.catalogProductId, "p")
+        XCTAssertEqual(entry.catalogOwnedAssetId, CatalogMockData.roundCabinetPlacementSpec().catalogOwnedAssetId)
         XCTAssertEqual(entry.catalogWidthMm, 290)
         XCTAssertEqual(entry.uniformScale, 1)
+    }
+
+    func testDimensionsShortLabelUsesMm() {
+        let dims = CatalogDimensions(widthMm: 400, depthMm: 290, heightMm: 1084)
+        XCTAssertEqual(dims.shortLabelMm, "W 400 × D 290 × H 1084 mm")
+        XCTAssertEqual(dims.accessibilityLabel, "너비 400밀리미터, 깊이 290밀리미터, 높이 1084밀리미터")
+        XCTAssertEqual(CatalogDimensionRuler.formatMm(400), "400 mm")
+    }
+
+    func testThumbnailHTTPSFallbackPriority() {
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: "http://insecure.example/x.jpg"))
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: "javascript:alert(1)"))
+        XCTAssertNotNil(CatalogThumbnailURL.httpsURL(from: "https://cdn.example.com/a.jpg"))
+
+        var product = CatalogMockData.roundCabinetDetail()
+        product.thumbnailUrl = nil
+        if var variants = product.variants, !variants.isEmpty {
+            variants[0].thumbnailUrl = "https://cdn.example.com/variant.jpg"
+            product.variants = variants
+        }
+        XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/variant.jpg")
+
+        product.thumbnailUrl = "https://cdn.example.com/product.jpg"
+        XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/product.jpg")
+    }
+
+    func testHeroThumbnailPrefersSelectedVariant() {
+        var product = CatalogMockData.roundCabinetDetail()
+        product.thumbnailUrl = "https://cdn.example.com/product.jpg"
+        guard var variants = product.variants, variants.count >= 1 else {
+            XCTFail("expected variants")
+            return
+        }
+        variants[0].thumbnailUrl = "https://cdn.example.com/variant-oak.jpg"
+        product.variants = variants
+        let selectedId = variants[0].id
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: selectedId),
+            "https://cdn.example.com/variant-oak.jpg"
+        )
+        // nil selection → effectiveVariantId = first → still first variant thumb
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: nil),
+            "https://cdn.example.com/variant-oak.jpg"
+        )
+        variants[0].thumbnailUrl = nil
+        product.variants = variants
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: selectedId),
+            "https://cdn.example.com/product.jpg"
+        )
+    }
+
+    func testEffectiveVariantIdAndCardThumbnail() {
+        var product = CatalogMockData.roundCabinetDetail()
+        product.thumbnailUrl = "https://cdn.example.com/product.jpg"
+        product.displayThumbnailUrl = "https://cdn.example.com/display-fallback.jpg"
+        guard var variants = product.variants, !variants.isEmpty else {
+            XCTFail("expected variants")
+            return
+        }
+        let firstId = variants[0].id
+        XCTAssertEqual(product.effectiveVariantId(selectedVariantId: nil), firstId)
+        variants[0].thumbnailUrl = "https://cdn.example.com/v1.jpg"
+        if variants.count > 1 {
+            variants[1].thumbnailUrl = "https://cdn.example.com/v2.jpg"
+            product.variants = variants
+            XCTAssertEqual(
+                product.cardThumbnailURL(selectedVariantId: variants[1].id),
+                "https://cdn.example.com/v2.jpg"
+            )
+            XCTAssertEqual(product.effectiveVariantId(selectedVariantId: variants[1].id), variants[1].id)
+        } else {
+            product.variants = variants
+        }
+        variants[0].thumbnailUrl = nil
+        product.variants = variants
+        XCTAssertEqual(
+            product.cardThumbnailURL(selectedVariantId: nil),
+            "https://cdn.example.com/display-fallback.jpg"
+        )
+    }
+
+    func testHomesFrontOnlyDisplayThumbnailMapsToProductImage() throws {
+        // Cloud mobile DTO after Homes front-only publish: thumbnailUrl/displayThumbnailUrl = front.
+        let json = """
+        {
+          "id": "curtain-front-only",
+          "partnerId": "homes",
+          "productName": "리넨 커튼",
+          "shortDescription": "원단 설명",
+          "placementType": "CURTAIN_2D",
+          "thumbnailUrl": "https://cdn.example.com/front.jpg",
+          "displayThumbnailUrl": "https://cdn.example.com/front.jpg",
+          "widthMm": 2400,
+          "depthMm": 50,
+          "heightMm": 2200,
+          "variants": [
+            {
+              "id": "v-default",
+              "name": "기본",
+              "hexCode": null,
+              "widthMm": 2400,
+              "depthMm": 50,
+              "heightMm": 2200,
+              "thumbnailUrl": null,
+              "availableForPlacement": true
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let product = try JSONDecoder().decode(CatalogProduct.self, from: json)
+        XCTAssertEqual(product.displayProductThumbnailURL, "https://cdn.example.com/front.jpg")
+        XCTAssertEqual(product.resolvedThumbnailURL, "https://cdn.example.com/front.jpg")
+        XCTAssertEqual(
+            product.cardThumbnailURL(selectedVariantId: nil),
+            "https://cdn.example.com/front.jpg"
+        )
+        XCTAssertEqual(
+            product.heroThumbnailURL(selectedVariantId: nil),
+            "https://cdn.example.com/front.jpg"
+        )
+        XCTAssertFalse(product.shortDescription?.isEmpty ?? true)
+    }
+
+    func testColorHexNormalizationAndPlainDescription() {
+        XCTAssertEqual(CatalogColorHex.normalized("#abc"), "#AABBCC")
+        XCTAssertEqual(CatalogColorHex.normalized("C2A87A"), "#C2A87A")
+        XCTAssertNil(CatalogColorHex.normalized("not-a-color"))
+        XCTAssertNil(CatalogColorHex.normalized("  "))
+        XCTAssertEqual(
+            CatalogPlainText.nonEmpty("  <b>설명</b> 줄1<br/>줄2  "),
+            "설명 줄1\n줄2"
+        )
+        XCTAssertNil(CatalogPlainText.nonEmpty("   "))
+        XCTAssertNil(CatalogPlainText.nonEmpty("<script>alert(1)</script>"))
+        XCTAssertEqual(CatalogPlainText.nonEmpty("설명<script>alert(1)</script>"), "설명")
+        XCTAssertEqual(CatalogPlainText.nonEmpty("<style>.x{color:red}</style>설명"), "설명")
+        XCTAssertEqual(CatalogPlainText.nonEmpty("A&amp;B"), "A&B")
+    }
+
+    func testRulerSpecFromStoredEntryAxis() throws {
+        var entry = VRPlacedAssetEntry(assetId: "catalog:a", position: .zero)
+        entry.catalogAssetId = "a"
+        entry.catalogWidthMm = 400
+        entry.catalogDepthMm = 290
+        entry.catalogHeightMm = 1084
+        let spec = try XCTUnwrap(CatalogDimensionRuler.rulerSpecFromStoredEntry(entry))
+        let ends = CatalogPlacementTransform.rulerEndpoints(spec: spec)
+        XCTAssertEqual(simd_length(ends.width.1 - ends.width.0), 0.4, accuracy: 1e-5)
+        XCTAssertEqual(simd_length(ends.depth.1 - ends.depth.0), 0.29, accuracy: 1e-5)
+        XCTAssertEqual(simd_length(ends.height.1 - ends.height.0), 1.084, accuracy: 1e-5)
     }
 
     func testExternalHTTPSAndDangerousURL() {
@@ -300,5 +456,234 @@ final class CatalogModelsTests: XCTestCase {
     func testReadyGateBlocksMissingSpec() {
         let result = CatalogPlacementSpecValidator.validate(nil)
         XCTAssertEqual(result, .failure(.missingPlacementSpec))
+    }
+
+    // MARK: - Merchandising categories
+
+    func testNormalizeFallbackSingleSectionWhenCategoriesMissing() {
+        let products = CatalogMockData.listProducts()
+        let payload = CatalogListPayload.normalize(products: products, categories: nil)
+        XCTAssertEqual(payload.categories.count, 1)
+        XCTAssertEqual(payload.categories[0].id, "all")
+        XCTAssertEqual(payload.categories[0].name, "제휴 상품")
+        XCTAssertEqual(payload.categories[0].products.count, products.count)
+        XCTAssertFalse(CatalogListPayload.shouldShowCategoryTitles(payload.categories))
+    }
+
+    func testNormalizeAdds기타ForLeftoverProducts() {
+        let cabinet = CatalogMockData.roundCabinetListCard()
+        let curtain = CatalogMockData.mockCurtainPlaceholderCard()
+        let shelf = CatalogCategory(
+            id: "shelf-1",
+            name: "수납장",
+            sortOrder: 0,
+            products: [cabinet]
+        )
+        let payload = CatalogListPayload.normalize(
+            products: [cabinet, curtain],
+            categories: [shelf]
+        )
+        XCTAssertEqual(payload.categories.map(\.name), ["수납장", "기타"])
+        XCTAssertEqual(payload.categories[1].id, "uncategorized")
+        XCTAssertEqual(payload.categories[1].products.map(\.id), [curtain.id])
+        XCTAssertTrue(CatalogListPayload.shouldShowCategoryTitles(payload.categories))
+    }
+
+    func testNormalizeDropsEmptyCategoriesAndUnsupported() {
+        var unsupported = CatalogMockData.roundCabinetListCard()
+        unsupported.id = "bad"
+        unsupported.placementType = .unsupported
+        let empty = CatalogCategory(id: "empty", name: "빈", sortOrder: 0, products: [])
+        let good = CatalogCategory(
+            id: "good",
+            name: "수납장",
+            sortOrder: 1,
+            products: [CatalogMockData.roundCabinetListCard()]
+        )
+        let payload = CatalogListPayload.normalize(
+            products: [CatalogMockData.roundCabinetListCard(), unsupported],
+            categories: [empty, good]
+        )
+        XCTAssertEqual(payload.categories.map(\.name), ["수납장"])
+        XCTAssertFalse(payload.products.contains(where: { $0.placementType == .unsupported }))
+    }
+
+    func testDecodeListResponseWithCategories() throws {
+        let json = """
+        {
+          "ok": true,
+          "products": [
+            {
+              "id": "p1",
+              "partnerId": "jd",
+              "productName": "A",
+              "placementType": "FURNITURE_3D",
+              "widthMm": 100,
+              "depthMm": 100,
+              "heightMm": 100
+            }
+          ],
+          "categories": [
+            {
+              "id": "c1",
+              "name": "거실",
+              "sortOrder": 0,
+              "products": [
+                {
+                  "id": "p1",
+                  "partnerId": "jd",
+                  "productName": "A",
+                  "placementType": "FURNITURE_3D",
+                  "widthMm": 100,
+                  "depthMm": 100,
+                  "heightMm": 100
+                }
+              ]
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(CatalogProductListResponse.self, from: json)
+        let payload = CatalogListPayload.normalize(
+            products: decoded.products,
+            categories: decoded.categories
+        )
+        XCTAssertEqual(payload.categories.count, 1)
+        XCTAssertEqual(payload.categories[0].name, "거실")
+        XCTAssertTrue(CatalogListPayload.shouldShowCategoryTitles(payload.categories))
+    }
+
+    // MARK: - Thumbnail aspect-fit (no crop)
+
+    func testThumbnailContainerAspectIsStable() {
+        XCTAssertEqual(CatalogProductThumbnailLayout.containerWidth, 200, accuracy: 0.1)
+        XCTAssertEqual(CatalogProductThumbnailLayout.containerHeight, 140, accuracy: 0.1)
+        XCTAssertEqual(
+            CatalogProductThumbnailLayout.containerAspectRatio,
+            200.0 / 140.0,
+            accuracy: 1e-6
+        )
+        XCTAssertGreaterThanOrEqual(CatalogProductThumbnailLayout.imageInset, 8)
+        XCTAssertLessThanOrEqual(CatalogProductThumbnailLayout.imageInset, 12)
+    }
+
+    func testThumbnailAspectFitDoesNotClipPortraitLandscapeSquare() {
+        // 1) Tall cabinet (~0.4 W/H)
+        let portrait: CGFloat = 400.0 / 1084.0
+        // 2) Wide sofa (~2.2 W/H)
+        let landscape: CGFloat = 2200.0 / 1000.0
+        // 3) Square
+        let square: CGFloat = 1.0
+        // 4) Transparent product-like tall PNG aspect
+        let transparentProduct: CGFloat = 600.0 / 900.0
+
+        for (name, aspect) in [
+            ("portrait_cabinet", portrait),
+            ("landscape_sofa", landscape),
+            ("square", square),
+            ("transparent_product", transparentProduct),
+        ] {
+            XCTAssertTrue(
+                CatalogProductThumbnailLayout.fittedImageFitsWithoutClipping(
+                    sourceAspectWidthOverHeight: aspect
+                ),
+                "\(name) must fit without clipping"
+            )
+            let fitted = CatalogProductThumbnailLayout.fittedImageSize(
+                sourceAspectWidthOverHeight: aspect
+            )
+            let boxW = CatalogProductThumbnailLayout.containerWidth
+                - CatalogProductThumbnailLayout.imageInset * 2
+            let boxH = CatalogProductThumbnailLayout.containerHeight
+                - CatalogProductThumbnailLayout.imageInset * 2
+            XCTAssertLessThanOrEqual(fitted.width, boxW + 0.5, name)
+            XCTAssertLessThanOrEqual(fitted.height, boxH + 0.5, name)
+            // Aspect preserved
+            XCTAssertEqual(fitted.width / fitted.height, aspect, accuracy: 1e-5, name)
+        }
+    }
+
+    func testThumbnailInvalidOrMissingURLUsesPlaceholderState() {
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: "not a url"))
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: "http://insecure.example/x.png"))
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: nil))
+        XCTAssertNil(CatalogThumbnailURL.httpsURL(from: ""))
+
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: false, phase: .empty),
+            .missingURL
+        )
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: true, phase: .empty),
+            .loading
+        )
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: true, phase: .failure),
+            .loadFailed
+        )
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: true, phase: .success),
+            .loaded
+        )
+        XCTAssertTrue(CatalogThumbnailDisplayState.missingURL.usesSofaPlaceholder)
+        XCTAssertTrue(CatalogThumbnailDisplayState.loadFailed.usesSofaPlaceholder)
+        XCTAssertFalse(CatalogThumbnailDisplayState.loading.usesSofaPlaceholder)
+
+        var noThumb = CatalogMockData.roundCabinetListCard()
+        noThumb.thumbnailUrl = nil
+        XCTAssertNil(noThumb.resolvedThumbnailURL)
+
+        var badThumb = CatalogMockData.roundCabinetListCard()
+        badThumb.thumbnailUrl = "https://example.invalid/does-not-exist-404.png"
+        // URL is HTTPS-valid; load failure is a separate display state (card must still render).
+        XCTAssertNotNil(CatalogThumbnailURL.httpsURL(from: badThumb.resolvedThumbnailURL))
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.resolve(hasHTTPSThumbnailURL: true, phase: .failure),
+            .loadFailed
+        )
+    }
+
+    func testCardAccessibilityKeepsProductNameWhenThumbnailMissing() {
+        var product = CatalogMockData.roundCabinetListCard()
+        product.thumbnailUrl = nil
+        let label =
+            "\(product.partnerDisplayName), \(product.productName), \(product.priceLabel), \(product.dimensions.shortLabelMm)"
+        XCTAssertTrue(label.contains(product.productName))
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.missingURL.accessibilitySuffix,
+            "이미지 없음"
+        )
+        XCTAssertEqual(
+            CatalogThumbnailDisplayState.loadFailed.accessibilitySuffix,
+            "이미지를 불러오지 못함"
+        )
+    }
+
+    // MARK: - Tab bar / safe-area clearance
+
+    func testHomeScrollBottomPaddingClearsTabBarOnPlusAndCompact() {
+        // iPhone 14 Plus-class home indicator ~34pt; compact / older ~0–20pt.
+        let plus = GonggiTabBarLayout.homeScrollBottomPadding(safeAreaBottom: 34)
+        let compact = GonggiTabBarLayout.homeScrollBottomPadding(safeAreaBottom: 0)
+        let small = GonggiTabBarLayout.homeScrollBottomPadding(safeAreaBottom: 20)
+
+        XCTAssertGreaterThanOrEqual(plus, GonggiTabBarLayout.contentHeight + 34)
+        XCTAssertGreaterThanOrEqual(compact, GonggiTabBarLayout.contentHeight)
+        XCTAssertGreaterThanOrEqual(small, GonggiTabBarLayout.contentHeight + 20)
+        XCTAssertGreaterThanOrEqual(
+            GonggiTabBarLayout.homeSafeAreaInsetHeight,
+            GonggiTabBarLayout.contentHeight + GonggiSpacing.touchTarget - 0.1
+        )
+        XCTAssertEqual(
+            GonggiTabBarLayout.homeScrollContentPadding,
+            GonggiTabBarLayout.scrollClearance,
+            accuracy: 0.1
+        )
+        XCTAssertEqual(
+            GonggiTabBarLayout.detailScrollBottomPadding,
+            GonggiSpacing.xxl,
+            accuracy: 0.1
+        )
+        XCTAssertGreaterThan(plus, compact)
     }
 }

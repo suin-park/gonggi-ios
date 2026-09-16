@@ -4,6 +4,7 @@ struct CatalogProductDetailView: View {
     let productId: String
     let client: any CatalogServing
     let isMockMode: Bool
+    var initialVariantId: String? = nil
 
     @EnvironmentObject private var appState: AppState
     @State private var product: CatalogProduct?
@@ -60,12 +61,18 @@ struct CatalogProductDetailView: View {
 
     @ViewBuilder
     private func detailBody(_ product: CatalogProduct) -> some View {
-        let variant = resolvedVariant(product)
-        let placeOK = CatalogPlacementSpecValidator.validate(variant?.placementSpec).isSuccess
-            && product.placementType.isSupportedForPlacement
+        let effectiveId = product.effectiveVariantId(selectedVariantId: selectedVariantId)
+        let variant = resolvedVariant(product, effectiveId: effectiveId)
+        let placeOK = product.placementType == .curtain2D
+            ? CatalogCurtainPlacementValidator.canPlace(product: product, variant: variant)
+            : CatalogPlacementSpecValidator.validate(variant?.placementSpec).isSuccess
+                && product.placementType.isSupportedForPlacement
+        let placeCTA = product.placementType == .curtain2D
+            ? "내 공간에 적용해보기"
+            : (placeOK ? "배치해보기" : "배치 준비 중")
 
         VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-            hero(product)
+            hero(product, effectiveId: effectiveId)
             VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
                 Text(product.partnerDisplayName)
                     .font(GonggiTypography.caption(13))
@@ -73,57 +80,90 @@ struct CatalogProductDetailView: View {
                 Text(product.productName)
                     .font(GonggiTypography.headline(22))
                     .foregroundStyle(GonggiColors.textPrimary)
-                if let desc = product.shortDescription {
-                    Text(desc)
-                        .font(GonggiTypography.body(15))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
                 Text(product.priceLabel)
                     .font(GonggiTypography.headline(18))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .accessibilityLabel(product.priceAccessibilityLabel)
-                if let variant {
-                    Text("옵션 · \(variant.name)")
+                if let dims = variant?.dimensions {
+                    Text(dims.shortLabelMm)
                         .font(GonggiTypography.body(14))
                         .foregroundStyle(GonggiColors.textSecondary)
+                        .accessibilityLabel(dims.accessibilityLabel)
+                } else {
+                    Text(product.dimensions.shortLabelMm)
+                        .font(GonggiTypography.body(14))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .accessibilityLabel(product.dimensions.accessibilityLabel)
                 }
-                Text(product.dimensions.shortLabelCm)
-                    .font(GonggiTypography.body(14))
-                    .foregroundStyle(GonggiColors.textSecondary)
-                    .accessibilityLabel(product.dimensions.accessibilityLabel)
-                Text(placementMethodLabel(product))
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                Text("표시 치수는 상품 DB 실제 규격이며, 공간 실측을 보장하지 않습니다.")
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(GonggiColors.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let variants = product.variants, variants.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        ForEach(variants) { v in
-                            Button(v.name) {
-                                selectedVariantId = v.id
+            if let variants = product.variants, !variants.isEmpty {
+                let currentName = variant?.name ?? variants[0].name
+                let hasExplicitSelection = selectedVariantId != nil
+                    && variants.contains(where: { $0.id == selectedVariantId })
+                Menu {
+                    ForEach(variants) { v in
+                        Button {
+                            GonggiHaptics.light()
+                            selectedVariantId = v.id
+                        } label: {
+                            HStack {
+                                if let hex = CatalogColorHex.normalized(v.hexCode),
+                                   let chip = CatalogColorHex.swiftUIColor(hex) {
+                                    Circle()
+                                        .fill(chip)
+                                        .frame(width: 12, height: 12)
+                                }
+                                if v.id == effectiveId {
+                                    Label(v.name, systemImage: "checkmark")
+                                } else {
+                                    Text(v.name)
+                                }
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule().fill(
-                                    selectedVariantId == v.id || (selectedVariantId == nil && v.id == variants.first?.id)
-                                        ? GonggiColors.accentCyan
-                                        : GonggiColors.surfaceElevated
-                                )
-                            )
-                            .foregroundStyle(
-                                selectedVariantId == v.id || (selectedVariantId == nil && v.id == variants.first?.id)
-                                    ? GonggiColors.textOnAccent
-                                    : GonggiColors.textSecondary
-                            )
                         }
                     }
+                } label: {
+                    HStack(spacing: 8) {
+                        if let hex = CatalogColorHex.normalized(variant?.hexCode),
+                           let chip = CatalogColorHex.swiftUIColor(hex) {
+                            Circle()
+                                .fill(chip)
+                                .frame(width: 14, height: 14)
+                                .overlay(Circle().strokeBorder(GonggiColors.borderSubtle, lineWidth: 1))
+                        }
+                        Text(hasExplicitSelection ? currentName : "옵션 선택")
+                            .font(GonggiTypography.body(14))
+                            .foregroundStyle(GonggiColors.textPrimary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(GonggiColors.accentCyan)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(
+                        Capsule()
+                            .fill(GonggiColors.surfaceElevated)
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(GonggiColors.accentCyan.opacity(0.85), lineWidth: 1.5)
+                    )
+                    .contentShape(Capsule())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("옵션 선택")
+                .accessibilityValue(hasExplicitSelection ? currentName : "미선택")
+                .accessibilityHint(variants.count == 1 ? "선택 가능한 옵션 1개" : "옵션을 선택합니다")
+            }
+
+            if let desc = CatalogPlainText.nonEmpty(product.shortDescription) {
+                Text(desc)
+                    .font(GonggiTypography.body(15))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             VStack(spacing: GonggiSpacing.sm) {
@@ -131,7 +171,7 @@ struct CatalogProductDetailView: View {
                     GonggiHaptics.medium()
                     handlePlaceTap(product: product, placeOK: placeOK)
                 } label: {
-                    Text(placeOK ? "배치해보기" : "배치 준비 중")
+                    Text(placeCTA)
                         .font(GonggiTypography.body(16))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -139,7 +179,11 @@ struct CatalogProductDetailView: View {
                         .foregroundStyle(placeOK ? GonggiColors.textOnAccent : GonggiColors.textTertiary)
                 }
                 .disabled(!placeOK)
-                .accessibilityLabel(placeOK ? "공간에 배치해보기" : "배치 아직 불가")
+                .accessibilityLabel(
+                    placeOK
+                        ? (product.placementType == .curtain2D ? "내 공간에 커튼 적용해보기" : "공간에 배치해보기")
+                        : "배치 아직 불가"
+                )
 
                 if let purchase = safeHTTPS(product.purchaseUrl) {
                     Button("구매하기") {
@@ -174,19 +218,32 @@ struct CatalogProductDetailView: View {
         .padding(GonggiSpacing.lg)
     }
 
-    private func hero(_ product: CatalogProduct) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: GonggiRadius.lg)
+    private func hero(_ product: CatalogProduct, effectiveId: String?) -> some View {
+        let heroURL = product.heroThumbnailURL(selectedVariantId: effectiveId)
+        return ZStack {
+            RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
                 .fill(GonggiColors.surfaceElevated)
-            if let s = product.thumbnailUrl, let url = URL(string: s) {
+            if let url = CatalogThumbnailURL.httpsURL(from: heroURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
-                        image.resizable().scaledToFit()
-                    default:
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .padding(CatalogProductThumbnailLayout.imageInset)
+                    case .failure:
                         Image(systemName: "sofa.fill")
                             .font(.system(size: 48))
                             .foregroundStyle(GonggiColors.textTertiary)
+                            .accessibilityLabel(
+                                "\(product.productName) \(CatalogThumbnailDisplayState.loadFailed.accessibilitySuffix)"
+                            )
+                    case .empty:
+                        ProgressView()
+                            .tint(GonggiColors.accentCyan)
+                    @unknown default:
+                        ProgressView()
+                            .tint(GonggiColors.accentCyan)
                     }
                 }
             } else {
@@ -197,22 +254,15 @@ struct CatalogProductDetailView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: 220)
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous))
         .accessibilityLabel("\(product.productName) 대표 이미지")
     }
 
-    private func placementMethodLabel(_ product: CatalogProduct) -> String {
-        switch product.placementType {
-        case .furniture3D: return "배치 방식 · 3D 가구 (바닥 기준)"
-        case .curtain2D: return "배치 방식 · 커튼 (추후 지원)"
-        case .unsupported: return "배치 방식 · 지원되지 않음"
+    private func resolvedVariant(_ product: CatalogProduct, effectiveId: String?) -> CatalogVariant? {
+        if let effectiveId {
+            return product.variants?.first(where: { $0.id == effectiveId })
         }
-    }
-
-    private func resolvedVariant(_ product: CatalogProduct) -> CatalogVariant? {
-        if let id = selectedVariantId {
-            return product.variants?.first(where: { $0.id == id })
-        }
-        return product.primaryVariant
+        return product.primaryVariant ?? product.variants?.first
     }
 
     private func handlePlaceTap(product: CatalogProduct, placeOK: Bool) {
@@ -233,9 +283,8 @@ struct CatalogProductDetailView: View {
 
     private func beginPlacement(in space: SpaceRecord) {
         guard let product else { return }
-        guard let variant = resolvedVariant(product),
-              case .success(let spec) = CatalogPlacementSpecValidator.validate(variant.placementSpec)
-        else {
+        let effectiveId = product.effectiveVariantId(selectedVariantId: selectedVariantId)
+        guard let variant = resolvedVariant(product, effectiveId: effectiveId) else {
             placeMessage = "배치 정보가 준비되지 않았어요."
             return
         }
@@ -246,6 +295,37 @@ struct CatalogProductDetailView: View {
             spaceId: space.id,
             projectionKey: space.projectionKey
         )
+        if product.placementType == .curtain2D {
+            guard CatalogCurtainPlacementValidator.canPlace(product: product, variant: variant) else {
+                placeMessage = "이 상품은 아직 미리보기할 수 없어요."
+                return
+            }
+            let baseRevisionId = resolvedBaseRevisionId(for: space)
+            appState.pendingCurtainPlacement = PendingCurtainPlacement(
+                productId: product.id,
+                variantId: variant.id,
+                catalog2DAssetId: product.catalog2DAssetId
+                    ?? variant.catalogAssetId
+                    ?? variant.catalogOwnedAssetId,
+                catalogRevision: product.catalogRevision,
+                productRevision: product.productRevision,
+                displayName: product.productName,
+                partnerName: product.partnerDisplayName,
+                thumbnailUrl: product.displayProductThumbnailURL ?? variant.thumbnailUrl,
+                targetSpaceId: space.id,
+                targetSessionId: space.sessionId,
+                projectionKey: space.projectionKey,
+                baseRevisionId: baseRevisionId
+            )
+            appState.pendingViewerJobId = space.id
+            placeMessage = "\(space.name)에서 커튼 미리보기를 시작합니다."
+            return
+        }
+        guard case .success(let spec) = CatalogPlacementSpecValidator.validate(variant.placementSpec) else {
+            placeMessage = "배치 정보가 준비되지 않았어요."
+            return
+        }
+        let baseRevisionId = resolvedBaseRevisionId(for: space)
         appState.pendingCatalogPlacement = PendingCatalogPlacement(
             productId: product.id,
             variantId: variant.id,
@@ -255,15 +335,24 @@ struct CatalogProductDetailView: View {
             dimensionsMm: spec.dimensionsMm,
             displayName: product.productName,
             partnerName: product.partnerDisplayName,
-            thumbnailUrl: product.thumbnailUrl ?? variant.thumbnailUrl,
+            thumbnailUrl: product.displayProductThumbnailURL ?? variant.thumbnailUrl,
             placementSpec: spec,
             targetSpaceId: space.id,
             targetSessionId: space.sessionId,
             projectionKey: space.projectionKey,
-            calibrationStatusText: cal.userFacingLabel
+            calibrationStatusText: cal.userFacingLabel,
+            baseRevisionId: baseRevisionId
         )
         appState.pendingViewerJobId = space.id
         placeMessage = "\(space.name)에 배치를 시작합니다.\n\(cal.userFacingLabel)"
+    }
+
+    /// Prefer consume-once cleanup result revision when handed off for this space.
+    private func resolvedBaseRevisionId(for space: SpaceRecord) -> String {
+        if let pending = appState.consumePendingCleanupBaseRevision(matchingSpace: space) {
+            return pending.resultRevisionId
+        }
+        return space.latestRevisionId ?? "rev-0-base"
     }
 
     private func load() async {
@@ -272,7 +361,13 @@ struct CatalogProductDetailView: View {
         do {
             let loaded = try await client.fetchProduct(id: productId)
             product = loaded
-            selectedVariantId = loaded.primaryVariant?.id
+            if let initialVariantId,
+               loaded.variants?.contains(where: { $0.id == initialVariantId }) == true {
+                selectedVariantId = initialVariantId
+            } else {
+                // Leave nil so effectiveVariantId = variants.first?.id (first thumb shows immediately).
+                selectedVariantId = nil
+            }
             await client.recordEvent(event(type: "DETAIL_VIEW", product: loaded, outbound: nil))
         } catch let error as CatalogAPIError {
             errorMessage = error.userMessage
@@ -285,7 +380,7 @@ struct CatalogProductDetailView: View {
         CatalogEventRequest(
             type: type,
             productId: product.id,
-            variantId: selectedVariantId ?? product.primaryVariant?.id,
+            variantId: product.effectiveVariantId(selectedVariantId: selectedVariantId),
             spaceId: nil,
             payload: CatalogEventPayload(
                 channel: "gonggi_ios",

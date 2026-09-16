@@ -35,6 +35,8 @@ struct SpaceDetailView: View {
     @State private var showGuidedCapture = false
     @State private var guidedPlan: AdvancedCaptureGuidePlan?
     @State private var showGaussianViewer = false
+    @State private var showSpaceCleanupSheet = false
+    @StateObject private var spaceCleanupSession = SpaceCleanupSession()
 
     private var liveSpace: SpaceRecord {
         appState.spaces.first(where: { $0.id == space.id || $0.sessionId == space.id }) ?? space
@@ -150,6 +152,32 @@ struct SpaceDetailView: View {
                 .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showSpaceCleanupSheet) {
+            SpaceCleanupModeSheet(
+                session: spaceCleanupSession,
+                onClose: { showSpaceCleanupSheet = false },
+                onContinueSelected: {
+                    let spaceKey = liveSpace.sessionId ?? liveSpace.id
+                    let revision = liveSpace.latestRevisionId ?? "rev-0-base"
+                    appState.pendingSpaceCleanup = PendingSpaceCleanup(
+                        spaceId: spaceKey,
+                        sourceRevisionId: revision,
+                        targetSessionId: liveSpace.id
+                    )
+                    showSpaceCleanupSheet = false
+                    Task { await openViewerForSpaceCleanup() }
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .onAppear {
+                let spaceKey = liveSpace.sessionId ?? liveSpace.id
+                spaceCleanupSession.begin(
+                    spaceId: spaceKey,
+                    sourceRevisionId: liveSpace.latestRevisionId ?? "rev-0-base"
+                )
+            }
+        }
         .sheet(isPresented: $showAudioRecorder) {
             SpaceAudioRecordingSheet(
                 onCancel: { showAudioRecorder = false },
@@ -196,7 +224,7 @@ struct SpaceDetailView: View {
                 .padding(.horizontal, GonggiSpacing.lg)
                 .padding(.top, GonggiSpacing.lg)
                 // Bottom: stay clear of TabView chrome without double safe-area stacking.
-                .padding(.bottom, GonggiSpacing.xxl)
+                .padding(.bottom, GonggiTabBarLayout.detailScrollBottomPadding)
             }
             .contentMargins(.bottom, GonggiSpacing.md, for: .scrollContent)
             .onChange(of: showAdvancedAnalyzeConfirm) { _, show in
@@ -420,7 +448,19 @@ struct SpaceDetailView: View {
                 }
                 .accessibilityLabel("360° 보기")
 
-                advancedCaptureActions
+                SecondaryButton(title: "공간 정리하기", icon: "sofa") {
+                    GonggiHaptics.light()
+                    showSpaceCleanupSheet = true
+                }
+                .accessibilityLabel("공간 정리하기")
+                Text("원본 공간은 그대로 유지되고, 가구를 비운 새 버전이 만들어집니다.")
+                    .font(GonggiTypography.caption(12))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if GonggiFeatureFlags.show3DGSCaptureFlows {
+                    advancedCaptureActions
+                }
             }
 
             switch liveSpace.status {
@@ -579,6 +619,10 @@ struct SpaceDetailView: View {
         case .failure(let error):
             viewerError = error.userMessage
         }
+    }
+
+    private func openViewerForSpaceCleanup() async {
+        await openViewer()
     }
 
     private func startAdvancedAnalyze() async {

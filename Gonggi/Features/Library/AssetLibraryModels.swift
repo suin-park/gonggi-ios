@@ -4,6 +4,7 @@ import Foundation
 enum LibraryCategory: String, CaseIterable, Identifiable {
     case spaces
     case assets
+    case placementResults
 
     var id: String { rawValue }
 
@@ -11,6 +12,7 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
         switch self {
         case .spaces: return "공간"
         case .assets: return "3D 자산"
+        case .placementResults: return "작업 결과"
         }
     }
 }

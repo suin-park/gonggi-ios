@@ -11,29 +11,24 @@ final class CatalogHomeViewModel: ObservableObject {
     }
 
     @Published private(set) var products: [CatalogProduct] = []
+    @Published private(set) var categories: [CatalogCategory] = []
     @Published private(set) var state: LoadState = .idle
-    @Published var selectedPlacementType: CatalogPlacementType?
+    @Published private(set) var selectedFilter: CatalogHomePlacementFilter = .curtain
+    @Published private(set) var productScrollResetToken: UInt64 = 0
+    /// Home / list card color selection keyed by product id.
+    @Published private(set) var selectedVariantIds: [String: String] = [:]
 
     private let isMockMode: Bool
     private let client: any CatalogServing
+    private let defaults: UserDefaults
     private var loadTask: Task<Void, Never>?
+    private var enrichTask: Task<Void, Never>?
 
-    init(isMockMode: Bool) {
+    init(isMockMode: Bool, defaults: UserDefaults = .standard) {
         self.isMockMode = isMockMode
         self.client = isMockMode ? CatalogMockClient() : CatalogAPIClient()
-    }
-
-    /// Production: categories present in API results only.
-    /// Mock: may include furniture + curtain for expansion checks.
-    var availableCategories: [CatalogPlacementType] {
-        let types = Set(products.map(\.placementType)).filter { $0 != .unsupported }
-        let order: [CatalogPlacementType] = [.furniture3D, .curtain2D]
-        return order.filter { types.contains($0) }
-    }
-
-    var visibleProducts: [CatalogProduct] {
-        guard let selectedPlacementType else { return products }
-        return products.filter { $0.placementType == selectedPlacementType }
+        self.defaults = defaults
+        self.selectedFilter = CatalogHomePlacementFilter.loadPersisted(defaults: defaults)
     }
 
     var shouldShowSection: Bool {
@@ -48,6 +43,22 @@ final class CatalogHomeViewModel: ObservableObject {
         }
     }
 
+    var sectionDescription: String {
+        selectedFilter.sectionDescription
+    }
+
+    var filteredProducts: [CatalogProduct] {
+        CatalogHomePlacementFilter.filterProducts(products, by: selectedFilter)
+    }
+
+    var filteredCategoriesForList: [CatalogCategory] {
+        CatalogHomePlacementFilter.filterCategories(categories, by: selectedFilter)
+    }
+
+    var showsTypeEmptyState: Bool {
+        state == .loaded && filteredProducts.isEmpty
+    }
+
     func onAppear() {
         if products.isEmpty, state == .idle || state == .empty || hasError {
             reload()
@@ -59,39 +70,45 @@ final class CatalogHomeViewModel: ObservableObject {
         return false
     }
 
+    func selectFilter(_ filter: CatalogHomePlacementFilter) {
+        guard filter != selectedFilter else { return }
+        let previous = selectedFilter
+        selectedFilter = filter
+        filter.persist(defaults: defaults)
+        productScrollResetToken = CatalogHomePlacementFilter.nextScrollResetToken(
+            previous: productScrollResetToken,
+            didChangeFilter: previous != filter
+        )
+    }
+
     func reload() {
         loadTask?.cancel()
         state = .loading
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let list = try await client.fetchProducts()
+                let payload = try await client.fetchCatalogList()
                 guard !Task.isCancelled else { return }
-                // Defensive: drop unsupported / non-READY-ish cards for Production UX.
-                let filtered = list.filter { product in
-                    if product.placementType == .unsupported { return false }
-                    if !isMockMode, product.availableForPlacement == false,
-                       product.placementType == .furniture3D {
-                        // Still show furniture cards that are published even if placement not ready,
-                        // so users can open detail — but prefer READY when flag present.
-                        return true
-                    }
-                    return true
+                products = payload.products
+                categories = payload.categories
+                applyFilterAfterLoad()
+                if products.isEmpty {
+                    state = .empty
+                } else if CatalogHomePlacementFilter.resolveSelection(
+                    products: products,
+                    preferred: selectedFilter
+                ) == nil {
+                    state = .empty
+                } else {
+                    state = .loaded
                 }
-                products = filtered
-                if selectedPlacementType == nil {
-                    selectedPlacementType = availableCategories.first
-                } else if let selected = selectedPlacementType,
-                          !availableCategories.contains(selected) {
-                    selectedPlacementType = availableCategories.first
-                }
-                state = filtered.isEmpty ? .empty : .loaded
-                for product in filtered.prefix(8) {
+                scheduleVariantOptionEnrichment()
+                for product in filteredProducts.prefix(8) {
                     await client.recordEvent(
                         CatalogEventRequest(
                             type: "IMPRESSION",
                             productId: product.id,
-                            variantId: nil,
+                            variantId: selectedVariantId(for: product),
                             spaceId: nil,
                             payload: CatalogEventPayload(
                                 channel: "gonggi_ios_home",
@@ -107,6 +124,7 @@ final class CatalogHomeViewModel: ObservableObject {
             } catch let error as CatalogAPIError {
                 if case .empty = error {
                     products = []
+                    categories = []
                     state = .empty
                 } else {
                     state = .error(error.userMessage)
@@ -117,11 +135,69 @@ final class CatalogHomeViewModel: ObservableObject {
         }
     }
 
-    func selectCategory(_ type: CatalogPlacementType) {
-        selectedPlacementType = type
+    /// In-memory filter only — no network. Adjusts selection if preferred type has no rows.
+    func applyFilterAfterLoad() {
+        let preferred = CatalogHomePlacementFilter.loadPersisted(defaults: defaults)
+        guard let resolved = CatalogHomePlacementFilter.resolveSelection(
+            products: products,
+            preferred: preferred
+        ) else {
+            return
+        }
+        if resolved != selectedFilter {
+            productScrollResetToken = CatalogHomePlacementFilter.nextScrollResetToken(
+                previous: productScrollResetToken,
+                didChangeFilter: true
+            )
+        }
+        selectedFilter = resolved
+        resolved.persist(defaults: defaults)
+    }
+
+    func selectedVariantId(for product: CatalogProduct) -> String? {
+        if let id = selectedVariantIds[product.id],
+           product.resolvedVariantOptions.contains(where: { $0.id == id }) {
+            return id
+        }
+        return product.resolvedVariantOptions.first?.id
+    }
+
+    func selectVariant(productId: String, variantId: String) {
+        selectedVariantIds[productId] = variantId
     }
 
     func detailClient() -> any CatalogServing { client }
+
+    /// When list payload lacks `variantOptions`, fill from detail (colors for dropdown).
+    private func scheduleVariantOptionEnrichment() {
+        enrichTask?.cancel()
+        enrichTask = Task { [weak self] in
+            guard let self else { return }
+            let targets = self.products.filter {
+                ($0.variantOptions?.isEmpty ?? true) && ($0.variants?.isEmpty ?? true)
+            }
+            guard !targets.isEmpty else { return }
+            for product in targets {
+                guard !Task.isCancelled else { return }
+                do {
+                    let detailed = try await self.client.fetchProduct(id: product.id)
+                    guard !Task.isCancelled else { return }
+                    let options = CatalogVariantOption.from(variants: detailed.variants)
+                    guard !options.isEmpty else { continue }
+                    if let idx = self.products.firstIndex(where: { $0.id == product.id }) {
+                        self.products[idx].variantOptions = options
+                    }
+                    for catIdx in self.categories.indices {
+                        if let pIdx = self.categories[catIdx].products.firstIndex(where: { $0.id == product.id }) {
+                            self.categories[catIdx].products[pIdx].variantOptions = options
+                        }
+                    }
+                } catch {
+                    continue
+                }
+            }
+        }
+    }
 }
 
 extension AppConfiguration {

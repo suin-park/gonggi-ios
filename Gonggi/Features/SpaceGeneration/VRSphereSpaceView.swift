@@ -38,6 +38,10 @@ struct VRSphereSpaceView: View {
     var onViewerReady: (() -> Void)? = nil
 
     @StateObject private var repairController: RepairSessionController
+    @StateObject private var curtainSession = CurtainPlacementSession()
+    @StateObject private var spaceCleanupSession = SpaceCleanupSession()
+    @State private var showCurtainCompare = false
+    @State private var cleanupCenterSampleToken = 0
     @ObservedObject private var spaceAudio = SpaceAudioManager.shared
     @State private var pendingTarget: RepairTarget?
     @State private var showConfirmSheet = false
@@ -68,10 +72,13 @@ struct VRSphereSpaceView: View {
     @State private var lockerAssets: [MobileAssetDTO] = []
     @State private var assetMetadata: [String: MobileAssetDTO] = [:]
     @State private var modelURLs: [String: URL] = [:]
+    @State private var catalogSpecsByPlacementId: [String: CatalogPlacementSpec] = [:]
     @State private var saveError: String?
     @State private var loadingAssets = false
     @State private var placementRequestToken = 0
     @State private var pendingPlacementAsset: MobileAssetDTO?
+    /// Catalog pending insert — resolved at screen-center floor like locker assets.
+    @State private var pendingCatalogInsert: PendingCatalogPlacement?
     @State private var didLoadPlacement = false
     @State private var placementTask: Task<Void, Never>?
     /// Phase 2 — external pending insert consume-once + cancel rollback.
@@ -185,6 +192,25 @@ struct VRSphereSpaceView: View {
     }
 
     var body: some View {
+        viewerLifecycleBody
+            .modifier(
+                CurtainPlacementPresentationModifier(
+                    session: curtainSession,
+                    showCompare: $showCurtainCompare,
+                    sessionId: sessionId,
+                    onCompositeSaved: { url in
+                        textureURL = url
+                        textureGeneration += 1
+                        onRepairCompleted?(url)
+                    }
+                )
+            )
+            .modifier(SpaceCleanupLifecycleModifier(session: spaceCleanupSession))
+    }
+
+    /// Split from `body` so curtain sheets do not blow the SwiftUI type-checker budget.
+    @ViewBuilder
+    private var viewerLifecycleBody: some View {
         mainChrome
             .statusBarHidden(true)
             .onChange(of: repairController.completedTextureURL) { _, newURL in
@@ -536,6 +562,69 @@ struct VRSphereSpaceView: View {
                 .padding(.bottom, 28)
                 .allowsHitTesting(true)
 
+            if curtainSession.isActive, let banner = curtainSession.bannerMessage {
+                CurtainPlacementBanner(
+                    message: banner,
+                    warnings: curtainSession.warnings,
+                    showConfirmActions: {
+                        if case .awaitingConfirmation = curtainSession.phase { return true }
+                        return false
+                    }(),
+                    showCreateFailureActions: curtainSession.showsCreateFailureActions,
+                    onConfirm: { curtainSession.confirmWindowAndComposite() },
+                    onReselect: { curtainSession.reselectWindow() },
+                    onRetryCreate: { curtainSession.retryCreateAfterFailure() }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, interactionMode == .edit ? 96 : 28)
+                .zIndex(4)
+            }
+
+            if spaceCleanupSession.isActive {
+                // Center reticle for aim-based multi-select.
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .shadow(radius: 2)
+                    .allowsHitTesting(false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: false)) { timeline in
+                    SpaceCleanupVROverlay(
+                        points: spaceCleanupSession.points,
+                        polygons: [],
+                        projectEquirectDegrees: { yaw, pitch in
+                            SpaceLinkTransitionBridge.shared.activeHost?
+                                .screenPointForEquirectDegrees(yawDeg: yaw, pitchDeg: pitch)
+                        },
+                        onMaskPreviewLoaded: { ready in
+                            spaceCleanupSession.markMaskOverlayReady(ready)
+                        },
+                        refreshEpoch: UInt64(timeline.date.timeIntervalSinceReferenceDate * 15)
+                    )
+                }
+                .allowsHitTesting(false)
+                .zIndex(4)
+
+                SpaceCleanupSelectionBanner(
+                    session: spaceCleanupSession,
+                    poleWarning: spaceCleanupSession.poleWarningActive,
+                    onAddCenter: { cleanupCenterSampleToken += 1 },
+                    onSubmit: {
+                        Task { await spaceCleanupSession.submitSelected() }
+                    },
+                    onConfirm: {
+                        Task { await spaceCleanupSession.confirmMasks() }
+                    },
+                    onCancel: {
+                        spaceCleanupSession.deactivate()
+                    }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, interactionMode == .edit ? 96 : 28)
+                .zIndex(5)
+            }
+
             if interactionMode == .edit {
                 editBottomBar
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -809,13 +898,31 @@ struct VRSphereSpaceView: View {
         appState.exitVRToHome()
     }
 
+    private var displayMarkerYawDeg: Float? {
+        curtainSession.isActive ? curtainSession.markerYawDeg : markerYawDeg
+    }
+
+    private var displayMarkerPitchDeg: Float? {
+        curtainSession.isActive ? curtainSession.markerPitchDeg : markerPitchDeg
+    }
+
+    private var curtainSeedTapActive: Bool {
+        if case .awaitingSeed = curtainSession.phase { return true }
+        return false
+    }
+
+    private var spaceCleanupTapActive: Bool {
+        spaceCleanupSession.isActive && spaceCleanupSession.job?.isAwaitingConfirmation != true
+    }
+
     private var panoramaHost: some View {
         Panorama360SceneOnlyView(
             imageURL: textureURL,
             videoURL: videoURL,
             textureGeneration: textureGeneration,
-            markerYawDeg: markerYawDeg,
-            markerPitchDeg: markerPitchDeg,
+            markerYawDeg: displayMarkerYawDeg,
+            markerPitchDeg: displayMarkerPitchDeg,
+            curtainWindowPolygon: curtainSession.windowPolygon,
             maskRadiusYawDeg: Float(pendingTarget?.radiusYawDeg
                 ?? Double(VRSphereEquirectBridge.defaultYawRadiusDeg)),
             maskRadiusPitchDeg: Float(pendingTarget?.radiusPitchDeg
@@ -827,11 +934,19 @@ struct VRSphereSpaceView: View {
             repairLongPressEnabled: allowsOwnerControls
                 && videoURL == nil
                 && interactionMode == .view
-                && !spaceLinkTransitionLocked,
+                && !spaceLinkTransitionLocked
+                && !curtainSession.isActive
+                && !spaceCleanupSession.isActive,
+            curtainSeedTapEnabled: allowsOwnerControls
+                && interactionMode == .view
+                && !spaceLinkTransitionLocked
+                && (curtainSeedTapActive || spaceCleanupTapActive),
+            cleanupCenterSampleToken: cleanupCenterSampleToken,
             placementEntries: draftLayout.assets,
             placementFloorY: draftLayout.floorY,
             assetMetadata: assetMetadata,
             modelURLs: modelURLs,
+            catalogSpecsByPlacementId: catalogSpecsByPlacementId,
             selectedId: selectedPlacementId,
             editTool: editTool,
             placementRequestToken: placementRequestToken,
@@ -888,6 +1003,33 @@ struct VRSphereSpaceView: View {
                 )
                 #endif
                 showConfirmSheet = true
+            },
+            onSingleTapEquirect: { yaw, pitch, point in
+                if spaceCleanupTapActive {
+                    GonggiHaptics.light()
+                    hideMotionHintImmediate()
+                    spaceCleanupSession.addCenterAim(
+                        yawDeg: yaw,
+                        pitchDeg: pitch,
+                        screen: point
+                    )
+                    return
+                }
+                guard curtainSeedTapActive else { return }
+                GonggiHaptics.light()
+                hideMotionHintImmediate()
+                let viewSize = UIScreen.main.bounds.size
+                curtainSession.handleSeedTap(
+                    yawDeg: yaw,
+                    pitchDeg: pitch,
+                    tapPoint: point,
+                    viewSize: viewSize
+                )
+            },
+            onCleanupCenterSample: { yaw, pitch in
+                guard spaceCleanupTapActive else { return }
+                GonggiHaptics.light()
+                spaceCleanupSession.addCenterAim(yawDeg: yaw, pitchDeg: pitch, screen: nil)
             },
             onMotionHardwareAvailable: { available in
                 motionHardwareOK = available
@@ -996,13 +1138,13 @@ struct VRSphereSpaceView: View {
                         let w = entry.catalogWidthMm ?? 0
                         let d = entry.catalogDepthMm ?? 0
                         let h = entry.catalogHeightMm ?? 0
-                        Text("상품 규격 W\(CatalogDimensionRuler.formatCm(w)) · D\(CatalogDimensionRuler.formatCm(d)) · H\(CatalogDimensionRuler.formatCm(h)) · 크기 잠금")
+                        Text("상품 규격 W \(CatalogDimensionRuler.formatMm(w)) · D \(CatalogDimensionRuler.formatMm(d)) · H \(CatalogDimensionRuler.formatMm(h)) · 크기 잠금")
                             .font(.caption2)
                             .foregroundStyle(.white.opacity(0.85))
                             .padding(.horizontal, 4)
                             .lineLimit(2)
                             .minimumScaleFactor(0.85)
-                            .accessibilityLabel("상품 실제 규격, 크기 조절 잠금")
+                            .accessibilityLabel("너비 \(w)밀리미터, 깊이 \(d)밀리미터, 높이 \(h)밀리미터, 크기 조절 잠금")
                     } else {
                         Text("한 손가락으로 이동, 두 손가락으로 회전/크기 조절")
                             .font(.caption2)
@@ -1086,10 +1228,10 @@ struct VRSphereSpaceView: View {
 
     private var saveErrorBanner: some View {
         HStack(spacing: 10) {
-            Text("배치를 저장하지 못했어요")
+            Text("배치를 저장하지 못했어요. 다시 시도해 주세요.")
                 .font(.footnote.weight(.medium))
             Button("다시 시도") {
-                Task { await saveAndFinishEditing() }
+                Task { await retrySavePlacement() }
             }
             .font(.footnote.weight(.semibold))
         }
@@ -1365,9 +1507,17 @@ struct VRSphereSpaceView: View {
             saveError = nil
         } catch {
             #if DEBUG
-            print("[vr-place66] PUT failed; keeping draft count=\(draftLayout.assets.count)")
+            let status: Int?
+            if case VRPlacementStoreError.server(let code) = error {
+                status = code
+            } else {
+                status = nil
+            }
+            print(
+                "[vr-place-catalog] PUT failed status=\(status.map(String.init) ?? "n/a") draftCount=\(draftLayout.assets.count) catalogCount=\(snapshot.assets.filter { $0.catalogAssetId != nil }.count)"
+            )
             #endif
-            saveError = "배치를 저장하지 못했어요"
+            saveError = "배치를 저장하지 못했어요. 다시 시도해 주세요."
         }
     }
 
@@ -1389,20 +1539,118 @@ struct VRSphereSpaceView: View {
             try? await placementStore.saveLocal(merged, sessionId: sessionId)
             applyStartInEditModeIfNeeded()
             await consumeExternalPendingPlacementIfNeeded()
+            await hydrateCatalogPlacements(in: merged)
 
             do {
                 let assets = try await assetsClient.fetchAssets()
                 guard !Task.isCancelled else { return }
                 lockerAssets = assets
-                assetMetadata = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+                for asset in assets {
+                    assetMetadata[asset.id] = asset
+                }
                 loadingAssets = false
                 AssetLibraryStore.shared.replaceIfNewer(assets)
                 await downloadModels(for: assets)
+                await hydrateCatalogPlacements(in: draftLayout)
                 await consumeExternalPendingPlacementIfNeeded()
             } catch {
                 loadingAssets = false
+                await hydrateCatalogPlacements(in: draftLayout)
                 await consumeExternalPendingPlacementIfNeeded()
             }
+        }
+    }
+
+    /// Re-download Catalog USDZ for saved `catalog:` placements (product API or space restore).
+    private func hydrateCatalogPlacements(in layout: VRPlacementLayout) async {
+        let catalogEntries = layout.assets.filter { $0.catalogAssetId != nil || $0.assetId.hasPrefix("catalog:") }
+        guard !catalogEntries.isEmpty else { return }
+
+        let client = CatalogAPIClient()
+        for entry in catalogEntries {
+            if modelURLs[entry.assetId] != nil { continue }
+            let catalogAssetId = entry.catalogAssetId
+                ?? String(entry.assetId.dropFirst("catalog:".count))
+            guard !catalogAssetId.isEmpty else { continue }
+
+            var resolvedSpec: CatalogPlacementSpec?
+            var displayName = entry.catalogDisplayName ?? "제휴 상품"
+            var thumb: String?
+
+            if let productId = entry.catalogProductId {
+                if let product = try? await client.fetchProduct(id: productId) {
+                    let variant = product.variants?.first(where: { $0.id == entry.catalogVariantId })
+                        ?? product.variants?.first(where: { $0.catalogAssetId == catalogAssetId })
+                        ?? product.primaryVariant
+                    if case .success(let spec) = CatalogPlacementSpecValidator.validate(variant?.placementSpec) {
+                        resolvedSpec = spec
+                    }
+                    displayName = product.productName
+                    thumb = product.resolvedThumbnailURL ?? variant?.thumbnailUrl
+                }
+            }
+
+            if resolvedSpec == nil {
+                resolvedSpec = try? await CatalogPlacementRestoreClient().fetchPlacementSpec(
+                    spaceId: sessionId,
+                    catalogAssetId: catalogAssetId
+                )
+            }
+
+            guard let spec = resolvedSpec,
+                  let remote = URL(string: spec.usdzSignedUrl),
+                  remote.scheme?.lowercased() == "https"
+            else { continue }
+
+            catalogSpecsByPlacementId[entry.id] = spec
+            let dto = MobileAssetDTO(
+                id: entry.assetId,
+                name: displayName,
+                thumbUrl: thumb,
+                usdzStatus: "READY",
+                usdzUrl: spec.usdzSignedUrl,
+                widthCm: Double(entry.catalogWidthMm ?? spec.dimensionsMm.widthMm) / 10.0,
+                heightCm: Double(entry.catalogHeightMm ?? spec.dimensionsMm.heightMm) / 10.0,
+                depthCm: Double(entry.catalogDepthMm ?? spec.dimensionsMm.depthMm) / 10.0,
+                availableForPlacement: true,
+                availability: "ready"
+            )
+            assetMetadata[entry.assetId] = dto
+            if let local = await usdzCache.localURL(assetId: entry.assetId, remoteURL: remote) {
+                modelURLs[entry.assetId] = local
+            }
+        }
+        placementRequestToken += 1
+    }
+
+    private func retrySavePlacement() async {
+        let snapshot = draftLayout
+        do {
+            let saved = try await placementStore.pushRemote(snapshot, sessionId: sessionId)
+            let responseIds = Set(saved.assets.map(\.id))
+            let snapshotIds = Set(snapshot.assets.map(\.id))
+            if saved.assets.count >= snapshot.assets.count
+                || responseIds == snapshotIds
+                || snapshot.assets.isEmpty {
+                draftLayout = saved
+                try? await placementStore.saveLocal(saved, sessionId: sessionId)
+            } else {
+                try? await placementStore.saveLocal(snapshot, sessionId: sessionId)
+            }
+            saveError = nil
+        } catch {
+            #if DEBUG
+            let status: Int?
+            if case VRPlacementStoreError.server(let code) = error {
+                status = code
+            } else {
+                status = nil
+            }
+            print(
+                "[vr-place-catalog] retry PUT failed status=\(status.map(String.init) ?? "n/a") draftCount=\(draftLayout.assets.count)"
+            )
+            #endif
+            saveError = "배치를 저장하지 못했어요. 다시 시도해 주세요."
         }
     }
 
@@ -1473,6 +1721,42 @@ struct VRSphereSpaceView: View {
     private func consumeExternalPendingPlacementIfNeeded() async {
         guard panoramaReady, didLoadPlacement else { return }
         guard !didConsumeExternalPending else { return }
+
+        if let curtainPending = appState.consumePendingCurtainPlacement(matchingViewerSessionId: sessionId) {
+            didConsumeExternalPending = true
+            curtainSession.configure(useMock: appState.isMockMode)
+            let state = appState
+            curtainSession.onPlacementAccepted = { resultId in
+                state.openPlacementResults(resultId: resultId)
+            }
+            if let validated = SpaceLatLongStore.validateImage(at: textureURL) {
+                curtainSession.updateLatLongDimensions(
+                    width: validated.width,
+                    height: validated.height
+                )
+            }
+            curtainSession.start(with: curtainPending, sessionId: sessionId)
+            return
+        }
+
+        if let cleanupPending = appState.consumePendingSpaceCleanup(matchingViewerSessionId: sessionId) {
+            didConsumeExternalPending = true
+            #if DEBUG
+            if appState.isMockMode {
+                spaceCleanupSession.configure(client: SpaceCleanupMockClient())
+            }
+            #endif
+            let state = appState
+            spaceCleanupSession.onAccepted = { resultId in
+                state.openPlacementResults(resultId: resultId)
+            }
+            spaceCleanupSession.activateSelectedMode(
+                spaceId: cleanupPending.spaceId,
+                sourceRevisionId: cleanupPending.sourceRevisionId,
+                consentAccepted: true
+            )
+            return
+        }
 
         if let catalogPending = appState.consumePendingCatalogPlacement(matchingViewerSessionId: sessionId) {
             didConsumeExternalPending = true
@@ -1591,18 +1875,9 @@ struct VRSphereSpaceView: View {
             }
         }
 
-        let entry = pending.makeLayoutEntry(
-            position: SIMD3(0, draftLayout.floorY, -1.2),
-            rotationY: 0,
-            floorY: draftLayout.floorY
-        )
-        guard draftLayout.append(entry) else {
-            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
-            return
-        }
-        selectedPlacementId = entry.id
-        editTool = .none
-        saveDraftLocally()
+        // Same path as locker assets: bump token → SCNHost samples screen-center floor → insert.
+        pendingCatalogInsert = pending
+        pendingPlacementAsset = dto
         placementRequestToken += 1
     }
 
@@ -1634,12 +1909,18 @@ struct VRSphereSpaceView: View {
     }
 
     private func addPendingAsset(at point: SIMD3<Float>) {
-        guard let asset = pendingPlacementAsset,
-              draftLayout.assets.count < VRPlacementLayout.maxAssets
-        else {
+        // Consume pending first so overlapping spawn callbacks cannot insert twice
+        // (viewport-wait retries + token bumps previously created duplicate furniture).
+        if let catalogPending = pendingCatalogInsert {
+            pendingCatalogInsert = nil
             pendingPlacementAsset = nil
+            finishPendingCatalogInsert(catalogPending, at: point)
             return
         }
+
+        guard let asset = pendingPlacementAsset else { return }
+        pendingPlacementAsset = nil
+        guard draftLayout.assets.count < VRPlacementLayout.maxAssets else { return }
         let entry = VRPlacedAssetEntry(
             assetId: asset.id,
             position: SIMD3(point.x, draftLayout.floorY, point.z),
@@ -1649,8 +1930,28 @@ struct VRSphereSpaceView: View {
             supportY: draftLayout.floorY
         )
         guard draftLayout.append(entry) else { return }
-        pendingPlacementAsset = nil
         selectedPlacementId = entry.id
+        editTool = .none
+        saveDraftLocally()
+    }
+
+    private func finishPendingCatalogInsert(_ pending: PendingCatalogPlacement, at point: SIMD3<Float>) {
+        guard draftLayout.assets.count < VRPlacementLayout.maxAssets else {
+            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            return
+        }
+
+        let entry = pending.makeLayoutEntry(
+            position: SIMD3(point.x, draftLayout.floorY, point.z),
+            rotationY: 0,
+            floorY: draftLayout.floorY
+        )
+        guard draftLayout.append(entry) else {
+            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            return
+        }
+        selectedPlacementId = entry.id
+        catalogSpecsByPlacementId[entry.id] = pending.placementSpec
         editTool = .none
         saveDraftLocally()
     }
@@ -2858,6 +3159,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var textureGeneration: Int
     var markerYawDeg: Float?
     var markerPitchDeg: Float?
+    var curtainWindowPolygon: [CurtainUVPoint]? = nil
     var maskRadiusYawDeg: Float
     var maskRadiusPitchDeg: Float
     var motionDesiredEnabled: Bool
@@ -2865,10 +3167,13 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var recenterToken: Int
     var editModeActive: Bool
     var repairLongPressEnabled: Bool
+    var curtainSeedTapEnabled: Bool = false
+    var cleanupCenterSampleToken: Int = 0
     var placementEntries: [VRPlacedAssetEntry]
     var placementFloorY: Float
     var assetMetadata: [String: MobileAssetDTO]
     var modelURLs: [String: URL]
+    var catalogSpecsByPlacementId: [String: CatalogPlacementSpec] = [:]
     var selectedId: String?
     var editTool: VREditTool
     var placementRequestToken: Int
@@ -2890,6 +3195,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
     var deferSecondaryLoads: Bool = false
     var onViewerReady: (() -> Void)? = nil
     var onLongPress: (Float, Float) -> Void
+    var onSingleTapEquirect: ((Float, Float, CGPoint) -> Void)? = nil
+    var onCleanupCenterSample: ((Float, Float) -> Void)? = nil
     var onMotionHardwareAvailable: ((Bool) -> Void)? = nil
     var onPlacedAssetTapped: ((String?) -> Void)? = nil
     var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)? = nil
@@ -2915,6 +3222,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         let tHost = CFAbsoluteTimeGetCurrent()
         SpaceLink82Timing.log("scnHostCreate start")
         host.onLongPressEquirect = onLongPress
+        host.onSingleTapEquirect = onSingleTapEquirect
         host.onMotionAvailabilityChanged = { available in
             onMotionHardwareAvailable?(available)
         }
@@ -2940,6 +3248,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         host.setConfirmSheetPresented(confirmSheetPresented)
         host.setEditModeActive(editModeActive)
         host.setRepairLongPressEnabled(repairLongPressEnabled)
+        host.setCurtainSeedTapEnabled(curtainSeedTapEnabled)
         host.syncPlacedAssets(
             placementEntries,
             floorY: placementFloorY,
@@ -2957,6 +3266,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             )
         }
         host.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
+        host.syncCatalogDimensionRulers(
+            entries: placementEntries,
+            specsByPlacementId: catalogSpecsByPlacementId,
+            enabled: editModeActive
+        )
         host.setLightingExperiment(
             mode: resolvedLightingMode,
             iblIntensity: resolvedLightingIBL,
@@ -2966,7 +3280,8 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             yawDeg: markerYawDeg,
             pitchDeg: markerPitchDeg,
             radiusYawDeg: maskRadiusYawDeg,
-            radiusPitchDeg: maskRadiusPitchDeg
+            radiusPitchDeg: maskRadiusPitchDeg,
+            windowPolygonUV: curtainWindowPolygon
         )
         context.coordinator.lastGeneration = textureGeneration
         context.coordinator.lastURL = imageURL
@@ -3013,6 +3328,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
 
     func updateUIView(_ uiView: SCNHostView, context: Context) {
         uiView.onLongPressEquirect = onLongPress
+        uiView.onSingleTapEquirect = onSingleTapEquirect
         uiView.onMotionAvailabilityChanged = { available in
             onMotionHardwareAvailable?(available)
         }
@@ -3051,6 +3367,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         uiView.setConfirmSheetPresented(confirmSheetPresented)
         uiView.setEditModeActive(editModeActive)
         uiView.setRepairLongPressEnabled(repairLongPressEnabled)
+        uiView.setCurtainSeedTapEnabled(curtainSeedTapEnabled)
         // Rebuild nodes only when membership / models change — not on every transform drag.
         let placementFingerprint = placementEntries.map { "\($0.id):\($0.assetId)" }.joined(separator: ",")
             + "|" + modelURLs.keys.sorted().joined(separator: ",")
@@ -3078,6 +3395,11 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             }
         }
         uiView.setEditTool(editTool, selectedId: selectedId, floorY: placementFloorY)
+        uiView.syncCatalogDimensionRulers(
+            entries: placementEntries,
+            specsByPlacementId: catalogSpecsByPlacementId,
+            enabled: editModeActive
+        )
         uiView.setLightingExperiment(
             mode: resolvedLightingMode,
             iblIntensity: resolvedLightingIBL,
@@ -3091,13 +3413,29 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         }
         if placementRequestToken != context.coordinator.lastPlacementRequestToken {
             context.coordinator.lastPlacementRequestToken = placementRequestToken
-            let size = uiView.viewportSize
-            let point = uiView.floorPointFromScreen(
-                CGPoint(x: size.width * 0.5, y: size.height * 0.55),
-                floorY: placementFloorY
-            )
+            // Cold enter often hits updateUIView before SCNHost has a real viewport; wait for
+            // layout so the asset spawns at screen-center floor instead of an off-screen ray.
+            let floorY = placementFloorY
             DispatchQueue.main.async {
-                onPlacementPointResolved?(point)
+                func tryResolve(attempt: Int) {
+                    uiView.setNeedsLayout()
+                    uiView.layoutIfNeeded()
+                    let size = uiView.viewportSize
+                    if size.width < 2 || size.height < 2 {
+                        if attempt < 10 {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                tryResolve(attempt: attempt + 1)
+                            }
+                        }
+                        return
+                    }
+                    let point = uiView.floorPointFromScreen(
+                        CGPoint(x: size.width * 0.5, y: size.height * 0.55),
+                        floorY: floorY
+                    )
+                    onPlacementPointResolved?(point)
+                }
+                tryResolve(attempt: 0)
             }
         }
         if spaceLinkSpawnToken != context.coordinator.lastSpaceLinkSpawnToken {
@@ -3112,11 +3450,21 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
             uiView.recenterKeepingVisual()
             context.coordinator.lastRecenterToken = recenterToken
         }
+        if cleanupCenterSampleToken != context.coordinator.lastCleanupCenterSampleToken {
+            context.coordinator.lastCleanupCenterSampleToken = cleanupCenterSampleToken
+            if cleanupCenterSampleToken > 0 {
+                let center = uiView.currentEquirectCenterDegrees()
+                DispatchQueue.main.async {
+                    onCleanupCenterSample?(center.yawDeg, center.pitchDeg)
+                }
+            }
+        }
         uiView.updateSelection(
             yawDeg: markerYawDeg,
             pitchDeg: markerPitchDeg,
             radiusYawDeg: maskRadiusYawDeg,
-            radiusPitchDeg: maskRadiusPitchDeg
+            radiusPitchDeg: maskRadiusPitchDeg,
+            windowPolygonUV: curtainWindowPolygon
         )
         let snap = uiView.lightingExperimentDebugSnapshot()
         let selectedSupportY: Float? = {
@@ -3172,6 +3520,7 @@ private struct Panorama360SceneOnlyView: UIViewRepresentable {
         var lastRecenterToken: Int = 0
         var lastMotionDesired: Bool = true
         var lastPlacementRequestToken: Int = 0
+        var lastCleanupCenterSampleToken: Int = 0
         var lastPlacementFingerprint: String = ""
         var lastLightingLabel: String = ""
         var lastSupportLiveRevision: Int = 0

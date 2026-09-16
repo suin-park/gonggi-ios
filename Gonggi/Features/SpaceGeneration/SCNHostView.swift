@@ -35,6 +35,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var spaceLinkDragDebugLogged = false
     #endif
     private var placementFloorY = VRPlacementLayout.defaultFloorY
+    private var catalogRulerSpecsByPlacementId: [String: CatalogPlacementSpec] = [:]
+    private var catalogRulerEntriesById: [String: VRPlacedAssetEntry] = [:]
+    private var catalogRulersEnabled = false
     private var gestureStartScale: Float = 1
     private var gestureStartRotationY: Float = 0
     private var oneFingerOwner: EditOneFingerOwner = .none
@@ -113,6 +116,9 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     private var motionDesiredEnabled = true
 
     var onLongPressEquirect: ((Float, Float) -> Void)?
+    /// Single tap → equirect (curtain seed selection).
+    var onSingleTapEquirect: ((Float, Float, CGPoint) -> Void)?
+    private var curtainSeedTapEnabled = false
     var onMotionAvailabilityChanged: ((Bool) -> Void)?
     var onPlacedAssetTapped: ((String?) -> Void)?
     var onPlacedAssetTransformChanged: ((String, SIMD3<Float>, Float, Float) -> Void)?
@@ -343,6 +349,7 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             unfreezeBakeAndReanchor()
         }
         applyLookToCamera()
+        refreshCatalogDimensionRulers()
     }
 
     func setEditTool(_ tool: VREditTool, selectedId: String?, floorY: Float) {
@@ -384,6 +391,37 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         // Re-apply contact opacity / castsShadow after membership rebuild (nodes reused for lights).
         lastLightingApplyKey = ""
         applyLightingExperimentIfNeeded(force: true)
+        refreshCatalogDimensionRulers()
+    }
+
+    /// Catalog W/H/D rulers — edit mode + selected catalog placement only.
+    func syncCatalogDimensionRulers(
+        entries: [VRPlacedAssetEntry],
+        specsByPlacementId: [String: CatalogPlacementSpec],
+        enabled: Bool
+    ) {
+        catalogRulerEntriesById = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+        catalogRulerSpecsByPlacementId = specsByPlacementId
+        catalogRulersEnabled = enabled
+        refreshCatalogDimensionRulers()
+    }
+
+    private func refreshCatalogDimensionRulers() {
+        for node in placedAssetsRoot.childNodes {
+            CatalogDimensionRuler.detach(from: node)
+        }
+        guard catalogRulersEnabled,
+              editModeActive,
+              let id = selectedPlacementID,
+              let assetNode = assetNode(id: id),
+              let entry = catalogRulerEntriesById[id],
+              entry.catalogAssetId != nil
+        else { return }
+
+        let spec = catalogRulerSpecsByPlacementId[id]
+            ?? CatalogDimensionRuler.rulerSpecFromStoredEntry(entry)
+        guard let spec else { return }
+        CatalogDimensionRuler.attach(to: assetNode, spec: spec, showDepth: true)
     }
 
     /// Sync 공간 연결 billboards (sibling of placedAssetsRoot — never under assets).
@@ -476,12 +514,16 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
               let assetNode = placedAssetsRoot.childNodes.first(where: {
                   VRPlacedAssetNodeFactory.placedAssetID(from: $0) == id
               })
-        else { return }
+        else {
+            refreshCatalogDimensionRulers()
+            return
+        }
 
         // Create-once (or unhide). Uses cached mesh bounds — never proxy-inflated root.boundingBox.
         let visual = VRPlacedAssetNodeFactory.ensureSelectionVisual(on: assetNode, visible: true)
         selectionIndicatorNode = visual
         selectedPlacementRoot = assetNode
+        refreshCatalogDimensionRulers()
     }
 
     func floorPointFromScreen(_ point: CGPoint, floorY: Float) -> SIMD3<Float> {
@@ -638,6 +680,18 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         #endif
         return fromLook
     }
+
+    /// Project equirect yaw/pitch onto the current SCN viewport (nil if behind camera).
+    func screenPointForEquirectDegrees(yawDeg: Float, pitchDeg: Float) -> CGPoint? {
+        applyLookToCamera()
+        let wp = SpaceLinkMath.worldPosition(yawDeg: yawDeg, pitchDeg: pitchDeg, radius: 10)
+        let projected = scnView.projectPoint(SCNVector3(wp.x, wp.y, wp.z))
+        guard projected.z.isFinite, projected.z > 0, projected.z < 1 else { return nil }
+        return CGPoint(x: CGFloat(projected.x), y: CGFloat(projected.y))
+    }
+
+    var lookFinalYawDeg: Float { look.finalYawDeg }
+    var lookFinalPitchDeg: Float { look.finalPitchDeg }
 
     // MARK: - Build 81 SpaceLink transition (rotate + FOV zoom + settle)
 
@@ -1162,6 +1216,10 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    func setCurtainSeedTapEnabled(_ enabled: Bool) {
+        curtainSeedTapEnabled = enabled
+    }
+
     private func applyTexture(
         to material: SCNMaterial,
         imageURL: URL,
@@ -1238,7 +1296,8 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         yawDeg: Float?,
         pitchDeg: Float?,
         radiusYawDeg: Float,
-        radiusPitchDeg: Float
+        radiusPitchDeg: Float,
+        windowPolygonUV: [CurtainUVPoint]? = nil
     ) {
         markerNode?.removeFromParentNode()
         markerNode = nil
@@ -1261,13 +1320,23 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
 
         let outline = SCNNode()
         outline.name = "repairMaskOutline"
-        let rim = VRSphereEquirectBridge.maskOutlineEquirectPoints(
-            centerYawDeg: yawDeg,
-            centerPitchDeg: pitchDeg,
-            radiusYawDeg: radiusYawDeg,
-            radiusPitchDeg: radiusPitchDeg,
-            samples: 56
-        )
+        let rim: [(yawDeg: Float, pitchDeg: Float)]
+        if let windowPolygonUV, windowPolygonUV.count >= 3 {
+            rim = windowPolygonUV.map {
+                VRSphereEquirectBridge.equirectDegreesFromTextureUV(
+                    u: Float($0.u),
+                    v: Float($0.v)
+                )
+            }
+        } else {
+            rim = VRSphereEquirectBridge.maskOutlineEquirectPoints(
+                centerYawDeg: yawDeg,
+                centerPitchDeg: pitchDeg,
+                radiusYawDeg: radiusYawDeg,
+                radiusPitchDeg: radiusPitchDeg,
+                samples: 56
+            )
+        }
         for (i, pt) in rim.enumerated() {
             let wp = VRSphereEquirectBridge.insideOutSpherePoint(
                 yawDeg: pt.yawDeg,
@@ -1570,6 +1639,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
             #if DEBUG
             print("[vr-place72] tap edit select link=\(selectedSpaceLinkID ?? "nil") asset=\(selectedPlacementID ?? "nil")")
             #endif
+            return
+        }
+        if curtainSeedTapEnabled {
+            let eq = resolveEquirect(at: location)
+            onSingleTapEquirect?(eq.yawDeg, eq.pitchDeg, location)
             return
         }
         // View: spaceLink tap → navigate
@@ -2018,6 +2092,11 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func resolveLongPress(at point: CGPoint) {
+        let eq = resolveEquirect(at: point)
+        onLongPressEquirect?(eq.yawDeg, eq.pitchDeg)
+    }
+
+    private func resolveEquirect(at point: CGPoint) -> (yawDeg: Float, pitchDeg: Float) {
         let hits = scnView.hitTest(point, options: [
             .searchMode: SCNHitTestSearchMode.closest.rawValue,
             .categoryBitMask: VRPlacedAssetCategory.panorama,
@@ -2025,40 +2104,34 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         ])
         let sphereHit = hits.first { $0.node.name == "sphere" || $0.node == sphereNode }
 
-        let yawDeg: Float
-        let pitchDeg: Float
         if let hit = sphereHit {
             let uv = hit.textureCoordinates(withMappingChannel: 0)
             let eq = VRSphereEquirectBridge.equirectDegreesFromTextureUV(
                 u: Float(uv.x),
                 v: Float(uv.y)
             )
-            yawDeg = eq.yawDeg
-            pitchDeg = eq.pitchDeg
             #if DEBUG
             let cam = look.cameraEulerRad
             print(
-                "[repair-bridge] source=hitTestUV camYawDeg=\(cam.yaw * 180 / .pi) camPitchDeg=\(cam.pitch * 180 / .pi) bridgedYaw=\(yawDeg) bridgedPitch=\(pitchDeg)"
+                "[repair-bridge] source=hitTestUV camYawDeg=\(cam.yaw * 180 / .pi) camPitchDeg=\(cam.pitch * 180 / .pi) bridgedYaw=\(eq.yawDeg) bridgedPitch=\(eq.pitchDeg)"
             )
             #endif
-        } else {
-            let cam = look.cameraEulerRad
-            let eq = VRSphereEquirectBridge.equirectDegreesFromScreenPoint(
-                point: point,
-                viewSize: scnView.bounds.size,
-                cameraYawRad: cam.yaw,
-                cameraPitchRad: cam.pitch,
-                fieldOfViewDeg: 70
-            )
-            yawDeg = eq.yawDeg
-            pitchDeg = eq.pitchDeg
-            #if DEBUG
-            print(
-                "[repair-bridge] source=cameraFallback camYawDeg=\(cam.yaw * 180 / .pi) camPitchDeg=\(cam.pitch * 180 / .pi) bridgedYaw=\(yawDeg) bridgedPitch=\(pitchDeg)"
-            )
-            #endif
+            return eq
         }
-        onLongPressEquirect?(yawDeg, pitchDeg)
+        let cam = look.cameraEulerRad
+        let eq = VRSphereEquirectBridge.equirectDegreesFromScreenPoint(
+            point: point,
+            viewSize: scnView.bounds.size,
+            cameraYawRad: cam.yaw,
+            cameraPitchRad: cam.pitch,
+            fieldOfViewDeg: 70
+        )
+        #if DEBUG
+        print(
+            "[repair-bridge] source=cameraFallback camYawDeg=\(cam.yaw * 180 / .pi) camPitchDeg=\(cam.pitch * 180 / .pi) bridgedYaw=\(eq.yawDeg) bridgedPitch=\(eq.pitchDeg)"
+        )
+        #endif
+        return eq
     }
 }
 
