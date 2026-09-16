@@ -312,7 +312,7 @@ final class SpaceCleanupTests: XCTestCase {
             variantId: "v",
             catalog2DAssetId: "a",
             catalogRevision: 1,
-            productRevision: 1,
+            productRevision: "1",
             displayName: "curtain",
             partnerName: "partner",
             thumbnailUrl: nil,
