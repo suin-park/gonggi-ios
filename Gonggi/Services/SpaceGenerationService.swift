@@ -13,6 +13,8 @@ struct CreateSpaceRequest: Equatable {
     var qualityProfile: String = "capture_dense_v2"
     /// Client-owned key for create retry / diagnostics.
     var idempotencyKey: String? = nil
+    /// Spatial package only — JPEG keyframe count hint.
+    var frameCount: Int? = nil
 }
 
 struct CreateSpaceResponse: Equatable {

@@ -528,6 +528,21 @@ struct CaptureFlowView: View {
                         showProcessing = false
                         showGaussianViewer = true
                     },
+                    onHandedOff: { jobId, spaceId in
+                        if let latLongId = sourceLatLongSessionId {
+                            AdvancedCaptureAnalysisStore.shared.update(sessionId: latLongId) { record in
+                                record.linkedGaussianSpaceId = spaceId
+                                record.linkedGaussianJobId = jobId
+                            }
+                        }
+                        showProcessing = false
+                        appState.pendingCapture = nil
+                        appState.gaussianLibraryBanner = "3D 공간 생성을 시작했어요."
+                        appState.rebuildSpaces()
+                        appState.ensureGaussianGenerationPolling()
+                        onClose()
+                        appState.selectTab(.library)
+                    },
                     onDismiss: { showProcessing = false }
                 )
             }

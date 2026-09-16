@@ -405,8 +405,99 @@ final class SpatialCapturePackageTests: XCTestCase {
         XCTAssertThrowsError(try SpatialCapturePackageValidator.validate(packageRoot: paths.root))
     }
 
+    func testDiagnosticsShareIncludesSpatialPackageSummary() throws {
+        let sessionId = "unit-spatial-share-\(UUID().uuidString)"
+        defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
+
+        let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
+        let jpeg = try makeTinyJPEG()
+        let frameId = "kf_00001"
+        try jpeg.write(to: SpatialCapturePackageBuilder.frameJPEGURL(paths: paths, frameId: frameId))
+
+        let keyframe = SpatialCapturePackageBuilder.AcceptedKeyframe(
+            frameId: frameId,
+            arTimestampSeconds: 1.0,
+            cameraToWorldColumnMajor: CaptureFrameContract.encodeTransform(matrix_identity_float4x4),
+            translationMeters: [0.1, 0, 0.2],
+            rotationQuaternionXYZw: [0, 0, 0, 1],
+            trackingState: "normal",
+            fx: 1000, fy: 1000, cx: 500, cy: 500,
+            width: 1, height: 1,
+            sensorImageWidth: 1, sensorImageHeight: 1,
+            jpegByteCount: jpeg.count,
+            quality: SpatialCaptureFrameQuality(
+                frameId: frameId,
+                sharpnessScore: 0.8,
+                sharpnessState: "sharp",
+                motionSpeed: 0.1,
+                angularVelocity: 0.05,
+                parallaxGrade: "good",
+                translationBaselineM: 0.2,
+                overlapScore: 0.7,
+                overlapState: "good",
+                trackingState: "normal",
+                lowTextureScore: 0.1,
+                acceptReason: "first"
+            ),
+            optionalDepthRelativePath: nil
+        )
+        _ = try SpatialCapturePackageBuilder.build(
+            input: SpatialCapturePackageBuilder.BuildInput(
+                captureId: "cap-share",
+                sessionId: sessionId,
+                startedAt: Date().addingTimeInterval(-30),
+                endedAt: Date(),
+                keyframes: [keyframe],
+                rejectedDecisionCount: 0,
+                trackingFailureCount: 0,
+                totalTranslationDistanceM: 1.0,
+                observedCoverage: 0.5,
+                qualityCoverage: 0.4,
+                viewAngleDiversity: 0.3,
+                translationBaselineGrade: "acceptable",
+                averageSharpness: 0.8,
+                videoRelativePath: nil,
+                hasLiDAR: false,
+                supportsSceneDepth: false,
+                supportsSmoothedSceneDepth: false,
+                supportsSceneReconstruction: false,
+                decisions: [],
+                telemetry: nil
+            )
+        )
+
+        let share = try CaptureDiagnosticsStore.buildSharePackage(
+            sessionId: sessionId,
+            captureId: "cap-share"
+        )
+        defer { try? FileManager.default.removeItem(at: share) }
+
+        let summaryURL = share.appendingPathComponent("spatial-package-summary.json")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: summaryURL.path))
+        let summary = try JSONDecoder().decode(
+            SpatialCapturePackageShareSummary.self,
+            from: Data(contentsOf: summaryURL)
+        )
+        XCTAssertTrue(summary.packagePresent)
+        XCTAssertEqual(summary.jpegCount, 1)
+        XCTAssertEqual(summary.poseCount, 1)
+        XCTAssertEqual(summary.intrinsicsCount, 1)
+        XCTAssertEqual(summary.validatorPassed, true)
+        XCTAssertEqual(summary.countsMatch, true)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: share
+                    .appendingPathComponent("capture/frames/\(frameId).jpg").path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: share.appendingPathComponent("capture/metadata.json").path
+            )
+        )
+    }
+
     func testCircularYawSpanDoesNotTreatWrapAsFullCircle() {
-        // Buckets covering ~350°→20° (buckets 11,0) should be ~60°, not ~330°.
         let wrap = CaptureReconstructionSessionMetrics.circularCoveredSpanDegrees(
             buckets: [11, 0],
             bucketCount: 12
@@ -431,6 +522,41 @@ final class SpatialCapturePackageTests: XCTestCase {
             bucketCount: 12
         )
         XCTAssertEqual(full.spanDeg, 360, accuracy: 0.01)
+    }
+
+    func testPackageZipperExcludesDebugAndIncludesFrames() throws {
+        let sessionId = "unit-zip-\(UUID().uuidString)"
+        defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
+
+        let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
+        let jpeg = try makeTinyJPEG()
+        try jpeg.write(to: SpatialCapturePackageBuilder.frameJPEGURL(paths: paths, frameId: "kf_00001"))
+        try jpeg.write(to: SpatialCapturePackageBuilder.frameJPEGURL(paths: paths, frameId: "kf_00002"))
+
+        for (name, obj) in [
+            (SpatialCaptureConfig.metadataFileName, ["captureId": "c", "selectedKeyframeCount": 2] as [String: Any]),
+            (SpatialCaptureConfig.posesFileName, ["schemaVersion": 1, "frames": []] as [String: Any]),
+            (SpatialCaptureConfig.intrinsicsFileName, ["schemaVersion": 1, "frames": []] as [String: Any]),
+            (SpatialCaptureConfig.qualityFileName, ["schemaVersion": 1] as [String: Any]),
+        ] {
+            let data = try JSONSerialization.data(withJSONObject: obj)
+            try data.write(to: paths.root.appendingPathComponent(name))
+        }
+        try SpatialCaptureCoordinateConvention.writeJSON(to: paths.conventionURL)
+        // debug noise must not be required for zip
+        try "noise".data(using: .utf8)?.write(
+            to: paths.debugDirectory.appendingPathComponent("noise.txt")
+        )
+
+        let zipDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zip-test-\(UUID().uuidString)", isDirectory: true)
+        let zipped = try SpatialCapturePackageZipper.buildArchive(
+            packageRoot: paths.root,
+            destinationDirectory: zipDir
+        )
+        XCTAssertGreaterThan(zipped.byteSize, 100)
+        XCTAssertEqual(zipped.frameCount, 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: zipped.zipURL.path))
     }
 
     private func makeTinyJPEG() throws -> Data {

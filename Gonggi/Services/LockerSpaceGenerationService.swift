@@ -79,7 +79,14 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
     }
 
     func createSpace(_ request: CreateSpaceRequest) async throws -> CreateSpaceResponse {
-        let url = try Self.apiURL(base: config.apiBaseURL, path: "/api/gaussian-spaces/video")
+        let isSpatialPackage =
+            request.videoFilename.lowercased().hasSuffix(".zip")
+            || request.videoContentType.contains("zip")
+            || request.qualityProfile == ServerGenerationProfileMapper.spatialPackageProfile
+        let apiPath = isSpatialPackage
+            ? "/api/gaussian-spaces/spatial-package"
+            : "/api/gaussian-spaces/video"
+        let url = try Self.apiURL(base: config.apiBaseURL, path: apiPath)
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -88,11 +95,13 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
 
         // Placeholder size — uploadCapture updates with real byte size before PUT.
         let byteSize = request.videoByteSize ?? 1_048_576
-        let profile = ServerGenerationProfileMapper.resolveServerProfile(
-            guideQualityProfile: request.qualityProfile
-        )
+        let profile = isSpatialPackage
+            ? ServerGenerationProfileMapper.spatialPackageProfile
+            : ServerGenerationProfileMapper.resolveServerProfile(
+                guideQualityProfile: request.qualityProfile
+            )
         let idempotencyKey = request.idempotencyKey ?? "gonggi-\(UUID().uuidString)"
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "name": request.name,
             "visibility": request.visibility,
             "filename": request.videoFilename,
@@ -102,12 +111,12 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
             "idempotencyKey": idempotencyKey,
         ]
         if let duration = request.durationSec {
-            var withDuration = body
-            withDuration["durationSec"] = duration
-            req.httpBody = try JSONSerialization.data(withJSONObject: withDuration)
-        } else {
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+            body["durationSec"] = duration
         }
+        if isSpatialPackage, let frames = request.frameCount {
+            body["frameCount"] = frames
+        }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else {
@@ -160,10 +169,11 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         let byteSize = (attrs[.size] as? NSNumber)?.intValue ?? 0
         guard byteSize > 0 else { throw SpaceGenerationError.uploadFailed }
 
-        // Stream from file — never load full MOV into memory (103MB+ caused NSURLErrorNetworkConnectionLost).
+        // Stream from file — never load full MOV/ZIP into memory.
+        let isZip = fileURL.pathExtension.lowercased() == "zip"
         var put = URLRequest(url: uploadURL)
         put.httpMethod = "PUT"
-        put.setValue("video/quicktime", forHTTPHeaderField: "Content-Type")
+        put.setValue(isZip ? "application/zip" : "video/quicktime", forHTTPHeaderField: "Content-Type")
         put.setValue("\(byteSize)", forHTTPHeaderField: "Content-Length")
         put.timeoutInterval = 600
 
@@ -285,6 +295,39 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         lock.unlock()
     }
 
+    func seedJobContext(jobId: String, spaceId: String, qualityProfile: String) {
+        lock.lock()
+        if jobContext[jobId] == nil {
+            jobContext[jobId] = JobContext(
+                spaceId: spaceId,
+                uploadURL: nil,
+                qualityProfile: qualityProfile,
+                videoByteSize: nil,
+                serverStatus: "processing",
+                overallProgress: 0.3,
+                idempotencyKey: nil
+            )
+        }
+        lock.unlock()
+    }
+
+    /// List owner Gaussian spaces (includes uploading / processing / ready / failed).
+    func listGaussianSpaces() async throws -> [GaussianSpaceListItem] {
+        let url = try Self.apiURL(base: config.apiBaseURL, path: "/api/gaussian-spaces")
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        try attachAuth(&req)
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw SpaceGenerationError.networkUnavailable
+        }
+        let decoded = try JSONDecoder().decode(GaussianListDTO.self, from: data)
+        return decoded.spaces.map {
+            GaussianSpaceListItem(id: $0.id, name: $0.name, status: $0.status ?? "processing")
+        }
+    }
+
     private func attachAuth(_ request: inout URLRequest) throws {
         guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
             throw SpaceGenerationError.unauthorized
@@ -377,4 +420,20 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
             }
         }
     }
+
+    private struct GaussianListDTO: Decodable {
+        var spaces: [GaussianSpaceDTO]
+    }
+
+    private struct GaussianSpaceDTO: Decodable {
+        var id: String
+        var name: String
+        var status: String?
+    }
+}
+
+struct GaussianSpaceListItem: Equatable, Sendable {
+    var id: String
+    var name: String
+    var status: String
 }

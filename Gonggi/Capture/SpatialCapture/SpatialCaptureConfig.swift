@@ -57,4 +57,14 @@ enum SpatialCaptureConfig {
         GonggiFeatureFlags.show3DGSCaptureFlows
     }
     #endif
+
+    /// First JPEG in the spatial package frames/ directory (for library thumbnail).
+    static func firstKeyframeJPEG(packageRoot: URL) -> URL? {
+        let frames = packageRoot.appendingPathComponent(framesDirectoryName, isDirectory: true)
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: frames.path))?
+            .filter { $0.lowercased().hasSuffix(".jpg") || $0.lowercased().hasSuffix(".jpeg") }
+            .sorted() ?? []
+        guard let first = names.first else { return nil }
+        return frames.appendingPathComponent(first)
+    }
 }

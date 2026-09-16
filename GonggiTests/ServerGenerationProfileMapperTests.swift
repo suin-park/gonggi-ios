@@ -11,7 +11,7 @@ final class ServerGenerationProfileMapperTests: XCTestCase {
     }
 
     func testMainlineProfilesPassthrough() {
-        for profile in ["capture_dense_v2", "fullres_max", "fullres_max_raw", "fullres_dense_d1"] {
+        for profile in ["capture_dense_v2", "fullres_max", "fullres_max_raw", "fullres_dense_d1", "spatial_package_v1"] {
             XCTAssertEqual(
                 ServerGenerationProfileMapper.resolveServerProfile(guideQualityProfile: profile),
                 profile

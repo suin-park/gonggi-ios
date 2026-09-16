@@ -19,10 +19,6 @@ final class AppState: ObservableObject {
     @Published var pendingCatalogPlacement: PendingCatalogPlacement?
     /// Catalog curtain → LatLong seed/composite flow (consume-once). Not persisted.
     @Published var pendingCurtainPlacement: PendingCurtainPlacement?
-    /// Space Detail → VR multi-point space cleanup (consume-once). Not persisted.
-    @Published var pendingSpaceCleanup: PendingSpaceCleanup?
-    /// Cleanup result → catalog placement base revision (consume-once, space-scoped).
-    @Published var pendingCleanupBaseRevision: PendingCleanupBaseRevision?
     @Published var spaceLinkUserMessage: String?
     /// Bumped on account reset so views dismiss open VR covers.
     @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
@@ -34,11 +30,14 @@ final class AppState: ObservableObject {
     @Published var pendingPlacementResultHighlightId: String?
     /// Soft Library refresh signal — does not block tab transition.
     @Published private(set) var libraryRefreshEpoch: UInt64 = 0
+    /// Banner after Spatial Capture handoff to Library ("3D 공간 생성을 시작했어요.").
+    @Published var gaussianLibraryBanner: String?
     /// Unread Gonggi notification badge (likes, comments, admin announcements).
     @Published var notificationUnreadCount: Int = 0
     /// Debounce repeated 「보관함」/「홈」 taps while covers tear down.
     private var isExitingVRToLibrary = false
     private var isExitingVRToHome = false
+    private var gaussianPollTask: Task<Void, Never>?
 
     let spaceService: SpaceGenerationService
     let jobStore: SpaceJobStore
@@ -117,8 +116,6 @@ final class AppState: ObservableObject {
         pendingAssetPlacement = nil
         pendingCatalogPlacement = nil
         pendingCurtainPlacement = nil
-        pendingSpaceCleanup = nil
-        pendingCleanupBaseRevision = nil
         spaceLinkUserMessage = nil
         preferredLibraryCategory = nil
         pendingLibraryTab = nil
@@ -404,6 +401,7 @@ final class AppState: ObservableObject {
     func ensureSpaceGenerationPolling() {
         jobRuntime.ensurePolling()
         AdvancedCaptureAnalysisRuntime.shared.ensurePolling()
+        ensureGaussianGenerationPolling()
     }
 
     func addSpace(from summary: CaptureSessionSummary, jobId: String) {
@@ -428,6 +426,7 @@ final class AppState: ObservableObject {
         let live = jobStore.jobs.map { job in
             SpaceRepairCardPresentation.enrich(job.asSpaceRecord())
         }
+        let gaussian = GaussianGenerationStore.shared.asSpaceRecords()
         #if DEBUG
         if ScreenshotLaunchConfig.isActive {
             spaces = live.isEmpty ? SpaceRecord.sampleArchive : live
@@ -436,12 +435,71 @@ final class AppState: ObservableObject {
         #endif
         // Account isolation: empty catalog stays empty (no foreign/sample bleed).
         // Mock demos may still seed via isMockMode + sample when intentionally empty.
-        if isMockMode, live.isEmpty {
+        if isMockMode, live.isEmpty, gaussian.isEmpty {
             spaces = SpaceRecord.sampleArchive
         } else {
-            spaces = live
+            // Gaussian cards first (most recent generation), then LatLong / catalog jobs.
+            var merged = gaussian
+            let gaussianIds = Set(gaussian.map(\.id))
+            for row in live where !gaussianIds.contains(row.id) {
+                merged.append(row)
+            }
+            spaces = merged
         }
         schedulePendingSpaceLinkFinalize()
+    }
+
+    func ensureGaussianGenerationPolling() {
+        rebuildSpaces()
+        guard gaussianPollTask == nil else { return }
+        gaussianPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pollGaussianJobsOnce()
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if GaussianGenerationStore.shared.activeJobs.isEmpty {
+                    self?.gaussianPollTask = nil
+                    break
+                }
+            }
+        }
+    }
+
+    private func pollGaussianJobsOnce() async {
+        let active = GaussianGenerationStore.shared.activeJobs
+        guard !active.isEmpty else { return }
+        guard let locker = spaceService as? LockerSpaceGenerationService else { return }
+        for job in active {
+            locker.seedJobContext(
+                jobId: job.jobId,
+                spaceId: job.spaceId,
+                qualityProfile: job.qualityProfile
+            )
+            do {
+                let status = try await locker.fetchStatus(jobId: job.jobId)
+                let server = status.steps.contains(where: {
+                    if case .failed = $0.status { return true }
+                    return false
+                }) ? "failed" : (status.overallProgress >= 0.99 ? "ready" : "processing")
+                let mapped: String
+                if server == "failed" {
+                    mapped = "failed"
+                } else if status.overallProgress >= 0.99 {
+                    mapped = "ready"
+                } else {
+                    mapped = "processing"
+                }
+                GaussianGenerationStore.shared.applyRemote(
+                    spaceId: job.spaceId,
+                    status: mapped,
+                    stage: nil,
+                    progress: status.overallProgress,
+                    failureCode: mapped == "failed" ? "generation_failed" : nil
+                )
+            } catch {
+                // Keep polling; transient network.
+            }
+        }
+        rebuildSpaces()
     }
 
     /// Build 78 — soft-delete GonggiSpace via API, then local remove. Fails without removing card.
@@ -626,32 +684,6 @@ final class AppState: ObservableObject {
         guard let pending = peekPendingCurtainPlacement(matchingViewerSessionId: matchingViewerSessionId)
         else { return nil }
         pendingCurtainPlacement = nil
-        return pending
-    }
-
-    func peekPendingSpaceCleanup(matchingViewerSessionId: String) -> PendingSpaceCleanup? {
-        guard let pending = pendingSpaceCleanup,
-              pending.matches(viewerSessionId: matchingViewerSessionId, spaces: spaces)
-        else { return nil }
-        return pending
-    }
-
-    func consumePendingSpaceCleanup(matchingViewerSessionId: String) -> PendingSpaceCleanup? {
-        guard let pending = peekPendingSpaceCleanup(matchingViewerSessionId: matchingViewerSessionId)
-        else { return nil }
-        pendingSpaceCleanup = nil
-        return pending
-    }
-
-    func peekPendingCleanupBaseRevision(matchingSpace: SpaceRecord) -> PendingCleanupBaseRevision? {
-        guard let pending = pendingCleanupBaseRevision, pending.matches(space: matchingSpace)
-        else { return nil }
-        return pending
-    }
-
-    func consumePendingCleanupBaseRevision(matchingSpace: SpaceRecord) -> PendingCleanupBaseRevision? {
-        guard let pending = peekPendingCleanupBaseRevision(matchingSpace: matchingSpace) else { return nil }
-        pendingCleanupBaseRevision = nil
         return pending
     }
 }

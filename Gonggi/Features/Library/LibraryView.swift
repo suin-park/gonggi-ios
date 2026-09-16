@@ -150,14 +150,46 @@ struct LibraryView: View {
             .padding(.top, GonggiSpacing.sm)
         } else {
             LazyVStack(spacing: GonggiSpacing.md) {
+                if let banner = appState.gaussianLibraryBanner {
+                    Text(banner)
+                        .font(GonggiTypography.body(14))
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .padding(GonggiSpacing.md)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(GonggiColors.surfaceSecondary.opacity(0.6))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .onAppear {
+                            Task {
+                                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                                if appState.gaussianLibraryBanner == banner {
+                                    appState.gaussianLibraryBanner = nil
+                                }
+                            }
+                        }
+                }
                 ForEach(appState.spaces) { space in
                     MemoryArchiveCard(
                         space: space,
                         onOpenDetail: {
-                            selectedSpace = space
+                            if let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: space.id) {
+                                if space.status == .ready {
+                                    gaussianViewerSpaceId = gid
+                                    showGaussianViewer = true
+                                } else {
+                                    selectedSpace = space
+                                }
+                            } else {
+                                selectedSpace = space
+                            }
                         },
                         onViewSpace: {
-                            Task { await openViewer(jobId: space.id) }
+                            if let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: space.id) {
+                                guard space.status == .ready else { return }
+                                gaussianViewerSpaceId = gid
+                                showGaussianViewer = true
+                            } else {
+                                Task { await openViewer(jobId: space.id) }
+                            }
                         }
                     )
                 }

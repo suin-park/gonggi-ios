@@ -7,6 +7,8 @@ final class ProcessingViewModel: ObservableObject {
     @Published var status: GenerationJobStatus?
     @Published var errorMessage: String?
     @Published var isComplete = false
+    /// Async handoff: upload+start succeeded — leave Processing UI for Library.
+    @Published var handoff: (jobId: String, spaceId: String)?
 
     private let spaceService: SpaceGenerationService
     private var pollTask: Task<Void, Never>?
@@ -23,11 +25,7 @@ final class ProcessingViewModel: ObservableObject {
     ) {
         pollTask?.cancel()
         pollTask = Task {
-            let resolvedProfile = ServerGenerationProfileMapper.resolveServerProfile(
-                guideQualityProfile: qualityProfile
-            )
             var generation = CaptureGenerationDiagnostics.empty
-            generation.createRequestProfile = resolvedProfile
 
             func persistGeneration() {
                 CaptureDiagnosticsStore.writeGenerationDiagnostics(
@@ -37,51 +35,109 @@ final class ProcessingViewModel: ObservableObject {
             }
 
             do {
-                let videoURL = summary.videoURL
-                    ?? (try? CaptureSessionStore.videoURL(sessionId: summary.sessionId))
-                let resolvedURL: URL? = {
-                    guard let videoURL, FileManager.default.fileExists(atPath: videoURL.path) else {
-                        return nil
-                    }
-                    return videoURL
-                }()
+                let useSpatialPackage =
+                    GonggiFeatureFlags.show3DGSCaptureFlows
+                    && (summary.spatialCapturePackageValid == true)
+                let packageRoot = summary.spatialCapturePackageURL
+                    ?? (try? CaptureSessionStore.spatialCapturePackageDirectory(sessionId: summary.sessionId))
 
-                let byteSize: Int
                 let uploadURL: URL
-                if let resolvedURL,
-                   let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedURL.path),
-                   let size = (attrs[.size] as? NSNumber)?.intValue,
-                   size > 1024 {
-                    byteSize = size
-                    uploadURL = resolvedURL
-                } else if allowStubVideoInMock {
-                    // Mock UI only — never upload stubs to production video-gaussian.
-                    let tmp = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("mock-capture-\(UUID().uuidString).mov")
-                    try Data(repeating: 0, count: 2048).write(to: tmp)
-                    byteSize = 2048
-                    uploadURL = tmp
+                let byteSize: Int
+                let createRequest: CreateSpaceRequest
+                let resolvedProfile: String
+                var zipCreateSec: Double?
+
+                if useSpatialPackage, let packageRoot {
+                    let zipDir = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("spatial-zip-\(UUID().uuidString)", isDirectory: true)
+                    let zipped = try SpatialCapturePackageZipper.buildArchive(
+                        packageRoot: packageRoot,
+                        destinationDirectory: zipDir
+                    )
+                    uploadURL = zipped.zipURL
+                    byteSize = zipped.byteSize
+                    zipCreateSec = zipped.createDurationSec
+                    resolvedProfile = ServerGenerationProfileMapper.spatialPackageProfile
+                    generation.createRequestProfile = resolvedProfile
+                    createRequest = CreateSpaceRequest(
+                        name: summary.suggestedName,
+                        visibility: "private",
+                        videoByteSize: byteSize,
+                        videoFilename: SpatialCapturePackageZipper.archiveFileName,
+                        videoContentType: "application/zip",
+                        durationSec: summary.duration,
+                        qualityProfile: resolvedProfile,
+                        idempotencyKey: nil,
+                        frameCount: zipped.frameCount
+                    )
+                    log.info(
+                        "spatial zip ready bytes=\(byteSize) frames=\(zipped.frameCount) createSec=\(zipped.createDurationSec)"
+                    )
                 } else {
-                    throw SpaceGenerationError.unknown("촬영 동영상(original.mov)을 찾을 수 없어요. 다시 촬영해 주세요.")
+                    resolvedProfile = ServerGenerationProfileMapper.resolveServerProfile(
+                        guideQualityProfile: qualityProfile
+                    )
+                    generation.createRequestProfile = resolvedProfile
+
+                    let videoURL = summary.videoURL
+                        ?? (try? CaptureSessionStore.videoURL(sessionId: summary.sessionId))
+                    let resolvedURL: URL? = {
+                        guard let videoURL, FileManager.default.fileExists(atPath: videoURL.path) else {
+                            return nil
+                        }
+                        return videoURL
+                    }()
+
+                    if let resolvedURL,
+                       let attrs = try? FileManager.default.attributesOfItem(atPath: resolvedURL.path),
+                       let size = (attrs[.size] as? NSNumber)?.intValue,
+                       size > 1024 {
+                        byteSize = size
+                        uploadURL = resolvedURL
+                    } else if allowStubVideoInMock {
+                        let tmp = FileManager.default.temporaryDirectory
+                            .appendingPathComponent("mock-capture-\(UUID().uuidString).mov")
+                        try Data(repeating: 0, count: 2048).write(to: tmp)
+                        byteSize = 2048
+                        uploadURL = tmp
+                    } else {
+                        throw SpaceGenerationError.unknown("촬영 동영상(original.mov)을 찾을 수 없어요. 다시 촬영해 주세요.")
+                    }
+                    createRequest = CreateSpaceRequest(
+                        name: summary.suggestedName,
+                        visibility: "private",
+                        videoByteSize: byteSize,
+                        durationSec: summary.duration,
+                        qualityProfile: resolvedProfile,
+                        idempotencyKey: nil
+                    )
                 }
 
                 let idempotencyKey = "gonggi-\(UUID().uuidString)"
                 generation.idempotencyKey = idempotencyKey
                 persistGeneration()
 
-                let created = try await spaceService.createSpace(
-                    CreateSpaceRequest(
-                        name: summary.suggestedName,
-                        visibility: "private",
-                        videoByteSize: byteSize,
-                        durationSec: summary.duration,
-                        qualityProfile: resolvedProfile,
-                        idempotencyKey: idempotencyKey
-                    )
-                )
+                var request = createRequest
+                request.idempotencyKey = idempotencyKey
+                let created = try await spaceService.createSpace(request)
                 generation.createStatus = 200
                 generation.idempotencyKey = created.idempotencyKey ?? idempotencyKey
                 persistGeneration()
+
+                // Show in Library immediately (before upload finishes) as uploading.
+                let thumb = packageRoot.flatMap { SpatialCaptureConfig.firstKeyframeJPEG(packageRoot: $0) }
+                GaussianGenerationStore.shared.upsert(
+                    spaceId: created.spaceId,
+                    jobId: created.jobId,
+                    name: summary.suggestedName,
+                    qualityProfile: resolvedProfile,
+                    status: "uploading",
+                    captureId: summary.captureId,
+                    sessionId: summary.sessionId,
+                    stage: useSpatialPackage ? "uploading_package" : "uploading",
+                    progress: 0.05,
+                    thumbnailSourceJPEG: thumb
+                )
 
                 let meta = CaptureUploadMetadata(
                     durationSec: summary.duration,
@@ -95,6 +151,7 @@ final class ProcessingViewModel: ObservableObject {
                         "viewAngleDiversity": summary.quality.viewAngleDiversity,
                         "overlapAvailable": summary.quality.overlapAvailable ? 1 : 0,
                         "maxBaselineM": summary.dataFoundation?.maxBaselineM ?? 0,
+                        "zipCreateSec": zipCreateSec ?? -1,
                     ]
                 )
                 generation.uploadStarted = true
@@ -105,12 +162,36 @@ final class ProcessingViewModel: ObservableObject {
                 generation.uploadFinished = true
                 persistGeneration()
 
+                GaussianGenerationStore.shared.applyRemote(
+                    spaceId: created.spaceId,
+                    status: "queued",
+                    stage: "package_uploaded",
+                    progress: 0.15,
+                    failureCode: nil
+                )
+
                 try await spaceService.startGeneration(jobId: created.jobId)
                 generation.generationStarted = true
                 persistGeneration()
 
-                status = try await spaceService.fetchStatus(jobId: created.jobId)
-                await poll(jobId: created.jobId, spaceId: created.spaceId)
+                GaussianGenerationStore.shared.applyRemote(
+                    spaceId: created.spaceId,
+                    status: "processing",
+                    stage: "queued",
+                    progress: 0.2,
+                    failureCode: nil
+                )
+                GaussianGenerationStore.shared.markHandedOff(spaceId: created.spaceId)
+
+                // Async UX: do not wait on Processing screen for reconstruction.
+                handoff = (created.jobId, created.spaceId)
+                status = GenerationJobStatus(
+                    jobId: created.jobId,
+                    spaceId: created.spaceId,
+                    steps: [],
+                    estimatedMinutesRemaining: 8,
+                    overallProgress: 0.2
+                )
             } catch {
                 if let gen = error as? SpaceGenerationError {
                     if let status = gen.httpStatus {
@@ -123,35 +204,13 @@ final class ProcessingViewModel: ObservableObject {
                 persistGeneration()
                 SpaceGenerationErrorPresenter.logFailure(
                     error: error,
-                    requestProfile: resolvedProfile,
+                    requestProfile: generation.createRequestProfile ?? qualityProfile,
                     idempotencyKey: generation.idempotencyKey
                 )
                 log.error(
-                    "create/upload/start failed profile=\(resolvedProfile, privacy: .public) code=\(generation.backendErrorCode ?? "nil", privacy: .public) status=\(generation.createStatus ?? -1)"
+                    "create/upload/start failed code=\(generation.backendErrorCode ?? "nil", privacy: .public)"
                 )
                 errorMessage = SpaceGenerationErrorPresenter.userMessage(for: error)
-            }
-        }
-    }
-
-    private func poll(jobId: String, spaceId: String) async {
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard let fetched = try? await spaceService.fetchStatus(jobId: jobId) else { continue }
-            status = fetched
-            if fetched.overallProgress >= 0.99 {
-                isComplete = true
-                completedSpaceId = spaceId
-                break
-            }
-            // Surface hard failures instead of spinning forever.
-            if let errStep = fetched.steps.first(where: {
-                if case .failed = $0.status { return true }
-                return false
-            }) {
-                _ = errStep
-                errorMessage = "3DGS 생성에 실패했어요. 잠시 후 다시 시도해 주세요."
-                break
             }
         }
     }
@@ -176,6 +235,8 @@ struct ProcessingView: View {
     let sourceLatLongSessionId: String?
     let allowStubVideoInMock: Bool
     let onComplete: (String, String) -> Void
+    /// Called when upload+start succeeded — navigate to Library (async reconstruction).
+    let onHandedOff: (String, String) -> Void
     let onDismiss: () -> Void
     /// DEBUG screenshot mode only — freezes UI without starting pipeline.
     private let screenshotFrozenStatus: GenerationJobStatus?
@@ -194,6 +255,7 @@ struct ProcessingView: View {
         allowStubVideoInMock: Bool = false,
         screenshotFrozenStatus: GenerationJobStatus? = nil,
         onComplete: @escaping (String, String) -> Void,
+        onHandedOff: @escaping (String, String) -> Void = { _, _ in },
         onDismiss: @escaping () -> Void
     ) {
         self.summary = summary
@@ -203,6 +265,7 @@ struct ProcessingView: View {
         self.allowStubVideoInMock = allowStubVideoInMock
         self.screenshotFrozenStatus = screenshotFrozenStatus
         self.onComplete = onComplete
+        self.onHandedOff = onHandedOff
         self.onDismiss = onDismiss
         _viewModel = StateObject(wrappedValue: ProcessingViewModel(spaceService: spaceService))
     }
@@ -272,6 +335,11 @@ struct ProcessingView: View {
                 qualityProfile: qualityProfile,
                 allowStubVideoInMock: allowStubVideoInMock
             )
+        }
+        .onChange(of: viewModel.handoff?.spaceId) { _, spaceId in
+            guard let spaceId, let handoff = viewModel.handoff else { return }
+            GonggiHaptics.success()
+            onHandedOff(handoff.jobId, spaceId)
         }
         .onDisappear { viewModel.cancel() }
     }
