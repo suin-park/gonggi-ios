@@ -147,11 +147,11 @@ struct SpaceCleanupSelectionBanner: View {
     }
 }
 
-/// Numbered markers + optional detected polygon overlays projected into the current VR view.
+/// Numbered markers + detected polygon overlays projected into the current VR view.
+/// Uses equirect UV projection only — never a screen-fixed latlong mask image (that drifts when panning).
 struct SpaceCleanupVROverlay: View {
     let points: [SpaceCleanupSelectionPoint]
     let polygons: [[SpaceCleanupUvPoint]]
-    let maskPreviewURL: URL?
     let projectEquirectDegrees: (Float, Float) -> CGPoint?
     var onMaskPreviewLoaded: ((Bool) -> Void)? = nil
     /// Bumped when camera look changes so markers re-project.
@@ -160,27 +160,6 @@ struct SpaceCleanupVROverlay: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                if let maskPreviewURL {
-                    AsyncImage(url: maskPreviewURL) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .opacity(0.28)
-                                .allowsHitTesting(false)
-                                .onAppear { onMaskPreviewLoaded?(true) }
-                        case .failure:
-                            Color.clear.onAppear { onMaskPreviewLoaded?(false) }
-                        case .empty:
-                            Color.clear
-                        @unknown default:
-                            Color.clear
-                        }
-                    }
-                    .frame(width: geo.size.width, height: geo.size.height)
-                }
-
                 ForEach(Array(polygons.enumerated()), id: \.offset) { _, poly in
                     polygonPath(poly, in: geo.size)
                         .fill(GonggiColors.accentCyan.opacity(0.28))
@@ -189,9 +168,7 @@ struct SpaceCleanupVROverlay: View {
                                 .stroke(GonggiColors.accentCyan.opacity(0.85), lineWidth: 2)
                         )
                         .allowsHitTesting(false)
-                        .onAppear {
-                            if maskPreviewURL == nil { onMaskPreviewLoaded?(true) }
-                        }
+                        .onAppear { onMaskPreviewLoaded?(true) }
                 }
 
                 ForEach(Array(points.enumerated()), id: \.element.id) { index, point in

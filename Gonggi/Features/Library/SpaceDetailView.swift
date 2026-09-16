@@ -166,22 +166,6 @@ struct SpaceDetailView: View {
                     )
                     showSpaceCleanupSheet = false
                     Task { await openViewerForSpaceCleanup() }
-                },
-                onRunAll: {
-                    let spaceKey = liveSpace.sessionId ?? liveSpace.id
-                    spaceCleanupSession.begin(
-                        spaceId: spaceKey,
-                        sourceRevisionId: liveSpace.latestRevisionId ?? "rev-0-base"
-                    )
-                    spaceCleanupSession.consentAccepted = true
-                    spaceCleanupSession.selectMode(.allFurniture)
-                    Task {
-                        await spaceCleanupSession.submitAllFurniture()
-                        showSpaceCleanupSheet = false
-                        if let resultId = spaceCleanupSession.job?.placementResultId {
-                            appState.openPlacementResults(resultId: resultId)
-                        }
-                    }
                 }
             )
             .presentationDetents([.medium, .large])

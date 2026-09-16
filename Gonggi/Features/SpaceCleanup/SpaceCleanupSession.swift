@@ -174,7 +174,6 @@ final class SpaceCleanupSession: ObservableObject {
     var canConfirm: Bool {
         guard let job, job.isAwaitingConfirmation else { return false }
         guard !(job.detectedObjects ?? []).isEmpty else { return false }
-        guard maskOverlayReady else { return false }
         return !isSubmitting
     }
 
@@ -211,6 +210,7 @@ final class SpaceCleanupSession: ObservableObject {
         startPollingIfNeeded()
     }
 
+    /// Confirm detected masks, then hand off to 보관함 immediately (no VR edit polling).
     func confirmMasks() async {
         guard canConfirm, let jobId = job?.id else {
             errorMessage = "마스크를 확인한 뒤에만 정리할 수 있어요."
@@ -224,10 +224,11 @@ final class SpaceCleanupSession: ObservableObject {
         defer { isSubmitting = false }
         do {
             job = try await client.confirmJob(id: jobId)
-            startPollingIfNeeded()
-            if job?.isCompleted == true {
-                onAccepted?(job?.placementResultId)
-            }
+            // Curtain-style async handoff: leave VR; locker polls PROCESSING.
+            cancelPolling()
+            let resultId = job?.placementResultId
+            isActive = false
+            onAccepted?(resultId)
         } catch let error as SpaceCleanupAPIError {
             errorMessage = error.userMessage
         } catch {
