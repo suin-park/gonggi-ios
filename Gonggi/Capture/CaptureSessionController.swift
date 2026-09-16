@@ -338,7 +338,7 @@ final class CaptureSessionController {
             acceptReason: keyDecision.reason,
             jpegURL: jpegURL,
             debugPrincipalPointJPEGURL: debugURL,
-            optionalDepthRelativePath: optionalDepthRelativePath
+            optionalDepthRelativePath: nil
         )
 
         let enqueued = jpegEncodeQueue.tryEnqueue(
