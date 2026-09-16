@@ -24,7 +24,7 @@ final class SpatialJPEGEncodeQueue {
         var cy: Float
     }
 
-    enum FailureReason: String {
+    enum FailureReason: String, Error {
         case encodeOrWriteFailed = "jpeg_write_failed"
     }
 
