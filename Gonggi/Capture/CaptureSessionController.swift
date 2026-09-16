@@ -1,5 +1,6 @@
 import ARKit
 import CoreGraphics
+import CoreVideo
 import Foundation
 import UIKit
 
@@ -25,6 +26,11 @@ final class CaptureSessionController {
     private var lastKeyframeTimestamp: Double?
     private var lastKeyframeTransform: simd_float4x4?
     private var keyframe3DGSCount = 0
+    private var acceptedSpatialKeyframes: [SpatialCapturePackageBuilder.AcceptedKeyframe] = []
+    private var keyframeDecisions: [SpatialCaptureKeyframeDecision] = []
+    private var rejectedKeyframeDecisionCount = 0
+    private var trackingFailureEventCount = 0
+    private var packagePaths: SpatialCapturePackagePaths?
     private var startedAt = Date()
     private var sessionStartTimestamp: TimeInterval = 0
     private(set) var isActive = false
@@ -32,6 +38,11 @@ final class CaptureSessionController {
     private var manifestURL: URL?
     private var sceneDepthConfigured = false
     private var orientationContract: CaptureImageOrientationContract?
+    private let jpegEncodeQueue = SpatialJPEGEncodeQueue()
+    private let runtimeTelemetry = SpatialCaptureRuntimeTelemetry()
+    private let spatialStateLock = NSLock()
+    private var acceptingSpatialKeyframes = true
+    private var pendingDepthByFrameId: [String: String] = [:]
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -63,17 +74,32 @@ final class CaptureSessionController {
         lastKeyframeTimestamp = nil
         lastKeyframeTransform = nil
         keyframe3DGSCount = 0
+        acceptedSpatialKeyframes = []
+        keyframeDecisions = []
+        rejectedKeyframeDecisionCount = 0
+        trackingFailureEventCount = 0
+        packagePaths = nil
         orientationContract = nil
+        acceptingSpatialKeyframes = true
+        pendingDepthByFrameId = [:]
+        runtimeTelemetry.reset()
+        jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
         let url = try CaptureSessionStore.videoURL(sessionId: sessionId)
         videoURL = url
         manifestURL = try CaptureSessionStore.manifestURL(sessionId: sessionId)
+        packagePaths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
         try videoRecorder.startRecording(to: url, prefer4K: true)
         isActive = true
     }
 
     func ingest(frame: ARFrame) {
         guard isActive else { return }
+        let callbackStart = CFAbsoluteTimeGetCurrent()
+        defer {
+            runtimeTelemetry.recordCallbackDurationMs((CFAbsoluteTimeGetCurrent() - callbackStart) * 1000)
+        }
+
         if sessionStartTimestamp == 0 {
             sessionStartTimestamp = frame.timestamp
             telemetry.reset(startTime: frame.timestamp)
@@ -84,8 +110,8 @@ final class CaptureSessionController {
             telemetry.ingest(frame: frame)
             sharpnessAnalyzer.scheduleSample(pixelBuffer: frame.capturedImage, at: frame.timestamp)
             let trackingNormal = frame.camera.trackingState == .normal
+            runtimeTelemetry.recordReceivedFrame(trackingNormal: trackingNormal)
             let transform = frame.camera.transform
-            // Do not mutate translationBaseline on dropped video frames (path length / poses stay synced).
             let motionQuality = telemetry.motionQuality
             coverage.observe(
                 cameraTransform: transform,
@@ -107,20 +133,12 @@ final class CaptureSessionController {
             return
         }
 
-        if orientationContract == nil {
-            let transform = CGAffineTransform(rotationAngle: .pi / 2) // placeholder until finish; overwrite from Result
-            orientationContract = CaptureFrameContract.makeOrientationContract(
-                capturedWidth: written.imageWidth,
-                capturedHeight: written.imageHeight,
-                imageResolution: frame.camera.imageResolution,
-                preferredTransform: transform
-            )
-        }
+        let trackingNormal = frame.camera.trackingState == .normal
+        runtimeTelemetry.recordReceivedFrame(trackingNormal: trackingNormal)
 
         telemetry.ingest(frame: frame)
         sharpnessAnalyzer.scheduleSample(pixelBuffer: frame.capturedImage, at: frame.timestamp)
 
-        let trackingNormal = frame.camera.trackingState == .normal
         let transform = frame.camera.transform
         let trackingLabel = CaptureFrameContract.trackingLabel(frame.camera.trackingState)
         discontinuity.ingest(transform: transform, trackingState: trackingLabel)
@@ -137,24 +155,65 @@ final class CaptureSessionController {
         )
         coverageSpatialIndex.replace(cells: coverage.snapshotCells())
 
+        let sharpSnap = sharpnessAnalyzer.snapshot()
+        let lastSample = telemetry.samples.last
+        let lowTexture = estimateLowTexture()
+        if !trackingNormal {
+            trackingFailureEventCount += 1
+        }
+
         let keyDecision = KeyframeSelector3DGS.shouldAccept(
             timestamp: frame.timestamp,
             transform: transform,
             trackingNormal: trackingNormal,
             lastKeyframeTimestamp: lastKeyframeTimestamp,
-            lastKeyframeTransform: lastKeyframeTransform
+            lastKeyframeTransform: lastKeyframeTransform,
+            keyframeCount: keyframe3DGSCount,
+            sharpnessState: sharpSnap.state,
+            motionSpeed: lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed,
+            angularVelocity: lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity,
+            lowTextureScore: lowTexture
         )
-        let isKeyframe = keyDecision.accept
+
+        var isKeyframe = false
         var depthRef: String?
         var confRef: String?
-        if isKeyframe {
-            translationBaseline.acceptKeyframe(transform: transform)
-            lastKeyframeTimestamp = frame.timestamp
-            lastKeyframeTransform = transform
-            keyframe3DGSCount += 1
-            let refs = depthSampler.writeIfAvailable(frame: frame, frameIndex: written.videoFrameIndex)
-            depthRef = refs.depth
-            confRef = refs.confidence
+
+        if keyDecision.accept, acceptingSpatialKeyframes, let paths = packagePaths {
+            let enqueued = enqueueSpatialKeyframe(
+                frame: frame,
+                transform: transform,
+                trackingLabel: trackingLabel,
+                keyDecision: keyDecision,
+                sharpSnap: sharpSnap,
+                lastSample: lastSample,
+                eval: eval,
+                lowTexture: lowTexture,
+                paths: paths
+            )
+            if enqueued {
+                isKeyframe = true
+                let refs = depthSampler.writeIfAvailable(frame: frame, frameIndex: written.videoFrameIndex)
+                depthRef = refs.depth
+                confRef = refs.confidence
+                if let depth = refs.depth {
+                    let frameId = String(format: "kf_%05d", keyframe3DGSCount)
+                    spatialStateLock.lock()
+                    pendingDepthByFrameId[frameId] = depth
+                    spatialStateLock.unlock()
+                }
+            }
+        } else if !keyDecision.accept {
+            rejectedKeyframeDecisionCount += 1
+            runtimeTelemetry.recordReject(reason: keyDecision.reason)
+            appendKeyframeDecision(
+                SpatialCaptureKeyframeDecision(
+                    arTimestampSeconds: frame.timestamp,
+                    accepted: false,
+                    reason: keyDecision.reason,
+                    frameId: nil
+                )
+            )
         }
 
         let cellId = CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform))
@@ -200,6 +259,198 @@ final class CaptureSessionController {
         recordDiagnostics(trackingNormal: trackingNormal)
     }
 
+    /// Snapshot same ARFrame → enqueue JPEG off AR callback. Returns true if reserved/enqueued.
+    @discardableResult
+    private func enqueueSpatialKeyframe(
+        frame: ARFrame,
+        transform: simd_float4x4,
+        trackingLabel: String,
+        keyDecision: KeyframeSelector3DGS.Decision,
+        sharpSnap: FrameSharpnessAnalyzer.Snapshot,
+        lastSample: TelemetrySample?,
+        eval: TranslationBaselineAnalyzer.Evaluation,
+        lowTexture: Double,
+        paths: SpatialCapturePackagePaths
+    ) -> Bool {
+        if jpegEncodeQueue.currentDepth >= SpatialCaptureConfig.jpegQueueMaxDepth {
+            rejectedKeyframeDecisionCount += 1
+            runtimeTelemetry.recordReject(reason: "jpeg_queue_full")
+            appendKeyframeDecision(
+                SpatialCaptureKeyframeDecision(
+                    arTimestampSeconds: frame.timestamp,
+                    accepted: false,
+                    reason: "jpeg_queue_full",
+                    frameId: nil
+                )
+            )
+            return false
+        }
+
+        guard let ownedBuffer = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) else {
+            rejectedKeyframeDecisionCount += 1
+            runtimeTelemetry.recordReject(reason: "pixel_copy_failed")
+            appendKeyframeDecision(
+                SpatialCaptureKeyframeDecision(
+                    arTimestampSeconds: frame.timestamp,
+                    accepted: false,
+                    reason: "pixel_copy_failed",
+                    frameId: nil
+                )
+            )
+            return false
+        }
+
+        let nextIndex = keyframe3DGSCount + 1
+        let frameId = String(format: "kf_%05d", nextIndex)
+        let jpegURL = SpatialCapturePackageBuilder.frameJPEGURL(paths: paths, frameId: frameId)
+        let debugURL: URL? = SpatialCaptureConfig.debugDrawPrincipalPoint
+            ? SpatialCapturePackageBuilder.debugPrincipalPointJPEGURL(paths: paths, frameId: frameId)
+            : nil
+
+        let sensorW = CVPixelBufferGetWidth(ownedBuffer)
+        let sensorH = CVPixelBufferGetHeight(ownedBuffer)
+        let resW = Int(frame.camera.imageResolution.width)
+        let resH = Int(frame.camera.imageResolution.height)
+
+        let snapshot = SpatialKeyframeSnapshot(
+            frameId: frameId,
+            arTimestampSeconds: frame.timestamp,
+            ownedPixelBuffer: ownedBuffer,
+            cameraToWorld: transform,
+            trackingState: trackingLabel,
+            fx: frame.camera.intrinsics.columns.0.x,
+            fy: frame.camera.intrinsics.columns.1.y,
+            cx: frame.camera.intrinsics.columns.2.x,
+            cy: frame.camera.intrinsics.columns.2.y,
+            sensorImageWidth: sensorW,
+            sensorImageHeight: sensorH,
+            imageResolutionWidth: resW,
+            imageResolutionHeight: resH,
+            sharpnessScore: sharpSnap.score,
+            sharpnessState: sharpSnap.state.rawValue,
+            motionSpeed: lastSample?.translationSpeedMps,
+            angularVelocity: lastSample?.angularVelocityRadPerSec,
+            parallaxGrade: eval.grade.rawValue,
+            translationBaselineM: eval.translationBaselineM,
+            overlapScore: overlapAnalyzer.lastScore,
+            overlapState: overlapAnalyzer.lastState.rawValue,
+            lowTextureScore: lowTexture,
+            acceptReason: keyDecision.reason,
+            jpegURL: jpegURL,
+            debugPrincipalPointJPEGURL: debugURL,
+            optionalDepthRelativePath: optionalDepthRelativePath
+        )
+
+        let enqueued = jpegEncodeQueue.tryEnqueue(
+            SpatialJPEGEncodeQueue.Job(snapshot: snapshot),
+            onDepthChange: { [weak self] depth in
+                self?.runtimeTelemetry.updateQueueDepth(depth)
+            },
+            completion: { [weak self] result in
+                self?.handleJPEGEncodeResult(result)
+            }
+        )
+
+        if !enqueued {
+            rejectedKeyframeDecisionCount += 1
+            runtimeTelemetry.recordReject(reason: "jpeg_queue_full")
+            appendKeyframeDecision(
+                SpatialCaptureKeyframeDecision(
+                    arTimestampSeconds: frame.timestamp,
+                    accepted: false,
+                    reason: "jpeg_queue_full",
+                    frameId: nil
+                )
+            )
+            return false
+        }
+
+        // Reserve selector state immediately so we do not over-accept while JPEG is pending.
+        translationBaseline.acceptKeyframe(transform: transform)
+        lastKeyframeTimestamp = frame.timestamp
+        lastKeyframeTransform = transform
+        keyframe3DGSCount = nextIndex
+        return true
+    }
+
+    private func handleJPEGEncodeResult(
+        _ result: Result<SpatialJPEGEncodeQueue.Success, SpatialJPEGEncodeQueue.FailureReason>
+    ) {
+        switch result {
+        case .success(let success):
+            let snap = success.snapshot
+            spatialStateLock.lock()
+            let depthPath = pendingDepthByFrameId.removeValue(forKey: success.frameId) ?? snap.optionalDepthRelativePath
+            spatialStateLock.unlock()
+            let quat = CaptureFrameContract.quaternion(from: snap.cameraToWorld)
+            let translation = CaptureFrameContract.translation(from: snap.cameraToWorld)
+            let keyframe = SpatialCapturePackageBuilder.AcceptedKeyframe(
+                frameId: success.frameId,
+                arTimestampSeconds: snap.arTimestampSeconds,
+                cameraToWorldColumnMajor: CaptureFrameContract.encodeTransform(snap.cameraToWorld),
+                translationMeters: [translation.x, translation.y, translation.z],
+                rotationQuaternionXYZw: [quat.vector.x, quat.vector.y, quat.vector.z, quat.vector.w],
+                trackingState: snap.trackingState,
+                fx: success.fx,
+                fy: success.fy,
+                cx: success.cx,
+                cy: success.cy,
+                width: success.width,
+                height: success.height,
+                sensorImageWidth: snap.sensorImageWidth,
+                sensorImageHeight: snap.sensorImageHeight,
+                jpegByteCount: success.byteCount,
+                quality: SpatialCaptureFrameQuality(
+                    frameId: success.frameId,
+                    sharpnessScore: snap.sharpnessScore,
+                    sharpnessState: snap.sharpnessState,
+                    motionSpeed: snap.motionSpeed,
+                    angularVelocity: snap.angularVelocity,
+                    parallaxGrade: snap.parallaxGrade,
+                    translationBaselineM: snap.translationBaselineM,
+                    overlapScore: snap.overlapScore,
+                    overlapState: snap.overlapState,
+                    trackingState: snap.trackingState,
+                    lowTextureScore: snap.lowTextureScore,
+                    acceptReason: snap.acceptReason
+                ),
+                optionalDepthRelativePath: depthPath
+            )
+            spatialStateLock.lock()
+            acceptedSpatialKeyframes.append(keyframe)
+            keyframeDecisions.append(
+                SpatialCaptureKeyframeDecision(
+                    arTimestampSeconds: snap.arTimestampSeconds,
+                    accepted: true,
+                    reason: snap.acceptReason,
+                    frameId: success.frameId
+                )
+            )
+            spatialStateLock.unlock()
+            runtimeTelemetry.recordJPEGSuccess(encodeMs: success.encodeMs, writeMs: success.writeMs)
+
+        case .failure(let reason):
+            spatialStateLock.lock()
+            rejectedKeyframeDecisionCount += 1
+            keyframeDecisions.append(
+                SpatialCaptureKeyframeDecision(
+                    arTimestampSeconds: 0,
+                    accepted: false,
+                    reason: reason.rawValue,
+                    frameId: nil
+                )
+            )
+            spatialStateLock.unlock()
+            runtimeTelemetry.recordJPEGFailure()
+        }
+    }
+
+    private func appendKeyframeDecision(_ decision: SpatialCaptureKeyframeDecision) {
+        spatialStateLock.lock()
+        keyframeDecisions.append(decision)
+        spatialStateLock.unlock()
+    }
+
     private func recordDiagnostics(trackingNormal: Bool) {
         let q = qualityState(trackingLimited: !trackingNormal)
         diagnostics.ingest(
@@ -225,23 +476,35 @@ final class CaptureSessionController {
 
     func currentGuidanceAction() -> GuidanceAction { lastGuidanceAction }
 
-
     func cancel() {
         guard isActive else { return }
         isActive = false
+        acceptingSpatialKeyframes = false
+        jpegEncodeQueue.stopAccepting()
         videoRecorder.cancel()
         CaptureSessionStore.deleteSession(sessionId: sessionId)
         videoURL = nil
         manifestURL = nil
         frameSamples = []
+        spatialStateLock.lock()
+        acceptedSpatialKeyframes = []
+        keyframeDecisions = []
+        pendingDepthByFrameId = [:]
+        spatialStateLock.unlock()
+        packagePaths = nil
     }
 
     func finish(finishedBy: CaptureFinishedBy = .manualEarlyFinish) async throws -> CaptureSessionSummary {
         guard isActive else {
             throw SessionError.notActive
         }
+        // 1) Stop new keyframe accepts → 2) flush pending JPEG → 3) finalize package
+        acceptingSpatialKeyframes = false
+        jpegEncodeQueue.stopAccepting()
         isActive = false
         let endedAt = Date()
+
+        await jpegEncodeQueue.flush()
 
         var videoResult: ARVideoRecorder.Result?
         do {
@@ -346,6 +609,89 @@ final class CaptureSessionController {
         )
         CaptureDiagnosticsStore.writeSessionSummary(diagSummary, sessionId: sessionId)
 
+        spatialStateLock.lock()
+        let finalizedKeyframes = acceptedSpatialKeyframes
+        let finalizedDecisions = keyframeDecisions
+        let finalizedRejectCount = rejectedKeyframeDecisionCount
+        spatialStateLock.unlock()
+
+        var packageURL: URL?
+        var packageValid: Bool?
+        if finalizedKeyframes.isEmpty {
+            packageValid = false
+        } else {
+            do {
+                let sharpScores = finalizedKeyframes.compactMap(\.quality.sharpnessScore)
+                let avgSharp = sharpScores.isEmpty
+                    ? nil
+                    : sharpScores.reduce(0, +) / Double(sharpScores.count)
+                let jpegBytes = finalizedKeyframes.map(\.jpegByteCount)
+                let avgJPEGBytes = jpegBytes.isEmpty ? nil : jpegBytes.reduce(0, +) / jpegBytes.count
+                let packageBytes = jpegBytes.reduce(0, +)
+                let avgTranslationBetween: Double? = {
+                    guard finalizedKeyframes.count > 1 else { return nil }
+                    var sum: Double = 0
+                    var n = 0
+                    let ordered = finalizedKeyframes.sorted { $0.arTimestampSeconds < $1.arTimestampSeconds }
+                    for i in 1..<ordered.count {
+                        let a = ordered[i - 1].translationMeters
+                        let b = ordered[i].translationMeters
+                        guard a.count >= 3, b.count >= 3 else { continue }
+                        let dx = Double(b[0] - a[0])
+                        let dy = Double(b[1] - a[1])
+                        let dz = Double(b[2] - a[2])
+                        sum += (dx * dx + dy * dy + dz * dz).squareRoot()
+                        n += 1
+                    }
+                    return n > 0 ? sum / Double(n) : nil
+                }()
+                let avgParallax = finalizedKeyframes.compactMap(\.quality.translationBaselineM).map(Double.init)
+                let avgParallaxValue = avgParallax.isEmpty
+                    ? nil
+                    : avgParallax.reduce(0, +) / Double(avgParallax.count)
+
+                let telemetryReport = runtimeTelemetry.snapshot(
+                    captureDurationSec: durationSec,
+                    totalTranslationDistanceM: Double(translationBaseline.totalPathLengthM),
+                    averageSharpness: avgSharp,
+                    averageParallax: avgParallaxValue,
+                    observedCoverage: coverage.observedCoverage,
+                    packageBytes: packageBytes,
+                    averageJPEGBytes: avgJPEGBytes,
+                    averageTranslationBetweenKeyframesM: avgTranslationBetween
+                )
+
+                let built = try SpatialCapturePackageBuilder.build(
+                    input: SpatialCapturePackageBuilder.BuildInput(
+                        captureId: captureId,
+                        sessionId: sessionId,
+                        startedAt: startedAt,
+                        endedAt: endedAt,
+                        keyframes: finalizedKeyframes,
+                        rejectedDecisionCount: finalizedRejectCount,
+                        trackingFailureCount: trackingFailureEventCount,
+                        totalTranslationDistanceM: Double(translationBaseline.totalPathLengthM),
+                        observedCoverage: coverage.observedCoverage,
+                        qualityCoverage: coverage.qualityCoverage,
+                        viewAngleDiversity: coverage.angleDiversityScore,
+                        translationBaselineGrade: translationBaseline.bestGrade.rawValue,
+                        averageSharpness: avgSharp,
+                        videoRelativePath: "../\(CaptureSessionStore.videoFileName)",
+                        hasLiDAR: ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
+                        supportsSceneDepth: sceneDepthConfigured,
+                        supportsSmoothedSceneDepth: ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth),
+                        supportsSceneReconstruction: ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
+                        decisions: finalizedDecisions,
+                        telemetry: telemetryReport
+                    )
+                )
+                packageURL = built.root
+                packageValid = true
+            } catch {
+                packageValid = false
+            }
+        }
+
         #if DEBUG
         let integritySummary = CaptureMOVIntegritySummary(
             writtenFrames: integrity.writtenFrames,
@@ -412,7 +758,9 @@ final class CaptureSessionController {
                 sharpnessBlurryFraction: sharpnessAnalyzer.snapshot().blurryFraction,
                 guidanceAction: lastGuidanceAction,
                 capturePhase: capturePhase,
-                completionState: completionState
+                completionState: completionState,
+                spatialCapturePackageURL: packageURL,
+                spatialCapturePackageValid: packageValid
             )
         )
     }

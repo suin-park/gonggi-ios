@@ -203,7 +203,7 @@ struct CaptureContainerView: View {
                         icon: "figure.walk.motion",
                         title: "3D 공간 기록",
                         subtitle: "공간을 걸으며 촬영해\n자유롭게 이동할 수 있어요.",
-                        badge: "입체 기록",
+                        badge: "Beta",
                         action: {
                             GonggiHaptics.medium()
                             activeFlow = .threeDSpaceRecord

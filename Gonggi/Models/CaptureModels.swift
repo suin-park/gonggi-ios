@@ -218,6 +218,9 @@ struct CaptureDataFoundationSummary: Equatable {
     var guidanceAction: GuidanceAction
     var capturePhase: CapturePhase
     var completionState: CaptureCompletionState
+    /// Root of `capture/` package when JPEG keyframe package was built successfully.
+    var spatialCapturePackageURL: URL?
+    var spatialCapturePackageValid: Bool?
 
     init(
         schemaVersion: Int,
@@ -245,7 +248,9 @@ struct CaptureDataFoundationSummary: Equatable {
         sharpnessBlurryFraction: Double = 0,
         guidanceAction: GuidanceAction = .continueCapture,
         capturePhase: CapturePhase = .stabilizing,
-        completionState: CaptureCompletionState = .notReady
+        completionState: CaptureCompletionState = .notReady,
+        spatialCapturePackageURL: URL? = nil,
+        spatialCapturePackageValid: Bool? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.posesURL = posesURL
@@ -273,6 +278,8 @@ struct CaptureDataFoundationSummary: Equatable {
         self.guidanceAction = guidanceAction
         self.capturePhase = capturePhase
         self.completionState = completionState
+        self.spatialCapturePackageURL = spatialCapturePackageURL
+        self.spatialCapturePackageValid = spatialCapturePackageValid
     }
 }
 

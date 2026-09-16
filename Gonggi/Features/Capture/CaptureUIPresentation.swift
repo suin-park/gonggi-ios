@@ -209,7 +209,7 @@ enum CaptureUIPresenter {
         switch state {
         case .notReady: return "공간 기록 중"
         case .nearlyReady: return "거의 다 기록했어요"
-        case .ready: return "3D 공간을 만들 준비가 됐어요"
+        case .ready: return "촬영이 충분합니다"
         }
     }
 
@@ -287,7 +287,7 @@ enum CaptureUIPresenter {
         if ready {
             return PrimaryGuidanceState(
                 action: .captureComplete,
-                title: "3D 공간을 만들 준비가 됐어요",
+                title: "촬영이 충분합니다",
                 subtitle: "원하면 지금 마무리할 수 있어요",
                 direction: .none,
                 severity: .normal,
@@ -360,9 +360,9 @@ enum CaptureUIPresenter {
     static func liveCopy(for action: GuidanceAction) -> (title: String, subtitle: String?) {
         switch action {
         case .continueCapture:
-            return ("천천히 이동하며 계속 촬영하세요", "같은 영역을 계속 바라봐주세요")
+            return ("방을 천천히 걸으며 보여주세요", "같은 곳을 너무 빨리 지나가지 마세요")
         case .moveLaterally, .improveBaseline:
-            return ("옆으로 조금 이동해주세요", "제자리에서 돌지 마세요")
+            return ("조금 이동하면서 촬영해주세요", "제자리에서만 돌지 마세요")
         case .moveForward:
             return ("천천히 앞으로 이동해주세요", nil)
         case .slowDown:
@@ -380,7 +380,7 @@ enum CaptureUIPresenter {
         case .captureNearlyComplete:
             return ("거의 다 기록했어요", "천천히 이동하며 조금 더 담아주세요")
         case .captureComplete:
-            return ("3D 공간을 만들 준비가 됐어요", "원하면 지금 마무리할 수 있어요")
+            return ("촬영이 충분합니다", "원하면 지금 마무리할 수 있어요")
         }
     }
 

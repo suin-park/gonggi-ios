@@ -175,7 +175,7 @@ struct CaptureSummaryView: View {
         let limitedFrac = min(1, summary.trackingLimitedSec / duration)
         let normalFrac = max(0, 1 - limitedFrac)
         return VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            Text("3DGS Data Foundation (DEBUG)")
+            Text("Capture Data Foundation (DEBUG)")
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
             Group {
@@ -187,7 +187,10 @@ struct CaptureSummaryView: View {
                 } else {
                     Text("MOV integrity: (release build skips reader)")
                 }
-                Text("keyframes \(df.keyframe3DGSCount) · depth \(df.depthSamples)")
+                Text("selected frames \(df.keyframe3DGSCount) · depth \(df.depthSamples)")
+                if let pkg = df.spatialCapturePackageURL {
+                    Text("package \(pkg.lastPathComponent) · valid \(df.spatialCapturePackageValid == true ? "yes" : "no")")
+                }
                 Text(String(format: "path %.2fm · max baseline %.2fm · grade %@", df.totalPathLengthM, df.maxBaselineM, df.translationBaselineGrade.rawValue))
                 Text(String(format: "viewAngleDiv %.2f · tracking N %.0f%% L %.0f%%", df.viewAngleDiversity, normalFrac * 100, limitedFrac * 100))
                 if let d = df.discontinuity {

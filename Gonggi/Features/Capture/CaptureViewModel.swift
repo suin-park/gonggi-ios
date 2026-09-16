@@ -225,10 +225,13 @@ final class CaptureViewModel: ObservableObject {
     private func startAR() {
         guard ARWorldTrackingConfiguration.isSupported else { return }
         let config = ARWorldTrackingConfiguration()
+        // Gravity-aligned world so coverage / guidance use world-up (not device roll).
+        config.worldAlignment = .gravity
         config.planeDetection = [.horizontal, .vertical]
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
             config.sceneReconstruction = .mesh
         }
+        // LiDAR sceneDepth is optional enhancement — never required for capture completion.
         if type(of: config).supportsFrameSemantics(.sceneDepth) {
             config.frameSemantics.insert(.sceneDepth)
         }

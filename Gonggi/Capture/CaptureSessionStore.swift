@@ -78,6 +78,14 @@ enum CaptureSessionStore {
         try keyframesDirectory(sessionId: sessionId).appendingPathComponent(fileName)
     }
 
+    /// Provider-agnostic spatial capture package root: `Captures/{id}/capture/`.
+    static func spatialCapturePackageDirectory(sessionId: String) throws -> URL {
+        let dir = try createSessionDirectory(sessionId: sessionId)
+            .appendingPathComponent(SpatialCaptureConfig.packageDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
     static func texturedSpaceUSDZURL(sessionId: String) throws -> URL {
         try createMeshDirectory(sessionId: sessionId).appendingPathComponent(texturedSpaceUSDZFileName)
     }

@@ -54,7 +54,7 @@ final class PrimaryGuidancePresenterTests: XCTestCase {
         let state = CaptureUIPresenter.primaryGuidance(quality: quality)
         XCTAssertTrue(state.isReadyToFinish)
         XCTAssertEqual(state.finishButtonTitle, "기록 완료")
-        XCTAssertEqual(state.statusLabel, "3D 공간을 만들 준비가 됐어요")
+        XCTAssertEqual(state.statusLabel, "촬영이 충분합니다")
         XCTAssertEqual(state.source, .completion)
     }
 
@@ -119,6 +119,6 @@ final class PrimaryGuidancePresenterTests: XCTestCase {
     func testStatusLabelsForCompletionStates() {
         XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .notReady), "공간 기록 중")
         XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .nearlyReady), "거의 다 기록했어요")
-        XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .ready), "3D 공간을 만들 준비가 됐어요")
+        XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .ready), "촬영이 충분합니다")
     }
 }

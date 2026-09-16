@@ -663,13 +663,13 @@ struct ProfilePrivacyPermissionsView: View {
 
 struct ProfileHelpView: View {
     @State private var safariURL: SpaceLinkIdentifiedURL?
-    @State private var copied = false
+    @State private var versionTapCount = 0
+    @State private var showInternalTools = GonggiFeatureFlags.isInternalToolsUnlocked
+    @State private var spatialCaptureEnabled = GonggiFeatureFlags.show3DGSCaptureFlows
+    @State private var unlockHint: String?
 
     private var versionLine: String {
-        let info = Bundle.main.infoDictionary
-        let v = info?["CFBundleShortVersionString"] as? String ?? "—"
-        let b = info?["CFBundleVersion"] as? String ?? "—"
-        return "\(v) (\(b))"
+        GonggiBuildInfo.versionLine
     }
 
     var body: some View {
@@ -687,14 +687,74 @@ struct ProfileHelpView: View {
                 }
             }
             Section("앱 정보") {
-                LabeledContent("버전", value: versionLine)
+                Button {
+                    handleVersionTap()
+                } label: {
+                    HStack {
+                        Text("버전")
+                            .foregroundStyle(GonggiColors.textPrimary)
+                        Spacer()
+                        Text(versionLine)
+                            .foregroundStyle(GonggiColors.textSecondary)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("버전 \(versionLine)")
+                .accessibilityHint(GonggiFeatureFlags.canUnlockInternalTools
+                    ? "내부 도구 잠금 해제를 위해 여러 번 탭할 수 있습니다"
+                    : "")
+                if let unlockHint {
+                    Text(unlockHint)
+                        .font(.caption)
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+            }
+
+            if showInternalTools {
+                Section {
+                    Toggle("Spatial Capture Beta", isOn: Binding(
+                        get: { spatialCaptureEnabled },
+                        set: { newValue in
+                            spatialCaptureEnabled = newValue
+                            GonggiFeatureFlags.setEnableSpatialCapture(newValue)
+                        }
+                    ))
+                    Text("켜면 기록 탭에서 360° / 3D 공간 기록 선택 화면이 나타납니다. 끄면 기존처럼 360°만 바로 시작합니다.")
+                        .font(.caption)
+                        .foregroundStyle(GonggiColors.textSecondary)
+                    Text("Test A–E 산출물: Captures/*/capture/debug/ (telemetry, sensor_space, camera_path_xz, decisions)")
+                        .font(.caption2)
+                        .foregroundStyle(GonggiColors.textSecondary)
+                } header: {
+                    Text("내부 테스트")
+                } footer: {
+                    Text("TestFlight·DEBUG 전용. App Store 일반 빌드에는 표시되지 않습니다.")
+                }
             }
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
         .navigationTitle("도움말 및 문의")
+        .onAppear {
+            showInternalTools = GonggiFeatureFlags.isInternalToolsUnlocked
+            spatialCaptureEnabled = GonggiFeatureFlags.show3DGSCaptureFlows
+        }
         .sheet(item: $safariURL) { item in
             SpaceLinkSafariView(url: item.url) { safariURL = nil }
+        }
+    }
+
+    private func handleVersionTap() {
+        guard GonggiFeatureFlags.canUnlockInternalTools else { return }
+        versionTapCount += 1
+        if versionTapCount >= 7 {
+            versionTapCount = 0
+            GonggiFeatureFlags.setInternalToolsUnlocked(true)
+            showInternalTools = true
+            unlockHint = "내부 테스트 메뉴가 열렸습니다"
+            GonggiHaptics.medium()
+        } else if versionTapCount >= 4 {
+            unlockHint = "내부 도구까지 \(7 - versionTapCount)회"
         }
     }
 

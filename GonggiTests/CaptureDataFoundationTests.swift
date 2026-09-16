@@ -75,6 +75,7 @@ final class CaptureDataFoundationTests: XCTestCase {
             lastKeyframeTransform: a
         )
         XCTAssertFalse(d.accept)
+        XCTAssertEqual(d.reason, "rotation_excessive")
     }
 
     func testKeyframeAcceptsBaseline() {
@@ -89,6 +90,7 @@ final class CaptureDataFoundationTests: XCTestCase {
             lastKeyframeTransform: a
         )
         XCTAssertTrue(d.accept)
+        XCTAssertEqual(d.reason, "translation_ok")
     }
 
     // MARK: - Test E sync + PTS SoT
