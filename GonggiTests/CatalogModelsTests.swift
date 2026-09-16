@@ -190,7 +190,8 @@ final class CatalogModelsTests: XCTestCase {
             targetSpaceId: "space1",
             targetSessionId: "sess1",
             projectionKey: "sess1",
-            calibrationStatusText: "치수 보정 없음"
+            calibrationStatusText: "치수 보정 없음",
+            baseRevisionId: "rev-0-base"
         )
         let entry = pending.makeLayoutEntry(position: SIMD3(0, -1.35, -1), rotationY: 0.1, floorY: -1.35)
         let data = try JSONEncoder().encode(entry)

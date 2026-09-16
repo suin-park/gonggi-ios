@@ -213,6 +213,15 @@ final class PlacementResultsPollingTests: XCTestCase {
 
         func confirmCurtainJob(jobId: String) async throws {}
 
+        func confirmSpaceCleanupJob(jobId: String) async throws {}
+
+        func retrySpaceCleanupJob(jobId: String) async throws -> ProductPlacementResultDTO {
+            guard let result = results.first(where: { $0.spaceCleanupJobId == jobId }) else {
+                throw MobilePlacementResultsAPIError.notFound
+            }
+            return result
+        }
+
         func deleteResult(id: String) async throws {
             results.removeAll { $0.id == id }
         }

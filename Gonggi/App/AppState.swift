@@ -19,6 +19,10 @@ final class AppState: ObservableObject {
     @Published var pendingCatalogPlacement: PendingCatalogPlacement?
     /// Catalog curtain → LatLong seed/composite flow (consume-once). Not persisted.
     @Published var pendingCurtainPlacement: PendingCurtainPlacement?
+    /// Space Detail → VR multi-point space cleanup (consume-once). Not persisted.
+    @Published var pendingSpaceCleanup: PendingSpaceCleanup?
+    /// Cleanup result → catalog placement base revision (consume-once, space-scoped).
+    @Published var pendingCleanupBaseRevision: PendingCleanupBaseRevision?
     @Published var spaceLinkUserMessage: String?
     /// Bumped on account reset so views dismiss open VR covers.
     @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
@@ -113,6 +117,8 @@ final class AppState: ObservableObject {
         pendingAssetPlacement = nil
         pendingCatalogPlacement = nil
         pendingCurtainPlacement = nil
+        pendingSpaceCleanup = nil
+        pendingCleanupBaseRevision = nil
         spaceLinkUserMessage = nil
         preferredLibraryCategory = nil
         pendingLibraryTab = nil
@@ -620,6 +626,32 @@ final class AppState: ObservableObject {
         guard let pending = peekPendingCurtainPlacement(matchingViewerSessionId: matchingViewerSessionId)
         else { return nil }
         pendingCurtainPlacement = nil
+        return pending
+    }
+
+    func peekPendingSpaceCleanup(matchingViewerSessionId: String) -> PendingSpaceCleanup? {
+        guard let pending = pendingSpaceCleanup,
+              pending.matches(viewerSessionId: matchingViewerSessionId, spaces: spaces)
+        else { return nil }
+        return pending
+    }
+
+    func consumePendingSpaceCleanup(matchingViewerSessionId: String) -> PendingSpaceCleanup? {
+        guard let pending = peekPendingSpaceCleanup(matchingViewerSessionId: matchingViewerSessionId)
+        else { return nil }
+        pendingSpaceCleanup = nil
+        return pending
+    }
+
+    func peekPendingCleanupBaseRevision(matchingSpace: SpaceRecord) -> PendingCleanupBaseRevision? {
+        guard let pending = pendingCleanupBaseRevision, pending.matches(space: matchingSpace)
+        else { return nil }
+        return pending
+    }
+
+    func consumePendingCleanupBaseRevision(matchingSpace: SpaceRecord) -> PendingCleanupBaseRevision? {
+        guard let pending = peekPendingCleanupBaseRevision(matchingSpace: matchingSpace) else { return nil }
+        pendingCleanupBaseRevision = nil
         return pending
     }
 }

@@ -194,6 +194,12 @@ final class CatalogCurtainListPlaceController: ObservableObject {
         space: SpaceRecord,
         appState: AppState
     ) {
+        let baseRevisionId: String
+        if let pending = appState.consumePendingCleanupBaseRevision(matchingSpace: space) {
+            baseRevisionId = pending.resultRevisionId
+        } else {
+            baseRevisionId = space.latestRevisionId ?? "rev-0-base"
+        }
         appState.pendingCurtainPlacement = PendingCurtainPlacement(
             productId: product.id,
             variantId: variant.id,
@@ -208,7 +214,7 @@ final class CatalogCurtainListPlaceController: ObservableObject {
             targetSpaceId: space.id,
             targetSessionId: space.sessionId,
             projectionKey: space.projectionKey,
-            baseRevisionId: space.latestRevisionId ?? "rev-0-base"
+            baseRevisionId: baseRevisionId
         )
         appState.pendingViewerJobId = space.id
     }

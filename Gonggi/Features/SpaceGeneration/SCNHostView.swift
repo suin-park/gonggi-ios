@@ -681,6 +681,18 @@ final class SCNHostView: UIView, UIGestureRecognizerDelegate {
         return fromLook
     }
 
+    /// Project equirect yaw/pitch onto the current SCN viewport (nil if behind camera).
+    func screenPointForEquirectDegrees(yawDeg: Float, pitchDeg: Float) -> CGPoint? {
+        applyLookToCamera()
+        let wp = SpaceLinkMath.worldPosition(yawDeg: yawDeg, pitchDeg: pitchDeg, radius: 10)
+        let projected = scnView.projectPoint(SCNVector3(wp.x, wp.y, wp.z))
+        guard projected.z.isFinite, projected.z > 0, projected.z < 1 else { return nil }
+        return CGPoint(x: CGFloat(projected.x), y: CGFloat(projected.y))
+    }
+
+    var lookFinalYawDeg: Float { look.finalYawDeg }
+    var lookFinalPitchDeg: Float { look.finalPitchDeg }
+
     // MARK: - Build 81 SpaceLink transition (rotate + FOV zoom + settle)
 
     func setSpaceLinkTransitionLocked(_ locked: Bool) {
