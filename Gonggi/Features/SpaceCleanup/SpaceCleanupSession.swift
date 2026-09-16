@@ -17,6 +17,7 @@ final class SpaceCleanupSession: ObservableObject {
     @Published private(set) var poleWarningActive = false
     @Published private(set) var isPolling = false
     @Published var maskOverlayReady = false
+    @Published var removalTargetText = ""
 
     private var client: any SpaceCleanupServing = SpaceCleanupAPIClient()
     private(set) var spaceId: String = ""
@@ -46,6 +47,7 @@ final class SpaceCleanupSession: ObservableObject {
         isActive = false
         poleWarningActive = false
         maskOverlayReady = false
+        removalTargetText = ""
     }
 
     func activateSelectedMode(spaceId: String, sourceRevisionId: String, consentAccepted: Bool) {
@@ -65,6 +67,7 @@ final class SpaceCleanupSession: ObservableObject {
         errorMessage = nil
         poleWarningActive = false
         maskOverlayReady = false
+        removalTargetText = ""
     }
 
     func onSelectionUIAppear() {
@@ -92,6 +95,7 @@ final class SpaceCleanupSession: ObservableObject {
         job = nil
         errorMessage = nil
         maskOverlayReady = false
+        removalTargetText = ""
         cancelPolling()
     }
 
@@ -166,6 +170,7 @@ final class SpaceCleanupSession: ObservableObject {
         job = nil
         poleWarningActive = false
         maskOverlayReady = false
+        removalTargetText = ""
         errorMessage = nil
         isSubmitting = false
     }
@@ -174,7 +179,8 @@ final class SpaceCleanupSession: ObservableObject {
     var canConfirm: Bool {
         guard let job, job.isAwaitingConfirmation else { return false }
         guard !(job.detectedObjects ?? []).isEmpty else { return false }
-        return !isSubmitting
+        let trimmed = removalTargetText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !isSubmitting
     }
 
     var detectedPolygons: [[SpaceCleanupUvPoint]] {
@@ -220,10 +226,15 @@ final class SpaceCleanupSession: ObservableObject {
             errorMessage = "감지된 가구가 없어 확인할 수 없어요."
             return
         }
+        let label = removalTargetText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else {
+            errorMessage = "무엇을 제거할지 입력해 주세요."
+            return
+        }
         isSubmitting = true
         defer { isSubmitting = false }
         do {
-            job = try await client.confirmJob(id: jobId)
+            job = try await client.confirmJob(id: jobId, removalTarget: label)
             // Curtain-style async handoff: leave VR; locker polls PROCESSING.
             cancelPolling()
             let resultId = job?.placementResultId
@@ -444,13 +455,18 @@ actor SpaceCleanupMockClient: SpaceCleanupServing {
         return job
     }
 
-    func confirmJob(id: String) async throws -> SpaceCleanupJobDTO {
+    nonisolated(unsafe) var lastConfirmRemovalTarget: String?
+
+    func confirmJob(id: String, removalTarget: String) async throws -> SpaceCleanupJobDTO {
         confirmCalls += 1
+        lastConfirmRemovalTarget = removalTarget
         editWouldHaveBeenCalled = true
         guard var job = jobs[id] else { throw SpaceCleanupAPIError.notFound }
         guard job.isAwaitingConfirmation, !(job.detectedObjects ?? []).isEmpty else {
             throw SpaceCleanupAPIError.server(status: 409)
         }
+        let trimmed = removalTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw SpaceCleanupAPIError.server(status: 400) }
         job.status = "PROCESSING"
         jobs[id] = job
         return job

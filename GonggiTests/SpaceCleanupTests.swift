@@ -112,10 +112,13 @@ final class SpaceCleanupTests: XCTestCase {
         session.addCenterAim(yawDeg: 10, pitchDeg: 5)
         await session.submitSelected()
         XCTAssertEqual(session.job?.status, "AWAITING_CONFIRMATION")
+        XCTAssertFalse(session.canConfirm)
+        session.removalTargetText = "쇼파"
         XCTAssertTrue(session.canConfirm)
 
         await session.confirmMasks()
         XCTAssertEqual(mock.confirmCalls, 1)
+        XCTAssertEqual(mock.lastConfirmRemovalTarget, "쇼파")
         XCTAssertTrue(mock.editWouldHaveBeenCalled)
         XCTAssertNotNil(acceptedId)
         XCTAssertFalse(session.isActive)
