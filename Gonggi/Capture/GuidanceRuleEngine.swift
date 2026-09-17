@@ -92,8 +92,9 @@ struct GuidanceRuleEngine {
             ))
         }
 
-        // 2. Overlap lost / weak
-        if quality.overlapAvailable {
+        // 2. Overlap lost / weak — skip once reconstructionReady is latched (V023).
+        let userFacingReady = quality.completionState == .ready || quality.reconstructionReady
+        if quality.overlapAvailable, !userFacingReady {
             switch quality.overlapState {
             case .lost:
                 candidates.append(GuidanceDecision(

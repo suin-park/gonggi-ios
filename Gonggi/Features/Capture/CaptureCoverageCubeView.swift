@@ -172,11 +172,17 @@ enum CaptureQuietUIPresenter {
         case .recognizing:
             return "공간을 인식하고 있어요"
         case .capturing:
+            if quality.keyframeHardCapReached {
+                return "키프레임이 가득 찼어요"
+            }
             return "공간 기록 중"
         case .nearlyReady:
+            if quality.keyframeHardCapReached {
+                return "기록이 거의 찼어요 · 완료를 눌러 주세요"
+            }
             return "조금만 더 둘러봐 주세요"
         case .ready:
-            return "기록이 충분해졌어요"
+            return "기록이 충분해졌어요 · 완료해 주세요"
         }
     }
 
@@ -187,7 +193,13 @@ enum CaptureQuietUIPresenter {
     /// Short intervention toast — only when recognizing is done and something blocks progress.
     static func toastHint(for quality: CaptureQualityState) -> String? {
         guard isSpatialRecognitionReady(quality: quality) else { return nil }
-        if quality.completionState == .ready { return nil }
+        // Latched / ready: status line + finish pill are the CTA — no nag toast.
+        if quality.completionState == .ready || quality.reconstructionReady {
+            return nil
+        }
+        if quality.keyframeHardCapReached {
+            return "키프레임이 가득 찼어요 · 완료를 눌러 주세요"
+        }
 
         if quality.trackingQuality < 0.45 || quality.guidanceAction == .trackingRecovery {
             return "조금 천천히 움직여 주세요"

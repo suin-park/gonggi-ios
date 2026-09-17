@@ -44,8 +44,30 @@ final class CaptureGuidanceP1Tests: XCTestCase {
 
     // MARK: - Completion gate
 
-    func testCompletionNotReadyWhenCoverageLow() {
-        let state = CaptureCompletionGate.evaluate(
+    func testCompletionNotReadyWhenCoverageLowWithoutReconstruction() {
+        let partial = CaptureReconstructionMetricsSnapshot(
+            sessionYawBucketCount: 2,
+            sessionYawCoverageRatio: 2.0 / 12.0,
+            sessionYawMinDeg: 0,
+            sessionYawMaxDeg: 60,
+            sessionYawSpanDeg: 45,
+            visitedCellCount: 4,
+            qualityCellCount: 3,
+            acceptableCellCount: 2,
+            goodCellCount: 0,
+            insufficientCellCount: 2,
+            unseenCellCount: 0,
+            xzExtentWidthM: 0.4,
+            xzExtentDepthM: 0.4,
+            xzBoundingAreaM2: 0.16,
+            totalTravelDistanceM: 1.0,
+            maxDistanceFromStartM: 0.3,
+            sessionViewDirectionBucketCount: 2,
+            sessionViewDirectionCoverageRatio: 2.0 / 12.0,
+            sessionMeanAngleDiversity: 0.2,
+            completionTimeSec: nil
+        )
+        let evaluation = CaptureCompletionGate.evaluate(
             durationSec: 60,
             keyframeCount: 20,
             pathLengthM: 3,
@@ -54,14 +76,15 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             sharpnessBlurryFraction: 0.05,
             trackingNormal: true,
             baselineGrade: .good,
-            reconstruction: Self.fullReconstructionSnapshot(),
-            sectorProgress: Self.fullSectorProgress()
+            reconstruction: partial,
+            sectorProgress: .empty
         )
-        XCTAssertEqual(state, .notReady)
+        XCTAssertEqual(evaluation.state, .notReady)
+        XCTAssertFalse(evaluation.reconstructionReadyLatched)
     }
 
     func testCompletionNotReadyWhenBaselineInsufficient() {
-        let state = CaptureCompletionGate.evaluate(
+        let evaluation = CaptureCompletionGate.evaluate(
             durationSec: 60,
             keyframeCount: 20,
             pathLengthM: 3,
@@ -73,11 +96,12 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             reconstruction: Self.fullReconstructionSnapshot(),
             sectorProgress: Self.fullSectorProgress()
         )
-        XCTAssertEqual(state, .notReady)
+        XCTAssertEqual(evaluation.state, .notReady)
+        XCTAssertFalse(evaluation.reconstructionReadyLatched)
     }
 
     func testCompletionNotReadyWhenTrackingBad() {
-        let state = CaptureCompletionGate.evaluate(
+        let evaluation = CaptureCompletionGate.evaluate(
             durationSec: 60,
             keyframeCount: 20,
             pathLengthM: 3,
@@ -87,13 +111,15 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             trackingNormal: false,
             baselineGrade: .good,
             reconstruction: Self.fullReconstructionSnapshot(),
-            sectorProgress: Self.fullSectorProgress()
+            sectorProgress: Self.fullSectorProgress(),
+            previouslyLatchedReady: true
         )
-        XCTAssertEqual(state, .notReady)
+        XCTAssertEqual(evaluation.state, .notReady)
+        XCTAssertFalse(evaluation.reconstructionReadyLatched)
     }
 
     func testCompletionReadyWhenAllMetIncludingReconstruction() {
-        let state = CaptureCompletionGate.evaluate(
+        let evaluation = CaptureCompletionGate.evaluate(
             durationSec: CaptureCompletionConfig.minimumDurationSec + 1,
             keyframeCount: CaptureCompletionConfig.minimumKeyframes + 1,
             pathLengthM: CaptureReconstructionReadyConfig.minTravelDistanceM + 0.1,
@@ -105,7 +131,41 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             reconstruction: Self.fullReconstructionSnapshot(),
             sectorProgress: Self.fullSectorProgress()
         )
-        XCTAssertEqual(state, .ready)
+        XCTAssertEqual(evaluation.state, .ready)
+        XCTAssertTrue(evaluation.reconstructionReadyLatched)
+    }
+
+    func testReconstructionReadyLatchesDespiteOverlapLost() {
+        let first = CaptureCompletionGate.evaluate(
+            durationSec: 60,
+            keyframeCount: 40,
+            pathLengthM: 5,
+            qualityCoverage: 0.85,
+            overlapState: .lost,
+            sharpnessBlurryFraction: 0.05,
+            trackingNormal: true,
+            baselineGrade: .good,
+            reconstruction: Self.fullReconstructionSnapshot(),
+            sectorProgress: Self.fullSectorProgress()
+        )
+        XCTAssertEqual(first.state, .ready)
+        XCTAssertTrue(first.reconstructionReadyLatched)
+
+        let held = CaptureCompletionGate.evaluate(
+            durationSec: 90,
+            keyframeCount: 80,
+            pathLengthM: 8,
+            qualityCoverage: 0.6,
+            overlapState: .lost,
+            sharpnessBlurryFraction: 0.2,
+            trackingNormal: true,
+            baselineGrade: .good,
+            reconstruction: Self.fullReconstructionSnapshot(),
+            sectorProgress: Self.fullSectorProgress(),
+            previouslyLatchedReady: true
+        )
+        XCTAssertEqual(held.state, .ready)
+        XCTAssertTrue(held.reconstructionReadyLatched)
     }
 
     func testHighQualityCoverageAloneIsSoftNotReady() {
@@ -132,7 +192,7 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             sessionMeanAngleDiversity: 0.4,
             completionTimeSec: nil
         )
-        let state = CaptureCompletionGate.evaluate(
+        let evaluation = CaptureCompletionGate.evaluate(
             durationSec: 60,
             keyframeCount: 20,
             pathLengthM: 3,
@@ -144,7 +204,8 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             reconstruction: partial,
             sectorProgress: .empty
         )
-        XCTAssertEqual(state, .nearlyReady, "45° yaw must not grant reconstructionReady")
+        XCTAssertEqual(evaluation.state, .nearlyReady, "45° yaw must not grant reconstructionReady")
+        XCTAssertFalse(evaluation.reconstructionReadyLatched)
         XCTAssertFalse(
             CaptureCompletionGate.isReconstructionReady(
                 pathLengthM: 3,
@@ -154,8 +215,30 @@ final class CaptureGuidanceP1Tests: XCTestCase {
         )
     }
 
-    func testCompletionNearlyReady() {
-        let state = CaptureCompletionGate.evaluate(
+    func testSoftCoverageWithoutReconstructionIsNearlyReady() {
+        let partial = CaptureReconstructionMetricsSnapshot(
+            sessionYawBucketCount: 4,
+            sessionYawCoverageRatio: 4.0 / 12.0,
+            sessionYawMinDeg: 0,
+            sessionYawMaxDeg: 120,
+            sessionYawSpanDeg: 120,
+            visitedCellCount: 14,
+            qualityCellCount: 12,
+            acceptableCellCount: 9,
+            goodCellCount: 3,
+            insufficientCellCount: 2,
+            unseenCellCount: 0,
+            xzExtentWidthM: 1.0,
+            xzExtentDepthM: 1.0,
+            xzBoundingAreaM2: 1.0,
+            totalTravelDistanceM: 2.5,
+            maxDistanceFromStartM: 0.8,
+            sessionViewDirectionBucketCount: 4,
+            sessionViewDirectionCoverageRatio: 4.0 / 12.0,
+            sessionMeanAngleDiversity: 0.4,
+            completionTimeSec: nil
+        )
+        let evaluation = CaptureCompletionGate.evaluate(
             durationSec: 60,
             keyframeCount: 20,
             pathLengthM: 3,
@@ -164,16 +247,54 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             sharpnessBlurryFraction: 0.05,
             trackingNormal: true,
             baselineGrade: .good,
-            reconstruction: Self.fullReconstructionSnapshot(),
-            sectorProgress: Self.fullSectorProgress()
+            reconstruction: partial,
+            sectorProgress: .empty
         )
-        // Soft OK + recon ready but qualityCoverage below "ready" band → nearlyReady
-        // (softHigh required for .ready)
-        XCTAssertEqual(state, .nearlyReady)
+        XCTAssertEqual(evaluation.state, .nearlyReady)
+        XCTAssertFalse(evaluation.reconstructionReadyLatched)
+    }
+
+    func testKeyframeHardCapWithoutReconstructionIsNearlyReady() {
+        let partial = CaptureReconstructionMetricsSnapshot(
+            sessionYawBucketCount: 4,
+            sessionYawCoverageRatio: 4.0 / 12.0,
+            sessionYawMinDeg: 0,
+            sessionYawMaxDeg: 120,
+            sessionYawSpanDeg: 120,
+            visitedCellCount: 10,
+            qualityCellCount: 8,
+            acceptableCellCount: 5,
+            goodCellCount: 2,
+            insufficientCellCount: 2,
+            unseenCellCount: 0,
+            xzExtentWidthM: 1.0,
+            xzExtentDepthM: 1.0,
+            xzBoundingAreaM2: 1.0,
+            totalTravelDistanceM: 2.5,
+            maxDistanceFromStartM: 0.8,
+            sessionViewDirectionBucketCount: 4,
+            sessionViewDirectionCoverageRatio: 4.0 / 12.0,
+            sessionMeanAngleDiversity: 0.4,
+            completionTimeSec: nil
+        )
+        let evaluation = CaptureCompletionGate.evaluate(
+            durationSec: 60,
+            keyframeCount: SpatialCaptureConfig.hardMaxKeyframes,
+            pathLengthM: 3,
+            qualityCoverage: 0.4,
+            overlapState: .good,
+            sharpnessBlurryFraction: 0.05,
+            trackingNormal: true,
+            baselineGrade: .good,
+            reconstruction: partial,
+            sectorProgress: .empty
+        )
+        XCTAssertEqual(evaluation.state, .nearlyReady)
+        XCTAssertEqual(SpatialCaptureConfig.hardMaxKeyframes, 200)
     }
 
     func testMinimumDurationBlocksEarlyReady() {
-        let state = CaptureCompletionGate.evaluate(
+        let evaluation = CaptureCompletionGate.evaluate(
             durationSec: 5,
             keyframeCount: 50,
             pathLengthM: 10,
@@ -185,7 +306,8 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             reconstruction: Self.fullReconstructionSnapshot(),
             sectorProgress: Self.fullSectorProgress()
         )
-        XCTAssertEqual(state, .notReady)
+        XCTAssertEqual(evaluation.state, .notReady)
+        XCTAssertFalse(evaluation.reconstructionReadyLatched)
     }
 
     // MARK: - Sector / ring

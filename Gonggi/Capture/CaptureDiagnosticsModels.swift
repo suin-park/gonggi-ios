@@ -247,9 +247,11 @@ struct CaptureReconstructionCompletionRecord: Codable, Equatable, Sendable {
     var xzBoundingAreaM2: Double
     var softHigh: Bool
     var isReconstructionReady: Bool
+    var reconstructionReadyLatched: Bool
     var completionState: String
     var guidanceStage: String
     var completionTimestamp: String
+    var firstReconstructionReadyAtSec: Double?
 
     static func make(
         durationSec: Double,
@@ -260,6 +262,8 @@ struct CaptureReconstructionCompletionRecord: Codable, Equatable, Sendable {
         guidanceStage: CaptureGuidanceStage,
         reconstruction: CaptureReconstructionMetricsSnapshot,
         sector: CaptureSectorRingProgress,
+        reconstructionReadyLatched: Bool = false,
+        firstReconstructionReadyAtSec: Double? = nil,
         at date: Date = Date()
     ) -> CaptureReconstructionCompletionRecord {
         let softHigh = qualityCoverage >= CaptureCompletionConfig.qualityCoverageReady
@@ -289,9 +293,11 @@ struct CaptureReconstructionCompletionRecord: Codable, Equatable, Sendable {
             xzBoundingAreaM2: reconstruction.xzBoundingAreaM2,
             softHigh: softHigh,
             isReconstructionReady: ready,
+            reconstructionReadyLatched: reconstructionReadyLatched || completionState == .ready,
             completionState: completionState.rawValue,
             guidanceStage: guidanceStage.rawValue,
-            completionTimestamp: formatter.string(from: date)
+            completionTimestamp: formatter.string(from: date),
+            firstReconstructionReadyAtSec: firstReconstructionReadyAtSec ?? reconstruction.completionTimeSec
         )
     }
 }

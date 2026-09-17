@@ -95,6 +95,8 @@ struct CaptureQualityState: Equatable {
     var sectorRingProgress: CaptureSectorRingProgress
     var guidanceStage: CaptureGuidanceStage
     var reconstructionReady: Bool
+    var acceptedKeyframeCount: Int
+    var keyframeHardCapReached: Bool
 
     init(
         overallCoverage: Double,
@@ -122,7 +124,9 @@ struct CaptureQualityState: Equatable {
         guidanceAction: GuidanceAction = .continueCapture,
         sectorRingProgress: CaptureSectorRingProgress = .empty,
         guidanceStage: CaptureGuidanceStage = .eyeLevelSweep,
-        reconstructionReady: Bool = false
+        reconstructionReady: Bool = false,
+        acceptedKeyframeCount: Int = 0,
+        keyframeHardCapReached: Bool = false
     ) {
         self.overallCoverage = overallCoverage
         self.observedCoverage = observedCoverage ?? overallCoverage
@@ -159,6 +163,8 @@ struct CaptureQualityState: Equatable {
         self.sectorRingProgress = sectorRingProgress
         self.guidanceStage = guidanceStage
         self.reconstructionReady = reconstructionReady
+        self.acceptedKeyframeCount = acceptedKeyframeCount
+        self.keyframeHardCapReached = keyframeHardCapReached
     }
 
     static let zero = CaptureQualityState(

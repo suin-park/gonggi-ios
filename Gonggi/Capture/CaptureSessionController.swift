@@ -46,6 +46,8 @@ final class CaptureSessionController {
     private var reconstructionMetrics = CaptureReconstructionSessionMetrics()
     private var sectorRingProgress: CaptureSectorRingProgress = .empty
     private var lastReconstructionSnapshot: CaptureReconstructionMetricsSnapshot?
+    /// Sticky ready: once true, transient overlap lost must not demote UI completion.
+    private var reconstructionReadyLatched = false
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -88,6 +90,7 @@ final class CaptureSessionController {
         reconstructionMetrics.reset()
         sectorRingProgress = .empty
         lastReconstructionSnapshot = nil
+        reconstructionReadyLatched = false
         runtimeTelemetry.reset()
         jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -604,7 +607,9 @@ final class CaptureSessionController {
             completionState: completionState,
             guidanceStage: sectorRingProgress.stage,
             reconstruction: reconSnap,
-            sector: sectorRingProgress
+            sector: sectorRingProgress,
+            reconstructionReadyLatched: reconstructionReadyLatched,
+            firstReconstructionReadyAtSec: reconstructionMetrics.firstReadyAtSec
         )
         let info = Bundle.main.infoDictionary
         let diagSummary = CaptureSessionSummaryDiagnostics(
@@ -825,7 +830,9 @@ final class CaptureSessionController {
             guidanceAction: lastGuidanceAction,
             sectorRingProgress: sectorRingProgress,
             guidanceStage: sectorRingProgress.stage,
-            reconstructionReady: completionState == .ready
+            reconstructionReady: reconstructionReadyLatched || completionState == .ready,
+            acceptedKeyframeCount: keyframe3DGSCount,
+            keyframeHardCapReached: keyframe3DGSCount >= SpatialCaptureConfig.hardMaxKeyframes
         )
     }
 
@@ -844,7 +851,7 @@ final class CaptureSessionController {
         lastReconstructionSnapshot = reconSnap
 
         let sharp = sharpnessAnalyzer.snapshot()
-        completionState = CaptureCompletionGate.evaluate(
+        let evaluation = CaptureCompletionGate.evaluate(
             durationSec: elapsed,
             keyframeCount: keyframe3DGSCount,
             pathLengthM: pathM,
@@ -854,24 +861,28 @@ final class CaptureSessionController {
             trackingNormal: trackingNormal,
             baselineGrade: translationBaseline.bestGrade,
             reconstruction: reconSnap,
-            sectorProgress: sectorRingProgress
+            sectorProgress: sectorRingProgress,
+            previouslyLatchedReady: reconstructionReadyLatched,
+            hardMaxKeyframes: SpatialCaptureConfig.hardMaxKeyframes
         )
+        reconstructionReadyLatched = evaluation.reconstructionReadyLatched
+        completionState = evaluation.state
         reconstructionMetrics.markCompletionTiming(elapsedSec: elapsed, completionState: completionState)
 
-        // Refresh stage with actual reconstructionReady for coach status.
+        // Refresh stage with latched ready for coach status.
         var staged = sectorRingProgress
         staged.stage = CaptureReconstructionSessionMetrics.stage(
             middle: staged.middleSufficientCount,
             upper: staged.upperSufficientCount,
             lower: staged.lowerSufficientCount,
-            reconstructionReady: completionState == .ready,
+            reconstructionReady: reconstructionReadyLatched,
             softComplete: completionState == .nearlyReady
         )
         sectorRingProgress = staged
 
         if elapsed < CapturePhaseConfig.stabilizingSec {
             capturePhase = .stabilizing
-        } else if completionState == .ready {
+        } else if reconstructionReadyLatched || completionState == .ready {
             capturePhase = .readyToFinish
         } else if staged.stage == .eyeLevelSweep {
             capturePhase = .perimeter
