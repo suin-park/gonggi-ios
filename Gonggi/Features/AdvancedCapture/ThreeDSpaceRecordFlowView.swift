@@ -28,6 +28,16 @@ struct ThreeDSpaceRecordFlowView: View {
     @State private var waitTask: Task<Void, Never>?
     /// Prevents duplicate transition into introStep2 / guidedCapture for the same completion event.
     @State private var didPromoteReadySessionIds = Set<String>()
+    @State private var didAutoStartDirect3D = false
+
+    /// Production hides legacy entry cards; keep code for Space Detail expansion / DEBUG.
+    private static var showLegacyEntryChoices: Bool {
+        #if DEBUG
+        false
+        #else
+        false
+        #endif
+    }
 
     private var expandableSpaces: [SpaceRecord] {
         ThreeDExpansionSupport.expandableSpaces(from: appState.spaces, store: analysisStore)
@@ -121,9 +131,9 @@ struct ThreeDSpaceRecordFlowView: View {
                         .foregroundStyle(GonggiColors.textSecondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, GonggiSpacing.lg)
-                    PrimaryButton(title: "시작 방식으로", icon: "arrow.uturn.backward") {
+                    PrimaryButton(title: "다시 촬영", icon: "camera.aperture") {
                         waitTask?.cancel()
-                        phase = .chooseEntry
+                        startDirect3DCapture()
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
                     Text("기존 360° 공간은 그대로 보관함에 남아 있어요.")
@@ -160,6 +170,13 @@ struct ThreeDSpaceRecordFlowView: View {
             )
             .environmentObject(appState)
         }
+        .onAppear {
+            guard !didAutoStartDirect3D else { return }
+            if case .chooseEntry = phase {
+                didAutoStartDirect3D = true
+                startDirect3DCapture()
+            }
+        }
         .onChange(of: analysisRuntime.analysisCompleteEpoch) { _, _ in
             handleAnalysisCompleteSignal()
         }
@@ -182,42 +199,53 @@ struct ThreeDSpaceRecordFlowView: View {
                 onClose()
             })
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                    Text("어떻게 시작할까요?")
-                        .font(GonggiTypography.body(16))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                        .padding(.top, GonggiSpacing.md)
+            if Self.showLegacyEntryChoices {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+                        Text("어떻게 시작할까요?")
+                            .font(GonggiTypography.body(16))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                            .padding(.top, GonggiSpacing.md)
 
-                    entryChoiceCard(
-                        icon: "rectangle.stack",
-                        title: "기존 공간에서 시작",
-                        subtitle: "기록해둔 360° 공간을\n3D 공간으로 확장해요"
-                    ) {
-                        GonggiHaptics.medium()
-                        phase = .pickExisting
-                    }
+                        entryChoiceCard(
+                            icon: "rectangle.stack",
+                            title: "기존 공간에서 시작",
+                            subtitle: "기록해둔 360° 공간을\n3D 공간으로 확장해요"
+                        ) {
+                            GonggiHaptics.medium()
+                            phase = .pickExisting
+                        }
 
-                    entryChoiceCard(
-                        icon: "camera.aperture",
-                        title: "새 공간 기록",
-                        subtitle: "공간을 먼저 확인한 뒤\n맞춤 안내로 3D를 기록해요"
-                    ) {
-                        GonggiHaptics.medium()
-                        phase = .introStep1
-                    }
+                        entryChoiceCard(
+                            icon: "camera.aperture",
+                            title: "새 공간 기록",
+                            subtitle: "공간을 먼저 확인한 뒤\n맞춤 안내로 3D를 기록해요"
+                        ) {
+                            GonggiHaptics.medium()
+                            phase = .introStep1
+                        }
 
-                    entryChoiceCard(
-                        icon: "figure.walk",
-                        title: "바로 3D 촬영",
-                        subtitle: "공간 분석 없이\n바로 3D 촬영을 시작해요"
-                    ) {
-                        GonggiHaptics.medium()
-                        startDirect3DCapture()
+                        entryChoiceCard(
+                            icon: "figure.walk",
+                            title: "바로 3D 촬영",
+                            subtitle: "공간 분석 없이\n바로 3D 촬영을 시작해요"
+                        ) {
+                            GonggiHaptics.medium()
+                            startDirect3DCapture()
+                        }
                     }
+                    .padding(.horizontal, GonggiSpacing.lg)
+                    .padding(.bottom, GonggiSpacing.xxl)
                 }
-                .padding(.horizontal, GonggiSpacing.lg)
-                .padding(.bottom, GonggiSpacing.xxl)
+            } else {
+                Spacer()
+                ProgressView()
+                    .tint(GonggiColors.accentCyan)
+                Text("촬영을 준비하고 있어요")
+                    .font(GonggiTypography.caption(14))
+                    .foregroundStyle(GonggiColors.textSecondary)
+                    .padding(.top, GonggiSpacing.sm)
+                Spacer()
             }
         }
     }
@@ -548,11 +576,12 @@ struct ThreeDSpaceRecordFlowView: View {
     // MARK: - Pipelines
 
     /// Independent Direct 3D session — no 360 picker, LatLong, Astra, or cachedGuidePlan.
+    /// Skips entry chooser + intro; opens guided capture immediately.
     private func startDirect3DCapture() {
         waitTask?.cancel()
         let sessionId = "direct3d-\(UUID().uuidString)"
         let plan = AdvancedCaptureCopy.sanitize(.defaultP1Plan(sessionId: sessionId))
-        phase = .introStep2(sessionId: sessionId, plan: plan, sourceLatLongSessionId: nil)
+        phase = .guidedCapture(sessionId: sessionId, plan: plan, sourceLatLongSessionId: nil)
     }
 
     private func beginExpansion(from space: SpaceRecord) {
