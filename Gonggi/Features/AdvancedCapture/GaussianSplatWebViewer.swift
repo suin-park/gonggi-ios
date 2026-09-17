@@ -21,6 +21,8 @@ struct GaussianSplatWebViewer: View {
     @State private var cleanupMode: GaussianCleanupMode = .original
     @State private var webBridge: GaussianSplatWebBridge?
     @State private var reloadToken = 0
+    /// Stable cache-bust — set once at State init (never `Date()` inside a computed URL).
+    @State private var assetRev: String = String(Int(Date().timeIntervalSince1970))
 
     /// Native loading gate — true from first frame; never waits for WKWebView/JS.
     @State private var isLoading = true
@@ -30,6 +32,8 @@ struct GaussianSplatWebViewer: View {
     @State private var slowLoadHintShown = false
     @State private var appearAt = Date()
     @State private var slowLoadTask: Task<Void, Never>?
+    @State private var didReceiveLoadStage = false
+    @State private var resumeReloadArmed = false
 
     private var viewerURL: URL {
         let root = AppConfiguration.production.apiBaseURL.absoluteString
@@ -39,6 +43,7 @@ struct GaussianSplatWebViewer: View {
             URLQueryItem(name: "navigationMode", value: "fly"),
             URLQueryItem(name: "gamingControls", value: "1"),
             URLQueryItem(name: "mobileChrome", value: "1"),
+            URLQueryItem(name: "assetRev", value: "\(assetRev)-\(reloadToken)"),
         ]
         if enableCleanupCompare, cleanupMode != .original {
             items.append(URLQueryItem(name: "cleanupMode", value: cleanupMode.rawValue))
@@ -108,6 +113,12 @@ struct GaussianSplatWebViewer: View {
                     .onChange(of: navigationMode) { _, mode in
                         webBridge?.setNavigationMode(mode)
                     }
+                    .onAppear {
+                        if navigationMode != .walk {
+                            navigationMode = .walk
+                            webBridge?.setNavigationMode(.walk)
+                        }
+                    }
                 }
             }
             .zIndex(60)
@@ -116,7 +127,9 @@ struct GaussianSplatWebViewer: View {
                 VStack {
                     Spacer()
                     Text(
-                        enableCleanupCompare
+                        hasCollision
+                            ? "걷기/자유이동 전환 · 왼쪽 조이스틱 이동 · 드래그로 시점"
+                            : enableCleanupCompare
                             ? "원본/Cleaned 전환 · 왼쪽 조이스틱 이동 · 드래그로 시점"
                             : "왼쪽 조이스틱으로 이동 · 화면을 드래그해 시점 변경"
                     )
@@ -138,12 +151,24 @@ struct GaussianSplatWebViewer: View {
             appearAt = Date()
             GaussianViewerLoadLog.mark("ViewerView.onAppear isLoading=\(isLoading)", since: appearAt)
             beginLoadCycle(reason: "onAppear")
+            // first-entry WebKit stall: if no bridge stage after layout, nudge once.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                guard isLoading, !loadFailed, !didReceiveLoadStage, !resumeReloadArmed else { return }
+                resumeReloadArmed = true
+                GaussianViewerLoadLog.mark("first_entry_nudge_reload", since: appearAt)
+                beginLoadCycle(reason: "first_entry_stall")
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.5) {
                 withAnimation(.easeOut(duration: 0.4)) { showHint = false }
             }
         }
         .onChange(of: scenePhase) { _, phase in
             GaussianViewerLoadLog.mark("scenePhase=\(String(describing: phase))", since: appearAt)
+            // Background→foreground often unsticks WebKit; force one reload if still silent.
+            if phase == .active, isLoading, !loadFailed, !didReceiveLoadStage {
+                GaussianViewerLoadLog.mark("resume_nudge_reload", since: appearAt)
+                beginLoadCycle(reason: "scene_active_stall")
+            }
         }
         .onDisappear {
             slowLoadTask?.cancel()
@@ -153,7 +178,7 @@ struct GaussianSplatWebViewer: View {
 
     private var nativeLoadingOverlay: some View {
         ZStack {
-            Color.black.opacity(0.88)
+            Color.black.opacity(0.92)
                 .ignoresSafeArea()
             VStack(spacing: 16) {
                 if !loadFailed {
@@ -195,7 +220,6 @@ struct GaussianSplatWebViewer: View {
             }
             .padding(.horizontal, 28)
         }
-        // Block WebView interaction while loading; allow Retry when failed.
         .allowsHitTesting(true)
     }
 
@@ -207,19 +231,29 @@ struct GaussianSplatWebViewer: View {
         loadSubMessage = nil
         slowLoadHintShown = false
         hasCollision = false
+        didReceiveLoadStage = false
         GaussianViewerLoadLog.mark("beginLoadCycle reason=\(reason)", since: appearAt)
 
+        // Always bump token except the very first onAppear (WebView makeUIView already loads).
+        // Stall / retry / mode change must reload.
         if reason != "onAppear" {
             reloadToken += 1
         }
 
         slowLoadTask = Task { @MainActor in
-            // Soft hint only — never fail a large PLY mid-download.
-            try? await Task.sleep(nanoseconds: 20_000_000_000)
-            guard !Task.isCancelled, isLoading, !loadFailed, !slowLoadHintShown else { return }
-            slowLoadHintShown = true
-            loadMessage = GaussianViewerLoadCopy.slowMessage
-            GaussianViewerLoadLog.mark("slow_load_hint", since: appearAt)
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard !Task.isCancelled, isLoading, !loadFailed else { return }
+            if !didReceiveLoadStage {
+                // Still no bridge traffic — force a reload once.
+                GaussianViewerLoadLog.mark("stall_12s_force_reload", since: appearAt)
+                loadMessage = GaussianViewerLoadCopy.slowMessage
+                reloadToken += 1
+                didReceiveLoadStage = false
+            } else if !slowLoadHintShown {
+                slowLoadHintShown = true
+                loadMessage = GaussianViewerLoadCopy.slowMessage
+                GaussianViewerLoadLog.mark("slow_load_hint", since: appearAt)
+            }
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
@@ -233,7 +267,9 @@ struct GaussianSplatWebViewer: View {
             GaussianViewerLoadLog.mark(name, since: appearAt)
 
         case .loadStage(let stage, let label, let sub):
-            GaussianViewerLoadLog.mark("first_or_next load_stage=\(stage)", since: appearAt)
+            GaussianViewerLoadLog.mark("load_stage=\(stage)", since: appearAt)
+            didReceiveLoadStage = true
+            resumeReloadArmed = false
             guard isLoading, !loadFailed else { return }
             loadMessage = GaussianViewerLoadCopy.message(forStage: stage, fallbackLabel: label)
             if let sub, !sub.isEmpty {
@@ -242,6 +278,8 @@ struct GaussianSplatWebViewer: View {
 
         case .ready:
             GaussianViewerLoadLog.mark("render_ready → hide native overlay", since: appearAt)
+            didReceiveLoadStage = true
+            resumeReloadArmed = false
             slowLoadTask?.cancel()
             withAnimation(.easeOut(duration: 0.25)) {
                 isLoading = false
@@ -253,7 +291,6 @@ struct GaussianSplatWebViewer: View {
 
         case .error(let code):
             GaussianViewerLoadLog.mark("viewer_error code=\(code)", since: appearAt)
-            // Soft / non-fatal codes: keep loading UI, do not flip to hard failure.
             if GaussianViewerLoadCopy.isHardFailure(code) {
                 slowLoadTask?.cancel()
                 loadFailed = true
@@ -300,6 +337,8 @@ private enum GaussianViewerLoadCopy {
         if c.contains("CONTENT_FETCH") { return true }
         if c.contains("WEBGL_CONTEXT_LOST") { return true }
         if c.contains("GAUSSIAN_VIEWER_WINDOW_ERROR") { return true }
+        if c.contains("NAV_PROVISIONAL_FAILED") { return true }
+        if c.contains("NAV_FAILED") { return true }
         if c.contains("PLY") && c.contains("FAIL") { return true }
         return false
     }
@@ -395,22 +434,36 @@ private struct GaussianSplatWebView: UIViewRepresentable {
 
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+        if #available(iOS 14.0, *) {
+            config.defaultWebpagePreferences.allowsContentJavaScript = true
+        }
         let contentController = config.userContentController
         contentController.add(context.coordinator, name: "gonggiViewer")
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.isOpaque = true
+        webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.navigationDelegate = context.coordinator
+        #if DEBUG
+        if #available(iOS 16.4, *) {
+            webView.isInspectable = true
+        }
+        #endif
 
         let owned = GaussianSplatWebBridge()
         owned.webView = webView
         context.coordinator.bridge = owned
         DispatchQueue.main.async { bridge = owned }
 
-        load(url, into: webView, coordinator: context.coordinator)
+        // Defer first load until after fullScreenCover layout — avoids blank WKWebView
+        // that only starts after app background/foreground.
         context.coordinator.lastLoadedURL = url
         context.coordinator.lastReloadToken = reloadToken
+        DispatchQueue.main.async {
+            self.load(url, into: webView, coordinator: context.coordinator)
+        }
         return webView
     }
 
@@ -424,19 +477,20 @@ private struct GaussianSplatWebView: UIViewRepresentable {
             context.coordinator.lastLoadedURL = url
             context.coordinator.lastReloadToken = reloadToken
             context.coordinator.didReceiveFirstStage = false
-            load(url, into: uiView, coordinator: context.coordinator)
+            // Slight defer so SwiftUI finishes the current update pass.
+            DispatchQueue.main.async {
+                self.load(url, into: uiView, coordinator: context.coordinator)
+            }
         }
     }
 
     private func load(_ url: URL, into webView: WKWebView, coordinator: Coordinator) {
-        coordinator.onTimeline("load_request_started")
+        coordinator.onTimeline("load_request_started \(url.path)")
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 120)
         if let token = MobileAuthTokenStore.shared.getAccessToken() {
-            var request = URLRequest(url: url)
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            webView.load(request)
-        } else {
-            webView.load(URLRequest(url: url))
         }
+        webView.load(request)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
@@ -474,6 +528,8 @@ private struct GaussianSplatWebView: UIViewRepresentable {
 
         deinit {
             if let observer { NotificationCenter.default.removeObserver(observer) }
+            // Avoid leaking the script message handler if the web view outlives us briefly.
+            bridge?.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "gonggiViewer")
         }
 
         func userContentController(
@@ -531,7 +587,6 @@ private struct GaussianSplatWebView: UIViewRepresentable {
 
             case "viewer_error":
                 let code = (body["errorCode"] as? String) ?? "VIEWER_ERROR"
-                // Camera-not-ready noise must not kill the load UI.
                 if code == "CAMERA_NOT_READY" || code == "CAMERA_ENTITY_UNAVAILABLE" {
                     onTimeline("viewer_error_soft \(code)")
                 } else {
@@ -540,6 +595,7 @@ private struct GaussianSplatWebView: UIViewRepresentable {
 
             case "viewer_shell_loaded":
                 onTimeline("JS_initialized viewer_shell_loaded")
+                onBridgeEvent(.loadStage(stage: "boot", label: "공간을 준비하고 있어요", sub: nil))
 
             default:
                 #if DEBUG
@@ -551,6 +607,7 @@ private struct GaussianSplatWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             onTimeline("didStartProvisionalNavigation")
+            onBridgeEvent(.loadStage(stage: "boot", label: "공간을 불러오고 있어요", sub: nil))
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
