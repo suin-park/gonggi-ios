@@ -49,6 +49,10 @@ enum SpatialCapturePackageBuilder {
         var telemetry: SpatialCaptureTelemetryReport?
         var reconstructionMetrics: CaptureReconstructionMetricsSnapshot?
         var reconstructionCompletion: CaptureReconstructionCompletionRecord?
+        var localCoverage: Double? = nil
+        var globalCoverage: Double? = nil
+        var regionCount: Int? = nil
+        var transitionScore: Double? = nil
     }
 
     static func prepareDirectories(sessionId: String) throws -> SpatialCapturePackagePaths {
@@ -123,11 +127,15 @@ enum SpatialCapturePackageBuilder {
             averageJPEGBytes: averageJPEG,
             packageBytesEstimate: packageBytes,
             videoMovIncluded: input.videoRelativePath != nil,
-            videoRelativePath: input.videoRelativePath
+            videoRelativePath: input.videoRelativePath,
+            captureMode: SpatialCaptureConfig.captureMode,
+            packageSchemaVersion: SpatialCaptureConfig.packageSchemaVersion,
+            regionCount: input.regionCount,
+            candidateSafetyCap: SpatialCaptureConfig.candidateSafetyCap
         )
 
         let poses = SpatialCapturePosesFile(
-            schemaVersion: 1,
+            schemaVersion: SpatialCaptureConfig.packageSchemaVersion,
             coordinateConvention: SpatialCaptureCoordinateConvention.documentId,
             unit: "meters",
             matrixLayout: "column_major_4x4_camera_to_world",
@@ -138,13 +146,17 @@ enum SpatialCapturePackageBuilder {
                     cameraToWorldColumnMajor: $0.cameraToWorldColumnMajor,
                     translationMeters: $0.translationMeters,
                     rotationQuaternionXYZw: $0.rotationQuaternionXYZw,
-                    trackingState: $0.trackingState
+                    trackingState: $0.trackingState,
+                    coverageCell: $0.quality.coverageCell,
+                    regionId: $0.quality.regionId,
+                    transitionScore: $0.quality.transitionScore,
+                    selectionScore: $0.quality.selectionScore
                 )
             }
         )
 
         let intrinsics = SpatialCaptureIntrinsicsFile(
-            schemaVersion: 1,
+            schemaVersion: SpatialCaptureConfig.packageSchemaVersion,
             frames: keyframes.map {
                 SpatialCaptureIntrinsicsEntry(
                     frameId: $0.frameId,
@@ -160,7 +172,7 @@ enum SpatialCapturePackageBuilder {
         )
 
         let quality = SpatialCaptureQualityFile(
-            schemaVersion: 1,
+            schemaVersion: SpatialCaptureConfig.packageSchemaVersion,
             session: SpatialCaptureSessionQuality(
                 acceptedFrames: keyframes.count,
                 rejectedDecisions: input.rejectedDecisionCount,
@@ -173,7 +185,12 @@ enum SpatialCapturePackageBuilder {
                 captureDurationSec: duration,
                 translationBaselineGrade: input.translationBaselineGrade,
                 reconstructionMetrics: input.reconstructionMetrics,
-                reconstructionCompletion: input.reconstructionCompletion
+                reconstructionCompletion: input.reconstructionCompletion,
+                captureMode: SpatialCaptureConfig.captureMode,
+                localCoverage: input.localCoverage,
+                globalCoverage: input.globalCoverage,
+                regionCount: input.regionCount,
+                transitionSegmentHint: input.transitionScore
             ),
             frames: keyframes.map(\.quality)
         )

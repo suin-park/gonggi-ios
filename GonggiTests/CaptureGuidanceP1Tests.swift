@@ -290,7 +290,7 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             sectorProgress: .empty
         )
         XCTAssertEqual(evaluation.state, .nearlyReady)
-        XCTAssertEqual(SpatialCaptureConfig.hardMaxKeyframes, 200)
+        XCTAssertEqual(SpatialCaptureConfig.candidateSafetyCap, 520)
     }
 
     func testMinimumDurationBlocksEarlyReady() {

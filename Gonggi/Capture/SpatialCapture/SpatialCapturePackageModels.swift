@@ -27,6 +27,11 @@ struct SpatialCapturePackageMetadata: Codable, Equatable, Sendable {
     var packageBytesEstimate: Int?
     var videoMovIncluded: Bool
     var videoRelativePath: String?
+    /// Additive multi-room fields (optional for Baseline A readers).
+    var captureMode: String?
+    var packageSchemaVersion: Int?
+    var regionCount: Int?
+    var candidateSafetyCap: Int?
 }
 
 struct SpatialCapturePoseEntry: Codable, Equatable, Sendable {
@@ -37,6 +42,10 @@ struct SpatialCapturePoseEntry: Codable, Equatable, Sendable {
     var translationMeters: [Float]
     var rotationQuaternionXYZw: [Float]
     var trackingState: String
+    var coverageCell: String?
+    var regionId: String?
+    var transitionScore: Double?
+    var selectionScore: Double?
 }
 
 struct SpatialCapturePosesFile: Codable, Equatable, Sendable {
@@ -77,6 +86,10 @@ struct SpatialCaptureFrameQuality: Codable, Equatable, Sendable {
     var trackingState: String
     var lowTextureScore: Double?
     var acceptReason: String
+    var selectionScore: Double?
+    var transitionScore: Double?
+    var coverageCell: String?
+    var regionId: String?
 }
 
 struct SpatialCaptureSessionQuality: Codable, Equatable, Sendable {
@@ -94,6 +107,11 @@ struct SpatialCaptureSessionQuality: Codable, Equatable, Sendable {
     var reconstructionMetrics: CaptureReconstructionMetricsSnapshot?
     /// Explicit completion gate snapshot for device validation (section 9).
     var reconstructionCompletion: CaptureReconstructionCompletionRecord?
+    var captureMode: String?
+    var localCoverage: Double?
+    var globalCoverage: Double?
+    var regionCount: Int?
+    var transitionSegmentHint: Double?
 }
 
 struct SpatialCaptureQualityFile: Codable, Equatable, Sendable {

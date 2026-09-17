@@ -45,4 +45,19 @@ enum CaptureMath {
         guard deltaTimeSec > 1e-4 else { return (0, 0) }
         return (translationM / deltaTimeSec, rotationRad / deltaTimeSec)
     }
+
+    /// Camera forward yaw/pitch in degrees (gravity-aligned world).
+    static func yawPitchDegrees(from transform: simd_float4x4) -> (yaw: Double, pitch: Double) {
+        let f = forwardVector(from: transform)
+        let yaw = Double(atan2(f.x, f.z)) * 180 / .pi
+        let pitch = Double(asin(simd_clamp(f.y, -1, 1))) * 180 / .pi
+        return (yaw, pitch)
+    }
+
+    static func shortestAngleDegrees(from a: Double, to b: Double) -> Double {
+        var d = b - a
+        while d > 180 { d -= 360 }
+        while d < -180 { d += 360 }
+        return d
+    }
 }

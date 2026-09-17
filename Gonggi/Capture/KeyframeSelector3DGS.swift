@@ -2,7 +2,7 @@ import Foundation
 import simd
 
 /// 3D spatial / 3DGS keyframe policy — separate from TexturedMesh `KeyframeSelector`.
-/// Prefers translation over in-place spin; optional quality gates reject blurry/fast/low-texture frames.
+/// Adaptive scoring prefers new coverage + doorway transitions; suppresses saturated redundancy.
 enum KeyframeSelector3DGS {
     struct Config: Equatable {
         var minTranslationM: Float = SpatialCaptureConfig.minTranslationM
@@ -11,12 +11,14 @@ enum KeyframeSelector3DGS {
         var maxMotionSpeedMps: Double = SpatialCaptureConfig.maxMotionSpeedMps
         var maxAngularVelocityRadPerSec: Double = SpatialCaptureConfig.maxAngularVelocityRadPerSec
         var maxLowTextureScore: Double = SpatialCaptureConfig.maxLowTextureScore
-        var hardMaxKeyframes: Int = SpatialCaptureConfig.hardMaxKeyframes
+        var hardMaxKeyframes: Int = SpatialCaptureConfig.candidateSafetyCap
+        var useAdaptiveScoring: Bool = SpatialCaptureConfig.useAdaptiveKeyframeScoring
     }
 
     struct Decision: Equatable {
         var accept: Bool
         var reason: String
+        var selectionScore: Double?
     }
 
     static func shouldAccept(
@@ -30,40 +32,59 @@ enum KeyframeSelector3DGS {
         motionSpeed: Double? = nil,
         angularVelocity: Double? = nil,
         lowTextureScore: Double? = nil,
+        adaptiveContext: AdaptiveKeyframeScorer.Context? = nil,
         config: Config = Config()
     ) -> Decision {
         guard trackingNormal else {
-            return Decision(accept: false, reason: "tracking_not_normal")
+            return Decision(accept: false, reason: "tracking_not_normal", selectionScore: nil)
         }
         if keyframeCount >= config.hardMaxKeyframes {
-            return Decision(accept: false, reason: "max_keyframes")
+            return Decision(accept: false, reason: "safety_cap", selectionScore: nil)
         }
         if sharpnessState == .blurry {
-            return Decision(accept: false, reason: "blur")
+            return Decision(accept: false, reason: "blur", selectionScore: nil)
         }
         if let motionSpeed, motionSpeed > config.maxMotionSpeedMps {
-            return Decision(accept: false, reason: "motion_too_fast")
+            return Decision(accept: false, reason: "motion_too_fast", selectionScore: nil)
         }
         if let angularVelocity, angularVelocity > config.maxAngularVelocityRadPerSec {
-            return Decision(accept: false, reason: "angular_too_fast")
+            return Decision(accept: false, reason: "angular_too_fast", selectionScore: nil)
         }
         if let lowTextureScore, lowTextureScore > config.maxLowTextureScore {
-            return Decision(accept: false, reason: "low_texture")
+            return Decision(accept: false, reason: "low_texture", selectionScore: nil)
         }
         guard let lastT = lastKeyframeTimestamp, let lastX = lastKeyframeTransform else {
-            return Decision(accept: true, reason: "first")
+            return Decision(accept: true, reason: "first", selectionScore: 2.0)
         }
         if timestamp - lastT < config.minIntervalSec {
-            return Decision(accept: false, reason: "min_interval")
+            return Decision(accept: false, reason: "min_interval", selectionScore: nil)
         }
+
         let translation = CaptureMath.translationMeters(from: lastX, to: transform)
-        if translation < config.minTranslationM {
-            return Decision(accept: false, reason: "translation_too_small")
-        }
         let rotation = CaptureMath.rotationDeltaRadians(from: lastX, to: transform)
         if rotation > config.maxRotationRad {
-            return Decision(accept: false, reason: "rotation_excessive")
+            return Decision(accept: false, reason: "rotation_excessive", selectionScore: nil)
         }
-        return Decision(accept: true, reason: "translation_ok")
+
+        if config.useAdaptiveScoring, let adaptiveContext {
+            let breakdown = AdaptiveKeyframeScorer.score(context: adaptiveContext)
+            let verdict = AdaptiveKeyframeScorer.shouldAccept(
+                breakdown: breakdown,
+                keyframeCount: keyframeCount,
+                safetyCap: config.hardMaxKeyframes,
+                acceptThreshold: SpatialCaptureConfig.adaptiveAcceptThreshold
+            )
+            return Decision(
+                accept: verdict.accept,
+                reason: verdict.reason,
+                selectionScore: breakdown.total
+            )
+        }
+
+        // Legacy binary gate (Baseline A-compatible fallback).
+        if translation < config.minTranslationM {
+            return Decision(accept: false, reason: "translation_too_small", selectionScore: nil)
+        }
+        return Decision(accept: true, reason: "translation_ok", selectionScore: Double(translation))
     }
 }

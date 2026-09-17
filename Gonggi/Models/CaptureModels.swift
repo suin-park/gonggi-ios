@@ -97,6 +97,13 @@ struct CaptureQualityState: Equatable {
     var reconstructionReady: Bool
     var acceptedKeyframeCount: Int
     var keyframeHardCapReached: Bool
+    /// Recent neighborhood coverage (Quiet cube) — not whole-home completion.
+    var localCoverage: Double
+    /// Session-accumulated coverage.
+    var globalCoverage: Double
+    var activeRegionId: String?
+    var regionCount: Int
+    var transitionScore: Double
 
     init(
         overallCoverage: Double,
@@ -126,7 +133,12 @@ struct CaptureQualityState: Equatable {
         guidanceStage: CaptureGuidanceStage = .eyeLevelSweep,
         reconstructionReady: Bool = false,
         acceptedKeyframeCount: Int = 0,
-        keyframeHardCapReached: Bool = false
+        keyframeHardCapReached: Bool = false,
+        localCoverage: Double = 0,
+        globalCoverage: Double = 0,
+        activeRegionId: String? = nil,
+        regionCount: Int = 0,
+        transitionScore: Double = 0
     ) {
         self.overallCoverage = overallCoverage
         self.observedCoverage = observedCoverage ?? overallCoverage
@@ -165,6 +177,11 @@ struct CaptureQualityState: Equatable {
         self.reconstructionReady = reconstructionReady
         self.acceptedKeyframeCount = acceptedKeyframeCount
         self.keyframeHardCapReached = keyframeHardCapReached
+        self.localCoverage = localCoverage
+        self.globalCoverage = globalCoverage
+        self.activeRegionId = activeRegionId
+        self.regionCount = regionCount
+        self.transitionScore = transitionScore
     }
 
     static let zero = CaptureQualityState(

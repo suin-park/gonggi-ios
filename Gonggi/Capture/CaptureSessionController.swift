@@ -48,6 +48,11 @@ final class CaptureSessionController {
     private var lastReconstructionSnapshot: CaptureReconstructionMetricsSnapshot?
     /// Sticky ready: once true, transient overlap lost must not demote UI completion.
     private var reconstructionReadyLatched = false
+    private var regionTracker = CaptureRegionTracker()
+    private var localGlobalCoverage = CaptureLocalGlobalCoverage.zero
+    private var lastIngestTimestamp: Double = 0
+    private var lastAcceptedYawDeg: Double?
+    private var lastAcceptedPitchDeg: Double?
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -91,6 +96,11 @@ final class CaptureSessionController {
         sectorRingProgress = .empty
         lastReconstructionSnapshot = nil
         reconstructionReadyLatched = false
+        regionTracker.reset()
+        localGlobalCoverage = .zero
+        lastIngestTimestamp = 0
+        lastAcceptedYawDeg = nil
+        lastAcceptedPitchDeg = nil
         runtimeTelemetry.reset()
         jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -171,6 +181,60 @@ final class CaptureSessionController {
             trackingFailureEventCount += 1
         }
 
+        let position = CaptureFrameContract.translation(from: transform)
+        let cellId = CaptureMath.gridCellId(position: position)
+        let dt: Float
+        if lastIngestTimestamp > 0 {
+            dt = Float(max(0.001, frame.timestamp - lastIngestTimestamp))
+        } else {
+            dt = 0.033
+        }
+        lastIngestTimestamp = frame.timestamp
+        localGlobalCoverage = regionTracker.ingest(cellId: cellId, position: position, deltaTimeSec: dt)
+
+        let (yawDeg, pitchDeg) = CaptureMath.yawPitchDegrees(from: transform)
+        let yawNovelty: Double
+        let pitchNovelty: Double
+        if let lastYaw = lastAcceptedYawDeg, let lastPitch = lastAcceptedPitchDeg {
+            yawNovelty = abs(CaptureMath.shortestAngleDegrees(from: lastYaw, to: yawDeg))
+            pitchNovelty = abs(pitchDeg - lastPitch)
+        } else {
+            yawNovelty = 90
+            pitchNovelty = 20
+        }
+        let translationFromLast: Float
+        if let lastX = lastKeyframeTransform {
+            translationFromLast = CaptureMath.translationMeters(from: lastX, to: transform)
+        } else {
+            translationFromLast = 1
+        }
+        let secondsSince: Double
+        if let lastT = lastKeyframeTimestamp {
+            secondsSince = frame.timestamp - lastT
+        } else {
+            secondsSince = 999
+        }
+        // Approximate new-coverage: cell rarely visited in local window.
+        let visit = regionTracker.visitCount(for: cellId)
+        let newCoverageRatio = visit <= 1 ? 1.0 : (visit <= 3 ? 0.45 : max(0, 1.0 / Double(visit)))
+
+        let adaptiveContext = AdaptiveKeyframeScorer.Context(
+            keyframeCount: keyframe3DGSCount,
+            currentCellId: cellId,
+            cellVisitCount: visit,
+            newCoverageRatio: newCoverageRatio,
+            yawNoveltyDeg: yawNovelty,
+            pitchNoveltyDeg: pitchNovelty,
+            sharpnessScore: sharpSnap.score,
+            trackingNormal: trackingNormal,
+            overlapState: overlapAnalyzer.lastState,
+            translationFromNearestAcceptedM: translationFromLast,
+            secondsSinceLastAccept: secondsSince,
+            transitionScore: localGlobalCoverage.transitionScore,
+            localCoverage: localGlobalCoverage.localCoverage,
+            globalCoverage: localGlobalCoverage.globalCoverage
+        )
+
         let keyDecision = KeyframeSelector3DGS.shouldAccept(
             timestamp: frame.timestamp,
             transform: transform,
@@ -181,7 +245,8 @@ final class CaptureSessionController {
             sharpnessState: sharpSnap.state,
             motionSpeed: lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed,
             angularVelocity: lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity,
-            lowTextureScore: lowTexture
+            lowTextureScore: lowTexture,
+            adaptiveContext: adaptiveContext
         )
 
         var isKeyframe = false
@@ -225,8 +290,12 @@ final class CaptureSessionController {
             )
         }
 
-        let cellId = CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform))
         _ = overlapAnalyzer.ingest(currentCellId: cellId, isKeyframe: isKeyframe)
+        if isKeyframe {
+            let yp = CaptureMath.yawPitchDegrees(from: transform)
+            lastAcceptedYawDeg = yp.yaw
+            lastAcceptedPitchDeg = yp.pitch
+        }
         updatePhaseAndCompletion(trackingNormal: trackingNormal, transform: transform)
 
         let sample = CaptureFrameSample(
@@ -345,6 +414,10 @@ final class CaptureSessionController {
             overlapState: overlapAnalyzer.lastState.rawValue,
             lowTextureScore: lowTexture,
             acceptReason: keyDecision.reason,
+            selectionScore: keyDecision.selectionScore,
+            transitionScore: localGlobalCoverage.transitionScore,
+            coverageCell: CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform)),
+            regionId: localGlobalCoverage.activeRegionId,
             jpegURL: jpegURL,
             debugPrincipalPointJPEGURL: debugURL,
             optionalDepthRelativePath: nil
@@ -421,7 +494,11 @@ final class CaptureSessionController {
                     overlapState: snap.overlapState,
                     trackingState: snap.trackingState,
                     lowTextureScore: snap.lowTextureScore,
-                    acceptReason: snap.acceptReason
+                    acceptReason: snap.acceptReason,
+                    selectionScore: snap.selectionScore,
+                    transitionScore: snap.transitionScore,
+                    coverageCell: snap.coverageCell,
+                    regionId: snap.regionId
                 ),
                 optionalDepthRelativePath: depthPath
             )
@@ -714,7 +791,11 @@ final class CaptureSessionController {
                         decisions: finalizedDecisions,
                         telemetry: telemetryReport,
                         reconstructionMetrics: reconSnap,
-                        reconstructionCompletion: completionRecord
+                        reconstructionCompletion: completionRecord,
+                        localCoverage: localGlobalCoverage.localCoverage,
+                        globalCoverage: localGlobalCoverage.globalCoverage,
+                        regionCount: localGlobalCoverage.regionCount,
+                        transitionScore: localGlobalCoverage.transitionScore
                     )
                 )
                 packageURL = built.root
@@ -832,7 +913,12 @@ final class CaptureSessionController {
             guidanceStage: sectorRingProgress.stage,
             reconstructionReady: reconstructionReadyLatched || completionState == .ready,
             acceptedKeyframeCount: keyframe3DGSCount,
-            keyframeHardCapReached: keyframe3DGSCount >= SpatialCaptureConfig.hardMaxKeyframes
+            keyframeHardCapReached: keyframe3DGSCount >= SpatialCaptureConfig.candidateSafetyCap,
+            localCoverage: localGlobalCoverage.localCoverage,
+            globalCoverage: localGlobalCoverage.globalCoverage,
+            activeRegionId: localGlobalCoverage.activeRegionId,
+            regionCount: localGlobalCoverage.regionCount,
+            transitionScore: localGlobalCoverage.transitionScore
         )
     }
 
@@ -863,7 +949,7 @@ final class CaptureSessionController {
             reconstruction: reconSnap,
             sectorProgress: sectorRingProgress,
             previouslyLatchedReady: reconstructionReadyLatched,
-            hardMaxKeyframes: SpatialCaptureConfig.hardMaxKeyframes
+            hardMaxKeyframes: SpatialCaptureConfig.candidateSafetyCap
         )
         reconstructionReadyLatched = evaluation.reconstructionReadyLatched
         completionState = evaluation.state

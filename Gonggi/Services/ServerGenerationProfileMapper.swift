@@ -13,8 +13,13 @@ enum ServerGenerationProfileMapper {
     /// Product default — matches `VIDEO_GAUSSIAN_DEFAULT_PROFILE`.
     static let defaultServerProfile = "capture_dense_v2"
 
-    /// Spatial Capture Package (JPEG keyframes) — parallel to MOV path.
+    /// Spatial Capture Package (JPEG keyframes) — Baseline A frozen.
     static let spatialPackageProfile = "spatial_package_v1"
+    static let spatialPackageColmapV2Profile = "spatial_package_colmap_v2"
+    static let spatialPackageVggtV1Profile = "spatial_package_vggt_v1"
+    static let spatialPackageHybridV1Profile = "spatial_package_hybrid_v1"
+    static let spatialPackageColmapFasterGsV1Profile = "spatial_package_colmap_fastergs_v1"
+    static let spatialPackageVggtFasterGsV1Profile = "spatial_package_vggt_fastergs_v1"
 
     /// Mainline allowlist (non-admin create path).
     static let mainlineServerProfiles: Set<String> = [
@@ -23,6 +28,15 @@ enum ServerGenerationProfileMapper {
         "fullres_dense_d1",
         "capture_dense_v2",
         "spatial_package_v1",
+    ]
+
+    /// Experiment allowlist (admin / internal tools / same-ZIP matrix).
+    static let experimentalSpatialProfiles: Set<String> = [
+        spatialPackageColmapV2Profile,
+        spatialPackageVggtV1Profile,
+        spatialPackageHybridV1Profile,
+        spatialPackageColmapFasterGsV1Profile,
+        spatialPackageVggtFasterGsV1Profile,
     ]
 
     private static let log = Logger(subsystem: "com.whik.gonggi", category: "GenerationProfile")
@@ -39,6 +53,9 @@ enum ServerGenerationProfileMapper {
         }
         if trimmed == spatialPackageProfile {
             return spatialPackageProfile
+        }
+        if experimentalSpatialProfiles.contains(trimmed) {
+            return trimmed
         }
         // Explicit client guide identities → product dense walk-through.
         if trimmed == "capture_default_p1" || trimmed.hasPrefix("guide_") {
@@ -57,6 +74,7 @@ enum ServerGenerationProfileMapper {
     static func sanitize(_ profile: String) -> String {
         let trimmed = profile.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed == spatialPackageProfile { return spatialPackageProfile }
+        if experimentalSpatialProfiles.contains(trimmed) { return trimmed }
         if mainlineServerProfiles.contains(trimmed) { return trimmed }
         return defaultServerProfile
     }

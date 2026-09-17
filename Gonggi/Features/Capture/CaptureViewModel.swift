@@ -32,6 +32,8 @@ final class CaptureViewModel: ObservableObject {
     private(set) var capturePlan: CapturePlan = .empty
     private var configureGeneration = 0
     private var didStartLiveSession = false
+    /// Once true, resume / re-run must not reset AR world (multi-room continuity).
+    private var hasEstablishedWorldOrigin = false
 
     init() {
         guidanceCancellable = guidance.objectWillChange.sink { [weak self] _ in
@@ -86,6 +88,7 @@ final class CaptureViewModel: ObservableObject {
         configureGeneration += 1
         didStartLiveSession = false
         hasReceivedFrame = false
+        hasEstablishedWorldOrigin = false
 
         if useMockCamera {
             cameraPresentation = .mock
@@ -109,14 +112,15 @@ final class CaptureViewModel: ObservableObject {
     func onARViewReady() {
         guard cameraPresentation == .live, !useMockCamera, !didStartLiveSession else { return }
         didStartLiveSession = true
-        startAR()
+        startAR(resetWorld: true)
         start()
     }
 
     /// Re-run AR after returning to foreground (recovers black preview).
+    /// Preserves world origin so multi-room capture stays in one coordinate system.
     func resumeCameraIfNeeded() {
         guard cameraPresentation == .live, !useMockCamera, !isStopping else { return }
-        startAR()
+        startAR(resetWorld: false)
     }
 
     func start() {
@@ -143,6 +147,7 @@ final class CaptureViewModel: ObservableObject {
         guidance.cancelSession()
         guidance.isRecording = false
         arSession.pause()
+        hasEstablishedWorldOrigin = false
     }
 
     func stop(finishedBy: CaptureFinishedBy = .manualEarlyFinish) async {
@@ -222,7 +227,7 @@ final class CaptureViewModel: ObservableObject {
             .sink { [weak self] _ in self?.framePipeline.ingestMockTick() }
     }
 
-    private func startAR() {
+    private func startAR(resetWorld: Bool) {
         guard ARWorldTrackingConfiguration.isSupported else { return }
         let config = ARWorldTrackingConfiguration()
         // Gravity-aligned world so coverage / guidance use world-up (not device roll).
@@ -236,6 +241,11 @@ final class CaptureViewModel: ObservableObject {
             config.frameSemantics.insert(.sceneDepth)
         }
         config.environmentTexturing = .automatic
-        arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
+        let shouldReset = resetWorld || !hasEstablishedWorldOrigin
+        let options: ARSession.RunOptions = shouldReset
+            ? [.resetTracking, .removeExistingAnchors]
+            : []
+        arSession.run(config, options: options)
+        hasEstablishedWorldOrigin = true
     }
 }

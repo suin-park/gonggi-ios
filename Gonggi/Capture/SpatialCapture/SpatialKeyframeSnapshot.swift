@@ -29,6 +29,10 @@ struct SpatialKeyframeSnapshot {
     var overlapState: String?
     var lowTextureScore: Double?
     var acceptReason: String
+    var selectionScore: Double?
+    var transitionScore: Double?
+    var coverageCell: String?
+    var regionId: String?
     var jpegURL: URL
     /// DEBUG-only overlay JPEG path (principal point). Nil in Release / when disabled.
     var debugPrincipalPointJPEGURL: URL?
