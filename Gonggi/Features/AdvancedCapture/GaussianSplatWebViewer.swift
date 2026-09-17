@@ -528,8 +528,6 @@ private struct GaussianSplatWebView: UIViewRepresentable {
 
         deinit {
             if let observer { NotificationCenter.default.removeObserver(observer) }
-            // Avoid leaking the script message handler if the web view outlives us briefly.
-            bridge?.webView?.configuration.userContentController.removeScriptMessageHandler(forName: "gonggiViewer")
         }
 
         func userContentController(
