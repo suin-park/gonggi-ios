@@ -37,17 +37,34 @@ struct GuidedCapturePlanBanner: View {
     }
 }
 
-/// Entry flow: intro overlay on top of live capture so AR warms while the user reads.
+/// Entry flow: optional intro overlay; Direct 3D skips intro and opens capture immediately.
 struct Guided3DGSCaptureFlowView: View {
     @EnvironmentObject private var appState: AppState
     let plan: AdvancedCaptureGuidePlan
     let sessionId: String
     /// LatLong analysis session to link after Gaussian success. Nil for Direct 3D (no 360 dependency).
     var sourceLatLongSessionId: String? = nil
+    /// When true (Direct 3D from Record tab), skip pre-capture intro screens.
+    var skipsIntro: Bool = false
     let onClose: () -> Void
 
     @State private var introStep = 0
-    @State private var showIntro = true
+    @State private var showIntro: Bool
+
+    init(
+        plan: AdvancedCaptureGuidePlan,
+        sessionId: String,
+        sourceLatLongSessionId: String? = nil,
+        skipsIntro: Bool = false,
+        onClose: @escaping () -> Void
+    ) {
+        self.plan = plan
+        self.sessionId = sessionId
+        self.sourceLatLongSessionId = sourceLatLongSessionId
+        self.skipsIntro = skipsIntro
+        self.onClose = onClose
+        _showIntro = State(initialValue: !skipsIntro)
+    }
 
     var body: some View {
         ZStack {

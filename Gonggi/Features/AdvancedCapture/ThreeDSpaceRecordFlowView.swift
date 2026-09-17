@@ -113,6 +113,7 @@ struct ThreeDSpaceRecordFlowView: View {
                     plan: plan,
                     sessionId: sessionId,
                     sourceLatLongSessionId: sourceLatLong,
+                    skipsIntro: sourceLatLong == nil,
                     onClose: {
                         waitTask?.cancel()
                         onClose()
