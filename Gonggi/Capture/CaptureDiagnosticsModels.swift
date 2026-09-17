@@ -221,6 +221,77 @@ struct CaptureSessionSummaryDiagnostics: Codable, Equatable, Sendable {
     var generation: CaptureGenerationDiagnostics
     var appVersion: String
     var buildNumber: String
-    /// Observability only — not used by CaptureCompletionGate in build 54.
+    /// Session reconstruction + sector/ring metrics used by CaptureCompletionGate (P1+).
     var reconstructionMetrics: CaptureReconstructionMetricsSnapshot?
+    /// Explicit P1 device-validation completion snapshot (section 9 fields).
+    var reconstructionCompletion: CaptureReconstructionCompletionRecord?
+}
+
+/// Device-validation SoT for Priority 1 reconstructionReady gate.
+struct CaptureReconstructionCompletionRecord: Codable, Equatable, Sendable {
+    var durationSec: Double
+    var keyframeCount: Int
+    var qualityCoverage: Double
+    var sessionYawBucketCount: Int
+    var sessionYawSpanDeg: Double
+    var visitedCellCount: Int
+    var qualityCellCount: Int
+    var goodCellCount: Int
+    var middleSufficientSectorCount: Int
+    var upperSufficientSectorCount: Int
+    var lowerSufficientSectorCount: Int
+    var totalTravelDistanceM: Double
+    var maxDistanceFromStartM: Double
+    var xzExtentWidthM: Double
+    var xzExtentDepthM: Double
+    var xzBoundingAreaM2: Double
+    var softHigh: Bool
+    var isReconstructionReady: Bool
+    var completionState: String
+    var guidanceStage: String
+    var completionTimestamp: String
+
+    static func make(
+        durationSec: Double,
+        keyframeCount: Int,
+        qualityCoverage: Double,
+        pathLengthM: Double,
+        completionState: CaptureCompletionState,
+        guidanceStage: CaptureGuidanceStage,
+        reconstruction: CaptureReconstructionMetricsSnapshot,
+        sector: CaptureSectorRingProgress,
+        at date: Date = Date()
+    ) -> CaptureReconstructionCompletionRecord {
+        let softHigh = qualityCoverage >= CaptureCompletionConfig.qualityCoverageReady
+        let ready = CaptureCompletionGate.isReconstructionReady(
+            pathLengthM: pathLengthM,
+            reconstruction: reconstruction,
+            sectorProgress: sector
+        )
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return CaptureReconstructionCompletionRecord(
+            durationSec: durationSec,
+            keyframeCount: keyframeCount,
+            qualityCoverage: qualityCoverage,
+            sessionYawBucketCount: reconstruction.sessionYawBucketCount,
+            sessionYawSpanDeg: reconstruction.sessionYawSpanDeg,
+            visitedCellCount: reconstruction.visitedCellCount,
+            qualityCellCount: reconstruction.qualityCellCount,
+            goodCellCount: reconstruction.goodCellCount,
+            middleSufficientSectorCount: sector.middleSufficientCount,
+            upperSufficientSectorCount: sector.upperSufficientCount,
+            lowerSufficientSectorCount: sector.lowerSufficientCount,
+            totalTravelDistanceM: max(pathLengthM, reconstruction.totalTravelDistanceM),
+            maxDistanceFromStartM: reconstruction.maxDistanceFromStartM,
+            xzExtentWidthM: reconstruction.xzExtentWidthM,
+            xzExtentDepthM: reconstruction.xzExtentDepthM,
+            xzBoundingAreaM2: reconstruction.xzBoundingAreaM2,
+            softHigh: softHigh,
+            isReconstructionReady: ready,
+            completionState: completionState.rawValue,
+            guidanceStage: guidanceStage.rawValue,
+            completionTimestamp: formatter.string(from: date)
+        )
+    }
 }

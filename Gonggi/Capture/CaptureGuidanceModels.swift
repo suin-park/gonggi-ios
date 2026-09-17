@@ -52,12 +52,32 @@ enum CaptureCompletionConfig {
     static var minimumDurationSec: Double = 25
     static var minimumKeyframes: Int = 8
     static var minimumPathLengthM: Double = 1.2
+    /// Soft progress only — never alone grants user-facing "촬영 완료".
     static var qualityCoverageReady: Double = 0.72
     static var qualityCoverageNearly: Double = 0.55
     static var maxBlurryFraction: Double = 0.35
     static var requireOverlapNotLost: Bool = true
     static var requireTrackingNormal: Bool = true
     static var requireBaselineAtLeastAcceptable: Bool = true
+}
+
+/// Global reconstruction-ready thresholds (config — tune from field data, not hard-wired in Gate).
+/// Baseline A early-complete root cause: qualityCoverage alone; these AND with soft metrics.
+enum CaptureReconstructionReadyConfig {
+    /// Of 12 yaw buckets (~30°). 8 ≈ 240° covered buckets.
+    static var minYawBucketCount: Int = 8
+    /// Wrap-aware covered yaw arc (degrees).
+    static var minYawSpanDeg: Double = 220
+    static var minVisitedCellCount: Int = 12
+    static var minQualityCellCount: Int = 10
+    static var minGoodCellCount: Int = 3
+    static var minXZExtentWidthM: Double = 0.8
+    static var minXZExtentDepthM: Double = 0.8
+    static var minXZBoundingAreaM2: Double = 0.9
+    /// Stronger than `CaptureCompletionConfig.minimumPathLengthM` for final ready.
+    static var minTravelDistanceM: Double = 2.0
+    static var minMaxDistanceFromStartM: Double = 0.6
+    static var requireSectorRing: Bool = true
 }
 
 // MARK: - Phase
@@ -75,7 +95,7 @@ enum CapturePhase: String, Codable, Equatable, Sendable {
         case .perimeter: return "벽을 따라 천천히 이동하세요"
         case .parallaxPass: return "공간 안쪽도 천천히 이동해주세요"
         case .coverageFill: return "촬영이 부족한 영역을 확인하고 있어요"
-        case .readyToFinish: return "공간 기록을 완료할 수 있어요"
+        case .readyToFinish: return "촬영을 완료할 수 있어요"
         }
     }
 }
@@ -97,6 +117,9 @@ enum GuidanceAction: String, Codable, Equatable, Sendable {
     case improveBaseline
     case trackingRecovery
     case lowTextureWarning
+    case needMoreYaw
+    case needUpperCoverage
+    case needLowerCoverage
     case captureNearlyComplete
     case captureComplete
 }

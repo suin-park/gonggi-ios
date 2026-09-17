@@ -44,6 +44,8 @@ final class CaptureSessionController {
     private var acceptingSpatialKeyframes = true
     private var pendingDepthByFrameId: [String: String] = [:]
     private var reconstructionMetrics = CaptureReconstructionSessionMetrics()
+    private var sectorRingProgress: CaptureSectorRingProgress = .empty
+    private var lastReconstructionSnapshot: CaptureReconstructionMetricsSnapshot?
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -84,6 +86,8 @@ final class CaptureSessionController {
         acceptingSpatialKeyframes = true
         pendingDepthByFrameId = [:]
         reconstructionMetrics.reset()
+        sectorRingProgress = .empty
+        lastReconstructionSnapshot = nil
         runtimeTelemetry.reset()
         jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -586,10 +590,21 @@ final class CaptureSessionController {
         let quality = qualityState(trackingLimited: false)
 
         CaptureDiagnosticsStore.writeGuidanceHistory(diagnostics.events, sessionId: sessionId)
+        let pathM = Double(translationBaseline.totalPathLengthM)
         let reconSnap = reconstructionMetrics.snapshot(
             coverage: coverage,
-            totalTravelDistanceM: Double(translationBaseline.totalPathLengthM),
+            totalTravelDistanceM: pathM,
             meanCellAngleDiversity: coverage.angleDiversityScore
+        )
+        let completionRecord = CaptureReconstructionCompletionRecord.make(
+            durationSec: durationSec,
+            keyframeCount: keyframe3DGSCount,
+            qualityCoverage: coverage.qualityCoverage,
+            pathLengthM: pathM,
+            completionState: completionState,
+            guidanceStage: sectorRingProgress.stage,
+            reconstruction: reconSnap,
+            sector: sectorRingProgress
         )
         let info = Bundle.main.infoDictionary
         let diagSummary = CaptureSessionSummaryDiagnostics(
@@ -600,7 +615,7 @@ final class CaptureSessionController {
             poseSamples: frameSamples.count,
             droppedFrames: videoResult?.droppedFrameCount ?? 0,
             acceptedKeyframes: keyframe3DGSCount,
-            totalTravelDistanceM: Double(translationBaseline.totalPathLengthM),
+            totalTravelDistanceM: pathM,
             maxTranslationBaselineM: Double(translationBaseline.maxBaselineM),
             observedCoverageFinal: coverage.observedCoverage,
             qualityCoverageFinal: coverage.qualityCoverage,
@@ -613,7 +628,8 @@ final class CaptureSessionController {
             generation: CaptureDiagnosticsStore.loadGenerationDiagnostics(sessionId: sessionId),
             appVersion: info?["CFBundleShortVersionString"] as? String ?? "0",
             buildNumber: info?["CFBundleVersion"] as? String ?? "0",
-            reconstructionMetrics: reconSnap
+            reconstructionMetrics: reconSnap,
+            reconstructionCompletion: completionRecord
         )
         CaptureDiagnosticsStore.writeSessionSummary(diagSummary, sessionId: sessionId)
 
@@ -692,7 +708,8 @@ final class CaptureSessionController {
                         supportsSceneReconstruction: ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
                         decisions: finalizedDecisions,
                         telemetry: telemetryReport,
-                        reconstructionMetrics: reconSnap
+                        reconstructionMetrics: reconSnap,
+                        reconstructionCompletion: completionRecord
                     )
                 )
                 packageURL = built.root
@@ -805,42 +822,64 @@ final class CaptureSessionController {
             sharpnessBlurryFraction: sharp.blurryFraction,
             capturePhase: capturePhase,
             completionState: completionState,
-            guidanceAction: lastGuidanceAction
+            guidanceAction: lastGuidanceAction,
+            sectorRingProgress: sectorRingProgress,
+            guidanceStage: sectorRingProgress.stage,
+            reconstructionReady: completionState == .ready
         )
     }
 
     private func updatePhaseAndCompletion(trackingNormal: Bool, transform: simd_float4x4) {
         let elapsed = Date().timeIntervalSince(startedAt)
         let qCov = coverage.qualityCoverage
-        if elapsed < CapturePhaseConfig.stabilizingSec {
-            capturePhase = .stabilizing
-        } else if completionState == .ready || qCov >= CaptureCompletionConfig.qualityCoverageReady {
-            capturePhase = .readyToFinish
-        } else if qCov < 0.35 {
-            capturePhase = .perimeter
-        } else if qCov < 0.55 {
-            capturePhase = .parallaxPass
-        } else {
-            capturePhase = .coverageFill
-        }
+        let pathM = Double(translationBaseline.totalPathLengthM)
+
+        reconstructionMetrics.ingestPose(transform: transform)
+        sectorRingProgress = reconstructionMetrics.sectorRingProgress()
+        let reconSnap = reconstructionMetrics.snapshot(
+            coverage: coverage,
+            totalTravelDistanceM: pathM,
+            meanCellAngleDiversity: coverage.angleDiversityScore
+        )
+        lastReconstructionSnapshot = reconSnap
 
         let sharp = sharpnessAnalyzer.snapshot()
         completionState = CaptureCompletionGate.evaluate(
             durationSec: elapsed,
             keyframeCount: keyframe3DGSCount,
-            pathLengthM: Double(translationBaseline.totalPathLengthM),
+            pathLengthM: pathM,
             qualityCoverage: qCov,
             overlapState: overlapAnalyzer.lastState,
             sharpnessBlurryFraction: sharp.blurryFraction,
             trackingNormal: trackingNormal,
-            baselineGrade: translationBaseline.bestGrade
+            baselineGrade: translationBaseline.bestGrade,
+            reconstruction: reconSnap,
+            sectorProgress: sectorRingProgress
         )
-        // Observability only — does not change CaptureCompletionGate thresholds.
-        reconstructionMetrics.ingest(
-            transform: transform,
-            elapsedSec: elapsed,
-            completionState: completionState
+        reconstructionMetrics.markCompletionTiming(elapsedSec: elapsed, completionState: completionState)
+
+        // Refresh stage with actual reconstructionReady for coach status.
+        var staged = sectorRingProgress
+        staged.stage = CaptureReconstructionSessionMetrics.stage(
+            middle: staged.middleSufficientCount,
+            upper: staged.upperSufficientCount,
+            lower: staged.lowerSufficientCount,
+            reconstructionReady: completionState == .ready,
+            softComplete: completionState == .nearlyReady
         )
+        sectorRingProgress = staged
+
+        if elapsed < CapturePhaseConfig.stabilizingSec {
+            capturePhase = .stabilizing
+        } else if completionState == .ready {
+            capturePhase = .readyToFinish
+        } else if staged.stage == .eyeLevelSweep {
+            capturePhase = .perimeter
+        } else if staged.stage == .upperSweep || staged.stage == .lowerSweep {
+            capturePhase = .parallaxPass
+        } else {
+            capturePhase = .coverageFill
+        }
     }
 
     private func estimateLowTexture() -> Double {

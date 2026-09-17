@@ -90,8 +90,10 @@ struct SpatialCaptureSessionQuality: Codable, Equatable, Sendable {
     var viewAngleDiversity: Double
     var captureDurationSec: Double
     var translationBaselineGrade: String
-    /// Observability metrics (build 54+) — not completion-gate inputs.
+    /// Reconstruction + sector/ring metrics (P1 gate inputs).
     var reconstructionMetrics: CaptureReconstructionMetricsSnapshot?
+    /// Explicit completion gate snapshot for device validation (section 9).
+    var reconstructionCompletion: CaptureReconstructionCompletionRecord?
 }
 
 struct SpatialCaptureQualityFile: Codable, Equatable, Sendable {

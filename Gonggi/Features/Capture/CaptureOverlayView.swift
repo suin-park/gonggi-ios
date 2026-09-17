@@ -46,6 +46,12 @@ struct CaptureOverlayView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
 
+            CaptureSectorPOVTargetView(
+                progress: guidance.quality.sectorRingProgress,
+                completionState: guidance.quality.completionState
+            )
+            .allowsHitTesting(false)
+
             VStack(spacing: 0) {
                 topBar
                 Spacer(minLength: GonggiSpacing.sm)
@@ -102,6 +108,9 @@ struct CaptureOverlayView: View {
 
     private func bottomControls(_ state: PrimaryGuidanceState) -> some View {
         VStack(spacing: GonggiSpacing.xs) {
+            CaptureSectorRingStrip(progress: guidance.quality.sectorRingProgress)
+                .padding(.bottom, 2)
+
             Text(state.statusLabel)
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(
@@ -137,6 +146,8 @@ struct CaptureOverlayView: View {
                     Text("sharp \(guidance.quality.sharpnessState.rawValue) · track \(String(format: "%.2f", guidance.quality.trackingQuality))")
                     Text("act \(guidance.quality.guidanceAction.rawValue) · phase \(guidance.quality.capturePhase.rawValue)")
                     Text("comp \(guidance.quality.completionState.rawValue) · src \(state.source.rawValue)")
+                    Text("stage \(guidance.quality.guidanceStage.rawValue) · sec \(String(format: "%.2f", guidance.quality.sectorRingProgress.fillRatio))")
+                    Text("yaw/recon \(guidance.quality.reconstructionReady ? "ready" : "wait")")
                 }
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.85))

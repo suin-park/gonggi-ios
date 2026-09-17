@@ -152,8 +152,43 @@ struct GuidanceRuleEngine {
             ))
         }
 
-        // 7. Coverage fill
-        if quality.qualityCoverage < 0.55, quality.completionState == .notReady {
+        // 7. Sector / ring coverage before soft percent
+        if quality.completionState != .ready {
+            switch quality.guidanceStage {
+            case .eyeLevelSweep:
+                candidates.append(GuidanceDecision(
+                    action: .needMoreYaw,
+                    priority: .medium,
+                    ruleId: "sector_middle"
+                ))
+            case .upperSweep:
+                candidates.append(GuidanceDecision(
+                    action: .needUpperCoverage,
+                    priority: .medium,
+                    ruleId: "sector_upper"
+                ))
+            case .lowerSweep:
+                candidates.append(GuidanceDecision(
+                    action: .needLowerCoverage,
+                    priority: .medium,
+                    ruleId: "sector_lower"
+                ))
+            case .fillGaps:
+                candidates.append(GuidanceDecision(
+                    action: .scanNewArea,
+                    priority: .medium,
+                    ruleId: "sector_fill"
+                ))
+            case .softComplete, .reconstructionReady:
+                break
+            }
+        }
+
+        // 8. Legacy coverage fill (fallback when sector stage not yet informative)
+        if quality.qualityCoverage < 0.55,
+           quality.completionState == .notReady,
+           quality.guidanceStage == .eyeLevelSweep
+        {
             candidates.append(GuidanceDecision(
                 action: .scanNewArea,
                 priority: .medium,
@@ -161,7 +196,7 @@ struct GuidanceRuleEngine {
             ))
         }
 
-        // 8. Completion / continue
+        // 9. Completion / continue — `.ready` only when reconstructionReady
         switch quality.completionState {
         case .ready:
             candidates.append(GuidanceDecision(
@@ -170,8 +205,14 @@ struct GuidanceRuleEngine {
                 ruleId: "complete"
             ))
         case .nearlyReady:
+            let deficit = CaptureCompletionGate.primaryDeficit(
+                reconstruction: nil,
+                sectorProgress: quality.sectorRingProgress,
+                baselineGrade: quality.translationBaselineGrade,
+                pathLengthM: 0
+            )
             candidates.append(GuidanceDecision(
-                action: .captureNearlyComplete,
+                action: deficit == .scanNewArea ? .captureNearlyComplete : deficit,
                 priority: .low,
                 ruleId: "nearly"
             ))

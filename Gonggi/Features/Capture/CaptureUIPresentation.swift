@@ -200,6 +200,7 @@ enum CaptureUIPresenter {
              .improveBaseline, .moveLaterally, .lowTextureWarning:
             return true
         case .continueCapture, .moveForward, .scanNewArea,
+             .needMoreYaw, .needUpperCoverage, .needLowerCoverage,
              .captureNearlyComplete, .captureComplete:
             return false
         }
@@ -208,9 +209,14 @@ enum CaptureUIPresenter {
     static func statusLabel(for state: CaptureCompletionState) -> String {
         switch state {
         case .notReady: return "공간 기록 중"
-        case .nearlyReady: return "거의 다 기록했어요"
-        case .ready: return "촬영이 충분합니다"
+        case .nearlyReady: return "조금 더 둘러봐 주세요"
+        case .ready: return "촬영 완료"
         }
+    }
+
+    static func statusLabel(for stage: CaptureGuidanceStage, completion: CaptureCompletionState) -> String {
+        if completion == .ready { return CaptureGuidanceStage.reconstructionReady.statusLabel }
+        return stage.statusLabel
     }
 
     static func finishButtonTitle(isReady: Bool) -> String {
@@ -230,14 +236,15 @@ enum CaptureUIPresenter {
         switch action {
         case .trackingRecovery, .returnToPreviousArea:
             return .critical
-        case .slowDown, .holdSteady, .lowTextureWarning, .improveBaseline, .moveLaterally, .scanNewArea:
+        case .slowDown, .holdSteady, .lowTextureWarning, .improveBaseline, .moveLaterally,
+             .scanNewArea, .needMoreYaw, .needUpperCoverage, .needLowerCoverage:
             return .warning
         default:
             return .normal
         }
     }
 
-    /// Ring shows completion progress only — never repeats live action icons from the coach card.
+    /// Ring shows sector/ring fill — not raw qualityCoverage percent.
     static func ringSystemImage(for state: CaptureCompletionState, action: GuidanceAction) -> String {
         _ = action
         switch state {
@@ -258,8 +265,9 @@ enum CaptureUIPresenter {
     ) -> PrimaryGuidanceState {
         let action = quality.guidanceAction
         let warning = warningKind(for: quality)
-        let ready = quality.completionState == .ready
-        let ring = min(1, max(0, quality.qualityCoverage))
+        let ready = quality.completionState == .ready || quality.reconstructionReady
+        let ring = min(1, max(0, max(quality.sectorRingProgress.fillRatio, quality.qualityCoverage * 0.35)))
+        let status = statusLabel(for: quality.guidanceStage, completion: quality.completionState)
 
         // Live correction always outranks completion copy — even if gate still reports ready
         // (e.g. severe motion / weak overlap do not always clear ready in the same snapshot).
@@ -281,20 +289,18 @@ enum CaptureUIPresenter {
             )
         }
 
-        let status = statusLabel(for: quality.completionState)
-
-        // Completion ready — only when no live correction is active.
+        // Completion ready — only when reconstructionReady (strict gate).
         if ready {
             return PrimaryGuidanceState(
                 action: .captureComplete,
                 title: "촬영이 충분합니다",
-                subtitle: "원하면 지금 마무리할 수 있어요",
+                subtitle: "공간을 충분히 담았어요. 기록을 완료할 수 있어요",
                 direction: .none,
                 severity: .normal,
                 statusLabel: status,
                 finishButtonTitle: finishButtonTitle(isReady: true),
                 isReadyToFinish: true,
-                ringProgress: ring,
+                ringProgress: 1,
                 ringSystemImage: "checkmark",
                 source: .completion
             )
@@ -323,12 +329,15 @@ enum CaptureUIPresenter {
             )
         }
 
-        // Default phase / continue — one stable line.
-        if quality.completionState == .nearlyReady {
+        // Sector / soft-complete coaching — prefer concrete missing coverage over percent.
+        if quality.completionState == .nearlyReady
+            || [.needMoreYaw, .needUpperCoverage, .needLowerCoverage, .captureNearlyComplete].contains(action)
+        {
+            let copy = liveCopy(for: action == .continueCapture ? .captureNearlyComplete : action)
             return PrimaryGuidanceState(
-                action: .captureNearlyComplete,
-                title: "거의 다 기록했어요",
-                subtitle: "천천히 이동하며 조금 더 담아주세요",
+                action: action,
+                title: copy.title,
+                subtitle: copy.subtitle,
                 direction: .none,
                 severity: .normal,
                 statusLabel: status,
@@ -360,9 +369,15 @@ enum CaptureUIPresenter {
     static func liveCopy(for action: GuidanceAction) -> (title: String, subtitle: String?) {
         switch action {
         case .continueCapture:
-            return ("방을 천천히 걸으며 보여주세요", "같은 곳을 너무 빨리 지나가지 마세요")
+            return (
+                "정면 높이로 공간을 둘러봐 주세요",
+                "표시된 지점을 화면 중앙에 두고 천천히 몸을 돌려주세요. 조금씩 위치를 옮기면서 촬영하면 더 정확한 3D 공간을 만들 수 있어요"
+            )
         case .moveLaterally, .improveBaseline:
-            return ("조금 이동하면서 촬영해주세요", "제자리에서만 돌지 마세요")
+            return (
+                "조금씩 위치를 옮기면서 촬영해 주세요",
+                "제자리에서만 돌면 3D 공간이 부정확해질 수 있어요"
+            )
         case .moveForward:
             return ("천천히 앞으로 이동해주세요", nil)
         case .slowDown:
@@ -372,22 +387,37 @@ enum CaptureUIPresenter {
         case .returnToPreviousArea:
             return ("방금 촬영한 곳이 다시 보이도록 이동해주세요", "연결을 다시 찾고 있어요")
         case .scanNewArea:
-            return ("아직 덜 담긴 영역을 천천히 비춰주세요", nil)
+            return ("아직 덜 담긴 영역을 천천히 비춰주세요", "조금씩 위치를 옮기면 더 정확한 3D 공간을 만들 수 있어요")
+        case .needMoreYaw:
+            return (
+                "정면 높이로 공간을 둘러봐 주세요",
+                "표시된 지점을 화면 중앙에 두고 천천히 몸을 돌려주세요. 조금씩 위치를 옮기면서 촬영하면 더 정확한 3D 공간을 만들 수 있어요"
+            )
+        case .needUpperCoverage:
+            return (
+                "이제 위쪽을 촬영해 주세요",
+                "휴대폰을 조금 위로 들어 벽 상단과 천장을 함께 보여주세요"
+            )
+        case .needLowerCoverage:
+            return (
+                "이제 아래쪽을 촬영해 주세요",
+                "휴대폰을 조금 아래로 내려 바닥과 가구 하단을 함께 보여주세요"
+            )
         case .trackingRecovery:
             return ("천천히 주변을 비춰주세요", "카메라 위치를 다시 확인하고 있어요")
         case .lowTextureWarning:
             return ("가구나 모서리도 화면에 함께 담아주세요", nil)
         case .captureNearlyComplete:
-            return ("거의 다 기록했어요", "천천히 이동하며 조금 더 담아주세요")
+            return ("거의 다 담았어요", "위·아래와 뒤쪽도 조금 더 둘러봐 주세요")
         case .captureComplete:
-            return ("촬영이 충분합니다", "원하면 지금 마무리할 수 있어요")
+            return ("촬영이 충분합니다", "공간을 충분히 담았어요. 기록을 완료할 수 있어요")
         }
     }
 
     private static func secondaryHint(for action: GuidanceAction) -> String? {
         switch action {
-        case .continueCapture, .moveLaterally, .improveBaseline:
-            return "같은 영역을 계속 바라봐주세요"
+        case .continueCapture, .moveLaterally, .improveBaseline, .needMoreYaw:
+            return "조금씩 위치를 옮기면서 촬영해 주세요"
         default:
             return nil
         }
