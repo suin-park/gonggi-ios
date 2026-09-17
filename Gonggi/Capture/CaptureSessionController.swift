@@ -53,6 +53,9 @@ final class CaptureSessionController {
     private var lastIngestTimestamp: Double = 0
     private var lastAcceptedYawDeg: Double?
     private var lastAcceptedPitchDeg: Double?
+    private var selectionDiagnostics = CaptureSelectionDiagnosticsAccumulator()
+    /// Doorway/transition chain latch end (AR timestamp seconds).
+    private var transitionChainUntil: Double = 0
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -101,6 +104,8 @@ final class CaptureSessionController {
         lastIngestTimestamp = 0
         lastAcceptedYawDeg = nil
         lastAcceptedPitchDeg = nil
+        selectionDiagnostics.reset()
+        transitionChainUntil = 0
         runtimeTelemetry.reset()
         jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -183,14 +188,19 @@ final class CaptureSessionController {
 
         let position = CaptureFrameContract.translation(from: transform)
         let cellId = CaptureMath.gridCellId(position: position)
-        let dt: Float
-        if lastIngestTimestamp > 0 {
-            dt = Float(max(0.001, frame.timestamp - lastIngestTimestamp))
-        } else {
-            dt = 0.033
-        }
         lastIngestTimestamp = frame.timestamp
-        localGlobalCoverage = regionTracker.ingest(cellId: cellId, position: position, deltaTimeSec: dt)
+        let regionSnap = regionTracker.ingest(cellId: cellId, position: position, timestamp: frame.timestamp)
+        localGlobalCoverage = regionSnap.asCoverage
+
+        let softTransition = SpatialCaptureConfig.adaptiveTransitionPriorityThreshold * 0.55
+        if regionSnap.didSplit || regionSnap.transitionScore >= softTransition {
+            transitionChainUntil = max(
+                transitionChainUntil,
+                frame.timestamp + SpatialCaptureConfig.transitionChainHalfWindowSec * 2
+            )
+        }
+        let inTransitionChain = frame.timestamp <= transitionChainUntil
+            || regionSnap.transitionScore >= softTransition
 
         let (yawDeg, pitchDeg) = CaptureMath.yawPitchDegrees(from: transform)
         let yawNovelty: Double
@@ -232,7 +242,8 @@ final class CaptureSessionController {
             secondsSinceLastAccept: secondsSince,
             transitionScore: localGlobalCoverage.transitionScore,
             localCoverage: localGlobalCoverage.localCoverage,
-            globalCoverage: localGlobalCoverage.globalCoverage
+            globalCoverage: localGlobalCoverage.globalCoverage,
+            inTransitionChain: inTransitionChain
         )
 
         let keyDecision = KeyframeSelector3DGS.shouldAccept(
@@ -263,10 +274,20 @@ final class CaptureSessionController {
                 lastSample: lastSample,
                 eval: eval,
                 lowTexture: lowTexture,
-                paths: paths
+                paths: paths,
+                inTransitionChain: inTransitionChain
             )
             if enqueued {
                 isKeyframe = true
+                if let regionInt = Int(localGlobalCoverage.activeRegionId) {
+                    regionTracker.recordAcceptedFrame(regionId: regionInt)
+                }
+                selectionDiagnostics.recordDecision(
+                    accepted: true,
+                    reason: keyDecision.reason,
+                    timestamp: frame.timestamp,
+                    inTransitionChain: inTransitionChain
+                )
                 let refs = depthSampler.writeIfAvailable(frame: frame, frameIndex: written.videoFrameIndex)
                 depthRef = refs.depth
                 confRef = refs.confidence
@@ -280,6 +301,12 @@ final class CaptureSessionController {
         } else if !keyDecision.accept {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: keyDecision.reason)
+            selectionDiagnostics.recordDecision(
+                accepted: false,
+                reason: keyDecision.reason,
+                timestamp: frame.timestamp,
+                inTransitionChain: inTransitionChain
+            )
             appendKeyframeDecision(
                 SpatialCaptureKeyframeDecision(
                     arTimestampSeconds: frame.timestamp,
@@ -348,11 +375,18 @@ final class CaptureSessionController {
         lastSample: TelemetrySample?,
         eval: TranslationBaselineAnalyzer.Evaluation,
         lowTexture: Double,
-        paths: SpatialCapturePackagePaths
+        paths: SpatialCapturePackagePaths,
+        inTransitionChain: Bool
     ) -> Bool {
         if jpegEncodeQueue.currentDepth >= SpatialCaptureConfig.jpegQueueMaxDepth {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: "jpeg_queue_full")
+            selectionDiagnostics.recordDecision(
+                accepted: false,
+                reason: "jpeg_queue_full",
+                timestamp: frame.timestamp,
+                inTransitionChain: inTransitionChain
+            )
             appendKeyframeDecision(
                 SpatialCaptureKeyframeDecision(
                     arTimestampSeconds: frame.timestamp,
@@ -436,6 +470,12 @@ final class CaptureSessionController {
         if !enqueued {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: "jpeg_queue_full")
+            selectionDiagnostics.recordDecision(
+                accepted: false,
+                reason: "jpeg_queue_full",
+                timestamp: frame.timestamp,
+                inTransitionChain: inTransitionChain
+            )
             appendKeyframeDecision(
                 SpatialCaptureKeyframeDecision(
                     arTimestampSeconds: frame.timestamp,
@@ -768,6 +808,16 @@ final class CaptureSessionController {
                     reconstructionMetrics: reconSnap
                 )
 
+                let selectionDiag = selectionDiagnostics.build(
+                    regionCount: localGlobalCoverage.regionCount,
+                    framesPerRegion: regionTracker.framesPerRegion(),
+                    travelDistanceM: Double(translationBaseline.totalPathLengthM),
+                    yawCoverage: reconSnap.sessionYawCoverageRatio,
+                    localCoverage: localGlobalCoverage.localCoverage,
+                    globalCoverage: localGlobalCoverage.globalCoverage,
+                    captureDurationSec: durationSec
+                )
+
                 let built = try SpatialCapturePackageBuilder.build(
                     input: SpatialCapturePackageBuilder.BuildInput(
                         captureId: captureId,
@@ -795,7 +845,8 @@ final class CaptureSessionController {
                         localCoverage: localGlobalCoverage.localCoverage,
                         globalCoverage: localGlobalCoverage.globalCoverage,
                         regionCount: localGlobalCoverage.regionCount,
-                        transitionScore: localGlobalCoverage.transitionScore
+                        transitionScore: localGlobalCoverage.transitionScore,
+                        selectionDiagnostics: selectionDiag
                     )
                 )
                 packageURL = built.root

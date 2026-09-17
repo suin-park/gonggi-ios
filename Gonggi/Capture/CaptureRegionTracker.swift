@@ -1,142 +1,185 @@
 import Foundation
 import simd
 
-/// Rolling local vs global coverage for multi-room Quiet UX.
-/// Global = whole session; local = recent camera neighborhood (not whole-home completion).
-struct CaptureLocalGlobalCoverage: Equatable, Sendable {
-    var localCoverage: Double
-    var globalCoverage: Double
-    var localCellCount: Int
-    var globalCellCount: Int
-    var activeRegionId: String?
-    var regionCount: Int
-    var transitionScore: Double
+/// Tracks local vs global coverage and room-like regions for multi-room Spatial Capture.
+///
+/// TF62: region centroids are **seed anchors** (never chase accepted frames). Split uses
+/// distance-to-anchors with hysteresis + cooldown so room→living→kitchen splits only on
+/// real travel — not forced region counts.
+struct CaptureRegionTracker {
+    struct Snapshot: Equatable {
+        var localCoverage: Double
+        var globalCoverage: Double
+        var regionCount: Int
+        var activeRegionId: Int
+        var transitionScore: Double
+        /// True when a region split just occurred on this ingest.
+        var didSplit: Bool
+    }
 
-    static let zero = CaptureLocalGlobalCoverage(
-        localCoverage: 0,
-        globalCoverage: 0,
-        localCellCount: 0,
-        globalCellCount: 0,
-        activeRegionId: nil,
-        regionCount: 0,
-        transitionScore: 0
-    )
-}
+    private struct Region {
+        let id: Int
+        /// Fixed seed position — never updated after creation (anti centroid-chase).
+        let anchorX: Float
+        let anchorZ: Float
+        var frameCount: Int
+    }
 
-/// Clusters trajectory cells into coarse regions + doorway-like transitions.
-final class CaptureRegionTracker {
+    private var recentCells: [String] = []
+    private let recentCapacity: Int
+    private var uniqueGlobalCells = Set<String>()
     private var cellVisitCounts: [String: Int] = [:]
-    private var recentCellIds: [String] = []
-    private var regionCentroids: [(id: String, x: Float, z: Float)] = []
-    private var activeRegionId: String?
+    private var regions: [Region] = []
+    private var nextRegionId = 0
+    private var activeRegionId = 0
     private var lastPosition: SIMD3<Float>?
-    private var recentSpeeds: [Float] = []
-    private(set) var transitionScore: Double = 0
-    private(set) var regionCount: Int = 0
-
-    private let localWindow: Int
-    private let regionSplitDistanceM: Float
-    private let narrowSpeedMaxMps: Float
+    private var lastSpeedMps: Float = 0
+    private var lastIngestTimestamp: TimeInterval?
+    private var lastSplitTimestamp: TimeInterval?
+    private var splitDistanceM: Float
+    private var rejoinDistanceM: Float
+    private var splitCooldownSec: Double
+    private var doorwaySpeedMaxMps: Float
+    private var globalSoftDenom: Int
 
     init(
-        localWindow: Int = SpatialCaptureConfig.localCoverageWindowCells,
-        regionSplitDistanceM: Float = SpatialCaptureConfig.regionSplitDistanceM,
-        narrowSpeedMaxMps: Float = SpatialCaptureConfig.doorwaySpeedMaxMps
+        recentCapacity: Int = SpatialCaptureConfig.localCoverageWindowCells,
+        splitDistanceM: Float = SpatialCaptureConfig.regionSplitDistanceM,
+        rejoinDistanceM: Float = SpatialCaptureConfig.regionRejoinDistanceM,
+        splitCooldownSec: Double = SpatialCaptureConfig.regionSplitCooldownSec,
+        doorwaySpeedMaxMps: Float = SpatialCaptureConfig.doorwaySpeedMaxMps,
+        globalSoftDenom: Int = SpatialCaptureConfig.globalCoverageSoftDenom
     ) {
-        self.localWindow = localWindow
-        self.regionSplitDistanceM = regionSplitDistanceM
-        self.narrowSpeedMaxMps = narrowSpeedMaxMps
+        self.recentCapacity = max(4, recentCapacity)
+        self.splitDistanceM = splitDistanceM
+        self.rejoinDistanceM = min(rejoinDistanceM, splitDistanceM * 0.75)
+        self.splitCooldownSec = splitCooldownSec
+        self.doorwaySpeedMaxMps = doorwaySpeedMaxMps
+        self.globalSoftDenom = max(8, globalSoftDenom)
     }
 
-    func reset() {
-        cellVisitCounts = [:]
-        recentCellIds = []
-        regionCentroids = []
-        activeRegionId = nil
+    mutating func reset() {
+        recentCells.removeAll(keepingCapacity: true)
+        uniqueGlobalCells.removeAll(keepingCapacity: true)
+        cellVisitCounts.removeAll(keepingCapacity: true)
+        regions.removeAll(keepingCapacity: true)
+        nextRegionId = 0
+        activeRegionId = 0
         lastPosition = nil
-        recentSpeeds = []
-        transitionScore = 0
-        regionCount = 0
+        lastSpeedMps = 0
+        lastIngestTimestamp = nil
+        lastSplitTimestamp = nil
     }
 
-    @discardableResult
-    func ingest(cellId: String, position: SIMD3<Float>, deltaTimeSec: Float) -> CaptureLocalGlobalCoverage {
+    mutating func ingest(
+        cellId: String,
+        position: SIMD3<Float>,
+        timestamp: TimeInterval
+    ) -> Snapshot {
+        var didSplit = false
+        uniqueGlobalCells.insert(cellId)
         cellVisitCounts[cellId, default: 0] += 1
-        recentCellIds.append(cellId)
-        if recentCellIds.count > localWindow {
-            recentCellIds.removeFirst(recentCellIds.count - localWindow)
+        recentCells.append(cellId)
+        if recentCells.count > recentCapacity {
+            recentCells.removeFirst(recentCells.count - recentCapacity)
         }
 
-        if let last = lastPosition, deltaTimeSec > 0.001 {
-            let speed = simd_distance(last, position) / deltaTimeSec
-            recentSpeeds.append(speed)
-            if recentSpeeds.count > 12 {
-                recentSpeeds.removeFirst(recentSpeeds.count - 12)
-            }
-            let meanSpeed = recentSpeeds.reduce(0, +) / Float(recentSpeeds.count)
-            // Doorway heuristic: continued translation but slower + entering low-visit cells.
-            let enteringFresh = (cellVisitCounts[cellId] ?? 0) <= 2
-            if meanSpeed > 0.05, meanSpeed < narrowSpeedMaxMps, enteringFresh {
-                transitionScore = min(1, transitionScore * 0.85 + 0.35)
-            } else {
-                transitionScore = max(0, transitionScore * 0.92 - 0.02)
-            }
+        if let last = lastPosition, let t0 = lastIngestTimestamp {
+            let dt = max(0.001, timestamp - t0)
+            let dist = simd_length(position - last)
+            lastSpeedMps = dist / Float(dt)
         }
         lastPosition = position
+        lastIngestTimestamp = timestamp
 
-        updateRegion(position: position)
+        if regions.isEmpty {
+            let r = Region(id: nextRegionId, anchorX: position.x, anchorZ: position.z, frameCount: 0)
+            regions.append(r)
+            activeRegionId = r.id
+            nextRegionId += 1
+        } else {
+            didSplit = updateRegions(position: position, timestamp: timestamp)
+        }
 
-        let globalUnique = cellVisitCounts.count
-        let localUnique = Set(recentCellIds).count
-        // Soft ratios vs configurable denominators (not hard room size).
-        let global = min(1, Double(globalUnique) / Double(SpatialCaptureConfig.globalCoverageSoftDenom))
-        let local = min(1, Double(localUnique) / Double(max(1, localWindow / 2)))
+        let uniqueRecent = Set(recentCells)
+        let local = Double(uniqueRecent.count) / Double(recentCapacity)
+        let global = min(1, Double(uniqueGlobalCells.count) / Double(globalSoftDenom))
 
-        return CaptureLocalGlobalCoverage(
+        // Doorway heuristic: moderate speed + rising global novelty vs local saturation.
+        let speedFactor = min(1, Double(lastSpeedMps) / Double(max(0.05, doorwaySpeedMaxMps)))
+        let noveltyGap = max(0, global - local)
+        var transition = min(1, 0.55 * noveltyGap + 0.35 * (1 - local) * speedFactor + 0.25 * speedFactor)
+        if didSplit {
+            transition = max(transition, 0.72)
+        }
+
+        return Snapshot(
             localCoverage: local,
             globalCoverage: global,
-            localCellCount: localUnique,
-            globalCellCount: globalUnique,
+            regionCount: regions.count,
             activeRegionId: activeRegionId,
-            regionCount: regionCount,
-            transitionScore: transitionScore
+            transitionScore: transition,
+            didSplit: didSplit
         )
+    }
+
+    mutating func recordAcceptedFrame(regionId: Int) {
+        guard let idx = regions.firstIndex(where: { $0.id == regionId }) else { return }
+        regions[idx].frameCount += 1
     }
 
     func visitCount(for cellId: String) -> Int {
         cellVisitCounts[cellId] ?? 0
     }
 
-    private func updateRegion(position: SIMD3<Float>) {
-        if regionCentroids.isEmpty {
-            let id = "region_000"
-            regionCentroids.append((id, position.x, position.z))
-            activeRegionId = id
-            regionCount = 1
-            return
+    func framesPerRegion() -> [Int: Int] {
+        Dictionary(uniqueKeysWithValues: regions.map { ($0.id, $0.frameCount) })
+    }
+
+    /// Hysteresis: rejoin only if within rejoinDistance; split only if beyond splitDistance
+    /// from **all anchors** and cooldown has elapsed.
+    private mutating func updateRegions(position: SIMD3<Float>, timestamp: TimeInterval) -> Bool {
+        func dist2(_ r: Region) -> Float {
+            let dx = position.x - r.anchorX
+            let dz = position.z - r.anchorZ
+            return dx * dx + dz * dz
         }
-        var bestIdx = 0
-        var bestDist = Float.greatestFiniteMagnitude
-        for (i, c) in regionCentroids.enumerated() {
-            let d = hypot(position.x - c.x, position.z - c.z)
-            if d < bestDist {
-                bestDist = d
-                bestIdx = i
-            }
+
+        let rejoin2 = rejoinDistanceM * rejoinDistanceM
+        let split2 = splitDistanceM * splitDistanceM
+
+        // Prefer staying in active region while within rejoin band (hysteresis).
+        if let active = regions.first(where: { $0.id == activeRegionId }),
+           dist2(active) <= rejoin2
+        {
+            return false
         }
-        if bestDist > regionSplitDistanceM {
-            let id = String(format: "region_%03d", regionCentroids.count)
-            regionCentroids.append((id, position.x, position.z))
-            activeRegionId = id
-            regionCount = regionCentroids.count
-        } else {
-            // Nudge centroid toward recent position.
-            var c = regionCentroids[bestIdx]
-            c.x = c.x * 0.92 + position.x * 0.08
-            c.z = c.z * 0.92 + position.z * 0.08
-            regionCentroids[bestIdx] = c
-            activeRegionId = c.id
-            regionCount = regionCentroids.count
+
+        // Otherwise pick nearest region within rejoin distance.
+        if let nearest = regions.min(by: { dist2($0) < dist2($1) }),
+           dist2(nearest) <= rejoin2
+        {
+            activeRegionId = nearest.id
+            return false
         }
+
+        // Far from all anchors → candidate split (cooldown prevents flap).
+        let farFromAll = regions.allSatisfy { dist2($0) > split2 }
+        let cooled: Bool = {
+            guard let last = lastSplitTimestamp else { return true }
+            return timestamp - last >= splitCooldownSec
+        }()
+
+        if farFromAll, cooled {
+            let r = Region(id: nextRegionId, anchorX: position.x, anchorZ: position.z, frameCount: 0)
+            regions.append(r)
+            activeRegionId = r.id
+            nextRegionId += 1
+            lastSplitTimestamp = timestamp
+            return true
+        }
+
+        // Between rejoin and split: keep active id (sticky) to avoid oscillation.
+        return false
     }
 }

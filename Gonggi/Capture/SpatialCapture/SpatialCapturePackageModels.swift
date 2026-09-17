@@ -32,6 +32,8 @@ struct SpatialCapturePackageMetadata: Codable, Equatable, Sendable {
     var packageSchemaVersion: Int?
     var regionCount: Int?
     var candidateSafetyCap: Int?
+    /// TF62 additive selection diagnostics (ignored by schema v1 readers).
+    var selectionDiagnostics: SpatialCaptureSelectionDiagnostics?
 }
 
 struct SpatialCapturePoseEntry: Codable, Equatable, Sendable {

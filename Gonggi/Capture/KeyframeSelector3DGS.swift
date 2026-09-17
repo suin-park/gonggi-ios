@@ -67,12 +67,22 @@ enum KeyframeSelector3DGS {
         }
 
         if config.useAdaptiveScoring, let adaptiveContext {
-            let breakdown = AdaptiveKeyframeScorer.score(context: adaptiveContext)
+            // Continuity starvation runs only after hard quality + min_interval gates above.
+            var ctx = adaptiveContext
+            // Prefer selector-measured translation from last accept when caller left a stale value.
+            if ctx.translationFromNearestAcceptedM <= 0 {
+                ctx.translationFromNearestAcceptedM = translation
+            }
+            if ctx.secondsSinceLastAccept <= 0 {
+                ctx.secondsSinceLastAccept = timestamp - lastT
+            }
+            let breakdown = AdaptiveKeyframeScorer.score(context: ctx)
             let verdict = AdaptiveKeyframeScorer.shouldAccept(
                 breakdown: breakdown,
                 keyframeCount: keyframeCount,
                 safetyCap: config.hardMaxKeyframes,
-                acceptThreshold: SpatialCaptureConfig.adaptiveAcceptThreshold
+                acceptThreshold: SpatialCaptureConfig.adaptiveAcceptThreshold,
+                context: ctx
             )
             return Decision(
                 accept: verdict.accept,

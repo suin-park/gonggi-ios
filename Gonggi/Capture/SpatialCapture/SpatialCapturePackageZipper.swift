@@ -114,6 +114,10 @@ enum SpatialCapturePackageZipper {
         for name in requiredRootFiles {
             try appendEntry(name: name, fileURL: packageRoot.appendingPathComponent(name))
         }
+        let selectionDiag = packageRoot.appendingPathComponent(SpatialCaptureConfig.selectionDiagnosticsFileName)
+        if fm.fileExists(atPath: selectionDiag.path) {
+            try appendEntry(name: SpatialCaptureConfig.selectionDiagnosticsFileName, fileURL: selectionDiag)
+        }
         for frame in frameURLs {
             let name = "\(SpatialCaptureConfig.framesDirectoryName)/\(frame.lastPathComponent)"
             try appendEntry(name: name, fileURL: frame)

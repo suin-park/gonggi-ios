@@ -53,6 +53,7 @@ enum SpatialCapturePackageBuilder {
         var globalCoverage: Double? = nil
         var regionCount: Int? = nil
         var transitionScore: Double? = nil
+        var selectionDiagnostics: SpatialCaptureSelectionDiagnostics? = nil
     }
 
     static func prepareDirectories(sessionId: String) throws -> SpatialCapturePackagePaths {
@@ -131,7 +132,8 @@ enum SpatialCapturePackageBuilder {
             captureMode: SpatialCaptureConfig.captureMode,
             packageSchemaVersion: SpatialCaptureConfig.packageSchemaVersion,
             regionCount: input.regionCount,
-            candidateSafetyCap: SpatialCaptureConfig.candidateSafetyCap
+            candidateSafetyCap: SpatialCaptureConfig.candidateSafetyCap,
+            selectionDiagnostics: input.selectionDiagnostics
         )
 
         let poses = SpatialCapturePosesFile(
@@ -200,6 +202,11 @@ enum SpatialCapturePackageBuilder {
         try encoder.encode(intrinsics).write(to: paths.intrinsicsURL, options: [.atomic])
         try encoder.encode(quality).write(to: paths.qualityURL, options: [.atomic])
         try SpatialCaptureCoordinateConvention.writeJSON(to: paths.conventionURL)
+
+        if let diagnostics = input.selectionDiagnostics {
+            let diagURL = paths.root.appendingPathComponent(SpatialCaptureConfig.selectionDiagnosticsFileName)
+            try encoder.encode(diagnostics).write(to: diagURL, options: [.atomic])
+        }
 
         if let telemetry = input.telemetry {
             let telemetryURL = paths.debugDirectory.appendingPathComponent(SpatialCaptureConfig.telemetryFileName)

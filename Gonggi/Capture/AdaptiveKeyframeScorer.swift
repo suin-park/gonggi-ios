@@ -21,6 +21,8 @@ enum AdaptiveKeyframeScorer {
         var transitionScore: Double
         var localCoverage: Double
         var globalCoverage: Double
+        /// True while preserving doorway pre/mid/post chain.
+        var inTransitionChain: Bool
     }
 
     struct ScoreBreakdown: Equatable {
@@ -30,6 +32,9 @@ enum AdaptiveKeyframeScorer {
         var viewNovelty: Double
         var imageQuality: Double
         var transition: Double
+        var continuityTime: Double
+        var continuityDistance: Double
+        var continuityTransitionChain: Double
         var redundancyPenalty: Double
         var reason: String
     }
@@ -47,6 +52,17 @@ enum AdaptiveKeyframeScorer {
             : 0
         let transition = min(1, max(0, context.transitionScore)) * cfg.transitionImportanceWeight
 
+        let gapRef = context.inTransitionChain ? cfg.transitionMaxGapSec : cfg.normalMaxGapSec
+        let continuityTime = min(1, max(0, context.secondsSinceLastAccept) / max(0.001, gapRef))
+            * cfg.continuityTimeWeight
+        let continuityDistance = min(
+            1,
+            Double(context.translationFromNearestAcceptedM) / Double(max(0.01, cfg.distanceStarvationM))
+        ) * cfg.continuityDistanceWeight
+        let continuityTransitionChain = context.inTransitionChain
+            ? cfg.continuityTransitionChainWeight
+            : 0
+
         var redundancy = 0.0
         if context.cellVisitCount >= cfg.redundantCellVisitThreshold,
            context.newCoverageRatio < cfg.redundantNewCoverageMax
@@ -61,14 +77,22 @@ enum AdaptiveKeyframeScorer {
         if context.secondsSinceLastAccept < cfg.minIntervalSec {
             redundancy += cfg.timeRedundancyPenalty
         }
+        if context.inTransitionChain {
+            redundancy *= cfg.transitionRedundancyScale
+        }
 
-        let total = newCoverage + baseline + viewNovelty + quality + transition - redundancy
+        let total = newCoverage + baseline + viewNovelty + quality + transition
+            + continuityTime + continuityDistance + continuityTransitionChain
+            - redundancy
+
         let reason: String
-        if context.transitionScore >= cfg.transitionPriorityThreshold {
+        if context.inTransitionChain, context.transitionScore >= cfg.transitionPriorityThreshold * 0.6 {
+            reason = "transition_chain"
+        } else if context.transitionScore >= cfg.transitionPriorityThreshold {
             reason = "transition_priority"
         } else if context.newCoverageRatio >= cfg.highNewCoverageThreshold {
             reason = "new_coverage"
-        } else if redundancy > (newCoverage + viewNovelty) {
+        } else if redundancy > (newCoverage + viewNovelty + continuityTime) {
             reason = "redundant"
         } else {
             reason = "scored"
@@ -80,6 +104,9 @@ enum AdaptiveKeyframeScorer {
             viewNovelty: viewNovelty,
             imageQuality: quality,
             transition: transition,
+            continuityTime: continuityTime,
+            continuityDistance: continuityDistance,
+            continuityTransitionChain: continuityTransitionChain,
             redundancyPenalty: redundancy,
             reason: reason
         )
@@ -89,7 +116,9 @@ enum AdaptiveKeyframeScorer {
         breakdown: ScoreBreakdown,
         keyframeCount: Int,
         safetyCap: Int,
-        acceptThreshold: Double
+        acceptThreshold: Double,
+        context: Context,
+        config: SpatialCaptureAdaptiveConfig = .current
     ) -> (accept: Bool, reason: String) {
         if keyframeCount >= safetyCap {
             return (false, "safety_cap")
@@ -97,10 +126,20 @@ enum AdaptiveKeyframeScorer {
         if breakdown.total >= acceptThreshold {
             return (true, breakdown.reason)
         }
-        // Transition frames: lower threshold so doorway continuity is preserved.
+        // Transition frames: slightly lower threshold for doorway continuity.
         if breakdown.transition > 0, breakdown.total >= acceptThreshold * 0.72 {
             return (true, "transition_relaxed")
         }
+
+        // Continuity starvation — only reached after hard quality gates in KeyframeSelector3DGS.
+        let gapLimit = context.inTransitionChain ? config.transitionMaxGapSec : config.normalMaxGapSec
+        if context.secondsSinceLastAccept >= gapLimit {
+            return (true, context.inTransitionChain ? "continuity_time_transition" : "continuity_time_starvation")
+        }
+        if context.translationFromNearestAcceptedM >= config.distanceStarvationM {
+            return (true, "continuity_distance_starvation")
+        }
+
         return (false, breakdown.reason == "redundant" ? "redundant" : "score_below_threshold")
     }
 }
@@ -126,7 +165,13 @@ struct SpatialCaptureAdaptiveConfig: Equatable, Sendable {
     var highNewCoverageThreshold: Double
     var acceptThreshold: Double
     var candidateSafetyCap: Int
-    /// Soft reconstruction targets (server may further compress).
+    var normalMaxGapSec: Double
+    var transitionMaxGapSec: Double
+    var distanceStarvationM: Float
+    var continuityTimeWeight: Double
+    var continuityDistanceWeight: Double
+    var continuityTransitionChainWeight: Double
+    var transitionRedundancyScale: Double
     var serverTargetSmallMin: Int
     var serverTargetSmallMax: Int
     var serverTargetNormalMin: Int
@@ -156,6 +201,13 @@ struct SpatialCaptureAdaptiveConfig: Equatable, Sendable {
             highNewCoverageThreshold: SpatialCaptureConfig.adaptiveHighNewCoverageThreshold,
             acceptThreshold: SpatialCaptureConfig.adaptiveAcceptThreshold,
             candidateSafetyCap: SpatialCaptureConfig.candidateSafetyCap,
+            normalMaxGapSec: SpatialCaptureConfig.normalMaxGapSec,
+            transitionMaxGapSec: SpatialCaptureConfig.transitionMaxGapSec,
+            distanceStarvationM: SpatialCaptureConfig.distanceStarvationM,
+            continuityTimeWeight: SpatialCaptureConfig.continuityTimeWeight,
+            continuityDistanceWeight: SpatialCaptureConfig.continuityDistanceWeight,
+            continuityTransitionChainWeight: SpatialCaptureConfig.continuityTransitionChainWeight,
+            transitionRedundancyScale: SpatialCaptureConfig.transitionRedundancyScale,
             serverTargetSmallMin: SpatialCaptureConfig.serverTargetSmallMin,
             serverTargetSmallMax: SpatialCaptureConfig.serverTargetSmallMax,
             serverTargetNormalMin: SpatialCaptureConfig.serverTargetNormalMin,
