@@ -408,7 +408,7 @@ struct CaptureFlowView: View {
                 ARCaptureViewRepresentable(
                     session: viewModel.arSession,
                     coverageSpatialIndex: viewModel.framePipeline.coverageSpatialIndex,
-                    showMeshOverlay: viewModel.guidance.showGuideOverlay,
+                    showMeshOverlay: CaptureDeviceCapabilities.supportsLiDARMeshReconstruction,
                     onViewReady: { viewModel.onARViewReady() }
                 ) { frame in
                     viewModel.ingestFrame(frame)

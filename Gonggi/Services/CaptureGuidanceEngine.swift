@@ -8,7 +8,7 @@ final class CaptureGuidanceEngine: ObservableObject {
     @Published private(set) var quality = CaptureQualityState.zero
     @Published private(set) var coachMessage: String = "천천히 이동하세요"
     @Published var isFlashOn = false
-    @Published var showGuideOverlay = true
+    @Published var showGuideOverlay = false
     @Published var isRecording = false
 
     var mockMode: Bool = true

@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// Quiet Spatial Capture chrome: camera-first, small cube, minimal status, ephemeral toast.
 struct CaptureOverlayView: View {
     @ObservedObject var guidance: CaptureGuidanceEngine
     var astraSegmentInstruction: String? = nil
@@ -9,83 +10,73 @@ struct CaptureOverlayView: View {
     let onGuide: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var holdController = PrimaryGuidanceHoldController()
-    @State private var displayedGuidance: PrimaryGuidanceState?
+    @State private var toastText: String?
+    @State private var toastToken = UUID()
 
-    private var guidanceState: PrimaryGuidanceState {
-        displayedGuidance
-            ?? CaptureUIPresenter.primaryGuidance(
-                quality: guidance.quality,
-                astraSegmentInstruction: astraSegmentInstruction
-            )
+    private var quietPhase: CaptureQuietUIPhase {
+        CaptureQuietUIPresenter.phase(for: guidance.quality)
     }
 
-    private var progressEmphasis: CaptureProgressEmphasis {
-        CaptureUIPresenter.progressEmphasis(for: guidance.quality)
+    private var recognitionReady: Bool {
+        CaptureQuietUIPresenter.isSpatialRecognitionReady(quality: guidance.quality)
+    }
+
+    private var isReady: Bool {
+        guidance.quality.completionState == .ready || guidance.quality.reconstructionReady
+    }
+
+    private var cubeFills: CaptureCubeFaceFills {
+        CaptureCubeFaceFills.from(progress: guidance.quality.sectorRingProgress)
     }
 
     var body: some View {
-        let state = guidanceState
         ZStack {
-            // LiDAR mesh wireframe is rendered in ARCaptureViewRepresentable (AR layer).
             VStack(spacing: 0) {
                 LinearGradient(
-                    colors: [Color.black.opacity(0.42), .clear],
+                    colors: [Color.black.opacity(0.38), .clear],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: 120)
+                .frame(height: 96)
                 Spacer()
                 LinearGradient(
-                    colors: [.clear, Color.black.opacity(0.5)],
+                    colors: [.clear, Color.black.opacity(0.42)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
-                .frame(height: 160)
+                .frame(height: 140)
             }
             .ignoresSafeArea()
             .allowsHitTesting(false)
 
-            CaptureSectorPOVTargetView(
-                progress: guidance.quality.sectorRingProgress,
-                completionState: guidance.quality.completionState
-            )
-            .allowsHitTesting(false)
-
             VStack(spacing: 0) {
                 topBar
-                Spacer(minLength: GonggiSpacing.sm)
-                if guidance.showGuideOverlay {
-                    CaptureCoachBubble(presentation: state.coachPresentation)
-                        .padding(.horizontal, GonggiSpacing.lg)
-                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                Spacer(minLength: 0)
+                if let toastText {
+                    Text(toastText)
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color.black.opacity(0.55))
+                        .clipShape(Capsule())
+                        .transition(.opacity)
+                        .padding(.bottom, GonggiSpacing.sm)
+                        .allowsHitTesting(false)
                 }
-                Spacer(minLength: GonggiSpacing.md)
-                bottomControls(state)
+                bottomChrome
             }
             .padding(.top, GonggiSpacing.sm)
             .padding(.bottom, GonggiSpacing.lg)
 
             #if DEBUG
-            debugMetricsBag(state)
+            debugMetricsBag
             #endif
         }
-        .animation(reduceMotion ? nil : GonggiMotion.quick, value: state.identityKey)
-        .animation(reduceMotion ? nil : GonggiMotion.quick, value: guidance.showGuideOverlay)
-        .onAppear {
-            holdController.reset()
-            refreshPrimaryGuidance()
-        }
-        .onChange(of: guidance.quality) { _, _ in refreshPrimaryGuidance() }
-        .onChange(of: astraSegmentInstruction) { _, _ in refreshPrimaryGuidance() }
-    }
-
-    private func refreshPrimaryGuidance() {
-        let candidate = CaptureUIPresenter.primaryGuidance(
-            quality: guidance.quality,
-            astraSegmentInstruction: astraSegmentInstruction
-        )
-        displayedGuidance = holdController.resolve(candidate)
+        .animation(reduceMotion ? nil : GonggiMotion.quick, value: toastText)
+        .animation(reduceMotion ? nil : GonggiMotion.quick, value: quietPhase)
+        .onAppear { refreshToast() }
+        .onChange(of: guidance.quality) { _, _ in refreshToast() }
     }
 
     private var topBar: some View {
@@ -97,57 +88,83 @@ struct CaptureOverlayView: View {
                 .font(GonggiTypography.headline(15))
                 .foregroundStyle(GonggiColors.textPrimary)
             Spacer()
-            if CaptureDeviceCapabilities.supportsLiDARMeshReconstruction {
-                CoverageLegend(compact: true)
-            }
             GonggiIconButton(systemName: "questionmark.circle", style: .dimmed, action: onGuide)
                 .accessibilityLabel("촬영 가이드")
         }
         .padding(.horizontal, GonggiSpacing.md)
     }
 
-    private func bottomControls(_ state: PrimaryGuidanceState) -> some View {
-        VStack(spacing: GonggiSpacing.xs) {
-            CaptureSectorRingStrip(progress: guidance.quality.sectorRingProgress)
-                .padding(.bottom, 2)
-
-            Text(state.statusLabel)
+    private var bottomChrome: some View {
+        VStack(spacing: GonggiSpacing.sm) {
+            Text(CaptureQuietUIPresenter.statusLine(for: guidance.quality))
                 .font(GonggiTypography.caption(13))
-                .foregroundStyle(
-                    state.isReadyToFinish ? GonggiColors.successGreen : GonggiColors.textSecondary
-                )
+                .foregroundStyle(isReady ? GonggiColors.successGreen : GonggiColors.textSecondary)
                 .frame(maxWidth: .infinity)
-                .accessibilityLabel("촬영 상태 \(state.statusLabel)")
+                .accessibilityLabel(CaptureQuietUIPresenter.statusLine(for: guidance.quality))
 
-            CaptureControlBar(
-                progress: state.ringProgress,
-                emphasis: progressEmphasis,
-                isReady: state.isReadyToFinish,
-                finishTitle: state.finishButtonTitle,
-                centerSystemImage: state.ringSystemImage,
-                isFlashOn: guidance.isFlashOn,
-                showGuideOverlay: guidance.showGuideOverlay,
-                onFlash: onFlash,
-                onFinish: onFinish,
-                onGuide: onGuide
+            HStack(alignment: .center, spacing: GonggiSpacing.md) {
+                GonggiIconButton(
+                    systemName: guidance.isFlashOn ? "bolt.fill" : "bolt.slash.fill",
+                    size: 40,
+                    style: .dimmed,
+                    action: onFlash
+                )
+                .accessibilityLabel(guidance.isFlashOn ? "플래시 끄기" : "플래시 켜기")
+
+                CaptureCoverageCubeView(
+                    fills: cubeFills,
+                    isActive: recognitionReady,
+                    size: 58
+                )
+                .opacity(quietPhase == .recognizing ? 0.4 : 1)
+
+                CaptureFinishPillButton(
+                    isReady: isReady,
+                    title: CaptureQuietUIPresenter.finishTitle(isReady: isReady),
+                    action: onFinish
+                )
+            }
+            .padding(.horizontal, GonggiSpacing.sm)
+            .padding(.vertical, GonggiSpacing.xs)
+            .background(
+                RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
+                    .fill(Color.black.opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
+                    .stroke(GonggiColors.borderSubtle, lineWidth: 1)
             )
         }
         .padding(.horizontal, GonggiSpacing.md)
     }
 
+    private func refreshToast() {
+        let next = CaptureQuietUIPresenter.toastHint(for: guidance.quality)
+        guard next != toastText else { return }
+        let token = UUID()
+        toastToken = token
+        withAnimation(reduceMotion ? nil : GonggiMotion.quick) {
+            toastText = next
+        }
+        guard next != nil else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            guard toastToken == token else { return }
+            withAnimation(reduceMotion ? nil : GonggiMotion.quick) {
+                toastText = nil
+            }
+        }
+    }
+
     #if DEBUG
-    private func debugMetricsBag(_ state: PrimaryGuidanceState) -> some View {
+    private var debugMetricsBag: some View {
         VStack {
             Spacer()
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("qCov \(Int((guidance.quality.qualityCoverage * 100).rounded()))% · oCov \(Int((guidance.quality.observedCoverage * 100).rounded()))%")
-                    Text("ov \(guidance.quality.overlapState.rawValue) · base \(guidance.quality.translationBaselineGrade.rawValue)")
-                    Text("sharp \(guidance.quality.sharpnessState.rawValue) · track \(String(format: "%.2f", guidance.quality.trackingQuality))")
-                    Text("act \(guidance.quality.guidanceAction.rawValue) · phase \(guidance.quality.capturePhase.rawValue)")
-                    Text("comp \(guidance.quality.completionState.rawValue) · src \(state.source.rawValue)")
-                    Text("stage \(guidance.quality.guidanceStage.rawValue) · sec \(String(format: "%.2f", guidance.quality.sectorRingProgress.fillRatio))")
-                    Text("yaw/recon \(guidance.quality.reconstructionReady ? "ready" : "wait")")
+                    Text("quiet \(String(describing: quietPhase)) · track \(String(format: "%.2f", guidance.quality.trackingQuality))")
+                    Text("comp \(guidance.quality.completionState.rawValue) · recon \(guidance.quality.reconstructionReady)")
+                    Text("stage \(guidance.quality.guidanceStage.rawValue)")
                 }
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.85))
@@ -272,37 +289,16 @@ struct MockCameraBackground: View {
 
 // MARK: - Previews
 
-#Preview("Coverage 30%") {
+#Preview("Recognizing") {
     capturePreview(GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage30), quality: GonggiPreviewSamples.coverage30)
 }
 
-#Preview("Coverage 68%") {
+#Preview("Capturing") {
     capturePreview(GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage68), quality: GonggiPreviewSamples.coverage68)
 }
 
-#Preview("Coverage 90%") {
+#Preview("Ready") {
     capturePreview(GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.coverage90), quality: GonggiPreviewSamples.coverage90)
-}
-
-#Preview("Tracking limited") {
-    capturePreview(
-        GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.trackingLimited, message: GonggiPreviewSamples.coachTracking),
-        quality: GonggiPreviewSamples.trackingLimited
-    )
-}
-
-#Preview("Fast movement") {
-    capturePreview(
-        GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.fastMovement, message: GonggiPreviewSamples.coachFastMove),
-        quality: GonggiPreviewSamples.fastMovement
-    )
-}
-
-#Preview("Low texture") {
-    capturePreview(
-        GonggiPreviewSamples.guidance(quality: GonggiPreviewSamples.lowTexture, message: GonggiPreviewSamples.coachLowTexture),
-        quality: GonggiPreviewSamples.lowTexture
-    )
 }
 
 @MainActor
