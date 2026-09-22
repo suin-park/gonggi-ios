@@ -297,7 +297,7 @@ final class CaptureBridgePolicyTests: XCTestCase {
             kind: .reconstructionKeyframe
         )
         var bridgeJPEGAccepts = 0
-        var lastContYaw: Float = 0
+        var lastContX: Float = 0
         // Bridge interval 0.05s; ~2.3°/step keeps each step inside bridgeStepMax.
         for i in 1...7 {
             let yaw = Float(i) * (16.0 / 7.0)
@@ -314,9 +314,9 @@ final class CaptureBridgePolicyTests: XCTestCase {
                 )
                 if d.acceptKind == .continuityBridgeObservation {
                     bridgeJPEGAccepts += 1
-                    let contYaw = FrustumOverlapProxy.yawDegrees(from: session.continuityAnchorTransform!)
-                    XCTAssertGreaterThan(contYaw, lastContYaw - 0.01, "anchor must step forward")
-                    lastContYaw = contYaw
+                    let contX = session.continuityAnchorTransform!.columns.3.x
+                    XCTAssertGreaterThan(contX, lastContX - 1e-5, "continuityAnchor must step forward")
+                    lastContX = contX
                 }
             }
         }
