@@ -103,7 +103,10 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             trackingNormal: true,
             baselineGrade: .acceptable,
             reconstruction: Self.fullReconstructionSnapshot(),
-            sectorProgress: Self.fullSectorProgress()
+            sectorProgress: Self.fullSectorProgress(),
+            reconstructionCoverage: CaptureBridgeConfig.reconstructionCoverageReady,
+            terminalContinuityOK: true,
+            bridgeMode: .idle
         )
         XCTAssertEqual(state, .ready)
     }
