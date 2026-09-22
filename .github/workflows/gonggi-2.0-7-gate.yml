@@ -141,6 +141,7 @@ jobs:
           for t in "${TESTS[@]}"; do
             ARGS+=("-only-testing:${t}")
           done
+          set +e
           xcodebuild test \
             -project "${{ env.PROJECT }}" \
             -scheme "${{ env.SCHEME }}" \
@@ -152,7 +153,22 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            -resultBundlePath GateTestResults.xcresult
+            -resultBundlePath GateTestResults.xcresult 2>&1 | tee gate-xcodebuild-test.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          grep -E "Test Case|error:|failed \(|passed \(|executed [0-9]+ test|TEST FAILED|TEST SUCCEEDED" gate-xcodebuild-test.log | tail -n 200 || true
+          exit "${STATUS}"
+
+      - name: Upload gate test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-tf65-test-logs
+          path: |
+            gate-xcodebuild-test.log
+            GateTestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Preflight Release app bundle
         run: |
