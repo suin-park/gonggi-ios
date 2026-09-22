@@ -41,18 +41,19 @@ final class CaptureBridgePolicyTests: XCTestCase {
         let origin = yawTransform(degrees: 0)
         session.noteAccepted(timestamp: 0, transform: origin, yawDeltaDeg: 0, frustumOverlap: 1, kind: .reconstructionKeyframe)
         var sawReconPromotion = false
+        // Steps must exceed poseJitterTranslationM (0.012) and minInterval (0.30s).
         for i in 1...5 {
-            let cand = yawTransform(degrees: 0, translation: SIMD3(0.01 * Float(i), 0, 0))
-            let d = decide(to: cand, timestamp: Double(i) * 0.3, session: &session)
+            let cand = yawTransform(degrees: 0, translation: SIMD3(0.015 * Float(i), 0, 0))
+            let d = decide(to: cand, timestamp: Double(i) * 0.35, session: &session)
             XCTAssertTrue(d.accept, "step \(i) \(d.reason)")
             session.noteAccepted(
-                timestamp: Double(i) * 0.3,
+                timestamp: Double(i) * 0.35,
                 transform: cand,
                 yawDeltaDeg: d.yawDeltaDeg ?? 0,
                 frustumOverlap: d.frustumOverlap ?? 0,
                 kind: d.acceptKind
             )
-            if d.acceptKind == .reconstructionKeyframe && i >= 3 {
+            if d.acceptKind == .reconstructionKeyframe && i >= 2 {
                 sawReconPromotion = true
             }
         }
