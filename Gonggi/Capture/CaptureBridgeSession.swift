@@ -35,6 +35,8 @@ struct CaptureBridgeCandidateSignals: Equatable {
     var baselineFromReconstructionAnchorM: Float
     var exposureScore: Double
     var lowTextureScore: Double
+    /// Coverage-cell signal from `CellOverlapAnalyzer` — **not** optical/feature overlap.
+    /// Diagnostic / soft-risk only; must not alone drive REACQUIRE or continuity hard gates.
     var cellOverlapState: CaptureOverlapState
     /// Diagnostic only — Gonggi `TranslationBaselineAnalyzer` grade (pose heuristic, not depth parallax).
     /// Must **not** be used as the sole hard gate for reconstructionKeyframe promotion.
@@ -210,8 +212,9 @@ struct CaptureBridgeSession: Equatable {
         let yawOver = signals.yawDeltaDeg > CaptureBridgeConfig.maxYawDeltaDeg
         let fwdOver = signals.forwardAngleDeg > CaptureBridgeConfig.maxForwardAngleDeg
         let frustumWeak = signals.frustumOverlap < CaptureBridgeConfig.minFrustumOverlapAccept
+        // Pose frustum only — CellOverlapAnalyzer is a coverage-cell signal, not optical overlap.
+        // Do **not** treat cellOverlapState == .lost as frustumLost / reacquire hard gate.
         let frustumLost = signals.frustumOverlap <= CaptureBridgeConfig.frustumOverlapLost
-            || signals.cellOverlapState == .lost
         let compoundRisk = isCompoundSfmRisk(signals)
 
         if frustumLost && (yawOver || fwdOver || compoundRisk) {
@@ -356,8 +359,8 @@ struct CaptureBridgeSession: Equatable {
         let lowTex = s.lowTextureScore >= CaptureBridgeConfig.lowTextureRiskMin
         let largeRot = s.forwardAngleDeg >= CaptureBridgeConfig.compoundLargeRotationDeg
             || s.yawDeltaDeg >= CaptureBridgeConfig.compoundLargeRotationDeg
+        // Pose frustum only — coverage-cell overlap (.weak/.lost) is not optical/feature overlap.
         let lowOverlap = s.frustumOverlap < CaptureBridgeConfig.minFrustumOverlapAccept
-            || s.cellOverlapState == .weak || s.cellOverlapState == .lost
         return largeRot && lowOverlap && (dark || lowTex)
     }
 

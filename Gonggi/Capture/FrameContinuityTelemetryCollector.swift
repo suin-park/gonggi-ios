@@ -97,6 +97,8 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
             imageTimestampSeconds: imageTimestampSeconds ?? arTs,
             frameId: frameId,
             committed: committed,
+            jpegEnqueueSucceeded: committed,
+            durableJPEGPresent: nil,
             features: featureSummary,
             sharpnessScore: sharpnessScore,
             sharpnessState: sharpnessState,

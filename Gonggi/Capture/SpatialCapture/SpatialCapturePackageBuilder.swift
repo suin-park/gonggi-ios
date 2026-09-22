@@ -252,9 +252,21 @@ enum SpatialCapturePackageBuilder {
         // Observe-only continuity telemetry: package root (upload ZIP) + debug JSONL.
         // Encoding failure must not invalidate the package.
         if let continuity = input.frameContinuityTelemetry {
+            var stamped = continuity
+            stamped.records = continuity.records.map { record in
+                var r = record
+                r.jpegEnqueueSucceeded = r.jpegEnqueueSucceeded ?? r.committed
+                if let id = r.frameId {
+                    let jpegURL = frameJPEGURL(paths: paths, frameId: id)
+                    r.durableJPEGPresent = FileManager.default.fileExists(atPath: jpegURL.path)
+                } else {
+                    r.durableJPEGPresent = false
+                }
+                return r
+            }
             let rootURL = paths.root.appendingPathComponent(SpatialCaptureConfig.frameContinuityTelemetryFileName)
             let debugJSON = paths.debugDirectory.appendingPathComponent(SpatialCaptureConfig.frameContinuityTelemetryFileName)
-            if let data = try? encoder.encode(continuity) {
+            if let data = try? encoder.encode(stamped) {
                 try? data.write(to: rootURL, options: [.atomic])
                 try? data.write(to: debugJSON, options: [.atomic])
             }
@@ -262,7 +274,7 @@ enum SpatialCapturePackageBuilder {
                 SpatialCaptureConfig.frameContinuityTelemetryDebugJSONLFileName
             )
             var jsonlLines: [String] = []
-            for record in continuity.records {
+            for record in stamped.records {
                 if let data = try? lineEncoder.encode(record), let line = String(data: data, encoding: .utf8) {
                     jsonlLines.append(line)
                 }

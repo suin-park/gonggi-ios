@@ -56,7 +56,9 @@ enum CaptureCompletionConfig {
     static var qualityCoverageReady: Double = 0.72
     static var qualityCoverageNearly: Double = 0.55
     static var maxBlurryFraction: Double = 0.35
-    static var requireOverlapNotLost: Bool = true
+    /// Deprecated: `CaptureOverlapState` comes from CellOverlapAnalyzer (coverage cells),
+    /// not optical/feature overlap. Do **not** hard-block completion on cell `.lost`.
+    static var requireOverlapNotLost: Bool = false
     static var requireTrackingNormal: Bool = true
     static var requireBaselineAtLeastAcceptable: Bool = true
 }

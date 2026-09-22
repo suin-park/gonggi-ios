@@ -503,6 +503,173 @@ final class SpatialCapturePackageTests: XCTestCase {
                 atPath: share.appendingPathComponent("capture/metadata.json").path
             )
         )
+        // ≤2.0(64)-style package: missing continuity telemetry must not fail share.
+        XCTAssertEqual(summary.frameContinuityTelemetryIncluded, false)
+        XCTAssertEqual(summary.frameContinuityTelemetryRootPresent, false)
+        let readmeNoTel = try String(
+            contentsOf: share.appendingPathComponent("README.txt"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(readmeNoTel.contains("omitted") || readmeNoTel.contains("not present"))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: share.appendingPathComponent("capture/frame_continuity_telemetry.json").path
+            )
+        )
+    }
+
+    /// Telemetry present → diagnostic share copies root + debug artifacts; absence is not a share failure.
+    func testDiagnosticsShareIncludesFrameContinuityTelemetryWhenPresent() throws {
+        let sessionId = "unit-spatial-share-tel-\(UUID().uuidString)"
+        defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
+
+        let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
+        let jpeg = try makeTinyJPEG()
+        let frameId = "kf_00001"
+        try jpeg.write(to: SpatialCapturePackageBuilder.frameJPEGURL(paths: paths, frameId: frameId))
+
+        let keyframe = SpatialCapturePackageBuilder.AcceptedKeyframe(
+            frameId: frameId,
+            arTimestampSeconds: 1.0,
+            cameraToWorldColumnMajor: CaptureFrameContract.encodeTransform(matrix_identity_float4x4),
+            translationMeters: [0.1, 0, 0.2],
+            rotationQuaternionXYZw: [0, 0, 0, 1],
+            trackingState: "normal",
+            fx: 1000, fy: 1000, cx: 500, cy: 500,
+            width: 1, height: 1,
+            sensorImageWidth: 1, sensorImageHeight: 1,
+            jpegByteCount: jpeg.count,
+            quality: SpatialCaptureFrameQuality(
+                frameId: frameId,
+                sharpnessScore: 0.8,
+                sharpnessState: "sharp",
+                motionSpeed: 0.1,
+                angularVelocity: 0.05,
+                parallaxGrade: "good",
+                translationBaselineM: 0.2,
+                overlapScore: 0.7,
+                overlapState: "good",
+                trackingState: "normal",
+                lowTextureScore: 0.1,
+                acceptReason: "first"
+            ),
+            optionalDepthRelativePath: nil
+        )
+        let continuity = FrameContinuityTelemetryFile(
+            schemaVersion: 1,
+            policyVersion: FrameContinuityTelemetryConfig.policyVersion,
+            gridRows: 3,
+            gridCols: 3,
+            recordCount: 1,
+            approximateBytesPerRecordEstimate: 420,
+            records: [
+                FrameContinuityTelemetryRecord(
+                    schemaVersion: 1,
+                    policyVersion: FrameContinuityTelemetryConfig.policyVersion,
+                    candidateSequence: 1,
+                    arTimestampSeconds: 1.0,
+                    imageTimestampSeconds: 1.0,
+                    frameId: frameId,
+                    committed: true,
+                    features: ARKitFeatureSummary(
+                        rawFeaturePointCount: nil,
+                        grid: nil,
+                        persistent: PersistentFeatureStats(
+                            previousFramePersistentCount: nil,
+                            previousFramePersistentRatio: nil,
+                            continuityAnchorPersistentCount: nil,
+                            continuityAnchorPersistentRatio: nil,
+                            unavailableReason: .pointCloudNil
+                        ),
+                        trackingState: "normal",
+                        trackingLimitationReason: nil,
+                        unavailableReason: .pointCloudNil
+                    ),
+                    sharpnessScore: nil,
+                    sharpnessState: nil,
+                    brightness: nil,
+                    lowTextureScore: nil,
+                    overlapScore: nil,
+                    dualAnchor: DualAnchorTelemetrySnapshot(
+                        continuityTranslationM: nil,
+                        continuityYawDeg: nil,
+                        continuityForwardAngleDeg: nil,
+                        reconstructionCumulativeTranslationM: nil,
+                        frustumOverlap: nil,
+                        reconstructionCoverageEstimate: 0,
+                        bridgeMode: "idle",
+                        verdict: "ACCEPT",
+                        reason: "first",
+                        acceptKind: "reconstructionKeyframe"
+                    )
+                ),
+            ]
+        )
+        _ = try SpatialCapturePackageBuilder.build(
+            input: SpatialCapturePackageBuilder.BuildInput(
+                captureId: "cap-share-tel",
+                sessionId: sessionId,
+                startedAt: Date().addingTimeInterval(-30),
+                endedAt: Date(),
+                keyframes: [keyframe],
+                rejectedDecisionCount: 0,
+                trackingFailureCount: 0,
+                totalTranslationDistanceM: 1.0,
+                observedCoverage: 0.5,
+                qualityCoverage: 0.4,
+                viewAngleDiversity: 0.3,
+                translationBaselineGrade: "acceptable",
+                averageSharpness: 0.8,
+                videoRelativePath: nil,
+                hasLiDAR: false,
+                supportsSceneDepth: false,
+                supportsSmoothedSceneDepth: false,
+                supportsSceneReconstruction: false,
+                decisions: [],
+                telemetry: nil,
+                frameContinuityTelemetry: continuity
+            )
+        )
+
+        let share = try CaptureDiagnosticsStore.buildSharePackage(
+            sessionId: sessionId,
+            captureId: "cap-share-tel"
+        )
+        defer { try? FileManager.default.removeItem(at: share) }
+
+        let summary = try JSONDecoder().decode(
+            SpatialCapturePackageShareSummary.self,
+            from: Data(contentsOf: share.appendingPathComponent("spatial-package-summary.json"))
+        )
+        XCTAssertEqual(summary.frameContinuityTelemetryIncluded, true)
+        XCTAssertEqual(summary.frameContinuityTelemetryRootPresent, true)
+        XCTAssertEqual(summary.frameContinuityTelemetryDebugPresent, true)
+        XCTAssertEqual(summary.frameContinuityTelemetryJSONLPresent, true)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: share.appendingPathComponent("capture/frame_continuity_telemetry.json").path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: share
+                    .appendingPathComponent("capture/debug/frame_continuity_telemetry.json").path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: share
+                    .appendingPathComponent("capture/debug/frame_continuity_telemetry.jsonl").path
+            )
+        )
+        let readme = try String(
+            contentsOf: share.appendingPathComponent("README.txt"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(readme.contains("capture/frame_continuity_telemetry.json"))
+        XCTAssertTrue(readme.contains("capture/debug/frame_continuity_telemetry.json"))
+        XCTAssertTrue(readme.contains("capture/debug/frame_continuity_telemetry.jsonl"))
+        XCTAssertFalse(readme.contains("omitted"))
     }
 
     func testCircularYawSpanDoesNotTreatWrapAsFullCircle() {

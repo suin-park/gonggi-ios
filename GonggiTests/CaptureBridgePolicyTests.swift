@@ -193,4 +193,95 @@ final class CaptureBridgePolicyTests: XCTestCase {
         XCTAssertFalse(d.accept)
         XCTAssertTrue(d.reason.contains("bridge") || d.bridgeVerdict == .reacquire)
     }
+
+    /// GONGGI_CAPTURE_V1_035: new coverage cell → CellOverlapAnalyzer `.lost` while pose/frustum OK
+    /// must **not** alone force REACQUIRE (false reacquire / keyframe starvation).
+    func testCellOverlapLostAloneDoesNotReacquireWhenPoseFrustumOK() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let cand = yawTransform(degrees: 4, translation: SIMD3(0.08, 0, 0))
+        let d = decide(to: cand, timestamp: 0.35, session: &session, cell: .lost)
+        XCTAssertNotEqual(d.bridgeVerdict, .reacquire, "cellOverlap.lost must not hard-gate; got \(d.reason)")
+        XCTAssertFalse(d.reason.contains("reacquire"), d.reason)
+        XCTAssertTrue(d.accept, "expected accept under pose/frustum continuity; got \(d.reason)")
+    }
+
+    /// Walking synthetic: after first ~2s, no indefinite REACQUIRE / recon starvation with cell `.lost`.
+    func testWalkingTraceWithCellLostDoesNotStarveOrIndefiniteReacquire() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        var consecutiveReacquire = 0
+        var maxConsecutiveReacquire = 0
+        var reconKF = 1
+        var lastReconX = origin.columns.3.x
+
+        for i in 1...40 {
+            let cand = yawTransform(
+                degrees: Float(i) * 3,
+                translation: SIMD3(0.08 * Float(i), 0, 0)
+            )
+            let t = Double(i) * 0.35
+            let reconBefore = session.reconstructionAnchorTransform
+            let contBefore = session.continuityAnchorTransform
+            let d = decide(to: cand, timestamp: t, session: &session, cell: .lost)
+
+            if d.bridgeVerdict == .reacquire {
+                consecutiveReacquire += 1
+                maxConsecutiveReacquire = max(maxConsecutiveReacquire, consecutiveReacquire)
+            } else {
+                consecutiveReacquire = 0
+            }
+
+            if d.accept {
+                session.noteAccepted(
+                    timestamp: t,
+                    transform: cand,
+                    yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                    frustumOverlap: d.frustumOverlap ?? 0,
+                    kind: d.acceptKind
+                )
+                if d.acceptKind == .reconstructionKeyframe {
+                    reconKF += 1
+                    lastReconX = cand.columns.3.x
+                } else if d.acceptKind == .continuityBridgeObservation {
+                    XCTAssertEqual(
+                        session.reconstructionAnchorTransform!.columns.3.x,
+                        lastReconX,
+                        accuracy: 1e-5,
+                        "bridge obs must not move reconstructionAnchor"
+                    )
+                }
+            } else {
+                // reject / reacquire / bridge_required must not poison anchors
+                XCTAssertEqual(
+                    session.reconstructionAnchorTransform!.columns.3.x,
+                    reconBefore!.columns.3.x,
+                    accuracy: 1e-6
+                )
+                XCTAssertEqual(
+                    session.continuityAnchorTransform!.columns.3.x,
+                    contBefore!.columns.3.x,
+                    accuracy: 1e-6
+                )
+            }
+        }
+
+        XCTAssertLessThan(maxConsecutiveReacquire, 8, "indefinite REACQUIRE streak \(maxConsecutiveReacquire)")
+        XCTAssertGreaterThanOrEqual(reconKF, 4, "reconstruction keyframe starvation: reconKF=\(reconKF)")
+        XCTAssertNotEqual(session.mode, .reacquiring)
+    }
 }

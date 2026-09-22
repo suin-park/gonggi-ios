@@ -331,6 +331,11 @@ final class FrameContinuityTelemetryTests: XCTestCase {
         XCTAssertEqual(decoded.recordCount, 2)
         XCTAssertEqual(decoded.records.filter { !$0.committed }.count, 1)
         XCTAssertEqual(decoded.records.first?.imageTimestampSeconds, 1.0)
+        // Durable keyframe = enqueue (committed) + frameId + on-disk JPEG.
+        XCTAssertEqual(decoded.records.first?.jpegEnqueueSucceeded, true)
+        XCTAssertEqual(decoded.records.first?.durableJPEGPresent, true)
+        XCTAssertEqual(decoded.records[1].jpegEnqueueSucceeded, false)
+        XCTAssertEqual(decoded.records[1].durableJPEGPresent, false)
 
         let dest = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dest) }

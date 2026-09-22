@@ -25,14 +25,17 @@ final class GuidanceRuleEngineTests: XCTestCase {
         XCTAssertEqual(decision.action, .trackingRecovery)
     }
 
-    func testOverlapLostReturnToPrevious() {
+    func testCellOverlapLostIsSoftScanNotReturn() {
         var engine = GuidanceRuleEngine()
         var quality = CaptureQualityState.zero
         quality.trackingQuality = 0.95
         quality.overlapAvailable = true
         quality.overlapState = .lost
         let decision = engine.evaluateDecision(quality: quality, trackingLimited: false)
-        XCTAssertEqual(decision.action, .returnToPreviousArea)
+        // Coverage-cell `.lost` must not escalate to returnToPreviousArea / reacquire.
+        XCTAssertNotEqual(decision.action, .returnToPreviousArea)
+        XCTAssertNotEqual(decision.action, .reacquireView)
+        XCTAssertEqual(decision.action, .scanNewArea)
     }
 
     func testInsufficientBaselineImprove() {

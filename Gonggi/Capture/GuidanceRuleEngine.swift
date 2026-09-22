@@ -133,20 +133,15 @@ struct GuidanceRuleEngine {
             ))
         }
 
-        // 2. Overlap lost / weak
+        // 2. Coverage-cell overlap (CellOverlapAnalyzer) — diagnostic / soft only.
+        // Never escalate cell `.lost` to returnToPreviousArea / reacquire; normal walks enter new cells.
         if quality.overlapAvailable {
             switch quality.overlapState {
-            case .lost:
+            case .lost, .weak:
                 candidates.append(GuidanceDecision(
-                    action: .returnToPreviousArea,
-                    priority: .critical,
-                    ruleId: "overlap_lost"
-                ))
-            case .weak:
-                candidates.append(GuidanceDecision(
-                    action: .returnToPreviousArea,
-                    priority: .high,
-                    ruleId: "overlap_weak"
+                    action: .scanNewArea,
+                    priority: .low,
+                    ruleId: "cell_overlap_soft"
                 ))
             default:
                 break

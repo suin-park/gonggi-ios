@@ -72,9 +72,20 @@ struct FrameContinuityTelemetryRecord: Codable, Equatable, Sendable {
     var policyVersion: String
     var candidateSequence: Int
     var arTimestampSeconds: Double
+    /// ARFrame.timestamp of the evaluated candidate. Also filled for rejected candidates
+    /// (not only accepted JPEG rows). Prefer this over assuming image sync to MOV PTS.
     var imageTimestampSeconds: Double?
     var frameId: String?
+    /// **Enqueue reservation**, not durable JPEG write.
+    /// `true` means the selector accepted and JPEG encode was successfully *enqueued*
+    /// (frameId reserved). The file may still fail later on the encode queue.
+    /// Durable keyframe for analysis = `jpegEnqueueSucceeded == true` (or `committed`)
+    /// AND `frameId != nil` AND `durableJPEGPresent == true` (package finalize).
     var committed: Bool
+    /// Explicit alias of enqueue success (same value as `committed` when written by collector).
+    var jpegEnqueueSucceeded: Bool? = nil
+    /// Set at package build time when `frames/{frameId}.jpg` exists on disk; nil in live records.
+    var durableJPEGPresent: Bool? = nil
     var features: ARKitFeatureSummary
     var sharpnessScore: Double?
     var sharpnessState: String?

@@ -387,10 +387,11 @@ enum CaptureUIPresenter {
         case .holdSteady:
             return ("잠시 천천히 움직여주세요", nil)
         case .returnToPreviousArea:
+            // True spatial revisit (separate from reacquireView screen-overlap recovery).
             return ("방금 촬영한 곳이 다시 보이도록 이동해주세요", "연결을 다시 찾고 있어요")
         case .reacquireView:
             return (
-                "방금 본 방향과 이어지게 천천히 다시 돌려주세요",
+                "방금 보던 화면과 겹치도록 천천히 돌려주세요",
                 "갑자기 크게 돌리면 3D 연결이 끊길 수 있어요"
             )
         case .bridgeContinuity:

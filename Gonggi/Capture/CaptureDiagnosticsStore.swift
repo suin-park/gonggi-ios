@@ -122,6 +122,20 @@ enum CaptureDiagnosticsStore {
         let summaryURL = exportRoot.appendingPathComponent(spatialPackageSummaryFileName)
         try JSONEncoder.pretty.encode(spatialSummary).write(to: summaryURL, options: .atomic)
 
+        var continuityLines: [String] = []
+        if spatialSummary.frameContinuityTelemetryRootPresent == true {
+            continuityLines.append("- capture/frame_continuity_telemetry.json")
+        }
+        if spatialSummary.frameContinuityTelemetryDebugPresent == true {
+            continuityLines.append("- capture/debug/frame_continuity_telemetry.json")
+        }
+        if spatialSummary.frameContinuityTelemetryJSONLPresent == true {
+            continuityLines.append("- capture/debug/frame_continuity_telemetry.jsonl")
+        }
+        if continuityLines.isEmpty {
+            continuityLines.append("- frame_continuity_telemetry.* omitted (not present in this package; ≤2.0(64) OK)")
+        }
+
         let readme = """
         Gonggi capture diagnostics
         sessionId=\(sessionId)
@@ -133,6 +147,7 @@ enum CaptureDiagnosticsStore {
         - capture/metadata.json, poses.json, intrinsics.json, quality.json, coordinate_convention.json
         - capture/debug/capture_telemetry.json, sensor_space_report.json, camera_path_xz.svg, keyframe_decisions.jsonl
         - capture/debug/principal_point/ (first 1–3 overlays only, if present)
+        \(continuityLines.joined(separator: "\n        "))
         original.mov \(includeVideo ? "included" : "omitted")
         frames/*.jpg omitted by default (see spatial-package-summary.json)
         """
@@ -174,11 +189,16 @@ enum CaptureDiagnosticsStore {
             SpatialCaptureConfig.intrinsicsFileName,
             SpatialCaptureConfig.qualityFileName,
             SpatialCaptureConfig.coordinateConventionFileName,
+            SpatialCaptureConfig.frameContinuityTelemetryFileName,
         ]
+        var includedContinuityTelemetryRoot = false
         for name in rootFiles {
             let src = packageRoot.appendingPathComponent(name)
             if fm.fileExists(atPath: src.path) {
                 try fm.copyItem(at: src, to: captureExport.appendingPathComponent(name))
+                if name == SpatialCaptureConfig.frameContinuityTelemetryFileName {
+                    includedContinuityTelemetryRoot = true
+                }
             }
         }
 
@@ -187,15 +207,30 @@ enum CaptureDiagnosticsStore {
             SpatialCaptureConfig.sensorSpaceReportFileName,
             SpatialCaptureConfig.cameraPathXZFileName,
             SpatialCaptureConfig.decisionsFileName,
+            SpatialCaptureConfig.frameContinuityTelemetryFileName,
+            SpatialCaptureConfig.frameContinuityTelemetryDebugJSONLFileName,
         ]
+        var includedContinuityTelemetryDebug = false
+        var includedContinuityTelemetryJSONL = false
         for name in debugFiles {
             let src = packageRoot
                 .appendingPathComponent(SpatialCaptureConfig.debugDirectoryName, isDirectory: true)
                 .appendingPathComponent(name)
             if fm.fileExists(atPath: src.path) {
                 try fm.copyItem(at: src, to: debugExport.appendingPathComponent(name))
+                if name == SpatialCaptureConfig.frameContinuityTelemetryFileName {
+                    includedContinuityTelemetryDebug = true
+                }
+                if name == SpatialCaptureConfig.frameContinuityTelemetryDebugJSONLFileName {
+                    includedContinuityTelemetryJSONL = true
+                }
             }
         }
+        summary.frameContinuityTelemetryIncluded =
+            includedContinuityTelemetryRoot || includedContinuityTelemetryDebug || includedContinuityTelemetryJSONL
+        summary.frameContinuityTelemetryRootPresent = includedContinuityTelemetryRoot
+        summary.frameContinuityTelemetryDebugPresent = includedContinuityTelemetryDebug
+        summary.frameContinuityTelemetryJSONLPresent = includedContinuityTelemetryJSONL
 
         // Optional principal-point overlays: first 1–3 only.
         let principalSrc = packageRoot
@@ -341,6 +376,11 @@ struct SpatialCapturePackageShareSummary: Codable, Equatable, Sendable {
     var validatorPassed: Bool?
     var validatorError: String?
     var countsMatch: Bool?
+    /// True when any frame_continuity_telemetry artifact was copied into the share.
+    var frameContinuityTelemetryIncluded: Bool?
+    var frameContinuityTelemetryRootPresent: Bool?
+    var frameContinuityTelemetryDebugPresent: Bool?
+    var frameContinuityTelemetryJSONLPresent: Bool?
 
     static let empty = SpatialCapturePackageShareSummary(
         packagePresent: false,
@@ -368,7 +408,11 @@ struct SpatialCapturePackageShareSummary: Codable, Equatable, Sendable {
         principalPointSampleNames: [],
         validatorPassed: nil,
         validatorError: nil,
-        countsMatch: nil
+        countsMatch: nil,
+        frameContinuityTelemetryIncluded: false,
+        frameContinuityTelemetryRootPresent: false,
+        frameContinuityTelemetryDebugPresent: false,
+        frameContinuityTelemetryJSONLPresent: false
     )
 }
 
