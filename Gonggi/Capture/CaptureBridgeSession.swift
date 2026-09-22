@@ -144,7 +144,7 @@ struct CaptureBridgeSession: Equatable {
             if let target = bridgeTargetYawDeg {
                 let yaw = FrustumOverlapProxy.yawDegrees(from: transform)
                 let remain = abs(shortestDeg(yaw - target))
-                if remain <= CaptureBridgeConfig.bridgeStepMaxYawDeg {
+                if Double(remain) <= CaptureBridgeConfig.bridgeStepMaxYawDeg {
                     mode = .idle
                     bridgeTargetYawDeg = nil
                     bridgeStepsAccepted = 0
