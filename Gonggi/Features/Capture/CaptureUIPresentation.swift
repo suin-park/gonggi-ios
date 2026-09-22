@@ -228,7 +228,7 @@ enum CaptureUIPresenter {
         switch action {
         case .moveForward: return .forward
         case .returnToPreviousArea, .reacquireView, .finishBlockedWeakTerminal: return .returnBack
-        case .bridgeContinuity: return .turnLeft
+        case .bridgeContinuity: return .forward
         default: return .none
         }
     }
