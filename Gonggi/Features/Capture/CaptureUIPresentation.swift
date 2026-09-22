@@ -196,7 +196,8 @@ enum CaptureUIPresenter {
     static func hasLiveCorrection(quality: CaptureQualityState) -> Bool {
         if warningKind(for: quality) != nil { return true }
         switch quality.guidanceAction {
-        case .trackingRecovery, .returnToPreviousArea, .slowDown, .holdSteady,
+        case .trackingRecovery, .returnToPreviousArea, .reacquireView, .bridgeContinuity,
+             .finishBlockedWeakTerminal, .slowDown, .holdSteady,
              .improveBaseline, .moveLaterally, .lowTextureWarning:
             return true
         case .continueCapture, .moveForward, .scanNewArea,
@@ -226,7 +227,8 @@ enum CaptureUIPresenter {
     static func direction(for action: GuidanceAction) -> PrimaryGuidanceDirection {
         switch action {
         case .moveForward: return .forward
-        case .returnToPreviousArea: return .returnBack
+        case .returnToPreviousArea, .reacquireView, .finishBlockedWeakTerminal: return .returnBack
+        case .bridgeContinuity: return .turnLeft
         default: return .none
         }
     }
@@ -234,9 +236,9 @@ enum CaptureUIPresenter {
     static func severity(for action: GuidanceAction, warning: CaptureWarningKind?) -> PrimaryGuidanceSeverity {
         if warning == .trackingLimited || warning == .overlapWeak { return .critical }
         switch action {
-        case .trackingRecovery, .returnToPreviousArea:
+        case .trackingRecovery, .returnToPreviousArea, .reacquireView, .finishBlockedWeakTerminal:
             return .critical
-        case .slowDown, .holdSteady, .lowTextureWarning, .improveBaseline, .moveLaterally,
+        case .bridgeContinuity, .slowDown, .holdSteady, .lowTextureWarning, .improveBaseline, .moveLaterally,
              .scanNewArea, .needMoreYaw, .needUpperCoverage, .needLowerCoverage:
             return .warning
         default:
@@ -386,6 +388,21 @@ enum CaptureUIPresenter {
             return ("잠시 천천히 움직여주세요", nil)
         case .returnToPreviousArea:
             return ("방금 촬영한 곳이 다시 보이도록 이동해주세요", "연결을 다시 찾고 있어요")
+        case .reacquireView:
+            return (
+                "방금 본 방향과 이어지게 천천히 다시 돌려주세요",
+                "갑자기 크게 돌리면 3D 연결이 끊길 수 있어요"
+            )
+        case .bridgeContinuity:
+            return (
+                "방향을 조금 더 천천히 이어가 주세요",
+                "중간 장면을 담아 연결을 유지하고 있어요"
+            )
+        case .finishBlockedWeakTerminal:
+            return (
+                "마지막 방향을 천천히 다시 연결해 주세요",
+                "끝난 직전 장면이 약해 완료할 수 없어요. 방금 본 곳과 이어지게 조금씩 돌려 촬영해 주세요"
+            )
         case .scanNewArea:
             return ("아직 덜 담긴 영역을 천천히 비춰주세요", "조금씩 위치를 옮기면 더 정확한 3D 공간을 만들 수 있어요")
         case .needMoreYaw:

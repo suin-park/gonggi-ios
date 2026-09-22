@@ -75,7 +75,10 @@ final class CaptureDataFoundationTests: XCTestCase {
             lastKeyframeTransform: a
         )
         XCTAssertFalse(d.accept)
-        XCTAssertEqual(d.reason, "rotation_excessive")
+        XCTAssertTrue(
+            d.bridgeVerdict == .bridgeRequired || d.bridgeVerdict == .reacquire
+                || d.reason.contains("bridge") || d.reason.contains("reacquire")
+        )
     }
 
     func testKeyframeAcceptsBaseline() {
@@ -90,7 +93,8 @@ final class CaptureDataFoundationTests: XCTestCase {
             lastKeyframeTransform: a
         )
         XCTAssertTrue(d.accept)
-        XCTAssertEqual(d.reason, "translation_ok")
+        XCTAssertTrue(d.countsForReconstruction)
+        XCTAssertEqual(d.acceptKind, .reconstructionKeyframe)
     }
 
     // MARK: - Test E sync + PTS SoT

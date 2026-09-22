@@ -2,7 +2,10 @@ import Foundation
 import simd
 
 /// Translation-baseline analyzer for 3DGS capture quality (NOT depth-aware parallax,
-/// NOT view-angle diversity). Reference = last accepted 3DGS keyframe.
+/// NOT view-angle diversity).
+///
+/// Reference = last accepted **reconstruction keyframe** only (not continuity bridge
+/// observations). Call `acceptKeyframe` solely when promoting a reconstructionKeyframe.
 struct TranslationBaselineAnalyzer {
     private(set) var lastKeyframeTransform: simd_float4x4?
     private(set) var maxBaselineM: Float = 0

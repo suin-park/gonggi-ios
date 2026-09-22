@@ -1,0 +1,265 @@
+import ARKit
+import Foundation
+import simd
+
+/// Thread-safe observe-only collector. Never throws into the capture path.
+final class FrameContinuityTelemetryCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var candidateSequence = 0
+    private var records: [FrameContinuityTelemetryRecord] = []
+    private var previousFrameIdentifiers: Set<UInt64> = []
+    private var continuityAnchorIdentifiers: Set<UInt64> = []
+    private var lastUnavailableLogReason: FeatureTelemetryUnavailableReason?
+    private var unavailableLogCount = 0
+
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        candidateSequence = 0
+        records.removeAll(keepingCapacity: true)
+        previousFrameIdentifiers.removeAll(keepingCapacity: true)
+        continuityAnchorIdentifiers.removeAll(keepingCapacity: true)
+        lastUnavailableLogReason = nil
+        unavailableLogCount = 0
+    }
+
+    /// Snapshot ARKit feature stats without retaining ARFrame / CVPixelBuffer.
+    func recordCandidate(
+        frame: ARFrame,
+        committed: Bool,
+        frameId: String?,
+        imageTimestampSeconds: Double?,
+        decision: KeyframeSelector3DGS.Decision?,
+        bridgeSession: CaptureBridgeSession,
+        reconstructionCoverageEstimate: Double,
+        sharpnessScore: Double?,
+        sharpnessState: String?,
+        brightness: Double?,
+        lowTextureScore: Double?,
+        overlapScore: Double?
+    ) {
+        let arTs = frame.timestamp
+        let trackingLabel = CaptureFrameContract.trackingLabel(frame.camera.trackingState)
+        let limitation = Self.trackingLimitationReason(frame.camera.trackingState)
+
+        let updateContinuitySet = committed && (
+            decision?.acceptKind == .continuityBridgeObservation
+            || decision?.acceptKind == .reconstructionKeyframe
+            || decision?.reason == "first"
+        )
+
+        let featureSummary = sampleFeatures(
+            frame: frame,
+            trackingState: trackingLabel,
+            trackingLimitationReason: limitation,
+            updatePreviousSet: true,
+            updateContinuitySet: updateContinuitySet
+        )
+
+        var dual = DualAnchorTelemetrySnapshot(
+            continuityTranslationM: nil,
+            continuityYawDeg: decision?.yawDeltaDeg,
+            continuityForwardAngleDeg: decision?.forwardAngleDeg,
+            reconstructionCumulativeTranslationM: nil,
+            frustumOverlap: decision?.frustumOverlap,
+            reconstructionCoverageEstimate: reconstructionCoverageEstimate,
+            bridgeMode: bridgeSession.mode.rawValue,
+            verdict: decision?.bridgeVerdict?.rawValue
+                ?? (committed ? CaptureBridgeVerdict.accept.rawValue : CaptureBridgeVerdict.reject.rawValue),
+            reason: decision?.reason,
+            acceptKind: decision?.acceptKind.rawValue
+        )
+
+        if let cont = bridgeSession.continuityAnchorTransform {
+            let sample = FrustumOverlapProxy.sample(from: cont, to: frame.camera.transform)
+            dual.continuityTranslationM = sample.translationM
+            if dual.continuityYawDeg == nil { dual.continuityYawDeg = sample.yawDeltaDeg }
+            if dual.continuityForwardAngleDeg == nil {
+                dual.continuityForwardAngleDeg = sample.forwardAngleDeg
+            }
+            if dual.frustumOverlap == nil { dual.frustumOverlap = sample.frustumOverlap }
+        }
+        if let recon = bridgeSession.reconstructionAnchorTransform {
+            dual.reconstructionCumulativeTranslationM = CaptureMath.translationMeters(
+                from: recon,
+                to: frame.camera.transform
+            )
+        }
+
+        lock.lock()
+        candidateSequence += 1
+        let seq = candidateSequence
+        let record = FrameContinuityTelemetryRecord(
+            schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
+            policyVersion: FrameContinuityTelemetryConfig.policyVersion,
+            candidateSequence: seq,
+            arTimestampSeconds: arTs,
+            imageTimestampSeconds: imageTimestampSeconds ?? arTs,
+            frameId: frameId,
+            committed: committed,
+            features: featureSummary,
+            sharpnessScore: sharpnessScore,
+            sharpnessState: sharpnessState,
+            brightness: brightness,
+            lowTextureScore: lowTextureScore,
+            overlapScore: overlapScore,
+            dualAnchor: dual
+        )
+        if records.count >= FrameContinuityTelemetryConfig.maxInMemoryRecords {
+            let overflow = records.count - FrameContinuityTelemetryConfig.maxInMemoryRecords + 1
+            records.removeFirst(overflow)
+        }
+        records.append(record)
+        lock.unlock()
+    }
+
+    func snapshotFile() -> FrameContinuityTelemetryFile {
+        lock.lock()
+        defer { lock.unlock() }
+        return FrameContinuityTelemetryFile(
+            schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
+            policyVersion: FrameContinuityTelemetryConfig.policyVersion,
+            gridRows: FrameContinuityTelemetryConfig.gridRows,
+            gridCols: FrameContinuityTelemetryConfig.gridCols,
+            recordCount: records.count,
+            approximateBytesPerRecordEstimate: 420,
+            records: records
+        )
+    }
+
+    // MARK: - Private
+
+    private func sampleFeatures(
+        frame: ARFrame,
+        trackingState: String,
+        trackingLimitationReason: String?,
+        updatePreviousSet: Bool,
+        updateContinuitySet: Bool
+    ) -> ARKitFeatureSummary {
+        guard let cloud = frame.rawFeaturePoints else {
+            noteUnavailable(.pointCloudNil)
+            return ARKitFeatureSummary(
+                rawFeaturePointCount: nil,
+                grid: nil,
+                persistent: PersistentFeatureStats(
+                    previousFramePersistentCount: nil,
+                    previousFramePersistentRatio: nil,
+                    continuityAnchorPersistentCount: nil,
+                    continuityAnchorPersistentRatio: nil,
+                    unavailableReason: .pointCloudNil
+                ),
+                trackingState: trackingState,
+                trackingLimitationReason: trackingLimitationReason,
+                unavailableReason: .pointCloudNil
+            )
+        }
+
+        let count = cloud.points.count
+        let identifiers = cloud.identifiers
+        let idsAvailable = identifiers.count == count && count > 0
+
+        var idSet = Set<UInt64>()
+        if idsAvailable {
+            idSet.reserveCapacity(min(count, FrameContinuityTelemetryConfig.maxRetainedIdentifiers))
+            for i in 0..<count {
+                if idSet.count >= FrameContinuityTelemetryConfig.maxRetainedIdentifiers { break }
+                idSet.insert(identifiers[i])
+            }
+        }
+
+        var world: [SIMD3<Float>] = []
+        world.reserveCapacity(count)
+        let pts = cloud.points
+        for i in 0..<count {
+            let p = pts[i]
+            world.append(SIMD3(p.x, p.y, p.z))
+        }
+        let grid = FeatureGridProjector.occupancy(
+            worldPoints: world,
+            worldToCamera: frame.camera.transform.inverse,
+            fx: frame.camera.intrinsics[0, 0],
+            fy: frame.camera.intrinsics[1, 1],
+            cx: frame.camera.intrinsics[2, 0],
+            cy: frame.camera.intrinsics[2, 1],
+            imageWidth: Float(frame.camera.imageResolution.width),
+            imageHeight: Float(frame.camera.imageResolution.height)
+        )
+
+        lock.lock()
+        let prev = previousFrameIdentifiers
+        let anchorIds = continuityAnchorIdentifiers
+        var prevCount: Int?
+        var prevRatio: Double?
+        var anchorCount: Int?
+        var anchorRatio: Double?
+        var persistReason: FeatureTelemetryUnavailableReason = .none
+        if !idsAvailable {
+            persistReason = .identifiersUnsupported
+            noteUnavailableLocked(.identifiersUnsupported)
+        } else {
+            if !prev.isEmpty {
+                let inter = idSet.intersection(prev).count
+                prevCount = inter
+                prevRatio = Double(inter) / Double(max(1, idSet.count))
+            }
+            if !anchorIds.isEmpty {
+                let inter = idSet.intersection(anchorIds).count
+                anchorCount = inter
+                anchorRatio = Double(inter) / Double(max(1, idSet.count))
+            }
+        }
+        if updatePreviousSet {
+            previousFrameIdentifiers = idSet
+        }
+        if updateContinuitySet, idsAvailable {
+            continuityAnchorIdentifiers = idSet
+        }
+        lock.unlock()
+
+        return ARKitFeatureSummary(
+            rawFeaturePointCount: count,
+            grid: grid,
+            persistent: PersistentFeatureStats(
+                previousFramePersistentCount: prevCount,
+                previousFramePersistentRatio: prevRatio,
+                continuityAnchorPersistentCount: anchorCount,
+                continuityAnchorPersistentRatio: anchorRatio,
+                unavailableReason: persistReason
+            ),
+            trackingState: trackingState,
+            trackingLimitationReason: trackingLimitationReason,
+            unavailableReason: grid == nil ? .projectionFailed : .none
+        )
+    }
+
+    private static func trackingLimitationReason(_ state: ARCamera.TrackingState) -> String? {
+        switch state {
+        case .normal: return nil
+        case .notAvailable: return "notAvailable"
+        case .limited(let reason):
+            switch reason {
+            case .initializing: return "limited_initializing"
+            case .excessiveMotion: return "limited_excessive_motion"
+            case .insufficientFeatures: return "limited_insufficient_features"
+            case .relocalizing: return "limited_relocalizing"
+            @unknown default: return "limited_unknown"
+            }
+        @unknown default: return "unknown"
+        }
+    }
+
+    private func noteUnavailable(_ reason: FeatureTelemetryUnavailableReason) {
+        lock.lock()
+        defer { lock.unlock() }
+        noteUnavailableLocked(reason)
+    }
+
+    private func noteUnavailableLocked(_ reason: FeatureTelemetryUnavailableReason) {
+        if lastUnavailableLogReason == reason {
+            unavailableLogCount += 1
+            return
+        }
+        lastUnavailableLogReason = reason
+        unavailableLogCount = 1
+    }
+}

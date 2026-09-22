@@ -120,6 +120,9 @@ enum GuidanceAction: String, Codable, Equatable, Sendable {
     case needMoreYaw
     case needUpperCoverage
     case needLowerCoverage
+    case bridgeContinuity
+    case reacquireView
+    case finishBlockedWeakTerminal
     case captureNearlyComplete
     case captureComplete
 }

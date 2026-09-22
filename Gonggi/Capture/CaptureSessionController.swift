@@ -46,16 +46,13 @@ final class CaptureSessionController {
     private var reconstructionMetrics = CaptureReconstructionSessionMetrics()
     private var sectorRingProgress: CaptureSectorRingProgress = .empty
     private var lastReconstructionSnapshot: CaptureReconstructionMetricsSnapshot?
-    /// Sticky ready: once true, transient overlap lost must not demote UI completion.
-    private var reconstructionReadyLatched = false
-    private var regionTracker = CaptureRegionTracker()
-    private var localGlobalCoverage = CaptureLocalGlobalCoverage.zero
-    private var lastIngestTimestamp: Double = 0
-    private var lastAcceptedYawDeg: Double?
-    private var lastAcceptedPitchDeg: Double?
-    private var selectionDiagnostics = CaptureSelectionDiagnosticsAccumulator()
-    /// Doorway/transition chain latch end (AR timestamp seconds).
-    private var transitionChainUntil: Double = 0
+    private var bridgeSession = CaptureBridgeSession()
+    private var reconstructionCoverageModel = ReconstructionCoverageModel()
+    private var lastBridgeVerdict: CaptureBridgeVerdict?
+    private var lastFrustumOverlap: Double = 1
+    private var lastTerminalContinuityOK = false
+    private var lastTerminalContinuityReason = "insufficient_neighbor_links"
+    private let frameContinuityTelemetry = FrameContinuityTelemetryCollector()
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -98,14 +95,13 @@ final class CaptureSessionController {
         reconstructionMetrics.reset()
         sectorRingProgress = .empty
         lastReconstructionSnapshot = nil
-        reconstructionReadyLatched = false
-        regionTracker.reset()
-        localGlobalCoverage = .zero
-        lastIngestTimestamp = 0
-        lastAcceptedYawDeg = nil
-        lastAcceptedPitchDeg = nil
-        selectionDiagnostics.reset()
-        transitionChainUntil = 0
+        bridgeSession.reset()
+        reconstructionCoverageModel.reset()
+        lastBridgeVerdict = nil
+        lastFrustumOverlap = 1
+        lastTerminalContinuityOK = false
+        lastTerminalContinuityReason = "insufficient_neighbor_links"
+        frameContinuityTelemetry.reset()
         runtimeTelemetry.reset()
         jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -186,66 +182,7 @@ final class CaptureSessionController {
             trackingFailureEventCount += 1
         }
 
-        let position = CaptureFrameContract.translation(from: transform)
-        let cellId = CaptureMath.gridCellId(position: position)
-        lastIngestTimestamp = frame.timestamp
-        let regionSnap = regionTracker.ingest(cellId: cellId, position: position, timestamp: frame.timestamp)
-        localGlobalCoverage = regionSnap.asCoverage
-
-        let softTransition = SpatialCaptureConfig.adaptiveTransitionPriorityThreshold * 0.55
-        if regionSnap.didSplit || regionSnap.transitionScore >= softTransition {
-            transitionChainUntil = max(
-                transitionChainUntil,
-                frame.timestamp + SpatialCaptureConfig.transitionChainHalfWindowSec * 2
-            )
-        }
-        let inTransitionChain = frame.timestamp <= transitionChainUntil
-            || regionSnap.transitionScore >= softTransition
-
-        let (yawDeg, pitchDeg) = CaptureMath.yawPitchDegrees(from: transform)
-        let yawNovelty: Double
-        let pitchNovelty: Double
-        if let lastYaw = lastAcceptedYawDeg, let lastPitch = lastAcceptedPitchDeg {
-            yawNovelty = abs(CaptureMath.shortestAngleDegrees(from: lastYaw, to: yawDeg))
-            pitchNovelty = abs(pitchDeg - lastPitch)
-        } else {
-            yawNovelty = 90
-            pitchNovelty = 20
-        }
-        let translationFromLast: Float
-        if let lastX = lastKeyframeTransform {
-            translationFromLast = CaptureMath.translationMeters(from: lastX, to: transform)
-        } else {
-            translationFromLast = 1
-        }
-        let secondsSince: Double
-        if let lastT = lastKeyframeTimestamp {
-            secondsSince = frame.timestamp - lastT
-        } else {
-            secondsSince = 999
-        }
-        // Approximate new-coverage: cell rarely visited in local window.
-        let visit = regionTracker.visitCount(for: cellId)
-        let newCoverageRatio = visit <= 1 ? 1.0 : (visit <= 3 ? 0.45 : max(0, 1.0 / Double(visit)))
-
-        let adaptiveContext = AdaptiveKeyframeScorer.Context(
-            keyframeCount: keyframe3DGSCount,
-            currentCellId: cellId,
-            cellVisitCount: visit,
-            newCoverageRatio: newCoverageRatio,
-            yawNoveltyDeg: yawNovelty,
-            pitchNoveltyDeg: pitchNovelty,
-            sharpnessScore: sharpSnap.score,
-            trackingNormal: trackingNormal,
-            overlapState: overlapAnalyzer.lastState,
-            translationFromNearestAcceptedM: translationFromLast,
-            secondsSinceLastAccept: secondsSince,
-            transitionScore: localGlobalCoverage.transitionScore,
-            localCoverage: localGlobalCoverage.localCoverage,
-            globalCoverage: localGlobalCoverage.globalCoverage,
-            inTransitionChain: inTransitionChain
-        )
-
+        let exposureScore = Double(min(1, lastSample?.brightness ?? 0.85))
         let keyDecision = KeyframeSelector3DGS.shouldAccept(
             timestamp: frame.timestamp,
             transform: transform,
@@ -257,12 +194,21 @@ final class CaptureSessionController {
             motionSpeed: lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed,
             angularVelocity: lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity,
             lowTextureScore: lowTexture,
-            adaptiveContext: adaptiveContext
+            exposureScore: exposureScore,
+            cellOverlapState: overlapAnalyzer.lastState,
+            parallaxGrade: eval.grade,
+            bridgeSession: &bridgeSession
         )
+        lastBridgeVerdict = keyDecision.bridgeVerdict
+        if let frustum = keyDecision.frustumOverlap {
+            lastFrustumOverlap = frustum
+        }
 
         var isKeyframe = false
         var depthRef: String?
         var confRef: String?
+        var telemetryCommitted = false
+        var telemetryFrameId: String?
 
         if keyDecision.accept, acceptingSpatialKeyframes, let paths = packagePaths {
             let enqueued = enqueueSpatialKeyframe(
@@ -274,20 +220,35 @@ final class CaptureSessionController {
                 lastSample: lastSample,
                 eval: eval,
                 lowTexture: lowTexture,
-                paths: paths,
-                inTransitionChain: inTransitionChain
+                paths: paths
             )
             if enqueued {
                 isKeyframe = true
-                if let regionInt = Int(localGlobalCoverage.activeRegionId) {
-                    regionTracker.recordAcceptedFrame(regionId: regionInt)
-                }
-                selectionDiagnostics.recordDecision(
-                    accepted: true,
-                    reason: keyDecision.reason,
+                telemetryCommitted = true
+                telemetryFrameId = String(format: "kf_%05d", keyframe3DGSCount)
+                let frustum = keyDecision.frustumOverlap ?? 1
+                let yaw = keyDecision.yawDeltaDeg ?? 0
+                let kind = keyDecision.acceptKind
+                bridgeSession.noteAccepted(
                     timestamp: frame.timestamp,
-                    inTransitionChain: inTransitionChain
+                    transform: transform,
+                    yawDeltaDeg: yaw,
+                    frustumOverlap: frustum,
+                    kind: kind
                 )
+                if kind == .continuityBridgeObservation {
+                    reconstructionCoverageModel.noteContinuityBridgeObservation()
+                    // Do NOT reset TranslationBaselineAnalyzer — recon baseline must stay on reconstructionAnchor.
+                } else if kind == .reconstructionKeyframe {
+                    translationBaseline.acceptKeyframe(transform: transform)
+                    reconstructionCoverageModel.commitReconstructionKeyframe(
+                        transform: transform,
+                        countsForReconstruction: true,
+                        wasBridgeStep: false,
+                        opticalOK: frustum >= CaptureBridgeConfig.minFrustumOverlapBridge,
+                        parallaxOK: true // frame-local parallax is diagnostic only for promotion
+                    )
+                }
                 let refs = depthSampler.writeIfAvailable(frame: frame, frameIndex: written.videoFrameIndex)
                 depthRef = refs.depth
                 confRef = refs.confidence
@@ -301,12 +262,11 @@ final class CaptureSessionController {
         } else if !keyDecision.accept {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: keyDecision.reason)
-            selectionDiagnostics.recordDecision(
-                accepted: false,
-                reason: keyDecision.reason,
-                timestamp: frame.timestamp,
-                inTransitionChain: inTransitionChain
-            )
+            if keyDecision.bridgeVerdict == .bridgeRequired
+                || keyDecision.bridgeVerdict == .reacquire
+            {
+                reconstructionCoverageModel.noteContinuityReject()
+            }
             appendKeyframeDecision(
                 SpatialCaptureKeyframeDecision(
                     arTimestampSeconds: frame.timestamp,
@@ -317,12 +277,19 @@ final class CaptureSessionController {
             )
         }
 
+        // Observe-only: never fail capture if telemetry sampling throws/unavailable.
+        recordFrameContinuityTelemetry(
+            frame: frame,
+            committed: telemetryCommitted,
+            frameId: telemetryFrameId,
+            decision: keyDecision,
+            sharpSnap: sharpSnap,
+            lastSample: lastSample,
+            lowTexture: lowTexture
+        )
+
+        let cellId = CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform))
         _ = overlapAnalyzer.ingest(currentCellId: cellId, isKeyframe: isKeyframe)
-        if isKeyframe {
-            let yp = CaptureMath.yawPitchDegrees(from: transform)
-            lastAcceptedYawDeg = yp.yaw
-            lastAcceptedPitchDeg = yp.pitch
-        }
         updatePhaseAndCompletion(trackingNormal: trackingNormal, transform: transform)
 
         let sample = CaptureFrameSample(
@@ -375,18 +342,11 @@ final class CaptureSessionController {
         lastSample: TelemetrySample?,
         eval: TranslationBaselineAnalyzer.Evaluation,
         lowTexture: Double,
-        paths: SpatialCapturePackagePaths,
-        inTransitionChain: Bool
+        paths: SpatialCapturePackagePaths
     ) -> Bool {
         if jpegEncodeQueue.currentDepth >= SpatialCaptureConfig.jpegQueueMaxDepth {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: "jpeg_queue_full")
-            selectionDiagnostics.recordDecision(
-                accepted: false,
-                reason: "jpeg_queue_full",
-                timestamp: frame.timestamp,
-                inTransitionChain: inTransitionChain
-            )
             appendKeyframeDecision(
                 SpatialCaptureKeyframeDecision(
                     arTimestampSeconds: frame.timestamp,
@@ -448,10 +408,6 @@ final class CaptureSessionController {
             overlapState: overlapAnalyzer.lastState.rawValue,
             lowTextureScore: lowTexture,
             acceptReason: keyDecision.reason,
-            selectionScore: keyDecision.selectionScore,
-            transitionScore: localGlobalCoverage.transitionScore,
-            coverageCell: CaptureMath.gridCellId(position: CaptureFrameContract.translation(from: transform)),
-            regionId: localGlobalCoverage.activeRegionId,
             jpegURL: jpegURL,
             debugPrincipalPointJPEGURL: debugURL,
             optionalDepthRelativePath: nil
@@ -470,12 +426,6 @@ final class CaptureSessionController {
         if !enqueued {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: "jpeg_queue_full")
-            selectionDiagnostics.recordDecision(
-                accepted: false,
-                reason: "jpeg_queue_full",
-                timestamp: frame.timestamp,
-                inTransitionChain: inTransitionChain
-            )
             appendKeyframeDecision(
                 SpatialCaptureKeyframeDecision(
                     arTimestampSeconds: frame.timestamp,
@@ -488,7 +438,7 @@ final class CaptureSessionController {
         }
 
         // Reserve selector state immediately so we do not over-accept while JPEG is pending.
-        translationBaseline.acceptKeyframe(transform: transform)
+        // TranslationBaselineAnalyzer reference advances only for reconstruction keyframes (caller).
         lastKeyframeTimestamp = frame.timestamp
         lastKeyframeTransform = transform
         keyframe3DGSCount = nextIndex
@@ -534,11 +484,7 @@ final class CaptureSessionController {
                     overlapState: snap.overlapState,
                     trackingState: snap.trackingState,
                     lowTextureScore: snap.lowTextureScore,
-                    acceptReason: snap.acceptReason,
-                    selectionScore: snap.selectionScore,
-                    transitionScore: snap.transitionScore,
-                    coverageCell: snap.coverageCell,
-                    regionId: snap.regionId
+                    acceptReason: snap.acceptReason
                 ),
                 optionalDepthRelativePath: depthPath
             )
@@ -575,6 +521,32 @@ final class CaptureSessionController {
         spatialStateLock.lock()
         keyframeDecisions.append(decision)
         spatialStateLock.unlock()
+    }
+
+    /// Observe-only feature continuity telemetry. Failures must not affect capture.
+    private func recordFrameContinuityTelemetry(
+        frame: ARFrame,
+        committed: Bool,
+        frameId: String?,
+        decision: KeyframeSelector3DGS.Decision,
+        sharpSnap: FrameSharpnessAnalyzer.Snapshot,
+        lastSample: TelemetrySample?,
+        lowTexture: Double
+    ) {
+        frameContinuityTelemetry.recordCandidate(
+            frame: frame,
+            committed: committed,
+            frameId: frameId,
+            imageTimestampSeconds: frame.timestamp,
+            decision: decision,
+            bridgeSession: bridgeSession,
+            reconstructionCoverageEstimate: reconstructionCoverageModel.reconstructionCoverageEstimate,
+            sharpnessScore: sharpSnap.score,
+            sharpnessState: sharpSnap.state.rawValue,
+            brightness: lastSample?.brightness,
+            lowTextureScore: lowTexture,
+            overlapScore: overlapAnalyzer.lastScore
+        )
     }
 
     private func recordDiagnostics(trackingNormal: Bool) {
@@ -724,9 +696,7 @@ final class CaptureSessionController {
             completionState: completionState,
             guidanceStage: sectorRingProgress.stage,
             reconstruction: reconSnap,
-            sector: sectorRingProgress,
-            reconstructionReadyLatched: reconstructionReadyLatched,
-            firstReconstructionReadyAtSec: reconstructionMetrics.firstReadyAtSec
+            sector: sectorRingProgress
         )
         let info = Bundle.main.infoDictionary
         let diagSummary = CaptureSessionSummaryDiagnostics(
@@ -808,16 +778,6 @@ final class CaptureSessionController {
                     reconstructionMetrics: reconSnap
                 )
 
-                let selectionDiag = selectionDiagnostics.build(
-                    regionCount: localGlobalCoverage.regionCount,
-                    framesPerRegion: regionTracker.framesPerRegion(),
-                    travelDistanceM: Double(translationBaseline.totalPathLengthM),
-                    yawCoverage: reconSnap.sessionYawCoverageRatio,
-                    localCoverage: localGlobalCoverage.localCoverage,
-                    globalCoverage: localGlobalCoverage.globalCoverage,
-                    captureDurationSec: durationSec
-                )
-
                 let built = try SpatialCapturePackageBuilder.build(
                     input: SpatialCapturePackageBuilder.BuildInput(
                         captureId: captureId,
@@ -842,11 +802,7 @@ final class CaptureSessionController {
                         telemetry: telemetryReport,
                         reconstructionMetrics: reconSnap,
                         reconstructionCompletion: completionRecord,
-                        localCoverage: localGlobalCoverage.localCoverage,
-                        globalCoverage: localGlobalCoverage.globalCoverage,
-                        regionCount: localGlobalCoverage.regionCount,
-                        transitionScore: localGlobalCoverage.transitionScore,
-                        selectionDiagnostics: selectionDiag
+                        frameContinuityTelemetry: frameContinuityTelemetry.snapshotFile()
                     )
                 )
                 packageURL = built.root
@@ -962,14 +918,15 @@ final class CaptureSessionController {
             guidanceAction: lastGuidanceAction,
             sectorRingProgress: sectorRingProgress,
             guidanceStage: sectorRingProgress.stage,
-            reconstructionReady: reconstructionReadyLatched || completionState == .ready,
-            acceptedKeyframeCount: keyframe3DGSCount,
-            keyframeHardCapReached: keyframe3DGSCount >= SpatialCaptureConfig.candidateSafetyCap,
-            localCoverage: localGlobalCoverage.localCoverage,
-            globalCoverage: localGlobalCoverage.globalCoverage,
-            activeRegionId: localGlobalCoverage.activeRegionId,
-            regionCount: localGlobalCoverage.regionCount,
-            transitionScore: localGlobalCoverage.transitionScore
+            reconstructionReady: completionState == .ready,
+            liveCoverage: coverage.qualityCoverage,
+            reconstructionCoverage: reconstructionCoverageModel.reconstructionCoverageEstimate,
+            bridgeMode: bridgeSession.mode,
+            bridgeVerdict: lastBridgeVerdict,
+            opticalOverlapProxy: lastFrustumOverlap,
+            frustumOverlapProxy: lastFrustumOverlap,
+            terminalContinuityOK: lastTerminalContinuityOK,
+            terminalContinuityReason: lastTerminalContinuityReason
         )
     }
 
@@ -988,9 +945,13 @@ final class CaptureSessionController {
         lastReconstructionSnapshot = reconSnap
 
         let sharp = sharpnessAnalyzer.snapshot()
-        let evaluation = CaptureCompletionGate.evaluate(
+        reconstructionCoverageModel.updateLive(from: coverage)
+        let terminal = bridgeSession.terminalContinuityStatus()
+        lastTerminalContinuityOK = terminal.ok
+        lastTerminalContinuityReason = terminal.reason
+        completionState = CaptureCompletionGate.evaluate(
             durationSec: elapsed,
-            keyframeCount: keyframe3DGSCount,
+            keyframeCount: reconstructionCoverageModel.committedKeyframeCount,
             pathLengthM: pathM,
             qualityCoverage: qCov,
             overlapState: overlapAnalyzer.lastState,
@@ -999,27 +960,26 @@ final class CaptureSessionController {
             baselineGrade: translationBaseline.bestGrade,
             reconstruction: reconSnap,
             sectorProgress: sectorRingProgress,
-            previouslyLatchedReady: reconstructionReadyLatched,
-            hardMaxKeyframes: SpatialCaptureConfig.candidateSafetyCap
+            reconstructionCoverage: reconstructionCoverageModel.reconstructionCoverageEstimate,
+            terminalContinuityOK: terminal.ok,
+            bridgeMode: bridgeSession.mode
         )
-        reconstructionReadyLatched = evaluation.reconstructionReadyLatched
-        completionState = evaluation.state
         reconstructionMetrics.markCompletionTiming(elapsedSec: elapsed, completionState: completionState)
 
-        // Refresh stage with latched ready for coach status.
+        // Refresh stage with actual reconstructionReady for coach status.
         var staged = sectorRingProgress
         staged.stage = CaptureReconstructionSessionMetrics.stage(
             middle: staged.middleSufficientCount,
             upper: staged.upperSufficientCount,
             lower: staged.lowerSufficientCount,
-            reconstructionReady: reconstructionReadyLatched,
+            reconstructionReady: completionState == .ready,
             softComplete: completionState == .nearlyReady
         )
         sectorRingProgress = staged
 
         if elapsed < CapturePhaseConfig.stabilizingSec {
             capturePhase = .stabilizing
-        } else if reconstructionReadyLatched || completionState == .ready {
+        } else if completionState == .ready {
             capturePhase = .readyToFinish
         } else if staged.stage == .eyeLevelSweep {
             capturePhase = .perimeter

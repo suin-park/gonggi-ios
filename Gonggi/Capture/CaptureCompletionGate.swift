@@ -1,15 +1,9 @@
 import Foundation
 
 enum CaptureCompletionGate {
-    struct Evaluation: Equatable {
-        var state: CaptureCompletionState
-        /// Sticky reconstruction-ready for this session (false→true only, except hard reset).
-        var reconstructionReadyLatched: Bool
-        var reconstructionReadyNow: Bool
-    }
-
-    /// Soft mins + qualityCoverage + reconstruction metrics.
-    /// Once latched, transient overlap lost / soft dips do not demote `.ready`.
+    /// Soft mins + live qualityCoverage for nearlyReady.
+    /// User-facing `.ready` requires reconstructionReady AND reconstructionCoverageEstimate
+    /// (continuity proxy — not COLMAP success) AND terminal continuity.
     static func evaluate(
         durationSec: Double,
         keyframeCount: Int,
@@ -21,74 +15,62 @@ enum CaptureCompletionGate {
         baselineGrade: CaptureTranslationBaselineGrade,
         reconstruction: CaptureReconstructionMetricsSnapshot? = nil,
         sectorProgress: CaptureSectorRingProgress? = nil,
-        previouslyLatchedReady: Bool = false,
-        hardMaxKeyframes: Int = SpatialCaptureConfig.hardMaxKeyframes
-    ) -> Evaluation {
-        let reconNow = isReconstructionReady(
+        reconstructionCoverage: Double? = nil,
+        terminalContinuityOK: Bool? = nil,
+        bridgeMode: CaptureBridgeMode? = nil
+    ) -> CaptureCompletionState {
+        if durationSec < CaptureCompletionConfig.minimumDurationSec
+            || keyframeCount < CaptureCompletionConfig.minimumKeyframes
+            || pathLengthM < CaptureCompletionConfig.minimumPathLengthM
+        {
+            return .notReady
+        }
+        if CaptureCompletionConfig.requireTrackingNormal, !trackingNormal {
+            return .notReady
+        }
+        if CaptureCompletionConfig.requireOverlapNotLost, overlapState == .lost {
+            return .notReady
+        }
+        if sharpnessBlurryFraction > CaptureCompletionConfig.maxBlurryFraction {
+            return .notReady
+        }
+        if CaptureCompletionConfig.requireBaselineAtLeastAcceptable,
+           baselineGrade == .insufficient
+        {
+            return .notReady
+        }
+        if let mode = bridgeMode, mode == .bridging || mode == .reacquiring {
+            return .notReady
+        }
+        if let terminalOK = terminalContinuityOK, !terminalOK {
+            // Soft progress may still show nearlyReady via reconstructionCoverage below.
+            let reconCov = reconstructionCoverage ?? 0
+            if reconCov >= CaptureBridgeConfig.reconstructionCoverageNearly {
+                return .nearlyReady
+            }
+            return .notReady
+        }
+
+        let softOK = qualityCoverage >= CaptureCompletionConfig.qualityCoverageNearly
+        let softHigh = qualityCoverage >= CaptureCompletionConfig.qualityCoverageReady
+        let reconCov = reconstructionCoverage ?? 0
+        let reconCovOK = reconCov >= CaptureBridgeConfig.reconstructionCoverageReady
+        let reconCovNear = reconCov >= CaptureBridgeConfig.reconstructionCoverageNearly
+        let reconReady = isReconstructionReady(
             pathLengthM: pathLengthM,
             reconstruction: reconstruction,
             sectorProgress: sectorProgress
         )
 
-        // Hard invalid: tracking lost → allow unlatch (session no longer trustworthy).
-        if CaptureCompletionConfig.requireTrackingNormal, !trackingNormal {
-            return Evaluation(
-                state: .notReady,
-                reconstructionReadyLatched: false,
-                reconstructionReadyNow: reconNow
-            )
+        // Final complete: sector/yaw/extent + reconstructionCoverage + terminal continuity.
+        // Live/UI coverage alone must never grant `.ready`.
+        if softHigh, reconReady, reconCovOK, terminalContinuityOK != false {
+            return .ready
         }
-
-        // Sticky ready: ignore transient overlap lost / blur / softHigh dips.
-        if previouslyLatchedReady {
-            return Evaluation(
-                state: .ready,
-                reconstructionReadyLatched: true,
-                reconstructionReadyNow: reconNow
-            )
+        if softOK || softHigh || reconCovNear {
+            return .nearlyReady
         }
-
-        if durationSec < CaptureCompletionConfig.minimumDurationSec
-            || keyframeCount < CaptureCompletionConfig.minimumKeyframes
-            || pathLengthM < CaptureCompletionConfig.minimumPathLengthM
-        {
-            return Evaluation(state: .notReady, reconstructionReadyLatched: false, reconstructionReadyNow: reconNow)
-        }
-        if CaptureCompletionConfig.requireBaselineAtLeastAcceptable,
-           baselineGrade == .insufficient
-        {
-            return Evaluation(state: .notReady, reconstructionReadyLatched: false, reconstructionReadyNow: reconNow)
-        }
-
-        // First latch: reconstruction metrics alone promote to ready.
-        // Overlap lost / blur must not block this transition (V023 failure mode).
-        if reconNow {
-            return Evaluation(state: .ready, reconstructionReadyLatched: true, reconstructionReadyNow: true)
-        }
-
-        // Soft path (not yet reconstruction-ready).
-        if CaptureCompletionConfig.requireOverlapNotLost, overlapState == .lost {
-            return Evaluation(state: .notReady, reconstructionReadyLatched: false, reconstructionReadyNow: false)
-        }
-        if sharpnessBlurryFraction > CaptureCompletionConfig.maxBlurryFraction {
-            return Evaluation(state: .notReady, reconstructionReadyLatched: false, reconstructionReadyNow: false)
-        }
-
-        let softOK = qualityCoverage >= CaptureCompletionConfig.qualityCoverageNearly
-        let softHigh = qualityCoverage >= CaptureCompletionConfig.qualityCoverageReady
-
-        // Keyframe hard-cap: stop encouraging endless capture.
-        if keyframeCount >= hardMaxKeyframes {
-            return Evaluation(
-                state: .nearlyReady,
-                reconstructionReadyLatched: false,
-                reconstructionReadyNow: false
-            )
-        }
-        if softOK || softHigh {
-            return Evaluation(state: .nearlyReady, reconstructionReadyLatched: false, reconstructionReadyNow: false)
-        }
-        return Evaluation(state: .notReady, reconstructionReadyLatched: false, reconstructionReadyNow: false)
+        return .notReady
     }
 
     static func isReconstructionReady(
@@ -125,8 +107,19 @@ enum CaptureCompletionGate {
         reconstruction: CaptureReconstructionMetricsSnapshot?,
         sectorProgress: CaptureSectorRingProgress?,
         baselineGrade: CaptureTranslationBaselineGrade,
-        pathLengthM: Double
+        pathLengthM: Double,
+        bridgeMode: CaptureBridgeMode? = nil,
+        terminalContinuityOK: Bool? = nil
     ) -> GuidanceAction {
+        if bridgeMode == .reacquiring {
+            return .reacquireView
+        }
+        if bridgeMode == .bridging {
+            return .bridgeContinuity
+        }
+        if terminalContinuityOK == false {
+            return .finishBlockedWeakTerminal
+        }
         if baselineGrade == .insufficient || pathLengthM < CaptureReconstructionReadyConfig.minTravelDistanceM {
             return .improveBaseline
         }

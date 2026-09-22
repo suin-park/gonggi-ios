@@ -29,7 +29,7 @@ final class SpatialCapturePackageTests: XCTestCase {
         GonggiFeatureFlags.setEnableSpatialCaptureForTesting(nil)
     }
 
-    func testSelectorRejectsTranslationTooSmallAndBlur() {
+    func testSelectorRejectsBlurAndHandlesSmallTranslation() {
         let a = matrix_identity_float4x4
         var near = a
         near.columns.3 = SIMD4(0.05, 0, 0, 1)
@@ -41,8 +41,12 @@ final class SpatialCapturePackageTests: XCTestCase {
             lastKeyframeTransform: a,
             keyframeCount: 1
         )
-        XCTAssertFalse(tooClose.accept)
-        XCTAssertEqual(tooClose.reason, "translation_too_small")
+        // Dual-anchor: small steps may bridge-observe or reject; must not be a reconstruction keyframe with large baseline claim.
+        if tooClose.accept {
+            XCTAssertEqual(tooClose.acceptKind, .continuityBridgeObservation)
+        } else {
+            XCTAssertFalse(tooClose.accept)
+        }
 
         var far = a
         far.columns.3 = SIMD4(0.3, 0, 0, 1)

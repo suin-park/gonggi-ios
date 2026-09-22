@@ -3,7 +3,7 @@ import Dispatch
 import Foundation
 
 /// Tunables for 3D spatial capture keyframe JPEG package (Capture Layer).
-/// Keep magic numbers here — do not scatter across call sites.
+/// Keep magic numbers here ??do not scatter across call sites.
 enum SpatialCaptureConfig {
     /// Capture package schema / pipeline id written into metadata.json.
     /// Baseline A readers still accept v1; multi-room adds additive optional fields.
@@ -15,25 +15,25 @@ enum SpatialCaptureConfig {
     /// Default capture mode for Spatial Capture sessions.
     static var captureMode: String = "multi_room"
 
-    /// JPEG lossy quality (0…1). High enough for reconstruction; tunable for size A/B.
+    /// JPEG lossy quality (0??). High enough for reconstruction; tunable for size A/B.
     static var jpegCompressionQuality: CGFloat = 0.92
     /// Long-edge cap; `nil` keeps ARKit full resolution.
     static var jpegMaxLongEdge: Int? = nil
 
-    /// Soft observation band (guidance only — not a hard product SLA).
+    /// Soft observation band (guidance only ??not a hard product SLA).
     static var targetKeyframeMin: Int = 60
     static var targetKeyframeMax: Int = 150
 
     /// Absolute device safety cap for on-device candidate JPEGs (multi-room).
     /// Not a UX message; server adaptive select further compresses.
     static var candidateSafetyCap: Int = 520
-    /// Back-compat alias used by older call sites — maps to candidateSafetyCap.
+    /// Back-compat alias used by older call sites ??maps to candidateSafetyCap.
     static var hardMaxKeyframes: Int {
         get { candidateSafetyCap }
         set { candidateSafetyCap = newValue }
     }
 
-    /// Server-side reconstruction budget targets (config — experiment-tunable).
+    /// Server-side reconstruction budget targets (config ??experiment-tunable).
     static var serverTargetSmallMin: Int = 60
     static var serverTargetSmallMax: Int = 100
     static var serverTargetNormalMin: Int = 80
@@ -49,7 +49,7 @@ enum SpatialCaptureConfig {
     /// Reject when motion is too fast (m/s / rad/s).
     static var maxMotionSpeedMps: Double = 0.55
     static var maxAngularVelocityRadPerSec: Double = 1.4
-    /// Reject when low-texture heuristic is above this (0…1).
+    /// Reject when low-texture heuristic is above this (0??).
     static var maxLowTextureScore: Double = 0.75
 
     // MARK: - Adaptive scoring (config-driven)
@@ -75,7 +75,7 @@ enum SpatialCaptureConfig {
     static var adaptiveAcceptThreshold: Double = 1.05
     static var useAdaptiveKeyframeScoring: Bool = true
 
-    // MARK: - Continuity / starvation (TF62) — quality-pass candidates only
+    // MARK: - Continuity / starvation (TF62) ??quality-pass candidates only
 
     /// Max gap between accepted frames during normal travel (after minInterval).
     static var normalMaxGapSec: Double = 0.7
@@ -118,6 +118,9 @@ enum SpatialCaptureConfig {
     static var telemetryFileName = "capture_telemetry.json"
     static var sensorSpaceReportFileName = "sensor_space_report.json"
     static var cameraPathXZFileName = "camera_path_xz.svg"
+    /// Observe-only feature continuity telemetry (package root + debug). Optional; absent on <=2.0(64).
+    static var frameContinuityTelemetryFileName = FrameContinuityTelemetryConfig.fileName
+    static var frameContinuityTelemetryDebugJSONLFileName = FrameContinuityTelemetryConfig.debugJSONLFileName
 
     /// Max pending JPEG encode/write jobs. When full, new keyframes are rejected (`jpeg_queue_full`).
     static var jpegQueueMaxDepth: Int = 8

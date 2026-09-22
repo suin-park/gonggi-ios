@@ -95,15 +95,17 @@ struct CaptureQualityState: Equatable {
     var sectorRingProgress: CaptureSectorRingProgress
     var guidanceStage: CaptureGuidanceStage
     var reconstructionReady: Bool
-    var acceptedKeyframeCount: Int
-    var keyframeHardCapReached: Bool
-    /// Recent neighborhood coverage (Quiet cube) — not whole-home completion.
-    var localCoverage: Double
-    /// Session-accumulated coverage.
-    var globalCoverage: Double
-    var activeRegionId: String?
-    var regionCount: Int
-    var transitionScore: Double
+    /// UI / "I looked here" coverage (cell quality).
+    var liveCoverage: Double
+    /// Continuity-qualified coverage **estimate** (proxy). Prefer reading as estimate, not SfM success.
+    var reconstructionCoverage: Double
+    var bridgeMode: CaptureBridgeMode
+    var bridgeVerdict: CaptureBridgeVerdict?
+    /// Pose frustum-overlap proxy (not feature/optical/COLMAP). Compat name: opticalOverlapProxy.
+    var opticalOverlapProxy: Double
+    var frustumOverlapProxy: Double
+    var terminalContinuityOK: Bool
+    var terminalContinuityReason: String
 
     init(
         overallCoverage: Double,
@@ -132,13 +134,14 @@ struct CaptureQualityState: Equatable {
         sectorRingProgress: CaptureSectorRingProgress = .empty,
         guidanceStage: CaptureGuidanceStage = .eyeLevelSweep,
         reconstructionReady: Bool = false,
-        acceptedKeyframeCount: Int = 0,
-        keyframeHardCapReached: Bool = false,
-        localCoverage: Double = 0,
-        globalCoverage: Double = 0,
-        activeRegionId: String? = nil,
-        regionCount: Int = 0,
-        transitionScore: Double = 0
+        liveCoverage: Double? = nil,
+        reconstructionCoverage: Double = 0,
+        bridgeMode: CaptureBridgeMode = .idle,
+        bridgeVerdict: CaptureBridgeVerdict? = nil,
+        opticalOverlapProxy: Double = 1,
+        frustumOverlapProxy: Double? = nil,
+        terminalContinuityOK: Bool = false,
+        terminalContinuityReason: String = "insufficient_neighbor_links"
     ) {
         self.overallCoverage = overallCoverage
         self.observedCoverage = observedCoverage ?? overallCoverage
@@ -175,13 +178,15 @@ struct CaptureQualityState: Equatable {
         self.sectorRingProgress = sectorRingProgress
         self.guidanceStage = guidanceStage
         self.reconstructionReady = reconstructionReady
-        self.acceptedKeyframeCount = acceptedKeyframeCount
-        self.keyframeHardCapReached = keyframeHardCapReached
-        self.localCoverage = localCoverage
-        self.globalCoverage = globalCoverage
-        self.activeRegionId = activeRegionId
-        self.regionCount = regionCount
-        self.transitionScore = transitionScore
+        self.liveCoverage = liveCoverage ?? (qualityCoverage ?? overallCoverage)
+        self.reconstructionCoverage = reconstructionCoverage
+        self.bridgeMode = bridgeMode
+        self.bridgeVerdict = bridgeVerdict
+        let frustum = frustumOverlapProxy ?? opticalOverlapProxy
+        self.frustumOverlapProxy = frustum
+        self.opticalOverlapProxy = frustum
+        self.terminalContinuityOK = terminalContinuityOK
+        self.terminalContinuityReason = terminalContinuityReason
     }
 
     static let zero = CaptureQualityState(
@@ -203,7 +208,10 @@ struct CaptureQualityState: Equatable {
     )
 
     var progressPercent: Int {
-        Int((qualityCoverage * 100).rounded())
+        // Soft UI: blend live cell coverage with reconstruction continuity (weights match CaptureBridgeConfig).
+        let liveW = 0.35
+        let blended = min(1, liveW * qualityCoverage + (1 - liveW) * reconstructionCoverage)
+        return Int((blended * 100).rounded())
     }
 }
 

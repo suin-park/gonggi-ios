@@ -54,6 +54,8 @@ enum SpatialCapturePackageBuilder {
         var regionCount: Int? = nil
         var transitionScore: Double? = nil
         var selectionDiagnostics: SpatialCaptureSelectionDiagnostics? = nil
+        /// Observe-only feature continuity telemetry (optional; nil on older packages / failures).
+        var frameContinuityTelemetry: FrameContinuityTelemetryFile? = nil
     }
 
     static func prepareDirectories(sessionId: String) throws -> SpatialCapturePackagePaths {
@@ -246,6 +248,27 @@ enum SpatialCapturePackageBuilder {
             }
         }
         try lines.joined(separator: "\n").write(to: decisionsURL, atomically: true, encoding: .utf8)
+
+        // Observe-only continuity telemetry: package root (upload ZIP) + debug JSONL.
+        // Encoding failure must not invalidate the package.
+        if let continuity = input.frameContinuityTelemetry {
+            let rootURL = paths.root.appendingPathComponent(SpatialCaptureConfig.frameContinuityTelemetryFileName)
+            let debugJSON = paths.debugDirectory.appendingPathComponent(SpatialCaptureConfig.frameContinuityTelemetryFileName)
+            if let data = try? encoder.encode(continuity) {
+                try? data.write(to: rootURL, options: [.atomic])
+                try? data.write(to: debugJSON, options: [.atomic])
+            }
+            let jsonlURL = paths.debugDirectory.appendingPathComponent(
+                SpatialCaptureConfig.frameContinuityTelemetryDebugJSONLFileName
+            )
+            var jsonlLines: [String] = []
+            for record in continuity.records {
+                if let data = try? lineEncoder.encode(record), let line = String(data: data, encoding: .utf8) {
+                    jsonlLines.append(line)
+                }
+            }
+            try? jsonlLines.joined(separator: "\n").write(to: jsonlURL, atomically: true, encoding: .utf8)
+        }
 
         try SpatialCapturePackageValidator.validate(packageRoot: paths.root)
         return paths

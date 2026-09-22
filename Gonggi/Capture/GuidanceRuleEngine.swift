@@ -92,9 +92,49 @@ struct GuidanceRuleEngine {
             ))
         }
 
-        // 2. Overlap lost / weak — skip once reconstructionReady is latched (V023).
-        let userFacingReady = quality.completionState == .ready || quality.reconstructionReady
-        if quality.overlapAvailable, !userFacingReady {
+        // 1b. Bridge / reacquisition / weak terminal (SfM continuity) — above cell-overlap alone
+        switch quality.bridgeMode {
+        case .reacquiring:
+            candidates.append(GuidanceDecision(
+                action: .reacquireView,
+                priority: .critical,
+                ruleId: "reacquire"
+            ))
+        case .bridging:
+            candidates.append(GuidanceDecision(
+                action: .bridgeContinuity,
+                priority: .critical,
+                ruleId: "bridge"
+            ))
+        case .idle:
+            break
+        }
+        if quality.bridgeVerdict == .bridgeRequired {
+            candidates.append(GuidanceDecision(
+                action: .bridgeContinuity,
+                priority: .critical,
+                ruleId: "bridge_verdict"
+            ))
+        }
+        if quality.bridgeVerdict == .reacquire {
+            candidates.append(GuidanceDecision(
+                action: .reacquireView,
+                priority: .critical,
+                ruleId: "reacquire_verdict"
+            ))
+        }
+        if quality.completionState != .ready, quality.terminalContinuityOK == false,
+           quality.reconstructionCoverage >= CaptureBridgeConfig.reconstructionCoverageNearly
+        {
+            candidates.append(GuidanceDecision(
+                action: .finishBlockedWeakTerminal,
+                priority: .high,
+                ruleId: "terminal_weak"
+            ))
+        }
+
+        // 2. Overlap lost / weak
+        if quality.overlapAvailable {
             switch quality.overlapState {
             case .lost:
                 candidates.append(GuidanceDecision(
@@ -210,7 +250,9 @@ struct GuidanceRuleEngine {
                 reconstruction: nil,
                 sectorProgress: quality.sectorRingProgress,
                 baselineGrade: quality.translationBaselineGrade,
-                pathLengthM: 0
+                pathLengthM: 0,
+                bridgeMode: quality.bridgeMode,
+                terminalContinuityOK: quality.terminalContinuityOK
             )
             candidates.append(GuidanceDecision(
                 action: deficit == .scanNewArea ? .captureNearlyComplete : deficit,
