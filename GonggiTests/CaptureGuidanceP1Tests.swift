@@ -192,11 +192,11 @@ final class CaptureGuidanceP1Tests: XCTestCase {
 
     func testSectorClassifierPitchBands() {
         XCTAssertEqual(
-            CaptureSectorRingClassifier.ring(forPitchRadians: Float(25 * .pi / 180)),
+            CaptureSectorRingClassifier.ring(forPitchRadians: Float(25) * .pi / 180),
             .upper
         )
         XCTAssertEqual(
-            CaptureSectorRingClassifier.ring(forPitchRadians: Float(-25 * .pi / 180)),
+            CaptureSectorRingClassifier.ring(forPitchRadians: Float(-25) * .pi / 180),
             .lower
         )
         XCTAssertEqual(
