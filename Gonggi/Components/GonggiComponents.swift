@@ -728,15 +728,23 @@ struct GonggiSummaryHero: View {
     let coveragePercent: Int
     let qualityLabel: String
     let duration: String
+    /// When false (notReady / early finish), avoid "촬영이 완료되었어요".
+    var captureFullyReady: Bool = true
 
     var body: some View {
         HStack(spacing: GonggiSpacing.lg) {
             ProgressRing(progress: Double(coveragePercent) / 100, lineWidth: 7, compact: true)
                 .frame(width: 88, height: 88)
             VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-                Label("촬영이 완료되었어요", systemImage: "checkmark.seal.fill")
-                    .font(GonggiTypography.headline(17))
-                    .foregroundStyle(GonggiColors.successGreen)
+                Label(
+                    CaptureSummaryPresentation.heroTitle(
+                        completionState: captureFullyReady ? .ready : .notReady,
+                        terminalContinuityOK: captureFullyReady
+                    ),
+                    systemImage: captureFullyReady ? "checkmark.seal.fill" : "externaldrive.fill"
+                )
+                .font(GonggiTypography.headline(17))
+                .foregroundStyle(captureFullyReady ? GonggiColors.successGreen : GonggiColors.textPrimary)
                 Text("품질 \(qualityLabel) · \(duration)")
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textSecondary)

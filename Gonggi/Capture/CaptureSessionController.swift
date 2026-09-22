@@ -53,6 +53,12 @@ final class CaptureSessionController {
     private var lastTerminalContinuityOK = false
     private var lastTerminalContinuityReason = "insufficient_neighbor_links"
     private let frameContinuityTelemetry = FrameContinuityTelemetryCollector()
+    private let continuityThumbnailStore = ContinuityAnchorThumbnailStore()
+    private var lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
+        jpegData: nil, visible: false, signedYawDeg: nil, proximity: 0,
+        title: "마지막 연결 화면",
+        guidance: "이 장면이 다시 보이도록 천천히 움직여주세요"
+    )
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -102,6 +108,12 @@ final class CaptureSessionController {
         lastTerminalContinuityOK = false
         lastTerminalContinuityReason = "insufficient_neighbor_links"
         frameContinuityTelemetry.reset()
+        continuityThumbnailStore.reset()
+        lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
+            jpegData: nil, visible: false, signedYawDeg: nil, proximity: 0,
+            title: "마지막 연결 화면",
+            guidance: "이 장면이 다시 보이도록 천천히 움직여주세요"
+        )
         runtimeTelemetry.reset()
         jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -183,6 +195,7 @@ final class CaptureSessionController {
         }
 
         let exposureScore = Double(min(1, lastSample?.brightness ?? 0.85))
+        let persistPeek = frameContinuityTelemetry.peekPreviousFramePersistence(frame: frame)
         let keyDecision = KeyframeSelector3DGS.shouldAccept(
             timestamp: frame.timestamp,
             transform: transform,
@@ -197,12 +210,27 @@ final class CaptureSessionController {
             exposureScore: exposureScore,
             cellOverlapState: overlapAnalyzer.lastState,
             parallaxGrade: eval.grade,
+            previousFramePersistentRatio: persistPeek.ratio,
+            featurePersistenceAvailable: persistPeek.available && persistPeek.ratio != nil,
             bridgeSession: &bridgeSession
         )
         lastBridgeVerdict = keyDecision.bridgeVerdict
         if let frustum = keyDecision.frustumOverlap {
             lastFrustumOverlap = frustum
         }
+
+        if let cont = bridgeSession.continuityAnchorTransform {
+            let signed = ContinuityYawHint.signedYawDegrees(from: transform, to: cont)
+            continuityThumbnailStore.updateLiveProximity(
+                signedYawDeg: signed,
+                frustumOverlap: lastFrustumOverlap,
+                at: frame.timestamp,
+                verdict: keyDecision.bridgeVerdict
+            )
+        } else {
+            continuityThumbnailStore.noteBridgeVerdict(keyDecision.bridgeVerdict, at: frame.timestamp)
+        }
+        lastReacquireThumbnail = continuityThumbnailStore.snapshot(now: frame.timestamp)
 
         var isKeyframe = false
         var depthRef: String?
@@ -235,6 +263,11 @@ final class CaptureSessionController {
                     yawDeltaDeg: yaw,
                     frustumOverlap: frustum,
                     kind: kind
+                )
+                // ContinuityAnchor image for REACQUIRE thumbnail (memory only).
+                continuityThumbnailStore.updateContinuityAnchorImage(
+                    pixelBuffer: frame.capturedImage,
+                    timestamp: frame.timestamp
                 )
                 if kind == .continuityBridgeObservation {
                     reconstructionCoverageModel.noteContinuityBridgeObservation()
@@ -926,7 +959,13 @@ final class CaptureSessionController {
             opticalOverlapProxy: lastFrustumOverlap,
             frustumOverlapProxy: lastFrustumOverlap,
             terminalContinuityOK: lastTerminalContinuityOK,
-            terminalContinuityReason: lastTerminalContinuityReason
+            terminalContinuityReason: lastTerminalContinuityReason,
+            reacquireThumbnailJPEG: lastReacquireThumbnail.visible ? lastReacquireThumbnail.jpegData : nil,
+            reacquireThumbnailVisible: lastReacquireThumbnail.visible,
+            reacquireSignedYawDeg: lastReacquireThumbnail.signedYawDeg,
+            reacquireProximity: lastReacquireThumbnail.proximity,
+            reacquireThumbnailTitle: lastReacquireThumbnail.title,
+            reacquireThumbnailGuidance: lastReacquireThumbnail.guidance
         )
     }
 

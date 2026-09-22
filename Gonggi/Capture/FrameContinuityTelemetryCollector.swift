@@ -6,21 +6,33 @@ import simd
 final class FrameContinuityTelemetryCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var candidateSequence = 0
-    private var records: [FrameContinuityTelemetryRecord] = []
+    /// Downsampled steady-state records (may drop mid-session).
+    private var stableRecords: [FrameContinuityTelemetryRecord] = []
+    /// Permanently retained transitions: accept/bridge/reacquire, reason change, anchor update.
+    private var permanentRecords: [FrameContinuityTelemetryRecord] = []
     private var previousFrameIdentifiers: Set<UInt64> = []
     private var continuityAnchorIdentifiers: Set<UInt64> = []
     private var lastUnavailableLogReason: FeatureTelemetryUnavailableReason?
     private var unavailableLogCount = 0
+    private var lastPermanentVerdict: String?
+    private var lastPermanentReason: String?
+    private var lastPermanentAcceptKind: String?
+    private var stableKeepCounter = 0
 
     func reset() {
         lock.lock()
         defer { lock.unlock() }
         candidateSequence = 0
-        records.removeAll(keepingCapacity: true)
+        stableRecords.removeAll(keepingCapacity: true)
+        permanentRecords.removeAll(keepingCapacity: true)
         previousFrameIdentifiers.removeAll(keepingCapacity: true)
         continuityAnchorIdentifiers.removeAll(keepingCapacity: true)
         lastUnavailableLogReason = nil
         unavailableLogCount = 0
+        lastPermanentVerdict = nil
+        lastPermanentReason = nil
+        lastPermanentAcceptKind = nil
+        stableKeepCounter = 0
     }
 
     /// Snapshot ARKit feature stats without retaining ARFrame / CVPixelBuffer.
@@ -107,26 +119,104 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
             overlapScore: overlapScore,
             dualAnchor: dual
         )
-        if records.count >= FrameContinuityTelemetryConfig.maxInMemoryRecords {
-            let overflow = records.count - FrameContinuityTelemetryConfig.maxInMemoryRecords + 1
-            records.removeFirst(overflow)
+        let verdict = dual.verdict
+        let reason = dual.reason
+        let acceptKind = dual.acceptKind
+        let isTransition =
+            committed
+            || verdict == CaptureBridgeVerdict.bridgeRequired.rawValue
+            || verdict == CaptureBridgeVerdict.reacquire.rawValue
+            || verdict != lastPermanentVerdict
+            || reason != lastPermanentReason
+            || acceptKind != lastPermanentAcceptKind
+            || updateContinuitySet
+        if isTransition {
+            permanentRecords.append(record)
+            if permanentRecords.count > FrameContinuityTelemetryConfig.maxPermanentTransitionRecords {
+                let overflow = permanentRecords.count
+                    - FrameContinuityTelemetryConfig.maxPermanentTransitionRecords
+                permanentRecords.removeFirst(overflow)
+            }
+            lastPermanentVerdict = verdict
+            lastPermanentReason = reason
+            lastPermanentAcceptKind = acceptKind
+        } else {
+            stableKeepCounter += 1
+            if stableKeepCounter % FrameContinuityTelemetryConfig.stableDownsampleStride == 0 {
+                stableRecords.append(record)
+            }
+            if stableRecords.count > FrameContinuityTelemetryConfig.maxInMemoryRecords {
+                let overflow = stableRecords.count - FrameContinuityTelemetryConfig.maxInMemoryRecords
+                stableRecords.removeFirst(overflow)
+            }
         }
-        records.append(record)
         lock.unlock()
     }
 
     func snapshotFile() -> FrameContinuityTelemetryFile {
         lock.lock()
         defer { lock.unlock() }
+        let merged = Self.mergeBySequence(permanent: permanentRecords, stable: stableRecords)
         return FrameContinuityTelemetryFile(
             schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
             policyVersion: FrameContinuityTelemetryConfig.policyVersion,
             gridRows: FrameContinuityTelemetryConfig.gridRows,
             gridCols: FrameContinuityTelemetryConfig.gridCols,
-            recordCount: records.count,
+            recordCount: merged.count,
             approximateBytesPerRecordEstimate: 420,
-            records: records
+            records: merged
         )
+    }
+
+    /// Approximate archive footprint for reporting.
+    func retentionStats() -> (permanent: Int, stable: Int, merged: Int, approxBytes: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        let merged = Self.mergeBySequence(permanent: permanentRecords, stable: stableRecords)
+        return (
+            permanentRecords.count,
+            stableRecords.count,
+            merged.count,
+            merged.count * 420
+        )
+    }
+
+    private static func mergeBySequence(
+        permanent: [FrameContinuityTelemetryRecord],
+        stable: [FrameContinuityTelemetryRecord]
+    ) -> [FrameContinuityTelemetryRecord] {
+        var bySeq: [Int: FrameContinuityTelemetryRecord] = [:]
+        bySeq.reserveCapacity(permanent.count + stable.count)
+        for r in stable { bySeq[r.candidateSequence] = r }
+        for r in permanent { bySeq[r.candidateSequence] = r } // permanent wins
+        return bySeq.keys.sorted().compactMap { bySeq[$0] }
+    }
+
+    /// Peek previous-frame feature persistence without mutating retained identifier sets.
+    func peekPreviousFramePersistence(frame: ARFrame) -> (available: Bool, ratio: Double?) {
+        lock.lock()
+        let prev = previousFrameIdentifiers
+        lock.unlock()
+        guard let cloud = frame.rawFeaturePoints else {
+            return (false, nil)
+        }
+        let identifiers = cloud.identifiers
+        let count = cloud.points.count
+        guard identifiers.count == count, count > 0 else {
+            return (false, nil)
+        }
+        if prev.isEmpty {
+            return (true, nil) // first frame — available but no ratio yet
+        }
+        var idSet = Set<UInt64>()
+        idSet.reserveCapacity(min(count, FrameContinuityTelemetryConfig.maxRetainedIdentifiers))
+        for i in 0..<count {
+            if idSet.count >= FrameContinuityTelemetryConfig.maxRetainedIdentifiers { break }
+            idSet.insert(identifiers[i])
+        }
+        let inter = idSet.intersection(prev).count
+        let ratio = Double(inter) / Double(max(1, idSet.count))
+        return (true, ratio)
     }
 
     // MARK: - Private

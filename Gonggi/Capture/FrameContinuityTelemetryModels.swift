@@ -11,8 +11,13 @@ enum FrameContinuityTelemetryConfig {
     static let gridCols = 3
     /// Cap retained identifier sets (comparison only).
     static let maxRetainedIdentifiers = 4_096
-    /// Soft cap on stored candidate records per session (oldest kept; still write all to JSONL stream if possible).
+    /// Soft cap on downsampled *stable* records retained in memory / package JSON.
+    /// Transition / anchor-update records are retained permanently (separate buffer).
     static let maxInMemoryRecords = 2_500
+    /// Keep at most this many permanent transition records (accept/bridge/reacquire/reason/anchor).
+    static let maxPermanentTransitionRecords = 4_000
+    /// Downsample every N-th stable record when over soft cap.
+    static let stableDownsampleStride = 8
     static let fileName = "frame_continuity_telemetry.json"
     static let debugJSONLFileName = "frame_continuity_telemetry.jsonl"
 }

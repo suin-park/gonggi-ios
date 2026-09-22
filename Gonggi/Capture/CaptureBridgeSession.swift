@@ -217,6 +217,14 @@ struct CaptureBridgeSession: Equatable {
         let frustumLost = signals.frustumOverlap <= CaptureBridgeConfig.frustumOverlapLost
         let compoundRisk = isCompoundSfmRisk(signals)
 
+        let angularJump = max(signals.yawDeltaDeg, signals.forwardAngleDeg)
+        // Unsupported single jump (TF62 ~23–28°) — never progressive-bridge across.
+        if angularJump > CaptureBridgeConfig.unsupportedAngularJumpDeg {
+            mode = .reacquiring
+            if continuityBrokenSince == nil { continuityBrokenSince = timestamp }
+            return decision(.reacquire, "reacquire_unsupported_jump", signals, kind: .none, counts: false)
+        }
+
         if frustumLost && (yawOver || fwdOver || compoundRisk) {
             mode = .reacquiring
             if continuityBrokenSince == nil { continuityBrokenSince = timestamp }
@@ -225,20 +233,19 @@ struct CaptureBridgeSession: Equatable {
 
         if compoundRisk && (yawOver || fwdOver || frustumWeak) {
             enterBridge(toward: transform)
-            return decision(.bridgeRequired, "bridge_compound_sfm_risk", signals, kind: .none, counts: false)
+            // Progressive: try a safe bridge step immediately instead of only BRIDGE_REQUIRED.
+            return evaluateBridgeStep(signals: signals, fallbackReason: "bridge_compound_sfm_risk")
         }
 
         if yawOver || fwdOver || frustumWeak {
-            if mode == .bridging || mode == .reacquiring {
-                return evaluateBridgeStep(signals: signals)
+            if mode != .bridging && mode != .reacquiring {
+                enterBridge(toward: transform)
             }
-            enterBridge(toward: transform)
-            return decision(
-                .bridgeRequired,
-                yawOver || fwdOver ? "bridge_angular_delta" : "bridge_frustum_weak",
-                signals,
-                kind: .none,
-                counts: false
+            // Progressive bridge: accept a step within bridgeStepMax vs continuityAnchor;
+            // otherwise BRIDGE_REQUIRED so high-frequency ARFrames can land intermediate steps.
+            return evaluateBridgeStep(
+                signals: signals,
+                fallbackReason: yawOver || fwdOver ? "bridge_angular_delta" : "bridge_frustum_weak"
             )
         }
 
@@ -319,8 +326,10 @@ struct CaptureBridgeSession: Equatable {
     }
 
     private mutating func evaluateBridgeStep(
-        signals: CaptureBridgeCandidateSignals
+        signals: CaptureBridgeCandidateSignals,
+        fallbackReason: String = "bridge_step_too_large"
     ) -> CaptureBridgeDecision {
+        _ = fallbackReason
         if signals.frustumOverlap < CaptureBridgeConfig.minFrustumOverlapBridge {
             if mode != .reacquiring { mode = .reacquiring }
             return decision(.reacquire, "reacquire_bridge_frustum", signals, kind: .none, counts: false)
@@ -328,6 +337,7 @@ struct CaptureBridgeSession: Equatable {
         if signals.yawDeltaDeg > CaptureBridgeConfig.bridgeStepMaxYawDeg
             || signals.forwardAngleDeg > CaptureBridgeConfig.maxForwardAngleDeg
         {
+            if mode != .reacquiring { mode = .bridging }
             return decision(.bridgeRequired, "bridge_step_too_large", signals, kind: .none, counts: false)
         }
         let angularEnough = max(signals.yawDeltaDeg, signals.forwardAngleDeg)
@@ -337,6 +347,8 @@ struct CaptureBridgeSession: Equatable {
         }
         // Cumulative baseline vs reconstructionAnchor — not adjacent continuity step.
         if signals.baselineFromReconstructionAnchorM >= CaptureBridgeConfig.minReconstructionTranslationM {
+            mode = .idle
+            bridgeTargetYawDeg = nil
             return decision(
                 .accept,
                 "bridge_step_reconstruction",

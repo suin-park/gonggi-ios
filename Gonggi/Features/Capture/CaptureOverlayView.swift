@@ -51,6 +51,21 @@ struct CaptureOverlayView: View {
 
             VStack(spacing: 0) {
                 topBar
+                if guidance.quality.reacquireThumbnailVisible,
+                   let data = guidance.quality.reacquireThumbnailJPEG
+                {
+                    CaptureReacquireThumbnailView(
+                        jpegData: data,
+                        title: guidance.quality.reacquireThumbnailTitle,
+                        guidance: guidance.quality.reacquireThumbnailGuidance,
+                        signedYawDeg: guidance.quality.reacquireSignedYawDeg,
+                        proximity: guidance.quality.reacquireProximity
+                    )
+                    .padding(.horizontal, GonggiSpacing.md)
+                    .padding(.top, GonggiSpacing.sm)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+                }
                 Spacer(minLength: 0)
                 if let toastText {
                     Text(toastText)

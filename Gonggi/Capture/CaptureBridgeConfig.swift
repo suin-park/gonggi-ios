@@ -13,12 +13,28 @@ enum CaptureBridgeConfig {
     /// Soft max forward-vector angle (see FrustumOverlapProxy). Provisional.
     static var maxForwardAngleDeg: Double = 15
     /// While bridging, each continuity observation may close at most this much yaw.
-    static var bridgeStepMaxYawDeg: Double = 10
+    /// Aligned with `maxYawDeltaDeg` so soft-band exit is not immediately `bridge_step_too_large`.
+    /// Must stay well below unsupported-jump (do **not** raise past ~20° casually).
+    static var bridgeStepMaxYawDeg: Double = 12
     /// Minimum yaw (or forward) change to treat as a real continuity bridge step (not jitter).
     static var minBridgeAngularDeg: Double = 1.5
     /// Below this yaw+tiny translation → pose jitter reject (no coverage advance).
     static var poseJitterYawDeg: Double = 0.75
     static var poseJitterTranslationM: Float = 0.012
+
+    /// Reconstruction keyframe min spacing (also `SpatialCaptureConfig.minIntervalSec`).
+    static var minReconstructionIntervalSec: Double = 0.30
+    /// Continuity bridge observation / progressive step evaluation spacing (ARFrame cadence).
+    /// Much shorter than recon interval so continuous turns can land safe intermediate steps
+    /// before yaw vs a stale continuityAnchor exceeds `bridgeStepMaxYawDeg`.
+    static var minBridgeObservationIntervalSec: Double = 0.05
+    /// Single-frame angular jump vs continuityAnchor → hard REACQUIRE (TF62 23–28° class).
+    static var unsupportedAngularJumpDeg: Double = 22
+    /// When previous-frame feature persistence is measurable and below this, do not save bridge JPEG
+    /// / advance continuityAnchor (`nil` / identifiers-unavailable does not hard-block).
+    static var minBridgeFeaturePersistentRatio: Double = 0.05
+    /// Show REACQUIRE continuity-anchor thumbnail after this duration in reacquiring mode.
+    static var reacquireThumbnailMinDurationSec: Double = 0.5
 
     // MARK: Reconstruction keyframe translation (vs reconstructionAnchor)
 
@@ -65,6 +81,8 @@ enum CaptureBridgeConfig {
 
     static var reacquireStarvationSec: Double = 2.5
     static var reacquireMinFrustumOverlap: Double = 0.38
+    /// Max long edge for in-memory REACQUIRE reference thumbnail (no durable high-res duplicate).
+    static var reacquireThumbnailMaxEdgePx: CGFloat = 160
     static var reacquireMinOpticalOverlap: Double {
         get { reacquireMinFrustumOverlap }
         set { reacquireMinFrustumOverlap = newValue }

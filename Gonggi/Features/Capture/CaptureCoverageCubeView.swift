@@ -213,7 +213,7 @@ enum CaptureQuietUIPresenter {
             return "바닥 쪽도 함께 보여주세요"
         }
         if quality.guidanceAction == .reacquireView {
-            return "방금 보던 화면과 겹치도록 천천히 돌려주세요"
+            return "이 장면이 다시 보이도록 천천히 움직여주세요"
         }
         if quality.guidanceAction == .returnToPreviousArea {
             return "방금 촬영한 곳이 다시 보이도록 이동해주세요"

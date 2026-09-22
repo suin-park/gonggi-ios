@@ -106,6 +106,13 @@ struct CaptureQualityState: Equatable {
     var frustumOverlapProxy: Double
     var terminalContinuityOK: Bool
     var terminalContinuityReason: String
+    /// In-memory REACQUIRE reference (continuityAnchor thumbnail JPEG bytes).
+    var reacquireThumbnailJPEG: Data?
+    var reacquireThumbnailVisible: Bool
+    var reacquireSignedYawDeg: Double?
+    var reacquireProximity: Double
+    var reacquireThumbnailTitle: String
+    var reacquireThumbnailGuidance: String
 
     init(
         overallCoverage: Double,
@@ -141,7 +148,13 @@ struct CaptureQualityState: Equatable {
         opticalOverlapProxy: Double = 1,
         frustumOverlapProxy: Double? = nil,
         terminalContinuityOK: Bool = false,
-        terminalContinuityReason: String = "insufficient_neighbor_links"
+        terminalContinuityReason: String = "insufficient_neighbor_links",
+        reacquireThumbnailJPEG: Data? = nil,
+        reacquireThumbnailVisible: Bool = false,
+        reacquireSignedYawDeg: Double? = nil,
+        reacquireProximity: Double = 0,
+        reacquireThumbnailTitle: String = "마지막 연결 화면",
+        reacquireThumbnailGuidance: String = "이 장면이 다시 보이도록 천천히 움직여주세요"
     ) {
         self.overallCoverage = overallCoverage
         self.observedCoverage = observedCoverage ?? overallCoverage
@@ -187,6 +200,12 @@ struct CaptureQualityState: Equatable {
         self.opticalOverlapProxy = frustum
         self.terminalContinuityOK = terminalContinuityOK
         self.terminalContinuityReason = terminalContinuityReason
+        self.reacquireThumbnailJPEG = reacquireThumbnailJPEG
+        self.reacquireThumbnailVisible = reacquireThumbnailVisible
+        self.reacquireSignedYawDeg = reacquireSignedYawDeg
+        self.reacquireProximity = reacquireProximity
+        self.reacquireThumbnailTitle = reacquireThumbnailTitle
+        self.reacquireThumbnailGuidance = reacquireThumbnailGuidance
     }
 
     static let zero = CaptureQualityState(

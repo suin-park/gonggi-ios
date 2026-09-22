@@ -9,6 +9,8 @@ enum KeyframeSelector3DGS {
         var minTranslationM: Float = SpatialCaptureConfig.minTranslationM
         var maxRotationRad: Float = SpatialCaptureConfig.maxRotationRad
         var minIntervalSec: Double = SpatialCaptureConfig.minIntervalSec
+        /// Continuity bridge observation spacing (overrides minInterval for bridge accepts).
+        var minBridgeObservationIntervalSec: Double = CaptureBridgeConfig.minBridgeObservationIntervalSec
         var maxMotionSpeedMps: Double = SpatialCaptureConfig.maxMotionSpeedMps
         var maxAngularVelocityRadPerSec: Double = SpatialCaptureConfig.maxAngularVelocityRadPerSec
         var maxLowTextureScore: Double = SpatialCaptureConfig.maxLowTextureScore
@@ -62,6 +64,8 @@ enum KeyframeSelector3DGS {
         exposureScore: Double = 0.85,
         cellOverlapState: CaptureOverlapState = .notAvailable,
         parallaxGrade: CaptureTranslationBaselineGrade = .acceptable,
+        previousFramePersistentRatio: Double? = nil,
+        featurePersistenceAvailable: Bool = false,
         bridgeSession: inout CaptureBridgeSession,
         config: Config = Config()
     ) -> Decision {
@@ -95,7 +99,9 @@ enum KeyframeSelector3DGS {
             )
         }
 
-        if timestamp - lastT < config.minIntervalSec {
+        let dt = timestamp - lastT
+        // Progressive bridge uses a shorter interval than reconstruction keyframes.
+        if dt < config.minBridgeObservationIntervalSec {
             return .rejected("min_interval")
         }
 
@@ -123,6 +129,9 @@ enum KeyframeSelector3DGS {
         )
 
         if !config.useBridgeContinuity {
+            if dt < config.minIntervalSec {
+                return .rejected("min_interval")
+            }
             if signals.translationM < config.minTranslationM {
                 return .rejected("translation_too_small")
             }
@@ -148,13 +157,49 @@ enum KeyframeSelector3DGS {
             signals: signals
         )
 
-        let accept = bridge.verdict == .accept
+        var accept = bridge.verdict == .accept
+        var kind = bridge.acceptKind
+        var reason = bridge.reason
+        var counts = bridge.countsForReconstruction
+        var verdict = bridge.verdict
+
+        // Reconstruction KF keeps the longer interval; early recon → bridge obs when possible.
+        if accept && kind == .reconstructionKeyframe && dt < config.minIntervalSec {
+            if signals.frustumOverlap >= CaptureBridgeConfig.minFrustumOverlapBridge,
+               max(signals.yawDeltaDeg, signals.forwardAngleDeg) >= CaptureBridgeConfig.minBridgeAngularDeg
+                || signals.translationM > CaptureBridgeConfig.poseJitterTranslationM
+            {
+                kind = .continuityBridgeObservation
+                reason = "continuity_bridge_observation"
+                counts = false
+            } else {
+                accept = false
+                kind = .none
+                reason = "min_interval"
+                counts = false
+                verdict = .reject
+            }
+        }
+
+        // Bridge JPEG / continuityAnchor advance requires measurable feature persistence when available.
+        if accept && kind == .continuityBridgeObservation && featurePersistenceAvailable {
+            if let ratio = previousFramePersistentRatio,
+               ratio < CaptureBridgeConfig.minBridgeFeaturePersistentRatio
+            {
+                accept = false
+                kind = .none
+                reason = "bridge_feature_persistence_weak"
+                counts = false
+                verdict = .reject
+            }
+        }
+
         return Decision(
             accept: accept,
-            reason: bridge.reason,
-            bridgeVerdict: bridge.verdict,
-            countsForReconstruction: bridge.countsForReconstruction,
-            acceptKind: bridge.acceptKind,
+            reason: reason,
+            bridgeVerdict: verdict,
+            countsForReconstruction: counts,
+            acceptKind: kind,
             frustumOverlap: bridge.frustumOverlap,
             forwardAngleDeg: bridge.forwardAngleDeg,
             yawDeltaDeg: bridge.yawDeltaDeg

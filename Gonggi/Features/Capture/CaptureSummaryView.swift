@@ -23,7 +23,9 @@ struct CaptureSummaryView: View {
                     GonggiSummaryHero(
                         coveragePercent: summary.coveragePercent,
                         qualityLabel: summary.qualityLabel,
-                        duration: formattedDuration(summary.duration)
+                        duration: formattedDuration(summary.duration),
+                        captureFullyReady: summary.quality.completionState == .ready
+                            && summary.quality.terminalContinuityOK
                     )
 
                     Text("촬영 결과")
@@ -58,11 +60,19 @@ struct CaptureSummaryView: View {
                                 onPreviewSpace?()
                             }
                         }
-                        PrimaryButton(title: "이대로 공간 생성", icon: "cube.transparent") {
+                        let weakTerminal = !summary.quality.terminalContinuityOK
+                            || summary.quality.completionState != .ready
+                        PrimaryButton(
+                            title: CaptureSummaryPresentation.createButtonTitle(weakTerminal: weakTerminal),
+                            icon: "cube.transparent"
+                        ) {
                             GonggiHaptics.success()
                             onCreateSpace()
                         }
-                        SecondaryButton(title: "추가 촬영", icon: "camera") {
+                        SecondaryButton(
+                            title: CaptureSummaryPresentation.continueButtonTitle(weakTerminal: weakTerminal),
+                            icon: "camera"
+                        ) {
                             onContinueCapture()
                         }
                         if !summary.sessionId.isEmpty {

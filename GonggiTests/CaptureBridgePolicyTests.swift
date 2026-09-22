@@ -284,4 +284,108 @@ final class CaptureBridgePolicyTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(reconKF, 4, "reconstruction keyframe starvation: reconKF=\(reconKF)")
         XCTAssertNotEqual(session.mode, .reacquiring)
     }
+
+    /// Continuous 16° over ~0.35s at bridge-observation cadence → progressive bridge steps.
+    func testProgressiveBridgeAcceptsIntermediateStepsDuringContinuousYaw() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        var bridgeJPEGAccepts = 0
+        var lastContYaw: Float = 0
+        // Bridge interval 0.05s; ~2.3°/step keeps each step inside bridgeStepMax.
+        for i in 1...7 {
+            let yaw = Float(i) * (16.0 / 7.0)
+            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.02 * Float(i), 0, 0))
+            let t = Double(i) * 0.05
+            let d = decide(to: cand, timestamp: t, session: &session)
+            if d.accept {
+                session.noteAccepted(
+                    timestamp: t,
+                    transform: cand,
+                    yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                    frustumOverlap: d.frustumOverlap ?? 0,
+                    kind: d.acceptKind
+                )
+                if d.acceptKind == .continuityBridgeObservation {
+                    bridgeJPEGAccepts += 1
+                    let contYaw = FrustumOverlapProxy.yawDegrees(from: session.continuityAnchorTransform!)
+                    XCTAssertGreaterThan(contYaw, lastContYaw - 0.01, "anchor must step forward")
+                    lastContYaw = contYaw
+                }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(bridgeJPEGAccepts, 2, "expected progressive bridge steps, got \(bridgeJPEGAccepts)")
+        XCTAssertNotEqual(session.mode, .reacquiring)
+    }
+
+    func testThirtyDegreeSingleJumpStillReacquires() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let cand = yawTransform(degrees: 30, translation: SIMD3(0.05, 0, 0))
+        let d = decide(to: cand, timestamp: 0.35, session: &session)
+        XCTAssertEqual(d.bridgeVerdict, .reacquire)
+        XCTAssertTrue(
+            d.reason.contains("reacquire") || d.reason.contains("unsupported"),
+            d.reason
+        )
+        XCTAssertEqual(session.continuityAnchorTransform, origin)
+    }
+
+    func testBridgeFeaturePersistenceZeroBlocksAnchorAdvance() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let cand = yawTransform(degrees: 4, translation: SIMD3(0.01, 0, 0))
+        let d = KeyframeSelector3DGS.shouldAccept(
+            timestamp: 0.08,
+            transform: cand,
+            trackingNormal: true,
+            lastKeyframeTimestamp: session.continuityAnchorTimestamp,
+            lastKeyframeTransform: session.continuityAnchorTransform,
+            keyframeCount: 1,
+            previousFramePersistentRatio: 0,
+            featurePersistenceAvailable: true,
+            bridgeSession: &session
+        )
+        XCTAssertFalse(d.accept, "zero persistence must block bridge JPEG / anchor advance; got \(d.reason) kind=\(d.acceptKind)")
+        XCTAssertEqual(d.reason, "bridge_feature_persistence_weak")
+        XCTAssertEqual(session.continuityAnchorTransform, origin)
+    }
+
+    func testReacquireThumbnailTargetFrozenWhileReacquiring() {
+        let store = ContinuityAnchorThumbnailStore()
+        // Simulate two anchor updates then long REACQUIRE — target timestamp must stay.
+        store.updateLiveProximity(signedYawDeg: 10, frustumOverlap: 0.2, at: 1.0, verdict: .accept)
+        // Without pixel buffer we only check reacquire visibility timing + freeze API.
+        store.noteBridgeVerdict(.reacquire, at: 2.0)
+        let mid = store.snapshot(now: 2.2)
+        XCTAssertFalse(mid.visible, "must wait ≥0.5s")
+        let late = store.snapshot(now: 2.6)
+        // Still no jpeg → not visible, but reacquireSince held.
+        XCTAssertFalse(late.visible)
+        store.noteBridgeVerdict(.reacquire, at: 5.0) // still reacquiring
+        XCTAssertNil(store.frozenAnchorTimestamp) // no image yet
+        store.noteBridgeVerdict(.accept, at: 6.0)
+        let cleared = store.snapshot(now: 6.1)
+        XCTAssertFalse(cleared.visible)
+    }
 }

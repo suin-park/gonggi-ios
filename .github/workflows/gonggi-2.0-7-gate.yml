@@ -136,6 +136,7 @@ jobs:
             GonggiTests/FrameContinuityTelemetryTests
             GonggiTests/SpatialCapturePackageTests
             GonggiTests/AdaptiveKeyframeTF62Tests
+            GonggiTests/CaptureCompletionPresentationTests
           )
           ARGS=()
           for t in "${TESTS[@]}"; do

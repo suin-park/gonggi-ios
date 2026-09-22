@@ -95,6 +95,60 @@ final class CaptureBridgeReplayTests: XCTestCase {
         }
     }
 
+    /// V1_036-class: continuous yaw after a long pause — progressive bridge must keep accepting
+    /// intermediate steps instead of indefinite bridge_step_too_large → reacquire starvation.
+    func testV1036StyleContinuousYawProgressiveBridgeReplay() {
+        var session = CaptureBridgeSession()
+        let origin = matrix_identity_float4x4
+        session.noteAccepted(
+            timestamp: 74.0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        var accepts = 0
+        var bridgeObs = 0
+        var reacquires = 0
+        var stepTooLarge = 0
+        // From 74.07s: 0.05s steps, ~2° yaw each for 8s of continuous turn.
+        for i in 1...160 {
+            let yaw = Float(i) * 2
+            var m = matrix_identity_float4x4
+            let rad = yaw * .pi / 180
+            m.columns.0 = SIMD4(cos(rad), 0, -sin(rad), 0)
+            m.columns.2 = SIMD4(sin(rad), 0, cos(rad), 0)
+            m.columns.3 = SIMD4(0.02 * Float(i), 0, 0, 1)
+            let t = 74.07 + Double(i) * 0.05
+            let d = KeyframeSelector3DGS.shouldAccept(
+                timestamp: t,
+                transform: m,
+                trackingNormal: true,
+                lastKeyframeTimestamp: session.continuityAnchorTimestamp,
+                lastKeyframeTransform: session.continuityAnchorTransform,
+                keyframeCount: session.reconstructionKeyframeCount + session.continuityBridgeObservationCount,
+                bridgeSession: &session
+            )
+            if d.reason == "bridge_step_too_large" { stepTooLarge += 1 }
+            if d.bridgeVerdict == .reacquire { reacquires += 1 }
+            if d.accept {
+                accepts += 1
+                session.noteAccepted(
+                    timestamp: t,
+                    transform: m,
+                    yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                    frustumOverlap: d.frustumOverlap ?? 0,
+                    kind: d.acceptKind
+                )
+                if d.acceptKind == .continuityBridgeObservation { bridgeObs += 1 }
+            }
+        }
+        // Progressive policy: many bridge obs, not 75s of zero keyframes.
+        XCTAssertGreaterThan(bridgeObs, 20, "bridgeObs=\(bridgeObs) accepts=\(accepts) reacq=\(reacquires) tooLarge=\(stepTooLarge)")
+        XCTAssertLessThan(reacquires, 40, "reacquires=\(reacquires)")
+        XCTAssertGreaterThan(accepts, 30)
+    }
+
     private func loadAllFramesPreferringFullCaptureMeta() throws -> [SlimFrame] {
         let fullPoses = URL(fileURLWithPath: #"C:\projects\gonggi-ios\tmp-pgtool\tf62-p0\ab-oiv\field-v1-tfa\artifacts\capture-meta\poses.json"#)
         let fullQual = URL(fileURLWithPath: #"C:\projects\gonggi-ios\tmp-pgtool\tf62-p0\ab-oiv\field-v1-tfa\artifacts\capture-meta\quality.json"#)
