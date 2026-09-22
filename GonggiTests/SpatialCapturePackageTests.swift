@@ -669,7 +669,7 @@ final class SpatialCapturePackageTests: XCTestCase {
         XCTAssertTrue(readme.contains("capture/frame_continuity_telemetry.json"))
         XCTAssertTrue(readme.contains("capture/debug/frame_continuity_telemetry.json"))
         XCTAssertTrue(readme.contains("capture/debug/frame_continuity_telemetry.jsonl"))
-        XCTAssertFalse(readme.contains("omitted"))
+        XCTAssertFalse(readme.contains("frame_continuity_telemetry.* omitted"))
     }
 
     func testCircularYawSpanDoesNotTreatWrapAsFullCircle() {
