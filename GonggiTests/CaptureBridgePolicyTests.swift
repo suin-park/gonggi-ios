@@ -41,9 +41,9 @@ final class CaptureBridgePolicyTests: XCTestCase {
         let origin = yawTransform(degrees: 0)
         session.noteAccepted(timestamp: 0, transform: origin, yawDeltaDeg: 0, frustumOverlap: 1, kind: .reconstructionKeyframe)
         var sawReconPromotion = false
-        // Steps must exceed poseJitterTranslationM (0.012) and minInterval (0.30s).
+        // Steps must exceed poseJitterTranslationM (0.012) and reach recon baseline (0.025).
         for i in 1...5 {
-            let cand = yawTransform(degrees: 0, translation: SIMD3(0.015 * Float(i), 0, 0))
+            let cand = yawTransform(degrees: 0, translation: SIMD3(0.03 * Float(i), 0, 0))
             let d = decide(to: cand, timestamp: Double(i) * 0.35, session: &session)
             XCTAssertTrue(d.accept, "step \(i) \(d.reason)")
             session.noteAccepted(
@@ -352,10 +352,10 @@ final class CaptureBridgePolicyTests: XCTestCase {
         let recon0 = session.reconstructionAnchorTransform!
         var bridgeJPEGAccepts = 0
         // Bridge interval; accumulate past minBridgeSaveAngularDeg (8°) before soft max (12°).
-        // 16° over ~0.40s at 0.20s cadence (2 steps) — V1_036-class continuous turn.
+        // Tiny translation keeps reconstructionAnchor from promoting.
         for i in 1...3 {
             let yaw = Float(i) * (16.0 / 3.0)
-            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.03 * Float(i), 0, 0))
+            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.005 * Float(i), 0, 0))
             let t = Double(i) * CaptureBridgeConfig.minBridgeObservationIntervalSec
             let d = decide(to: cand, timestamp: t, session: &session)
             if d.accept {
@@ -398,7 +398,7 @@ final class CaptureBridgePolicyTests: XCTestCase {
         // Cross ±180 with 0.20s cadence and ≥ save-floor steps.
         for i in 1...3 {
             let yaw = 170.0 + Double(i) * (16.0 / 3.0)
-            let cand = yawTransform(degrees: Float(yaw), translation: SIMD3(0.03 * Float(i), 0, 0))
+            let cand = yawTransform(degrees: Float(yaw), translation: SIMD3(0.005 * Float(i), 0, 0))
             let t = Double(i) * CaptureBridgeConfig.minBridgeObservationIntervalSec
             let d = decide(to: cand, timestamp: t, session: &session)
             if d.accept, d.acceptKind == .continuityBridgeObservation {
@@ -508,41 +508,34 @@ final class CaptureBridgePolicyTests: XCTestCase {
         var reacquire = 0
         var maxStep = 0.0
         var lastCont = origin
+        // 90° over ~3s with ≥ save-floor angular steps at bridge cadence.
         let stepDt = CaptureBridgeConfig.minBridgeObservationIntervalSec
-        let steps = Int((3.0 / stepDt).rounded(.down))
+        let stepYaw = CaptureBridgeConfig.minBridgeSaveAngularDeg
+        let steps = Int((90.0 / stepYaw).rounded(.up))
         for i in 1...steps {
-            let yaw = Float(i) * (90.0 / Float(steps))
-            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.015 * Float(i), 0, 0))
+            let yaw = Float(min(90.0, Double(i) * stepYaw))
+            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.004 * Float(i), 0, 0))
             let t = Double(i) * stepDt
             let d = decide(to: cand, timestamp: t, session: &session)
             if d.bridgeVerdict == .reacquire { reacquire += 1 }
             if d.accept {
                 let step = forwardAngleDegrees(from: lastCont, to: cand)
+                session.noteAccepted(
+                    timestamp: t,
+                    transform: cand,
+                    yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                    frustumOverlap: d.frustumOverlap ?? 0,
+                    kind: d.acceptKind
+                )
                 if d.acceptKind == .continuityBridgeObservation {
                     bridge += 1
                     maxStep = max(maxStep, step)
-                    session.noteAccepted(
-                        timestamp: t,
-                        transform: cand,
-                        yawDeltaDeg: d.yawDeltaDeg ?? 0,
-                        frustumOverlap: d.frustumOverlap ?? 0,
-                        kind: d.acceptKind
-                    )
                     assertForwardAligned(session.continuityAnchorTransform!, cand)
-                    lastCont = cand
-                } else {
-                    session.noteAccepted(
-                        timestamp: t,
-                        transform: cand,
-                        yawDeltaDeg: d.yawDeltaDeg ?? 0,
-                        frustumOverlap: d.frustumOverlap ?? 0,
-                        kind: d.acceptKind
-                    )
-                    lastCont = cand
                 }
+                lastCont = cand
             }
         }
-        XCTAssertEqual(reacquire, 0)
+        XCTAssertEqual(reacquire, 0, "unexpected REACQUIRE during paced 90° turn")
         XCTAssertGreaterThan(bridge, 0)
         XCTAssertLessThanOrEqual(bridge, 15, "bridge density too high under save-floor policy: \(bridge)")
         XCTAssertLessThanOrEqual(maxStep, CaptureBridgeConfig.bridgeStepMaxYawDeg + 1.0)

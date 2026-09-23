@@ -111,16 +111,18 @@ final class CaptureBridgeReplayTests: XCTestCase {
         var bridgeObs = 0
         var reacquires = 0
         var stepTooLarge = 0
-        // From 74.07s: bridge cadence steps with ~8° yaw each for 8s of continuous turn.
+        // From 74.07s: each step is exactly save-floor vs the previous accepted pose.
         let dt = CaptureBridgeConfig.minBridgeObservationIntervalSec
-        let steps = Int((8.0 / dt).rounded(.down))
+        let stepYaw = Float(CaptureBridgeConfig.minBridgeSaveAngularDeg)
+        var last = origin
+        let steps = 40
         for i in 1...steps {
-            let yaw = Float(i) * Float(CaptureBridgeConfig.minBridgeSaveAngularDeg)
+            let yaw = stepYaw * Float(i)
             var m = matrix_identity_float4x4
             let rad = yaw * .pi / 180
             m.columns.0 = SIMD4(cos(rad), 0, -sin(rad), 0)
             m.columns.2 = SIMD4(sin(rad), 0, cos(rad), 0)
-            m.columns.3 = SIMD4(0.02 * Float(i), 0, 0, 1)
+            m.columns.3 = SIMD4(0.004 * Float(i), 0, 0, 1)
             let t = 74.07 + Double(i) * dt
             let d = KeyframeSelector3DGS.shouldAccept(
                 timestamp: t,
@@ -143,11 +145,13 @@ final class CaptureBridgeReplayTests: XCTestCase {
                     kind: d.acceptKind
                 )
                 if d.acceptKind == .continuityBridgeObservation { bridgeObs += 1 }
+                last = m
             }
+            _ = last
         }
         // Progressive policy: bridges continue; not 75s of zero keyframes.
         XCTAssertGreaterThan(bridgeObs, 10, "bridgeObs=\(bridgeObs) accepts=\(accepts) reacq=\(reacquires) tooLarge=\(stepTooLarge)")
-        XCTAssertLessThan(reacquires, 40, "reacquires=\(reacquires)")
+        XCTAssertLessThan(reacquires, 10, "reacquires=\(reacquires)")
         XCTAssertGreaterThan(accepts, 15)
         XCTAssertLessThanOrEqual(accepts, 50, "density regression accepts=\(accepts)")
     }
