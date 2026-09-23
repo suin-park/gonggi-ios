@@ -1,3 +1,4 @@
+import CoreVideo
 import Foundation
 import simd
 import XCTest
@@ -58,6 +59,9 @@ final class PendingAngularRescueTests: XCTestCase {
             frustumOverlap: 0.9,
             forwardAngleDeg: 8,
             early: true,
+            fx: 1200, fy: 1200, cx: 640, cy: 360,
+            imageResolutionWidth: 1280,
+            imageResolutionHeight: 720,
             ownedPixelBuffer: nil
         )
         coord.holdPending(slot, discardPrevious: false)
@@ -129,6 +133,242 @@ final class PendingAngularRescueTests: XCTestCase {
             PendingAngularRescuePolicy.isEnabled,
             "default OFF; async rollback remains a pre-existing gap when ON as well"
         )
+    }
+
+    /// Pending hold must copy ARFrame intrinsics; flush snapshot must keep positive fx/fy and matching cx/cy.
+    func testPendingFlushSnapshotPreservesIntrinsicsIntoPackage() async throws {
+        let sessionId = "unit-pending-intrinsics-\(UUID().uuidString)"
+        defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
+        let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
+
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(
+            kCFAllocatorDefault, 16, 10,
+            kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary,
+            &buffer
+        )
+        let owned = try XCTUnwrap(buffer)
+
+        let slot = PendingAngularRescueSlot(
+            timestamp: 12.5,
+            transform: matrix_identity_float4x4,
+            acceptKind: .continuityBridgeObservation,
+            reason: "early_risk_bridge",
+            yawDeltaDeg: 9,
+            frustumOverlap: 0.8,
+            forwardAngleDeg: 8,
+            early: true,
+            fx: 1435.25, fy: 1435.25, cx: 960.0, cy: 540.0,
+            imageResolutionWidth: 1920,
+            imageResolutionHeight: 1080,
+            ownedPixelBuffer: owned
+        )
+        let taken = try XCTUnwrap(slot.takePixelBuffer())
+        let snap = PendingAngularRescueSnapshotBuilder.makeSnapshot(
+            ownedBuffer: taken,
+            slot: slot,
+            frameId: "kf_00007",
+            trackingLabel: "normal",
+            paths: paths,
+            sharpSnap: FrameSharpnessAnalyzer.Snapshot(
+                state: .sharp, score: 1, variance: 100, blurryFraction: 0
+            ),
+            lastSample: nil,
+            eval: TranslationBaselineAnalyzer.Evaluation(
+                translationBaselineM: 0.05,
+                grade: .acceptable,
+                isInPlaceRotation: false
+            ),
+            lowTexture: 0.1,
+            overlapScore: 0.7,
+            overlapState: "good",
+            debugPrincipalPoint: false
+        )
+        XCTAssertGreaterThan(snap.fx, 0)
+        XCTAssertGreaterThan(snap.fy, 0)
+        XCTAssertEqual(snap.fx, 1435.25, accuracy: 1e-3)
+        XCTAssertEqual(snap.fy, 1435.25, accuracy: 1e-3)
+        XCTAssertEqual(snap.cx, 960.0, accuracy: 1e-3)
+        XCTAssertEqual(snap.cy, 540.0, accuracy: 1e-3)
+        XCTAssertEqual(snap.imageResolutionWidth, 1920)
+        XCTAssertEqual(snap.imageResolutionHeight, 1080)
+        XCTAssertEqual(snap.arTimestampSeconds, 12.5, accuracy: 1e-9)
+
+        let queue = SpatialJPEGEncodeQueue()
+        var success: SpatialJPEGEncodeQueue.Success?
+        let exp = expectation(description: "jpeg")
+        XCTAssertTrue(queue.tryEnqueue(SpatialJPEGEncodeQueue.Job(snapshot: snap), completion: { result in
+            if case .success(let s) = result { success = s }
+            exp.fulfill()
+        }))
+        await fulfillment(of: [exp], timeout: 5)
+        let written = try XCTUnwrap(success)
+        XCTAssertGreaterThan(written.fx, 0)
+        XCTAssertGreaterThan(written.fy, 0)
+        // Scale contract: written K = sensor K * (jpegSize / sensorSize)
+        let scaleX = Float(written.width) / Float(snap.sensorImageWidth)
+        let scaleY = Float(written.height) / Float(snap.sensorImageHeight)
+        XCTAssertEqual(written.fx, snap.fx * scaleX, accuracy: 1e-2)
+        XCTAssertEqual(written.fy, snap.fy * scaleY, accuracy: 1e-2)
+        XCTAssertEqual(written.cx, snap.cx * scaleX, accuracy: 1e-2)
+        XCTAssertEqual(written.cy, snap.cy * scaleY, accuracy: 1e-2)
+
+        let keyframe = SpatialCapturePackageBuilder.AcceptedKeyframe(
+            frameId: written.frameId,
+            arTimestampSeconds: snap.arTimestampSeconds,
+            cameraToWorldColumnMajor: CaptureFrameContract.encodeTransform(snap.cameraToWorld),
+            translationMeters: [0, 0, 0],
+            rotationQuaternionXYZw: [0, 0, 0, 1],
+            trackingState: "normal",
+            fx: written.fx,
+            fy: written.fy,
+            cx: written.cx,
+            cy: written.cy,
+            width: written.width,
+            height: written.height,
+            sensorImageWidth: snap.sensorImageWidth,
+            sensorImageHeight: snap.sensorImageHeight,
+            jpegByteCount: written.byteCount,
+            quality: SpatialCaptureFrameQuality(
+                frameId: written.frameId,
+                sharpnessScore: 1,
+                sharpnessState: "sharp",
+                motionSpeed: nil,
+                angularVelocity: nil,
+                parallaxGrade: "acceptable",
+                translationBaselineM: 0.05,
+                overlapScore: 0.7,
+                overlapState: "good",
+                trackingState: "normal",
+                lowTextureScore: 0.1,
+                acceptReason: "early_risk_bridge"
+            ),
+            optionalDepthRelativePath: nil
+        )
+        let built = try SpatialCapturePackageBuilder.build(
+            input: SpatialCapturePackageBuilder.BuildInput(
+                captureId: "c",
+                sessionId: sessionId,
+                startedAt: Date(timeIntervalSince1970: 0),
+                endedAt: Date(timeIntervalSince1970: 1),
+                keyframes: [keyframe],
+                rejectedDecisionCount: 0,
+                trackingFailureCount: 0,
+                totalTranslationDistanceM: 0.1,
+                observedCoverage: 0.1,
+                qualityCoverage: 0.1,
+                viewAngleDiversity: 0.1,
+                translationBaselineGrade: "acceptable",
+                averageSharpness: 1,
+                videoRelativePath: nil,
+                hasLiDAR: false,
+                supportsSceneDepth: false,
+                supportsSmoothedSceneDepth: false,
+                supportsSceneReconstruction: false,
+                decisions: [
+                    SpatialCaptureKeyframeDecision(
+                        arTimestampSeconds: 12.5,
+                        accepted: true,
+                        reason: "early_risk_bridge",
+                        frameId: written.frameId
+                    )
+                ]
+            )
+        )
+        let intrinsics = try JSONDecoder().decode(
+            SpatialCaptureIntrinsicsFile.self,
+            from: Data(contentsOf: built.intrinsicsURL)
+        )
+        let row = try XCTUnwrap(intrinsics.frames.first)
+        XCTAssertEqual(row.frameId, "kf_00007")
+        XCTAssertGreaterThan(row.fx, 0)
+        XCTAssertGreaterThan(row.fy, 0)
+        XCTAssertEqual(row.fx, written.fx, accuracy: 1e-3)
+        XCTAssertEqual(row.cx, written.cx, accuracy: 1e-3)
+        XCTAssertEqual(row.cy, written.cy, accuracy: 1e-3)
+    }
+
+    /// Rescue pending save and current-frame verdict must use separate timestamps / frameIds.
+    func testRescueTelemetryPendingOnlyCurrentReject() throws {
+        let collector = FrameContinuityTelemetryCollector()
+        collector.recordSyntheticCandidate(
+            arTimestampSeconds: 10.0,
+            committed: true,
+            frameId: "kf_00003",
+            verdict: CaptureBridgeVerdict.accept.rawValue,
+            reason: "early_risk_bridge",
+            acceptKind: CaptureAcceptKind.continuityBridgeObservation.rawValue,
+            updateContinuitySet: true
+        )
+        collector.recordSyntheticCandidate(
+            arTimestampSeconds: 10.2,
+            committed: false,
+            frameId: nil,
+            verdict: CaptureBridgeVerdict.bridgeRequired.rawValue,
+            reason: "bridge_step_too_large",
+            acceptKind: CaptureAcceptKind.none.rawValue
+        )
+        let records = collector.snapshotFile().records
+        let pending = try XCTUnwrap(records.first { $0.frameId == "kf_00003" })
+        let current = try XCTUnwrap(records.first { $0.arTimestampSeconds == 10.2 })
+        XCTAssertEqual(pending.arTimestampSeconds, 10.0, accuracy: 1e-9)
+        XCTAssertTrue(pending.committed)
+        XCTAssertEqual(pending.frameId, "kf_00003")
+        XCTAssertFalse(current.committed)
+        XCTAssertNil(current.frameId)
+        XCTAssertEqual(current.dualAnchor.reason, "bridge_step_too_large")
+    }
+
+    func testRescueTelemetryBothPendingAndCurrentCommitted() {
+        let collector = FrameContinuityTelemetryCollector()
+        collector.recordSyntheticCandidate(
+            arTimestampSeconds: 20.0,
+            committed: true,
+            frameId: "kf_00004",
+            verdict: CaptureBridgeVerdict.accept.rawValue,
+            reason: "continuity_bridge_observation",
+            acceptKind: CaptureAcceptKind.continuityBridgeObservation.rawValue,
+            updateContinuitySet: true
+        )
+        collector.recordSyntheticCandidate(
+            arTimestampSeconds: 20.15,
+            committed: true,
+            frameId: "kf_00005",
+            verdict: CaptureBridgeVerdict.accept.rawValue,
+            reason: "continuity_ok",
+            acceptKind: CaptureAcceptKind.reconstructionKeyframe.rawValue,
+            updateContinuitySet: true
+        )
+        let records = collector.snapshotFile().records
+        XCTAssertEqual(records.count, 2)
+        XCTAssertEqual(records[0].frameId, "kf_00004")
+        XCTAssertEqual(records[0].arTimestampSeconds, 20.0, accuracy: 1e-9)
+        XCTAssertEqual(records[1].frameId, "kf_00005")
+        XCTAssertEqual(records[1].arTimestampSeconds, 20.15, accuracy: 1e-9)
+        XCTAssertTrue(records.allSatisfy(\.committed))
+        XCTAssertNotEqual(records[0].frameId, records[1].frameId)
+    }
+
+    func testEosFlushTelemetryUsesPendingTimestamp() throws {
+        let collector = FrameContinuityTelemetryCollector()
+        let pendingT = 149.797
+        let sessionEndT = 150.0
+        collector.recordSyntheticCandidate(
+            arTimestampSeconds: pendingT,
+            committed: true,
+            frameId: "kf_00454",
+            verdict: CaptureBridgeVerdict.accept.rawValue,
+            reason: "continuity_bridge_observation",
+            acceptKind: CaptureAcceptKind.continuityBridgeObservation.rawValue,
+            updateContinuitySet: true
+        )
+        let row = try XCTUnwrap(collector.snapshotFile().records.last)
+        XCTAssertEqual(row.arTimestampSeconds, pendingT, accuracy: 1e-6)
+        XCTAssertEqual(row.imageTimestampSeconds, pendingT, accuracy: 1e-6)
+        XCTAssertNotEqual(row.arTimestampSeconds, sessionEndT)
+        XCTAssertTrue(row.committed)
+        XCTAssertEqual(row.frameId, "kf_00454")
     }
 
     /// V1_036 pose replay vs Python `e2e_angular_pending_rescue_report.json` goldens.

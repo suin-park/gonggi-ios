@@ -293,14 +293,16 @@ final class CaptureSessionController {
                 lowTexture: lowTexture,
                 writtenFrameIndex: written.videoFrameIndex
             )
-            isKeyframe = outcome.isKeyframe
+            isKeyframe = outcome.currentBecameKeyframe
             depthRef = outcome.depthRef
             confRef = outcome.confRef
             telemetryCommitted = outcome.telemetryCommitted
             telemetryFrameId = outcome.telemetryFrameId
-            // Re-bind displayed verdict after optional rescue re-eval.
             if let v = outcome.bridgeVerdict {
                 lastBridgeVerdict = v
+            }
+            if let d = outcome.telemetryDecision {
+                keyDecision = d
             }
         } else if keyDecision.accept, acceptingSpatialKeyframes, let paths = packagePaths {
             let enqueued = enqueueSpatialKeyframe(
@@ -1073,12 +1075,17 @@ final class CaptureSessionController {
     // MARK: - Pending angular rescue (candidate, default OFF)
 
     private struct RescueFrameOutcome {
-        var isKeyframe: Bool = false
+        /// Current ARFrame became a reserved/enqueued keyframe (not a prior pending flush).
+        var currentBecameKeyframe: Bool = false
         var depthRef: String?
         var confRef: String?
+        /// Continuity telemetry for the **current** ARFrame only.
         var telemetryCommitted: Bool = false
         var telemetryFrameId: String?
+        var telemetryDecision: KeyframeSelector3DGS.Decision?
         var bridgeVerdict: CaptureBridgeVerdict?
+        /// Frame id reserved when a prior pending was flushed on this tick (informational).
+        var pendingFlushedFrameId: String?
     }
 
     /// Device path for `capture_pending_angular_rescue_v1`. Anchors/cap advance only after sync enqueue.
@@ -1095,6 +1102,7 @@ final class CaptureSessionController {
         writtenFrameIndex: Int
     ) -> RescueFrameOutcome {
         var outcome = RescueFrameOutcome()
+        outcome.telemetryDecision = keyDecision
         guard acceptingSpatialKeyframes, let paths = packagePaths else {
             if !keyDecision.accept && keyDecision.reason != "early_risk_hold" {
                 rejectedKeyframeDecisionCount += 1
@@ -1123,14 +1131,34 @@ final class CaptureSessionController {
             ) {
                 decision = rescued
                 outcome.bridgeVerdict = decision.bridgeVerdict
-            } else if outcome.isKeyframe {
-                // Pending flushed; current still rejected.
+                outcome.telemetryDecision = decision
+            } else if outcome.pendingFlushedFrameId != nil {
+                // Pending saved; current still rejected — do NOT mark current committed.
+                rejectedKeyframeDecisionCount += 1
+                runtimeTelemetry.recordReject(reason: keyDecision.reason)
+                if keyDecision.bridgeVerdict == .bridgeRequired || keyDecision.bridgeVerdict == .reacquire {
+                    reconstructionCoverageModel.noteContinuityReject()
+                }
+                appendKeyframeDecision(
+                    SpatialCaptureKeyframeDecision(
+                        arTimestampSeconds: frame.timestamp,
+                        accepted: false,
+                        reason: keyDecision.reason,
+                        frameId: nil
+                    )
+                )
+                outcome.telemetryCommitted = false
+                outcome.telemetryFrameId = nil
+                outcome.telemetryDecision = keyDecision
+                outcome.currentBecameKeyframe = false
                 return outcome
             }
         }
 
         if decision.reason == "early_risk_hold" {
-            // Held earlier; no reject telemetry / no anchor advance.
+            // Held earlier; no reject telemetry / no anchor advance for current.
+            outcome.telemetryCommitted = false
+            outcome.telemetryFrameId = nil
             return outcome
         }
 
@@ -1148,6 +1176,9 @@ final class CaptureSessionController {
                     frameId: nil
                 )
             )
+            outcome.telemetryCommitted = false
+            outcome.telemetryFrameId = nil
+            outcome.telemetryDecision = decision
             return outcome
         }
 
@@ -1173,6 +1204,10 @@ final class CaptureSessionController {
                     )
                 )
             }
+            // Hold is not a committed save of the current frame.
+            outcome.telemetryCommitted = false
+            outcome.telemetryFrameId = nil
+            outcome.telemetryDecision = decision
             return outcome
         }
 
@@ -1189,6 +1224,8 @@ final class CaptureSessionController {
                     frameId: nil
                 )
             )
+            outcome.telemetryCommitted = false
+            outcome.telemetryFrameId = nil
             return outcome
         }
         let enqueued = enqueueSpatialKeyframe(
@@ -1203,9 +1240,10 @@ final class CaptureSessionController {
             paths: paths
         )
         if enqueued {
-            outcome.isKeyframe = true
+            outcome.currentBecameKeyframe = true
             outcome.telemetryCommitted = true
             outcome.telemetryFrameId = String(format: "kf_%05d", keyframe3DGSCount)
+            outcome.telemetryDecision = decision
             pendingAngularRescue.markLiveEnqueue()
             applyAcceptedKeyframeSideEffects(
                 frame: frame,
@@ -1295,6 +1333,7 @@ final class CaptureSessionController {
         guard let owned = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) else {
             return false
         }
+        let cam = PendingAngularRescueSlot.cameraMetadata(from: frame)
         let slot = PendingAngularRescueSlot(
             timestamp: frame.timestamp,
             transform: transform,
@@ -1304,6 +1343,12 @@ final class CaptureSessionController {
             frustumOverlap: decision.frustumOverlap ?? 1,
             forwardAngleDeg: decision.forwardAngleDeg ?? 0,
             early: early,
+            fx: cam.fx,
+            fy: cam.fy,
+            cx: cam.cx,
+            cy: cam.cy,
+            imageResolutionWidth: cam.resW,
+            imageResolutionHeight: cam.resH,
             ownedPixelBuffer: owned
         )
         pendingAngularRescue.holdPending(slot, discardPrevious: false)
@@ -1351,12 +1396,14 @@ final class CaptureSessionController {
         let (okP, _, _) = PendingAngularRescueLinkGate.linkOK(from: cont, to: pending.transform)
         guard okP else { return nil }
 
-        let flushed = flushPendingSlot(reason: "angular_reject_rescue", live: true)
-        guard flushed else { return nil }
+        let flushedId = flushPendingSlot(reason: "angular_reject_rescue", live: true)
+        guard let flushedId else { return nil }
         pendingAngularRescue.markRescueFlush()
-        outcome.isKeyframe = true
-        outcome.telemetryCommitted = true
-        outcome.telemetryFrameId = String(format: "kf_%05d", keyframe3DGSCount)
+        // Pending save is recorded under pending's timestamp/frameId — not the current ARFrame.
+        outcome.pendingFlushedFrameId = flushedId
+        outcome.telemetryCommitted = false
+        outcome.telemetryFrameId = nil
+        outcome.currentBecameKeyframe = false
 
         // Re-evaluate current ARFrame once with updated anchors.
         var cfg = KeyframeSelector3DGS.Config()
@@ -1391,24 +1438,24 @@ final class CaptureSessionController {
         return nil
     }
 
+    /// Returns reserved frameId on success.
     @discardableResult
-    private func flushPendingSlot(reason: String, live: Bool) -> Bool {
-        guard let slot = pendingAngularRescue.takePendingForEnqueue() else { return false }
+    private func flushPendingSlot(reason: String, live: Bool) -> String? {
+        guard let slot = pendingAngularRescue.takePendingForEnqueue() else { return nil }
         if reason == "end_of_stream" {
             pendingAngularRescue.markEosFlushAttempt()
         }
         guard let buffer = slot.takePixelBuffer() else {
-            // No buffer → discard without advancing anchors / cap / coverage.
             slot.releaseBuffer()
-            return false
+            return nil
         }
         guard linkGateAllowsEnqueue(transform: slot.transform) else {
             slot.releaseBuffer()
-            return false
+            return nil
         }
         guard let paths = packagePaths else {
             slot.releaseBuffer()
-            return false
+            return nil
         }
         let decision = KeyframeSelector3DGS.Decision(
             accept: true,
@@ -1420,10 +1467,9 @@ final class CaptureSessionController {
             forwardAngleDeg: slot.forwardAngleDeg,
             yawDeltaDeg: slot.yawDeltaDeg
         )
-        let enqueued = enqueueOwnedSpatialKeyframe(
+        let enqueuedId = enqueueOwnedSpatialKeyframe(
             ownedBuffer: buffer,
-            timestamp: slot.timestamp,
-            transform: slot.transform,
+            slot: slot,
             trackingLabel: "normal",
             keyDecision: decision,
             sharpSnap: FrameSharpnessAnalyzer.Snapshot(
@@ -1438,16 +1484,14 @@ final class CaptureSessionController {
             lowTexture: 0.2,
             paths: paths
         )
-        if !enqueued {
-            // Sync enqueue fail — anchors not advanced (enqueueSpatialKeyframe returns false first).
-            return false
+        guard let frameId = enqueuedId else {
+            return nil
         }
         if live {
             pendingAngularRescue.markLiveEnqueue()
         } else {
             pendingAngularRescue.markEosEnqueue()
         }
-        // Advance anchors only after successful sync enqueue reservation.
         bridgeSession.noteAccepted(
             timestamp: slot.timestamp,
             transform: slot.transform,
@@ -1471,7 +1515,18 @@ final class CaptureSessionController {
                 parallaxOK: true
             )
         }
-        return true
+        // Continuity telemetry for the **pending** photo (its AR timestamp / frameId).
+        frameContinuityTelemetry.recordSyntheticCandidate(
+            arTimestampSeconds: slot.timestamp,
+            committed: true,
+            frameId: frameId,
+            verdict: CaptureBridgeVerdict.accept.rawValue,
+            reason: slot.reason,
+            acceptKind: slot.acceptKind.rawValue,
+            bridgeMode: bridgeSession.mode.rawValue,
+            updateContinuitySet: true
+        )
+        return frameId
     }
 
     private func flushPendingAngularRescueEndOfStream() {
@@ -1526,11 +1581,11 @@ final class CaptureSessionController {
     }
 
     /// Enqueue from an already-owned pixel buffer (pending flush). Same sync fail contract as frame path.
+    /// Returns reserved `frameId` on success.
     @discardableResult
     private func enqueueOwnedSpatialKeyframe(
         ownedBuffer: CVPixelBuffer,
-        timestamp: Double,
-        transform: simd_float4x4,
+        slot: PendingAngularRescueSlot,
         trackingLabel: String,
         keyDecision: KeyframeSelector3DGS.Decision,
         sharpSnap: FrameSharpnessAnalyzer.Snapshot,
@@ -1538,56 +1593,40 @@ final class CaptureSessionController {
         eval: TranslationBaselineAnalyzer.Evaluation,
         lowTexture: Double,
         paths: SpatialCapturePackagePaths
-    ) -> Bool {
+    ) -> String? {
         if jpegEncodeQueue.currentDepth >= SpatialCaptureConfig.jpegQueueMaxDepth {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: "jpeg_queue_full")
             appendKeyframeDecision(
                 SpatialCaptureKeyframeDecision(
-                    arTimestampSeconds: timestamp,
+                    arTimestampSeconds: slot.timestamp,
                     accepted: false,
                     reason: "jpeg_queue_full",
                     frameId: nil
                 )
             )
-            return false
+            return nil
         }
         if keyframe3DGSCount >= SpatialCaptureConfig.candidateSafetyCap {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: "max_keyframes")
-            return false
+            return nil
         }
 
         let nextIndex = keyframe3DGSCount + 1
         let frameId = String(format: "kf_%05d", nextIndex)
-        let jpegURL = SpatialCapturePackageBuilder.frameJPEGURL(paths: paths, frameId: frameId)
-        let sensorW = CVPixelBufferGetWidth(ownedBuffer)
-        let sensorH = CVPixelBufferGetHeight(ownedBuffer)
-
-        let snapshot = SpatialKeyframeSnapshot(
+        let snapshot = PendingAngularRescueSnapshotBuilder.makeSnapshot(
+            ownedBuffer: ownedBuffer,
+            slot: slot,
             frameId: frameId,
-            arTimestampSeconds: timestamp,
-            ownedPixelBuffer: ownedBuffer,
-            cameraToWorld: transform,
-            trackingState: trackingLabel,
-            fx: 0, fy: 0, cx: 0, cy: 0,
-            sensorImageWidth: sensorW,
-            sensorImageHeight: sensorH,
-            imageResolutionWidth: sensorW,
-            imageResolutionHeight: sensorH,
-            sharpnessScore: sharpSnap.score,
-            sharpnessState: sharpSnap.state.rawValue,
-            motionSpeed: lastSample?.translationSpeedMps,
-            angularVelocity: lastSample?.angularVelocityRadPerSec,
-            parallaxGrade: eval.grade.rawValue,
-            translationBaselineM: eval.translationBaselineM,
+            trackingLabel: trackingLabel,
+            paths: paths,
+            sharpSnap: sharpSnap,
+            lastSample: lastSample,
+            eval: eval,
+            lowTexture: lowTexture,
             overlapScore: overlapAnalyzer.lastScore,
-            overlapState: overlapAnalyzer.lastState.rawValue,
-            lowTextureScore: lowTexture,
-            acceptReason: keyDecision.reason,
-            jpegURL: jpegURL,
-            debugPrincipalPointJPEGURL: nil,
-            optionalDepthRelativePath: nil
+            overlapState: overlapAnalyzer.lastState.rawValue
         )
 
         let enqueued = jpegEncodeQueue.tryEnqueue(
@@ -1604,18 +1643,19 @@ final class CaptureSessionController {
             runtimeTelemetry.recordReject(reason: "jpeg_queue_full")
             appendKeyframeDecision(
                 SpatialCaptureKeyframeDecision(
-                    arTimestampSeconds: timestamp,
+                    arTimestampSeconds: slot.timestamp,
                     accepted: false,
                     reason: "jpeg_queue_full",
                     frameId: nil
                 )
             )
-            return false
+            return nil
         }
-        lastKeyframeTimestamp = timestamp
-        lastKeyframeTransform = transform
+        lastKeyframeTimestamp = slot.timestamp
+        lastKeyframeTransform = slot.transform
         keyframe3DGSCount = nextIndex
-        return true
+        _ = keyDecision
+        return frameId
     }
 
     private func estimateLowTexture() -> Double {

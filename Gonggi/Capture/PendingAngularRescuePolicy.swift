@@ -84,7 +84,7 @@ enum PendingAngularRescueLinkGate {
     }
 }
 
-/// Held bridge / early candidate — pose + optional owned pixel buffer.
+/// Held bridge / early candidate — pose + owned pixel buffer + same-frame camera metadata.
 final class PendingAngularRescueSlot {
     var timestamp: Double
     var transform: simd_float4x4
@@ -94,6 +94,14 @@ final class PendingAngularRescueSlot {
     var frustumOverlap: Double
     var forwardAngleDeg: Double
     var early: Bool
+    /// Sensor-space intrinsics from the held ARFrame (`ARCamera.intrinsics`).
+    var fx: Float
+    var fy: Float
+    var cx: Float
+    var cy: Float
+    /// `ARCamera.imageResolution` at hold time (may differ from pixel-buffer size).
+    var imageResolutionWidth: Int
+    var imageResolutionHeight: Int
     /// Deep-copied pixel buffer; released on discard / after successful enqueue handoff.
     private(set) var ownedPixelBuffer: CVPixelBuffer?
 
@@ -106,6 +114,12 @@ final class PendingAngularRescueSlot {
         frustumOverlap: Double,
         forwardAngleDeg: Double,
         early: Bool,
+        fx: Float,
+        fy: Float,
+        cx: Float,
+        cy: Float,
+        imageResolutionWidth: Int,
+        imageResolutionHeight: Int,
         ownedPixelBuffer: CVPixelBuffer?
     ) {
         self.timestamp = timestamp
@@ -116,7 +130,27 @@ final class PendingAngularRescueSlot {
         self.frustumOverlap = frustumOverlap
         self.forwardAngleDeg = forwardAngleDeg
         self.early = early
+        self.fx = fx
+        self.fy = fy
+        self.cx = cx
+        self.cy = cy
+        self.imageResolutionWidth = imageResolutionWidth
+        self.imageResolutionHeight = imageResolutionHeight
         self.ownedPixelBuffer = ownedPixelBuffer
+    }
+
+    /// Convenience from a live ARFrame (copies pose metadata only — buffer passed separately).
+    static func cameraMetadata(from frame: ARFrame) -> (
+        fx: Float, fy: Float, cx: Float, cy: Float, resW: Int, resH: Int
+    ) {
+        (
+            frame.camera.intrinsics.columns.0.x,
+            frame.camera.intrinsics.columns.1.y,
+            frame.camera.intrinsics.columns.2.x,
+            frame.camera.intrinsics.columns.2.y,
+            Int(frame.camera.imageResolution.width),
+            Int(frame.camera.imageResolution.height)
+        )
     }
 
     func releaseBuffer() {
