@@ -464,14 +464,15 @@ final class PendingAngularRescueTests: XCTestCase {
         }
 
         let poseA = yaw(0, tx: 0)
-        let poseB = yaw(8, tx: 0.03)
-        let poseC = yaw(35, tx: 0.8)
+        let poseB = yaw(8, tx: 0.02)
+        // ~8° from B (link OK), ~16° from A (step_over_12 → not OK).
+        let poseC = yaw(16, tx: 0.03)
 
         let (linkAB, _, _) = PendingAngularRescueLinkGate.linkOK(from: poseA, to: poseB)
-        let (linkBC, _, _) = PendingAngularRescueLinkGate.linkOK(from: poseB, to: poseC)
+        let (linkBC, reasonBC, _) = PendingAngularRescueLinkGate.linkOK(from: poseB, to: poseC)
         let (linkAC, _, _) = PendingAngularRescueLinkGate.linkOK(from: poseA, to: poseC)
         XCTAssertTrue(linkAB)
-        XCTAssertTrue(linkBC, "C must be choosable while anchors sit on B")
+        XCTAssertTrue(linkBC, "C must be choosable while anchors sit on B; got \(reasonBC)")
         XCTAssertFalse(linkAC, "C must NOT link to durable A")
 
         controller.setJPEGStallFrameIdsForTesting(["kf_00001", "kf_00002", "kf_00003"])
