@@ -5,8 +5,9 @@ import simd
 /// Runtime helper for pending hold + angular rescue (device path).
 /// Anchors / cap advance **only** via caller after successful sync JPEG enqueue.
 ///
-/// Async encode failure after enqueue reservation still leaves anchors advanced
-/// (pre-existing behavior — **not** solved by this candidate).
+/// Async encode/write failure (policy ON): caller restores continuity to the last
+/// durable JPEG via `AsyncJPEGDurableContinuity` — does not reuse frameIds or
+/// decrement the reservation cap. Policy OFF leaves the legacy gap unchanged.
 final class PendingAngularRescueCoordinator {
     private(set) var pending: PendingAngularRescueSlot?
     private(set) var lastRegularTimestamp: Double?

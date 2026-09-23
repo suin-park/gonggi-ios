@@ -29,6 +29,8 @@ struct SpatialKeyframeSnapshot {
     var overlapState: String?
     var lowTextureScore: Double?
     var acceptReason: String
+    /// Selector accept kind at reservation time (bridge vs recon). Used for async JPEG failure repair.
+    var acceptKindRaw: String? = nil
     var selectionScore: Double?
     var transitionScore: Double?
     var coverageCell: String?

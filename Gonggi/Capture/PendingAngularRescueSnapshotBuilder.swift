@@ -45,6 +45,7 @@ enum PendingAngularRescueSnapshotBuilder {
             overlapState: q?.overlapState,
             lowTextureScore: q?.lowTextureScore,
             acceptReason: slot.reason,
+            acceptKindRaw: slot.acceptKind.rawValue,
             jpegURL: jpegURL,
             debugPrincipalPointJPEGURL: debugURL,
             optionalDepthRelativePath: nil

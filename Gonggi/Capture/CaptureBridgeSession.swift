@@ -109,6 +109,34 @@ struct CaptureBridgeSession: Equatable {
         reconstructionKeyframeCount = 0
     }
 
+    /// After async JPEG encode/write failure: restore anchors to the last durable JPEG pose
+    /// and enter reacquire. Does **not** decrement bridge/recon observation counters or reuse ids.
+    mutating func restoreAfterAsyncJPEGFailure(
+        at timestamp: Double,
+        continuityTimestamp: Double?,
+        continuityTransform: simd_float4x4?,
+        reconstructionTimestamp: Double?,
+        reconstructionTransform: simd_float4x4?,
+        enterReacquire: Bool
+    ) {
+        if enterReacquire {
+            mode = .reacquiring
+            if continuityBrokenSince == nil {
+                continuityBrokenSince = timestamp
+            }
+        }
+        bridgeTargetYawDeg = nil
+        bridgeStepsAccepted = 0
+        if let t = continuityTimestamp, let x = continuityTransform {
+            continuityAnchorTimestamp = t
+            continuityAnchorTransform = x
+        }
+        if let t = reconstructionTimestamp, let x = reconstructionTransform {
+            reconstructionAnchorTimestamp = t
+            reconstructionAnchorTransform = x
+        }
+    }
+
     mutating func noteAccepted(
         timestamp: Double,
         transform: simd_float4x4,

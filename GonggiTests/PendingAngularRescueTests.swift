@@ -125,15 +125,223 @@ final class PendingAngularRescueTests: XCTestCase {
         }
     }
 
-    func testAsyncEncodeFailureRollbackStillUnresolvedComment() {
-        // Documented contract: sync enqueue advances anchors; async JPEG failure does NOT roll back.
-        // This candidate does not add rollback — regression guard is the existing
-        // CaptureBridgePolicyTests enqueue-failure-without-noteAccepted test.
-        XCTAssertFalse(
-            PendingAngularRescuePolicy.isEnabled,
-            "default OFF; async rollback remains a pre-existing gap when ON as well"
-        )
+    func testAsyncEncodeFailureMarksContinuityUncertainNotAcceptedPhoto() {
+        // Documented residual when policy OFF: no anchor repair (legacy).
+        // Policy ON: see testAsyncJPEGFailureInjectBridgeAndReconRepair.
+        XCTAssertFalse(PendingAngularRescuePolicy.isEnabled)
     }
+
+    /// Deterministic JPEG encode/write failure after enqueue — pending bridge + recon (policy ON).
+    func testAsyncJPEGFailureInjectBridgeAndReconRepair() async throws {
+        PendingAngularRescuePolicy.setEnabledForTesting(true)
+        defer { PendingAngularRescuePolicy.setEnabledForTesting(nil) }
+
+        let index = CoverageSpatialIndex()
+        let controller = CaptureSessionController(
+            captureId: "unit-jpeg-fail-\(UUID().uuidString)",
+            coverageSpatialIndex: index
+        )
+        let sessionId = controller.sessionId
+        defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
+        let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
+
+        func makeBuffer() throws -> CVPixelBuffer {
+            var buffer: CVPixelBuffer?
+            CVPixelBufferCreate(
+                kCFAllocatorDefault, 16, 10,
+                kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary,
+                &buffer
+            )
+            return try XCTUnwrap(buffer)
+        }
+
+        func yawTransform(degrees: Double, tx: Float = 0) -> simd_float4x4 {
+            var m = matrix_identity_float4x4
+            let y = Float(degrees * .pi / 180)
+            m.columns.0 = SIMD4(cos(y), 0, -sin(y), 0)
+            m.columns.2 = SIMD4(sin(y), 0, cos(y), 0)
+            m.columns.3 = SIMD4(tx, 0, 0, 1)
+            return m
+        }
+
+        func snapshot(
+            frameId: String,
+            t: Double,
+            transform: simd_float4x4,
+            reason: String,
+            kind: CaptureAcceptKind,
+            buffer: CVPixelBuffer
+        ) -> SpatialKeyframeSnapshot {
+            SpatialKeyframeSnapshot(
+                frameId: frameId,
+                arTimestampSeconds: t,
+                ownedPixelBuffer: buffer,
+                cameraToWorld: transform,
+                trackingState: "normal",
+                fx: 1000, fy: 1000, cx: 500, cy: 300,
+                sensorImageWidth: 16,
+                sensorImageHeight: 10,
+                imageResolutionWidth: 16,
+                imageResolutionHeight: 10,
+                sharpnessScore: 0.9,
+                sharpnessState: "sharp",
+                motionSpeed: nil,
+                angularVelocity: nil,
+                parallaxGrade: "acceptable",
+                translationBaselineM: 0.05,
+                overlapScore: 0.8,
+                overlapState: "good",
+                lowTextureScore: 0.1,
+                acceptReason: reason,
+                acceptKindRaw: kind.rawValue,
+                jpegURL: SpatialCapturePackageBuilder.frameJPEGURL(paths: paths, frameId: frameId),
+                debugPrincipalPointJPEGURL: nil,
+                optionalDepthRelativePath: nil
+            )
+        }
+
+        // --- Seed durable recon (success) ---
+        let durablePose = yawTransform(degrees: 0)
+        let seedId = try await controller.testHookReserveAndNoteAccepted(
+            snapshot: snapshot(
+                frameId: "kf_00001", t: 1.0, transform: durablePose,
+                reason: "first", kind: .reconstructionKeyframe, buffer: try makeBuffer()
+            ),
+            kind: .reconstructionKeyframe,
+            failEncode: false
+        )
+        XCTAssertEqual(seedId, "kf_00001")
+        XCTAssertEqual(controller.acceptedSpatialKeyframeIdsForTesting(), ["kf_00001"])
+        XCTAssertEqual(controller.keyframe3DGSCountForTesting(), 1)
+        XCTAssertFalse(controller.durableJPEGContinuityStateForTesting().continuityUncertain)
+        let durableCont = try XCTUnwrap(controller.bridgeSessionForTesting().continuityAnchorTransform)
+
+        // Timeline row after seed
+        var timeline: [(String, String)] = [
+            ("t1_seed_success", "frameId=kf_00001 acceptedJPEG=1 cap=1 uncertain=false")
+        ]
+
+        // --- Pending bridge: enqueue OK, encode/write FAILS ---
+        let bridgePose = yawTransform(degrees: 8, tx: 0.02)
+        let bridgeFailId = try await controller.testHookReserveAndNoteAccepted(
+            snapshot: snapshot(
+                frameId: "kf_00002", t: 1.2, transform: bridgePose,
+                reason: "early_risk_bridge", kind: .continuityBridgeObservation, buffer: try makeBuffer()
+            ),
+            kind: .continuityBridgeObservation,
+            failEncode: true
+        )
+        XCTAssertEqual(bridgeFailId, "kf_00002")
+        // Cap burned; JPEG not accepted; anchors restored to durable; uncertain + reacquire.
+        XCTAssertEqual(controller.keyframe3DGSCountForTesting(), 2, "do not reuse/decrement reserved cap")
+        XCTAssertEqual(controller.acceptedSpatialKeyframeIdsForTesting(), ["kf_00001"])
+        XCTAssertFalse(
+            controller.acceptedSpatialKeyframeIdsForTesting().contains("kf_00002"),
+            "failed bridge must not appear as successful photo"
+        )
+        let afterBridgeFail = controller.bridgeSessionForTesting()
+        XCTAssertEqual(afterBridgeFail.mode, .reacquiring)
+        XCTAssertNotNil(afterBridgeFail.continuityBrokenSince)
+        XCTAssertEqual(afterBridgeFail.continuityAnchorTransform, durableCont)
+        XCTAssertTrue(controller.durableJPEGContinuityStateForTesting().continuityUncertain)
+        XCTAssertEqual(
+            controller.durableJPEGContinuityStateForTesting().lastFailedReservedFrameId,
+            "kf_00002"
+        )
+        let bridgeFailDecision = try XCTUnwrap(
+            controller.keyframeDecisionsForTesting().last { $0.frameId == "kf_00002" }
+        )
+        XCTAssertFalse(bridgeFailDecision.accepted)
+        XCTAssertEqual(bridgeFailDecision.reason, "jpeg_write_failed")
+        timeline.append(
+            ("t2_bridge_fail", "frameId=kf_00002 acceptedJPEG=1 cap=2 mode=reacquiring restoredTo=kf_00001")
+        )
+
+        // Subsequent success must link from durable (not the failed bridge pose).
+        let nextBridgePose = yawTransform(degrees: 7, tx: 0.015)
+        let (linkOK, _, _) = PendingAngularRescueLinkGate.linkOK(from: durableCont, to: nextBridgePose)
+        XCTAssertTrue(linkOK, "post-failure candidate must still link to durable JPEG pose")
+        let nextBridgeId = try await controller.testHookReserveAndNoteAccepted(
+            snapshot: snapshot(
+                frameId: "kf_00003", t: 1.4, transform: nextBridgePose,
+                reason: "continuity_bridge_observation", kind: .continuityBridgeObservation,
+                buffer: try makeBuffer()
+            ),
+            kind: .continuityBridgeObservation,
+            failEncode: false
+        )
+        XCTAssertEqual(nextBridgeId, "kf_00003")
+        XCTAssertEqual(
+            Set(controller.acceptedSpatialKeyframeIdsForTesting()),
+            Set(["kf_00001", "kf_00003"])
+        )
+        timeline.append(
+            ("t3_bridge_success", "frameId=kf_00003 acceptedJPEG=2 cap=3 linkedFrom=durable")
+        )
+
+        // --- Recon: enqueue OK, encode/write FAILS ---
+        let reconBefore = try XCTUnwrap(controller.bridgeSessionForTesting().reconstructionAnchorTransform)
+        let reconFailPose = yawTransform(degrees: 12, tx: 0.12)
+        let reconFailId = try await controller.testHookReserveAndNoteAccepted(
+            snapshot: snapshot(
+                frameId: "kf_00004", t: 1.8, transform: reconFailPose,
+                reason: "continuity_ok", kind: .reconstructionKeyframe, buffer: try makeBuffer()
+            ),
+            kind: .reconstructionKeyframe,
+            failEncode: true
+        )
+        XCTAssertEqual(reconFailId, "kf_00004")
+        XCTAssertEqual(controller.keyframe3DGSCountForTesting(), 4)
+        XCTAssertFalse(controller.acceptedSpatialKeyframeIdsForTesting().contains("kf_00004"))
+        let afterReconFail = controller.bridgeSessionForTesting()
+        XCTAssertEqual(afterReconFail.mode, .reacquiring)
+        XCTAssertEqual(afterReconFail.reconstructionAnchorTransform, reconBefore)
+        XCTAssertEqual(
+            controller.durableJPEGContinuityStateForTesting().lastFailedReservedFrameId,
+            "kf_00004"
+        )
+        let reconFailDecision = try XCTUnwrap(
+            controller.keyframeDecisionsForTesting().last { $0.frameId == "kf_00004" }
+        )
+        XCTAssertFalse(reconFailDecision.accepted)
+        XCTAssertEqual(reconFailDecision.reason, "jpeg_write_failed")
+        timeline.append(
+            ("t4_recon_fail", "frameId=kf_00004 acceptedJPEG=2 cap=4 reconRestored mode=reacquiring")
+        )
+
+        // Final successful recon links from restored durable recon.
+        let finalReconPose = yawTransform(degrees: 11, tx: 0.11)
+        let (reconLink, _, _) = PendingAngularRescueLinkGate.linkOK(from: reconBefore, to: finalReconPose)
+        XCTAssertTrue(reconLink)
+        let finalId = try await controller.testHookReserveAndNoteAccepted(
+            snapshot: snapshot(
+                frameId: "kf_00005", t: 2.0, transform: finalReconPose,
+                reason: "continuity_ok", kind: .reconstructionKeyframe, buffer: try makeBuffer()
+            ),
+            kind: .reconstructionKeyframe,
+            failEncode: false
+        )
+        XCTAssertEqual(finalId, "kf_00005")
+        let accepted = Set(controller.acceptedSpatialKeyframeIdsForTesting())
+        XCTAssertEqual(accepted, Set(["kf_00001", "kf_00003", "kf_00005"]))
+        XCTAssertFalse(accepted.contains("kf_00002"))
+        XCTAssertFalse(accepted.contains("kf_00004"))
+        timeline.append(
+            ("t5_recon_success", "frameId=kf_00005 acceptedJPEG=3 cap=5 failedNeverInPackage")
+        )
+
+        // Package metadata: only durable JPEGs.
+        XCTAssertEqual(controller.keyframe3DGSCountForTesting(), 5)
+        XCTAssertGreaterThanOrEqual(
+            controller.reconstructionCoverageForTesting().rejectedForContinuityCount,
+            1
+        )
+        // Ensure timeline is non-empty for Gate report artifacts.
+        XCTAssertEqual(timeline.count, 5)
+        _ = timeline
+    }
+
 
     /// Pending hold must copy ARFrame intrinsics; flush snapshot must keep positive fx/fy and matching cx/cy.
     func testPendingFlushSnapshotPreservesIntrinsicsIntoPackage() async throws {

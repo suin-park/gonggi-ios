@@ -24,6 +24,15 @@ final class SpatialJPEGEncodeQueue {
         var cy: Float
     }
 
+    struct Failure: Error, Equatable {
+        var reason: FailureReason
+        var snapshot: SpatialKeyframeSnapshot
+
+        static func == (lhs: Failure, rhs: Failure) -> Bool {
+            lhs.reason == rhs.reason && lhs.snapshot.frameId == rhs.snapshot.frameId
+        }
+    }
+
     enum FailureReason: String, Error {
         case encodeOrWriteFailed = "jpeg_write_failed"
     }
@@ -34,6 +43,8 @@ final class SpatialJPEGEncodeQueue {
     private var pending = 0
     private var accepting = true
     private var flushWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Test-only: when true for a snapshot, skip write and fail deterministically.
+    private var failureInjector: ((SpatialKeyframeSnapshot) -> Bool)?
 
     var currentDepth: Int {
         lock.lock()
@@ -49,9 +60,17 @@ final class SpatialJPEGEncodeQueue {
         self.workQueue = DispatchQueue(label: "com.whik.gonggi.spatial.jpeg-encode", qos: qos)
     }
 
+    /// XCTest: force encode/write failure after a successful enqueue (deterministic).
+    func setFailureInjectorForTesting(_ injector: ((SpatialKeyframeSnapshot) -> Bool)?) {
+        lock.lock()
+        failureInjector = injector
+        lock.unlock()
+    }
+
     func reset() {
         lock.lock()
         accepting = true
+        failureInjector = nil
         // Pending jobs may still finish; depth drains via completions.
         lock.unlock()
     }
@@ -68,7 +87,7 @@ final class SpatialJPEGEncodeQueue {
     func tryEnqueue(
         _ job: Job,
         onDepthChange: ((Int) -> Void)? = nil,
-        completion: @escaping (Result<Success, FailureReason>) -> Void
+        completion: @escaping (Result<Success, Failure>) -> Void
     ) -> Bool {
         lock.lock()
         guard accepting, pending < maxDepth else {
@@ -77,12 +96,13 @@ final class SpatialJPEGEncodeQueue {
         }
         pending += 1
         let depth = pending
+        let injector = failureInjector
         lock.unlock()
         onDepthChange?(depth)
 
         workQueue.async { [weak self] in
             guard let self else { return }
-            let result = Self.process(job)
+            let result = Self.process(job, failureInjector: injector)
             completion(result)
             self.jobDidFinish(onDepthChange: onDepthChange)
         }
@@ -119,8 +139,14 @@ final class SpatialJPEGEncodeQueue {
         }
     }
 
-    private static func process(_ job: Job) -> Result<Success, FailureReason> {
+    private static func process(
+        _ job: Job,
+        failureInjector: ((SpatialKeyframeSnapshot) -> Bool)?
+    ) -> Result<Success, Failure> {
         let snap = job.snapshot
+        if failureInjector?(snap) == true {
+            return .failure(Failure(reason: .encodeOrWriteFailed, snapshot: snap))
+        }
         do {
             // Reconstruction JPEG stays clean (no overlay). Debug principal-point copy is optional.
             let written = try SpatialKeyframeJPEGWriter.write(
@@ -157,7 +183,7 @@ final class SpatialJPEGEncodeQueue {
                 )
             )
         } catch {
-            return .failure(.encodeOrWriteFailed)
+            return .failure(Failure(reason: .encodeOrWriteFailed, snapshot: snap))
         }
     }
 }

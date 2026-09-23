@@ -61,6 +61,8 @@ final class CaptureSessionController {
     )
     /// Candidate pending-hold + angular rescue (default OFF — no effect when disabled).
     private let pendingAngularRescue = PendingAngularRescueCoordinator()
+    /// Last JPEG-confirmed continuity/recon poses — policy-ON async write failure repair.
+    private var durableJPEGContinuity = AsyncJPEGDurableContinuityState()
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -117,6 +119,7 @@ final class CaptureSessionController {
             guidance: "이 장면이 다시 보이도록 천천히 움직여주세요"
         )
         pendingAngularRescue.reset()
+        durableJPEGContinuity.reset()
         runtimeTelemetry.reset()
         jpegEncodeQueue.reset()
         sceneDepthConfigured = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
@@ -478,6 +481,7 @@ final class CaptureSessionController {
             overlapState: overlapAnalyzer.lastState.rawValue,
             lowTextureScore: lowTexture,
             acceptReason: keyDecision.reason,
+            acceptKindRaw: keyDecision.acceptKind.rawValue,
             jpegURL: jpegURL,
             debugPrincipalPointJPEGURL: debugURL,
             optionalDepthRelativePath: nil
@@ -516,7 +520,7 @@ final class CaptureSessionController {
     }
 
     private func handleJPEGEncodeResult(
-        _ result: Result<SpatialJPEGEncodeQueue.Success, SpatialJPEGEncodeQueue.FailureReason>
+        _ result: Result<SpatialJPEGEncodeQueue.Success, SpatialJPEGEncodeQueue.Failure>
     ) {
         switch result {
         case .success(let success):
@@ -570,21 +574,182 @@ final class CaptureSessionController {
             )
             spatialStateLock.unlock()
             runtimeTelemetry.recordJPEGSuccess(encodeMs: success.encodeMs, writeMs: success.writeMs)
+            if PendingAngularRescuePolicy.isEnabled {
+                let kind = CaptureAcceptKind(rawValue: snap.acceptKindRaw ?? "")
+                    ?? AsyncJPEGDurableContinuity.acceptKind(fromAcceptReason: snap.acceptReason)
+                durableJPEGContinuity.noteDurableJPEGSuccess(
+                    frameId: success.frameId,
+                    timestamp: snap.arTimestampSeconds,
+                    transform: snap.cameraToWorld,
+                    acceptKind: kind
+                )
+            }
 
-        case .failure(let reason):
+        case .failure(let failure):
+            let snap = failure.snapshot
             spatialStateLock.lock()
             rejectedKeyframeDecisionCount += 1
+            // Keep reserved frameId visible as a **failed** decision — never as an accepted photo.
             keyframeDecisions.append(
                 SpatialCaptureKeyframeDecision(
-                    arTimestampSeconds: 0,
+                    arTimestampSeconds: snap.arTimestampSeconds,
                     accepted: false,
-                    reason: reason.rawValue,
-                    frameId: nil
+                    reason: failure.reason.rawValue,
+                    frameId: snap.frameId
                 )
             )
             spatialStateLock.unlock()
             runtimeTelemetry.recordJPEGFailure()
+            // Policy OFF / Lat Long: leave prior behavior (no anchor repair).
+            guard PendingAngularRescuePolicy.isEnabled else { return }
+            applyAsyncJPEGFailureRepair(snapshot: snap, reason: failure.reason.rawValue)
         }
+    }
+
+    /// Policy-ON only: restore continuity to last durable JPEG; do not reuse frameId / decrement cap.
+    private func applyAsyncJPEGFailureRepair(snapshot: SpatialKeyframeSnapshot, reason: String) {
+        let kind = CaptureAcceptKind(rawValue: snapshot.acceptKindRaw ?? "")
+            ?? AsyncJPEGDurableContinuity.acceptKind(fromAcceptReason: snapshot.acceptReason)
+        let repair = durableJPEGContinuity.repairSnapshot(failedKind: kind)
+        durableJPEGContinuity.noteDurableJPEGFailure(frameId: snapshot.frameId, reason: reason)
+        AsyncJPEGDurableContinuity.apply(
+            repair: repair,
+            at: snapshot.arTimestampSeconds,
+            bridgeSession: &bridgeSession,
+            coverage: &reconstructionCoverageModel
+        )
+        // Selector interval must track last durable photo, not the burned reservation pose.
+        if let t = repair.restoreContinuityTimestamp, let x = repair.restoreContinuityTransform {
+            lastKeyframeTimestamp = t
+            lastKeyframeTransform = x
+        }
+        lastBridgeVerdict = .reacquire
+        lastGuidanceAction = .reacquireView
+        lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
+            jpegData: lastReacquireThumbnail.jpegData,
+            visible: true,
+            signedYawDeg: lastReacquireThumbnail.signedYawDeg,
+            proximity: lastReacquireThumbnail.proximity,
+            title: "연결이 불확실합니다",
+            guidance: "저장에 실패한 장면이 있습니다. 마지막 연결 화면이 다시 보이도록 천천히 움직여 연결을 보강해주세요"
+        )
+        frameContinuityTelemetry.recordHeldFlushCandidate(
+            arTimestampSeconds: snapshot.arTimestampSeconds,
+            imageTimestampSeconds: snapshot.arTimestampSeconds,
+            committed: false,
+            frameId: snapshot.frameId,
+            features: ARKitFeatureSummary(
+                rawFeaturePointCount: nil,
+                grid: nil,
+                persistent: PersistentFeatureStats(
+                    previousFramePersistentCount: nil,
+                    previousFramePersistentRatio: nil,
+                    continuityAnchorPersistentCount: nil,
+                    continuityAnchorPersistentRatio: nil,
+                    unavailableReason: .samplingSkipped
+                ),
+                trackingState: snapshot.trackingState,
+                trackingLimitationReason: nil,
+                unavailableReason: .samplingSkipped
+            ),
+            sharpnessScore: snapshot.sharpnessScore,
+            sharpnessState: snapshot.sharpnessState,
+            brightness: nil,
+            lowTextureScore: snapshot.lowTextureScore,
+            overlapScore: snapshot.overlapScore,
+            dualAnchor: DualAnchorTelemetrySnapshot(
+                continuityTranslationM: nil,
+                continuityYawDeg: nil,
+                continuityForwardAngleDeg: nil,
+                reconstructionCumulativeTranslationM: nil,
+                frustumOverlap: nil,
+                reconstructionCoverageEstimate: reconstructionCoverageModel.reconstructionCoverageEstimate,
+                bridgeMode: bridgeSession.mode.rawValue,
+                verdict: CaptureBridgeVerdict.reacquire.rawValue,
+                reason: reason,
+                acceptKind: kind.rawValue
+            ),
+            continuityIdentifiers: [],
+            updateContinuitySet: false
+        )
+    }
+
+    /// XCTest hook — deterministic encode/write failure after enqueue.
+    func setJPEGEncodeFailureInjectorForTesting(_ injector: ((SpatialKeyframeSnapshot) -> Bool)?) {
+        jpegEncodeQueue.setFailureInjectorForTesting(injector)
+    }
+
+    /// XCTest: durable continuity / uncertainty snapshot (policy-ON repair path).
+    func durableJPEGContinuityStateForTesting() -> AsyncJPEGDurableContinuityState {
+        durableJPEGContinuity
+    }
+
+    func bridgeSessionForTesting() -> CaptureBridgeSession { bridgeSession }
+    func setBridgeSessionForTesting(_ session: CaptureBridgeSession) { bridgeSession = session }
+    func reconstructionCoverageForTesting() -> ReconstructionCoverageModel { reconstructionCoverageModel }
+    func keyframe3DGSCountForTesting() -> Int { keyframe3DGSCount }
+    func acceptedSpatialKeyframeIdsForTesting() -> [String] {
+        spatialStateLock.lock()
+        defer { spatialStateLock.unlock() }
+        return acceptedSpatialKeyframes.map(\.frameId)
+    }
+    func keyframeDecisionsForTesting() -> [SpatialCaptureKeyframeDecision] {
+        spatialStateLock.lock()
+        defer { spatialStateLock.unlock() }
+        return keyframeDecisions
+    }
+
+    /// Simulate policy-ON enqueue reservation + optimistic anchor advance (no ARFrame).
+    /// Caller must enable `PendingAngularRescuePolicy` for testing for the duration.
+    @discardableResult
+    func testHookReserveAndNoteAccepted(
+        snapshot: SpatialKeyframeSnapshot,
+        kind: CaptureAcceptKind,
+        failEncode: Bool
+    ) async -> String? {
+        var snap = snapshot
+        snap.acceptKindRaw = kind.rawValue
+        // Optimistic advance first (same thread) so async fail repair cannot race ahead of noteAccepted.
+        let idx = Int(snap.frameId.split(separator: "_").last ?? "0") ?? (keyframe3DGSCount + 1)
+        keyframe3DGSCount = max(keyframe3DGSCount, idx)
+        lastKeyframeTimestamp = snap.arTimestampSeconds
+        lastKeyframeTransform = snap.cameraToWorld
+        bridgeSession.noteAccepted(
+            timestamp: snap.arTimestampSeconds,
+            transform: snap.cameraToWorld,
+            yawDeltaDeg: 5,
+            frustumOverlap: 0.85,
+            kind: kind
+        )
+        if kind == .continuityBridgeObservation {
+            reconstructionCoverageModel.noteContinuityBridgeObservation()
+        } else if kind == .reconstructionKeyframe {
+            reconstructionCoverageModel.commitReconstructionKeyframe(
+                transform: snap.cameraToWorld,
+                countsForReconstruction: true,
+                wasBridgeStep: false,
+                opticalOK: true,
+                parallaxOK: true
+            )
+        }
+        if failEncode {
+            jpegEncodeQueue.setFailureInjectorForTesting { $0.frameId == snap.frameId }
+        } else {
+            jpegEncodeQueue.setFailureInjectorForTesting(nil)
+        }
+        let enqueued = jpegEncodeQueue.tryEnqueue(
+            SpatialJPEGEncodeQueue.Job(snapshot: snap),
+            onDepthChange: { [weak self] depth in
+                self?.runtimeTelemetry.updateQueueDepth(depth)
+            },
+            completion: { [weak self] result in
+                self?.handleJPEGEncodeResult(result)
+            }
+        )
+        guard enqueued else { return nil }
+        await jpegEncodeQueue.flush()
+        jpegEncodeQueue.setFailureInjectorForTesting(nil)
+        return snap.frameId
     }
 
     private func appendKeyframeDecision(_ decision: SpatialCaptureKeyframeDecision) {
