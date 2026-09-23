@@ -139,17 +139,40 @@ final class PendingAngularRescueSlot {
         self.ownedPixelBuffer = ownedPixelBuffer
     }
 
-    /// Convenience from a live ARFrame (copies pose metadata only — buffer passed separately).
-    static func cameraMetadata(from frame: ARFrame) -> (
-        fx: Float, fy: Float, cx: Float, cy: Float, resW: Int, resH: Int
-    ) {
-        (
-            frame.camera.intrinsics.columns.0.x,
-            frame.camera.intrinsics.columns.1.y,
-            frame.camera.intrinsics.columns.2.x,
-            frame.camera.intrinsics.columns.2.y,
-            Int(frame.camera.imageResolution.width),
-            Int(frame.camera.imageResolution.height)
+    /// Convenience factory without ARKit — callers copy from `ARCamera`.
+    static func make(
+        timestamp: Double,
+        transform: simd_float4x4,
+        acceptKind: CaptureAcceptKind,
+        reason: String,
+        yawDeltaDeg: Double,
+        frustumOverlap: Double,
+        forwardAngleDeg: Double,
+        early: Bool,
+        fx: Float,
+        fy: Float,
+        cx: Float,
+        cy: Float,
+        imageResolutionWidth: Int,
+        imageResolutionHeight: Int,
+        ownedPixelBuffer: CVPixelBuffer?
+    ) -> PendingAngularRescueSlot {
+        PendingAngularRescueSlot(
+            timestamp: timestamp,
+            transform: transform,
+            acceptKind: acceptKind,
+            reason: reason,
+            yawDeltaDeg: yawDeltaDeg,
+            frustumOverlap: frustumOverlap,
+            forwardAngleDeg: forwardAngleDeg,
+            early: early,
+            fx: fx,
+            fy: fy,
+            cx: cx,
+            cy: cy,
+            imageResolutionWidth: imageResolutionWidth,
+            imageResolutionHeight: imageResolutionHeight,
+            ownedPixelBuffer: ownedPixelBuffer
         )
     }
 

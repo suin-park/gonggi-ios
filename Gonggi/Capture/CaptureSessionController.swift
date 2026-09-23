@@ -1333,7 +1333,6 @@ final class CaptureSessionController {
         guard let owned = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) else {
             return false
         }
-        let cam = PendingAngularRescueSlot.cameraMetadata(from: frame)
         let slot = PendingAngularRescueSlot(
             timestamp: frame.timestamp,
             transform: transform,
@@ -1343,12 +1342,12 @@ final class CaptureSessionController {
             frustumOverlap: decision.frustumOverlap ?? 1,
             forwardAngleDeg: decision.forwardAngleDeg ?? 0,
             early: early,
-            fx: cam.fx,
-            fy: cam.fy,
-            cx: cam.cx,
-            cy: cam.cy,
-            imageResolutionWidth: cam.resW,
-            imageResolutionHeight: cam.resH,
+            fx: frame.camera.intrinsics.columns.0.x,
+            fy: frame.camera.intrinsics.columns.1.y,
+            cx: frame.camera.intrinsics.columns.2.x,
+            cy: frame.camera.intrinsics.columns.2.y,
+            imageResolutionWidth: Int(frame.camera.imageResolution.width),
+            imageResolutionHeight: Int(frame.camera.imageResolution.height),
             ownedPixelBuffer: owned
         )
         pendingAngularRescue.holdPending(slot, discardPrevious: false)
