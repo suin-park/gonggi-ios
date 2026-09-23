@@ -188,6 +188,11 @@ struct CaptureGenerationDiagnostics: Codable, Equatable, Sendable {
     var generationStarted: Bool
     var backendErrorCode: String?
     var idempotencyKey: String?
+    /// Server draft ids — persisted so same-capture retry can reuse without duplicate space.
+    var spaceId: String?
+    var jobId: String?
+    /// prepare_package | upload | request_generation | cancelled
+    var failedStage: String?
 
     static let empty = CaptureGenerationDiagnostics(
         createRequestProfile: nil,
@@ -196,7 +201,10 @@ struct CaptureGenerationDiagnostics: Codable, Equatable, Sendable {
         uploadFinished: false,
         generationStarted: false,
         backendErrorCode: nil,
-        idempotencyKey: nil
+        idempotencyKey: nil,
+        spaceId: nil,
+        jobId: nil,
+        failedStage: nil
     )
 }
 

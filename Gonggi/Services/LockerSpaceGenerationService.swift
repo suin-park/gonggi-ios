@@ -137,7 +137,8 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         }
 
         let decoded = try JSONDecoder().decode(CreateDTO.self, from: data)
-        let spaceId = decoded.space.id
+        // Prefer job.spaceId so idempotent replay does not bind to a mismatched draft.
+        let spaceId = decoded.job.spaceId ?? decoded.space.id
         let jobId = decoded.job.id
         let uploadURL = decoded.uploadUrl.flatMap(URL.init(string:))
         lock.lock()
@@ -156,6 +157,7 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
     }
 
     func uploadCapture(_ request: UploadCaptureRequest) async throws {
+        try Task.checkCancellation()
         lock.lock()
         var ctx = jobContext[request.jobId]
         lock.unlock()
@@ -180,13 +182,15 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         let (_, putResponse): (Data, URLResponse)
         do {
             (_, putResponse) = try await session.upload(for: put, fromFile: fileURL)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             let ns = error as NSError
-            throw SpaceGenerationError.unknown(
-                ns.domain == NSURLErrorDomain
-                    ? ns.localizedDescription
-                    : "upload_failed"
-            )
+            if ns.domain == NSURLErrorDomain, ns.code == NSURLErrorCancelled {
+                throw CancellationError()
+            }
+            // Map network loss during R2 PUT to uploadFailed (not generic create failure).
+            throw SpaceGenerationError.uploadFailed
         }
         guard let http = putResponse as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw SpaceGenerationError.uploadFailed
@@ -396,18 +400,20 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
 
     private struct JobDTO: Decodable {
         var id: String
+        var spaceId: String?
         var status: String?
         var qualityProfile: String?
         /// Server may send object progressJson — ignore non-numeric.
         var progress: Double?
 
         enum CodingKeys: String, CodingKey {
-            case id, status, qualityProfile, progress
+            case id, spaceId, status, qualityProfile, progress
         }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             id = try c.decode(String.self, forKey: .id)
+            spaceId = try c.decodeIfPresent(String.self, forKey: .spaceId)
             status = try c.decodeIfPresent(String.self, forKey: .status)
             qualityProfile = try c.decodeIfPresent(String.self, forKey: .qualityProfile)
             if let value = try? c.decode(Double.self, forKey: .progress) {

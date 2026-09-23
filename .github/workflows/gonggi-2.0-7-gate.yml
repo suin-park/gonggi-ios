@@ -138,6 +138,8 @@ jobs:
             GonggiTests/AdaptiveKeyframeTF62Tests
             GonggiTests/CaptureCompletionPresentationTests
             GonggiTests/PendingAngularRescueTests
+            GonggiTests/ClientGenerationPipelineTests
+            GonggiTests/ServerGenerationProfileMapperTests
           )
           ARGS=()
           for t in "${TESTS[@]}"; do

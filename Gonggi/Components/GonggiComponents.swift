@@ -433,14 +433,27 @@ struct CaptureCoachBubble: View {
 // MARK: - Processing
 
 struct StatusStepRow: View {
-    let step: ProcessingStepState
+    let title: String
+    let status: ProcessingStepStatus
     var isLast: Bool = false
+
+    init(step: ProcessingStepState, isLast: Bool = false) {
+        self.title = step.kind.friendlyTitle
+        self.status = step.status
+        self.isLast = isLast
+    }
+
+    init(title: String, status: ProcessingStepStatus, isLast: Bool = false) {
+        self.title = title
+        self.status = status
+        self.isLast = isLast
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: GonggiSpacing.md) {
             stepperRail
             VStack(alignment: .leading, spacing: GonggiSpacing.xxs) {
-                Text(step.kind.friendlyTitle)
+                Text(title)
                     .font(GonggiTypography.headline(16))
                     .foregroundStyle(isActive ? GonggiColors.textPrimary : GonggiColors.textSecondary)
                 Text(statusText)
@@ -450,12 +463,12 @@ struct StatusStepRow: View {
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(step.kind.friendlyTitle), \(statusText)")
+        .accessibilityLabel("\(title), \(statusText)")
     }
 
     private var isActive: Bool {
-        if case .active = step.status { return true }
-        if case .completed = step.status { return true }
+        if case .active = status { return true }
+        if case .completed = status { return true }
         return false
     }
 
@@ -473,13 +486,13 @@ struct StatusStepRow: View {
     }
 
     private var stepConnectorColor: Color {
-        if case .completed = step.status { return GonggiColors.accentTeal.opacity(0.5) }
+        if case .completed = status { return GonggiColors.accentTeal.opacity(0.5) }
         return GonggiColors.borderSubtle
     }
 
     @ViewBuilder
     private var statusIcon: some View {
-        switch step.status {
+        switch status {
         case .completed:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(GonggiColors.successGreen)
@@ -502,7 +515,7 @@ struct StatusStepRow: View {
     }
 
     private var statusText: String {
-        switch step.status {
+        switch status {
         case .waiting: return "곧 시작됩니다"
         case .completed: return "완료"
         case .failed(let msg): return msg

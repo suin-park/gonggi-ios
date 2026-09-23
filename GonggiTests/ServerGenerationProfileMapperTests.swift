@@ -63,6 +63,12 @@ final class SpaceGenerationErrorPresenterTests: XCTestCase {
         let message = SpaceGenerationErrorPresenter.userMessage(for: error)
         XCTAssertFalse(message.contains("QUALITY_PROFILE"))
     }
+
+    func testUploadFailedIsNotCreateFailureCopy() {
+        let message = SpaceGenerationErrorPresenter.userMessage(for: SpaceGenerationError.uploadFailed)
+        XCTAssertTrue(message.contains("업로드에 실패"))
+        XCTAssertFalse(message.contains("3D 공간 생성을 시작하지 못했어요"))
+    }
 }
 
 final class CaptureDiagnosticsAccumulatorTests: XCTestCase {

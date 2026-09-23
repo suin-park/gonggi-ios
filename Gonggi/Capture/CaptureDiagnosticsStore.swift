@@ -430,7 +430,19 @@ enum SpaceGenerationErrorPresenter {
     static let genericCreateFailure =
         "3D 공간 생성을 시작하지 못했어요.\n잠시 후 다시 시도해주세요."
 
+    static let uploadFailure =
+        "업로드에 실패했어요.\n네트워크 연결이 끊겼을 수 있어요. Wi‑Fi에서 다시 시도해 주세요."
+
+    static let packageMissingUnrecoverable =
+        "기기에서 원본 촬영 패키지를 찾을 수 없어요.\n같은 촬영으로 다시 시도할 수 없습니다. 새로 촬영해 주세요."
+
+    static let uploadCancelled =
+        "업로드가 취소됐어요.\n원본 촬영 데이터는 기기에 남아 있어요."
+
     static func userMessage(for error: Error) -> String {
+        if error is CancellationError {
+            return uploadCancelled
+        }
         if let gen = error as? SpaceGenerationError {
             switch gen {
             case .networkUnavailable:
@@ -440,10 +452,13 @@ enum SpaceGenerationErrorPresenter {
             case .jobNotFound:
                 return genericCreateFailure
             case .uploadFailed:
-                return "촬영 영상 업로드에 실패했어요. 다시 시도해주세요."
+                return uploadFailure
             case .server:
                 return genericCreateFailure
             case .unknown(let raw):
+                if Self.looksLikeUploadNetworkLoss(raw) {
+                    return uploadFailure
+                }
                 let upper = raw.uppercased()
                 if upper.contains("QUALITY_PROFILE")
                     || upper.contains("ORG_REQUIRED")
@@ -463,10 +478,29 @@ enum SpaceGenerationErrorPresenter {
         }
         // NSURLError network connection lost during R2 PUT
         let ns = error as NSError
-        if ns.domain == NSURLErrorDomain, ns.code == NSURLErrorNetworkConnectionLost {
-            return "촬영 영상 업로드 중 연결이 끊어졌어요. Wi‑Fi에서 다시 시도해주세요."
+        if ns.domain == NSURLErrorDomain {
+            if ns.code == NSURLErrorCancelled {
+                return uploadCancelled
+            }
+            if ns.code == NSURLErrorNetworkConnectionLost
+                || ns.code == NSURLErrorTimedOut
+                || ns.code == NSURLErrorNotConnectedToInternet
+            {
+                return uploadFailure
+            }
+        }
+        if Self.looksLikeUploadNetworkLoss(error.localizedDescription) {
+            return uploadFailure
         }
         return genericCreateFailure
+    }
+
+    static func looksLikeUploadNetworkLoss(_ raw: String) -> Bool {
+        let lower = raw.lowercased()
+        return lower.contains("network connection was lost")
+            || lower.contains("the internet connection appears to be offline")
+            || lower.contains("timed out")
+            || lower.contains("NSURLErrorNetworkConnectionLost".lowercased())
     }
 
     static func logFailure(
