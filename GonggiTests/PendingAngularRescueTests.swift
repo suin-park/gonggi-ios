@@ -537,6 +537,139 @@ final class PendingAngularRescueTests: XCTestCase {
         XCTAssertNotEqual(controller.completionStateForTesting(), .ready)
     }
 
+    /// B's fail completion races ARFrame-C policy eval on `captureStateQueue` — C sees
+    /// optimistic B continuity, then fail restores durable A; C JPEG is orphaned.
+    func testAsyncJPEGBFailCompletionOverlapsARFrameCPolicyEval() async throws {
+        PendingAngularRescuePolicy.setEnabledForTesting(true)
+        defer { PendingAngularRescuePolicy.setEnabledForTesting(nil) }
+
+        let controller = CaptureSessionController(
+            captureId: "unit-jpeg-overlap-\(UUID().uuidString)",
+            coverageSpatialIndex: CoverageSpatialIndex()
+        )
+        defer { CaptureSessionStore.deleteSession(sessionId: controller.sessionId) }
+        let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: controller.sessionId)
+
+        func makeBuffer() throws -> CVPixelBuffer {
+            var buffer: CVPixelBuffer?
+            CVPixelBufferCreate(
+                kCFAllocatorDefault, 16, 10,
+                kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary,
+                &buffer
+            )
+            return try XCTUnwrap(buffer)
+        }
+        func yaw(_ deg: Double, tx: Float) -> simd_float4x4 {
+            var m = matrix_identity_float4x4
+            let y = Float(deg * .pi / 180)
+            m.columns.0 = SIMD4(cos(y), 0, -sin(y), 0)
+            m.columns.2 = SIMD4(sin(y), 0, cos(y), 0)
+            m.columns.3 = SIMD4(tx, 0, 0, 1)
+            return m
+        }
+        func snap(
+            _ id: String, t: Double, x: simd_float4x4, reason: String,
+            kind: CaptureAcceptKind, buf: CVPixelBuffer
+        ) -> SpatialKeyframeSnapshot {
+            SpatialKeyframeSnapshot(
+                frameId: id, arTimestampSeconds: t, ownedPixelBuffer: buf, cameraToWorld: x,
+                trackingState: "normal", fx: 1000, fy: 1000, cx: 500, cy: 300,
+                sensorImageWidth: 16, sensorImageHeight: 10,
+                imageResolutionWidth: 16, imageResolutionHeight: 10,
+                sharpnessScore: 0.9, sharpnessState: "sharp",
+                motionSpeed: nil, angularVelocity: nil,
+                parallaxGrade: "acceptable", translationBaselineM: 0.05,
+                overlapScore: 0.8, overlapState: "good", lowTextureScore: 0.1,
+                acceptReason: reason, acceptKindRaw: kind.rawValue,
+                jpegURL: SpatialCapturePackageBuilder.frameJPEGURL(paths: paths, frameId: id),
+                debugPrincipalPointJPEGURL: nil, optionalDepthRelativePath: nil
+            )
+        }
+
+        let poseA = yaw(0, tx: 0)
+        let poseB = yaw(8, tx: 0.02)
+        let poseC = yaw(16, tx: 0.03)
+
+        let (linkAB, _, _) = PendingAngularRescueLinkGate.linkOK(from: poseA, to: poseB)
+        let (linkBC, reasonBC, _) = PendingAngularRescueLinkGate.linkOK(from: poseB, to: poseC)
+        let (linkAC, _, _) = PendingAngularRescueLinkGate.linkOK(from: poseA, to: poseC)
+        XCTAssertTrue(linkAB)
+        XCTAssertTrue(linkBC, "C policy must pass while anchors sit on B; got \(reasonBC)")
+        XCTAssertFalse(linkAC, "adjacent A–C must not link")
+
+        // A completes first (no stall). B stalled + fail; C not yet enqueued.
+        controller.setJPEGEncodeFailureInjectorForTesting { $0.frameId == "kf_00002" }
+        controller.setJPEGStallFrameIdsForTesting(["kf_00002"])
+
+        XCTAssertEqual(
+            controller.testHookReserveAndEnqueueNoFlush(
+                snapshot: snap("kf_00001", t: 1.0, x: poseA, reason: "first",
+                               kind: .reconstructionKeyframe, buf: try makeBuffer()),
+                kind: .reconstructionKeyframe
+            ),
+            "kf_00001"
+        )
+        await controller.flushJPEGEncodeQueueForTesting()
+        XCTAssertEqual(controller.bridgeSessionForTesting().continuityAnchorTransform, poseA)
+        XCTAssertTrue(controller.durableJPEGContinuityStateForTesting().hasDurableContinuity)
+
+        XCTAssertEqual(
+            controller.testHookReserveAndEnqueueNoFlush(
+                snapshot: snap("kf_00002", t: 1.2, x: poseB, reason: "continuity_bridge_observation",
+                               kind: .continuityBridgeObservation, buf: try makeBuffer()),
+                kind: .continuityBridgeObservation
+            ),
+            "kf_00002"
+        )
+        XCTAssertEqual(controller.bridgeSessionForTesting().continuityAnchorTransform, poseB)
+        XCTAssertEqual(controller.keyframe3DGSCountForTesting(), 2)
+
+        // Hold capture state: release B stall so fail completion blocks on this queue,
+        // then evaluate C against optimistic B continuity (serial C-before-B-fail).
+        let overlap = controller.testHookEvaluateEnqueueWhileHoldingCaptureState(
+            snapshot: snap("kf_00003", t: 1.25, x: poseC, reason: "continuity_bridge_observation",
+                           kind: .continuityBridgeObservation, buf: try makeBuffer()),
+            kind: .continuityBridgeObservation,
+            whileHolding: { controller.releaseJPEGStallForTesting() }
+        )
+        XCTAssertEqual(overlap.continuityAtEval, poseB, "C eval must see optimistic B before fail repair")
+        XCTAssertTrue(overlap.linkOKAtEval, "C must link to B at eval time")
+        XCTAssertEqual(overlap.capAtEval, 2, "cap before C reserve")
+        XCTAssertEqual(overlap.enqueuedFrameId, "kf_00003")
+        XCTAssertEqual(controller.keyframe3DGSCountForTesting(), 3)
+
+        await controller.flushJPEGEncodeQueueForTesting()
+        controller.setJPEGEncodeFailureInjectorForTesting(nil)
+
+        let accepted = controller.acceptedSpatialKeyframeIdsForTesting()
+        XCTAssertTrue(accepted.contains("kf_00001"))
+        XCTAssertFalse(accepted.contains("kf_00002"), "B JPEG must not be accepted")
+        XCTAssertTrue(accepted.contains("kf_00003"), "C JPEG may land on disk")
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: paths.framesDirectory.appendingPathComponent("kf_00001.jpg").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: paths.framesDirectory.appendingPathComponent("kf_00002.jpg").path))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: paths.framesDirectory.appendingPathComponent("kf_00003.jpg").path))
+
+        let durable = controller.durableJPEGContinuityStateForTesting()
+        XCTAssertTrue(durable.continuityUncertain)
+        XCTAssertTrue(durable.orphanDurableFrameIds.contains("kf_00003"))
+        XCTAssertEqual(durable.lastDurableContinuityTransform, poseA)
+        XCTAssertEqual(controller.bridgeSessionForTesting().continuityAnchorTransform, poseA)
+        XCTAssertEqual(controller.bridgeSessionForTesting().mode, .reacquiring)
+
+        let bFail = try XCTUnwrap(controller.keyframeDecisionsForTesting().last { $0.frameId == "kf_00002" })
+        XCTAssertFalse(bFail.accepted)
+        let cDecision = try XCTUnwrap(controller.keyframeDecisionsForTesting().last { $0.frameId == "kf_00003" })
+        XCTAssertTrue(cDecision.accepted)
+
+        controller.refreshCompletionGateForTesting(elapsed: 120)
+        XCTAssertFalse(controller.lastTerminalContinuityForTesting().0)
+        XCTAssertNotEqual(controller.completionStateForTesting(), .ready)
+    }
+
     /// Pending hold must copy ARFrame intrinsics; flush snapshot must keep positive fx/fy and matching cx/cy.
     func testPendingFlushSnapshotPreservesIntrinsicsIntoPackage() async throws {
         let sessionId = "unit-pending-intrinsics-\(UUID().uuidString)"

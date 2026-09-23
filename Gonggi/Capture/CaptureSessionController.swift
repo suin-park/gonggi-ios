@@ -215,41 +215,138 @@ final class CaptureSessionController {
 
         let exposureScore = Double(min(1, lastSample?.brightness ?? 0.85))
         let persistPeek = frameContinuityTelemetry.peekPreviousFramePersistence(frame: frame)
-        var selectorConfig = KeyframeSelector3DGS.Config()
-        let intervalTimestamp: Double?
-        let intervalTransform: simd_float4x4?
+
+        var isKeyframe = false
+        var depthRef: String?
+        var confRef: String?
+        var telemetryCommitted = false
+        var telemetryFrameId: String?
+        var keyDecision = KeyframeSelector3DGS.Decision(
+            accept: false,
+            reason: "unset",
+            bridgeVerdict: .reject,
+            countsForReconstruction: false,
+            acceptKind: .none
+        )
+
         if PendingAngularRescuePolicy.isEnabled {
-            selectorConfig.minBridgeObservationIntervalSec =
-                PendingAngularRescuePolicy.replayMinBridgeIntervalSec
-            intervalTimestamp = pendingAngularRescue.lastRegularTimestamp ?? lastKeyframeTimestamp
-            intervalTransform = lastKeyframeTransform ?? bridgeSession.continuityAnchorTransform
-        } else {
-            intervalTimestamp = lastKeyframeTimestamp
-            intervalTransform = lastKeyframeTransform
-        }
+            // Pixel copy stays off the capture-state queue (AR callback / background), then
+            // selector / pending / reserve / anchor updates share the same serial order as JPEG completions.
+            let ownedForPolicy = SpatialPixelBufferCopy.deepCopy(frame.capturedImage)
+            var policyBuffer = ownedForPolicy
+            var outcome = RescueFrameOutcome()
+            mutateCaptureState {
+                // finish() may have stopped accept/active on this queue after our outer isActive check.
+                guard isActive else { return }
+                var selectorConfig = KeyframeSelector3DGS.Config()
+                selectorConfig.minBridgeObservationIntervalSec =
+                    PendingAngularRescuePolicy.replayMinBridgeIntervalSec
+                let intervalTimestamp =
+                    pendingAngularRescue.lastRegularTimestamp ?? lastKeyframeTimestamp
+                let intervalTransform =
+                    lastKeyframeTransform ?? bridgeSession.continuityAnchorTransform
 
-        var earlyRiskHeld = false
-        if PendingAngularRescuePolicy.isEnabled,
-           acceptingSpatialKeyframes,
-           packagePaths != nil,
-           tryHoldEarlyRiskPending(
-            frame: frame,
-            transform: transform,
-            trackingLabel: trackingLabel,
-            exposureScore: exposureScore,
-            lowTexture: lowTexture,
-            sharpSnap: sharpSnap,
-            lastSample: lastSample,
-            eval: eval
-           )
-        {
-            earlyRiskHeld = true
-        }
+                var earlyRiskHeld = false
+                if acceptingSpatialKeyframes,
+                   packagePaths != nil,
+                   let earlyDecision = evaluateEarlyRiskPendingDecision(
+                    frameTimestamp: frame.timestamp,
+                    transform: transform
+                   ),
+                   let owned = policyBuffer,
+                   commitPendingHold(
+                    ownedBuffer: owned,
+                    frame: frame,
+                    transform: transform,
+                    decision: earlyDecision,
+                    early: true,
+                    trackingLabel: trackingLabel,
+                    sharpSnap: sharpSnap,
+                    lastSample: lastSample,
+                    eval: eval,
+                    lowTexture: lowTexture
+                   )
+                {
+                    earlyRiskHeld = true
+                    policyBuffer = nil
+                }
 
-        var keyDecision: KeyframeSelector3DGS.Decision
-        if earlyRiskHeld {
-            keyDecision = .rejected("early_risk_hold")
+                if earlyRiskHeld {
+                    keyDecision = .rejected("early_risk_hold")
+                } else {
+                    keyDecision = KeyframeSelector3DGS.shouldAccept(
+                        timestamp: frame.timestamp,
+                        transform: transform,
+                        trackingNormal: trackingNormal,
+                        lastKeyframeTimestamp: intervalTimestamp,
+                        lastKeyframeTransform: intervalTransform,
+                        keyframeCount: keyframe3DGSCount,
+                        sharpnessState: sharpSnap.state,
+                        motionSpeed: lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed,
+                        angularVelocity: lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity,
+                        lowTextureScore: lowTexture,
+                        exposureScore: exposureScore,
+                        cellOverlapState: overlapAnalyzer.lastState,
+                        parallaxGrade: eval.grade,
+                        previousFramePersistentRatio: persistPeek.ratio,
+                        featurePersistenceAvailable: persistPeek.available && persistPeek.ratio != nil,
+                        bridgeSession: &bridgeSession,
+                        config: selectorConfig
+                    )
+                }
+                lastBridgeVerdict = keyDecision.bridgeVerdict
+                if let frustum = keyDecision.frustumOverlap {
+                    lastFrustumOverlap = frustum
+                }
+                pendingAngularRescue.notePrevTrack(timestamp: frame.timestamp, transform: transform)
+
+                if let cont = bridgeSession.continuityAnchorTransform {
+                    let signed = ContinuityYawHint.signedYawDegrees(from: transform, to: cont)
+                    continuityThumbnailStore.updateLiveProximity(
+                        signedYawDeg: signed,
+                        frustumOverlap: lastFrustumOverlap,
+                        at: frame.timestamp,
+                        verdict: keyDecision.bridgeVerdict,
+                        yawHintReliable: ContinuityYawHint.isYawHintReliable(frustumOverlap: lastFrustumOverlap)
+                    )
+                } else {
+                    continuityThumbnailStore.noteBridgeVerdict(keyDecision.bridgeVerdict, at: frame.timestamp)
+                }
+                lastReacquireThumbnail = continuityThumbnailStore.snapshot(now: frame.timestamp)
+
+                outcome = processPendingAngularRescueCandidate(
+                    frame: frame,
+                    transform: transform,
+                    trackingLabel: trackingLabel,
+                    trackingNormal: trackingNormal,
+                    keyDecision: keyDecision,
+                    sharpSnap: sharpSnap,
+                    lastSample: lastSample,
+                    eval: eval,
+                    lowTexture: lowTexture,
+                    writtenFrameIndex: written.videoFrameIndex,
+                    preCopiedBuffer: policyBuffer
+                )
+                if outcome.consumedPreCopiedBuffer {
+                    policyBuffer = nil
+                }
+                if let d = outcome.telemetryDecision {
+                    keyDecision = d
+                }
+                if let v = outcome.bridgeVerdict {
+                    lastBridgeVerdict = v
+                }
+            }
+            isKeyframe = outcome.currentBecameKeyframe
+            depthRef = outcome.depthRef
+            confRef = outcome.confRef
+            telemetryCommitted = outcome.telemetryCommitted
+            telemetryFrameId = outcome.telemetryFrameId
+            _ = policyBuffer
         } else {
+            var selectorConfig = KeyframeSelector3DGS.Config()
+            let intervalTimestamp = lastKeyframeTimestamp
+            let intervalTransform = lastKeyframeTransform
             keyDecision = KeyframeSelector3DGS.shouldAccept(
                 timestamp: frame.timestamp,
                 transform: transform,
@@ -269,98 +366,67 @@ final class CaptureSessionController {
                 bridgeSession: &bridgeSession,
                 config: selectorConfig
             )
-        }
-        lastBridgeVerdict = keyDecision.bridgeVerdict
-        if let frustum = keyDecision.frustumOverlap {
-            lastFrustumOverlap = frustum
-        }
-        pendingAngularRescue.notePrevTrack(timestamp: frame.timestamp, transform: transform)
-
-        if let cont = bridgeSession.continuityAnchorTransform {
-            let signed = ContinuityYawHint.signedYawDegrees(from: transform, to: cont)
-            continuityThumbnailStore.updateLiveProximity(
-                signedYawDeg: signed,
-                frustumOverlap: lastFrustumOverlap,
-                at: frame.timestamp,
-                verdict: keyDecision.bridgeVerdict,
-                yawHintReliable: ContinuityYawHint.isYawHintReliable(frustumOverlap: lastFrustumOverlap)
-            )
-        } else {
-            continuityThumbnailStore.noteBridgeVerdict(keyDecision.bridgeVerdict, at: frame.timestamp)
-        }
-        lastReacquireThumbnail = continuityThumbnailStore.snapshot(now: frame.timestamp)
-
-        var isKeyframe = false
-        var depthRef: String?
-        var confRef: String?
-        var telemetryCommitted = false
-        var telemetryFrameId: String?
-
-        if PendingAngularRescuePolicy.isEnabled {
-            let outcome = processPendingAngularRescueCandidate(
-                frame: frame,
-                transform: transform,
-                trackingLabel: trackingLabel,
-                trackingNormal: trackingNormal,
-                keyDecision: keyDecision,
-                sharpSnap: sharpSnap,
-                lastSample: lastSample,
-                eval: eval,
-                lowTexture: lowTexture,
-                writtenFrameIndex: written.videoFrameIndex
-            )
-            isKeyframe = outcome.currentBecameKeyframe
-            depthRef = outcome.depthRef
-            confRef = outcome.confRef
-            telemetryCommitted = outcome.telemetryCommitted
-            telemetryFrameId = outcome.telemetryFrameId
-            if let v = outcome.bridgeVerdict {
-                lastBridgeVerdict = v
+            lastBridgeVerdict = keyDecision.bridgeVerdict
+            if let frustum = keyDecision.frustumOverlap {
+                lastFrustumOverlap = frustum
             }
-            if let d = outcome.telemetryDecision {
-                keyDecision = d
+            if let cont = bridgeSession.continuityAnchorTransform {
+                let signed = ContinuityYawHint.signedYawDegrees(from: transform, to: cont)
+                continuityThumbnailStore.updateLiveProximity(
+                    signedYawDeg: signed,
+                    frustumOverlap: lastFrustumOverlap,
+                    at: frame.timestamp,
+                    verdict: keyDecision.bridgeVerdict,
+                    yawHintReliable: ContinuityYawHint.isYawHintReliable(frustumOverlap: lastFrustumOverlap)
+                )
+            } else {
+                continuityThumbnailStore.noteBridgeVerdict(keyDecision.bridgeVerdict, at: frame.timestamp)
             }
-        } else if keyDecision.accept, acceptingSpatialKeyframes, let paths = packagePaths {
-            let enqueued = enqueueSpatialKeyframe(
-                frame: frame,
-                transform: transform,
-                trackingLabel: trackingLabel,
-                keyDecision: keyDecision,
-                sharpSnap: sharpSnap,
-                lastSample: lastSample,
-                eval: eval,
-                lowTexture: lowTexture,
-                paths: paths
-            )
-            if enqueued {
-                isKeyframe = true
-                telemetryCommitted = true
-                telemetryFrameId = String(format: "kf_%05d", keyframe3DGSCount)
-                applyAcceptedKeyframeSideEffects(
+            lastReacquireThumbnail = continuityThumbnailStore.snapshot(now: frame.timestamp)
+
+            if keyDecision.accept, acceptingSpatialKeyframes, let paths = packagePaths {
+                let enqueued = enqueueSpatialKeyframe(
                     frame: frame,
                     transform: transform,
+                    trackingLabel: trackingLabel,
                     keyDecision: keyDecision,
-                    writtenFrameIndex: written.videoFrameIndex,
-                    depthRef: &depthRef,
-                    confRef: &confRef
+                    sharpSnap: sharpSnap,
+                    lastSample: lastSample,
+                    eval: eval,
+                    lowTexture: lowTexture,
+                    paths: paths,
+                    preCopiedBuffer: nil
+                )
+                if enqueued {
+                    isKeyframe = true
+                    telemetryCommitted = true
+                    telemetryFrameId = String(format: "kf_%05d", keyframe3DGSCount)
+                    applyAcceptedKeyframeSideEffects(
+                        frame: frame,
+                        transform: transform,
+                        keyDecision: keyDecision,
+                        writtenFrameIndex: written.videoFrameIndex,
+                        depthRef: &depthRef,
+                        confRef: &confRef
+                    )
+                }
+            } else if !keyDecision.accept {
+                rejectedKeyframeDecisionCount += 1
+                runtimeTelemetry.recordReject(reason: keyDecision.reason)
+                if keyDecision.bridgeVerdict == .bridgeRequired
+                    || keyDecision.bridgeVerdict == .reacquire
+                {
+                    reconstructionCoverageModel.noteContinuityReject()
+                }
+                appendKeyframeDecision(
+                    SpatialCaptureKeyframeDecision(
+                        arTimestampSeconds: frame.timestamp,
+                        accepted: false,
+                        reason: keyDecision.reason,
+                        frameId: nil
+                    )
                 )
             }
-        } else if !keyDecision.accept {
-            rejectedKeyframeDecisionCount += 1
-            runtimeTelemetry.recordReject(reason: keyDecision.reason)
-            if keyDecision.bridgeVerdict == .bridgeRequired
-                || keyDecision.bridgeVerdict == .reacquire
-            {
-                reconstructionCoverageModel.noteContinuityReject()
-            }
-            appendKeyframeDecision(
-                SpatialCaptureKeyframeDecision(
-                    arTimestampSeconds: frame.timestamp,
-                    accepted: false,
-                    reason: keyDecision.reason,
-                    frameId: nil
-                )
-            )
         }
 
         // Observe-only: never fail capture if telemetry sampling throws/unavailable.
@@ -428,7 +494,8 @@ final class CaptureSessionController {
         lastSample: TelemetrySample?,
         eval: TranslationBaselineAnalyzer.Evaluation,
         lowTexture: Double,
-        paths: SpatialCapturePackagePaths
+        paths: SpatialCapturePackagePaths,
+        preCopiedBuffer: CVPixelBuffer? = nil
     ) -> Bool {
         if jpegEncodeQueue.currentDepth >= SpatialCaptureConfig.jpegQueueMaxDepth {
             rejectedKeyframeDecisionCount += 1
@@ -444,7 +511,12 @@ final class CaptureSessionController {
             return false
         }
 
-        guard let ownedBuffer = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) else {
+        let ownedBuffer: CVPixelBuffer
+        if let preCopiedBuffer {
+            ownedBuffer = preCopiedBuffer
+        } else if let copied = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) {
+            ownedBuffer = copied
+        } else {
             rejectedKeyframeDecisionCount += 1
             runtimeTelemetry.recordReject(reason: "pixel_copy_failed")
             appendKeyframeDecision(
@@ -920,6 +992,83 @@ final class CaptureSessionController {
         return resultId
     }
 
+    /// Deterministic overlap: hold `captureStateQueue`, release JPEG stall so B's fail
+    /// completion blocks on this queue, then evaluate/enqueue C against the still-optimistic
+    /// continuity. After return, the waiting fail repair runs on the same serial order.
+    struct OverlapEvalEnqueueResult {
+        var enqueuedFrameId: String?
+        var linkOKAtEval: Bool
+        var continuityAtEval: simd_float4x4?
+        var capAtEval: Int
+    }
+
+    @discardableResult
+    func testHookEvaluateEnqueueWhileHoldingCaptureState(
+        snapshot: SpatialKeyframeSnapshot,
+        kind: CaptureAcceptKind,
+        whileHolding: () -> Void
+    ) -> OverlapEvalEnqueueResult {
+        var result = OverlapEvalEnqueueResult(
+            enqueuedFrameId: nil,
+            linkOKAtEval: false,
+            continuityAtEval: nil,
+            capAtEval: 0
+        )
+        mutateCaptureState {
+            whileHolding()
+            // JPEG worker finishes fail and blocks on `mutateCaptureState` below us.
+            Thread.sleep(forTimeInterval: 0.08)
+            result.continuityAtEval = bridgeSession.continuityAnchorTransform
+            result.capAtEval = keyframe3DGSCount
+            if let cont = result.continuityAtEval {
+                let (ok, _, _) = PendingAngularRescueLinkGate.linkOK(
+                    from: cont,
+                    to: snapshot.cameraToWorld
+                )
+                result.linkOKAtEval = ok
+            }
+            guard result.linkOKAtEval else { return }
+
+            var snap = snapshot
+            snap.acceptKindRaw = kind.rawValue
+            let idx = Int(snap.frameId.split(separator: "_").last ?? "0") ?? (keyframe3DGSCount + 1)
+            keyframe3DGSCount = max(keyframe3DGSCount, idx)
+            lastKeyframeTimestamp = snap.arTimestampSeconds
+            lastKeyframeTransform = snap.cameraToWorld
+            bridgeSession.noteAccepted(
+                timestamp: snap.arTimestampSeconds,
+                transform: snap.cameraToWorld,
+                yawDeltaDeg: 5,
+                frustumOverlap: 0.85,
+                kind: kind
+            )
+            if kind == .continuityBridgeObservation {
+                reconstructionCoverageModel.noteContinuityBridgeObservation()
+            } else if kind == .reconstructionKeyframe {
+                reconstructionCoverageModel.commitReconstructionKeyframe(
+                    transform: snap.cameraToWorld,
+                    countsForReconstruction: true,
+                    wasBridgeStep: false,
+                    opticalOK: true,
+                    parallaxOK: true
+                )
+            }
+            let enqueued = jpegEncodeQueue.tryEnqueue(
+                SpatialJPEGEncodeQueue.Job(snapshot: snap),
+                onDepthChange: { [weak self] depth in
+                    self?.runtimeTelemetry.updateQueueDepth(depth)
+                },
+                completion: { [weak self] result in
+                    self?.mutateCaptureState {
+                        self?.handleJPEGEncodeResult(result)
+                    }
+                }
+            )
+            result.enqueuedFrameId = enqueued ? snap.frameId : nil
+        }
+        return result
+    }
+
     func setJPEGStallFrameIdsForTesting(_ ids: Set<String>) {
         jpegEncodeQueue.setStallFrameIdsForTesting(ids)
     }
@@ -1050,13 +1199,16 @@ final class CaptureSessionController {
         guard isActive else {
             throw SessionError.notActive
         }
-        // 1) Stop new keyframe accepts → 2) EOS pending flush (candidate) → 3) flush JPEG → 4) finalize
-        acceptingSpatialKeyframes = false
-        if PendingAngularRescuePolicy.isEnabled {
-            flushPendingAngularRescueEndOfStream()
+        // Serialize stop-accept + EOS + isActive with JPEG completions so a late
+        // ARFrame reservation or completion cannot reorder past EOS / flip anchors.
+        mutateCaptureState {
+            acceptingSpatialKeyframes = false
+            isActive = false
+            if PendingAngularRescuePolicy.isEnabled {
+                flushPendingAngularRescueEndOfStream()
+            }
         }
         jpegEncodeQueue.stopAccepting()
-        isActive = false
         let endedAt = Date()
 
         await jpegEncodeQueue.flush()
@@ -1482,6 +1634,8 @@ final class CaptureSessionController {
         var bridgeVerdict: CaptureBridgeVerdict?
         /// Frame id reserved when a prior pending was flushed on this tick (informational).
         var pendingFlushedFrameId: String?
+        /// True when `preCopiedBuffer` was taken by hold or recon enqueue.
+        var consumedPreCopiedBuffer: Bool = false
     }
 
     /// Device path for `capture_pending_angular_rescue_v1`. Anchors/cap advance only after sync enqueue.
@@ -1495,7 +1649,8 @@ final class CaptureSessionController {
         lastSample: TelemetrySample?,
         eval: TranslationBaselineAnalyzer.Evaluation,
         lowTexture: Double,
-        writtenFrameIndex: Int
+        writtenFrameIndex: Int,
+        preCopiedBuffer: CVPixelBuffer?
     ) -> RescueFrameOutcome {
         var outcome = RescueFrameOutcome()
         outcome.telemetryDecision = keyDecision
@@ -1508,6 +1663,7 @@ final class CaptureSessionController {
         }
 
         var decision = keyDecision
+        var buffer = preCopiedBuffer
 
         // Angular reject → pending link check → enqueue → re-eval current ARFrame at most once.
         if !decision.accept,
@@ -1582,8 +1738,24 @@ final class CaptureSessionController {
         pendingAngularRescue.noteLastRegular(frame.timestamp)
 
         if decision.acceptKind == .continuityBridgeObservation {
-            // Bridge → pending hold only (no Cont/Recon/cap until flush enqueue).
-            if !holdPendingFromFrame(
+            guard let owned = buffer else {
+                rejectedKeyframeDecisionCount += 1
+                runtimeTelemetry.recordReject(reason: "pending_pixel_copy_failed")
+                appendKeyframeDecision(
+                    SpatialCaptureKeyframeDecision(
+                        arTimestampSeconds: frame.timestamp,
+                        accepted: false,
+                        reason: "pending_pixel_copy_failed",
+                        frameId: nil
+                    )
+                )
+                outcome.telemetryCommitted = false
+                outcome.telemetryFrameId = nil
+                outcome.telemetryDecision = decision
+                return outcome
+            }
+            if commitPendingHold(
+                ownedBuffer: owned,
                 frame: frame,
                 transform: transform,
                 decision: decision,
@@ -1594,6 +1766,9 @@ final class CaptureSessionController {
                 eval: eval,
                 lowTexture: lowTexture
             ) {
+                outcome.consumedPreCopiedBuffer = true
+                buffer = nil
+            } else {
                 rejectedKeyframeDecisionCount += 1
                 runtimeTelemetry.recordReject(reason: "pending_pixel_copy_failed")
                 appendKeyframeDecision(
@@ -1605,7 +1780,6 @@ final class CaptureSessionController {
                     )
                 )
             }
-            // Hold is not a committed save of the current frame.
             outcome.telemetryCommitted = false
             outcome.telemetryFrameId = nil
             outcome.telemetryDecision = decision
@@ -1638,9 +1812,13 @@ final class CaptureSessionController {
             lastSample: lastSample,
             eval: eval,
             lowTexture: lowTexture,
-            paths: paths
+            paths: paths,
+            preCopiedBuffer: buffer
         )
         if enqueued {
+            if buffer != nil {
+                outcome.consumedPreCopiedBuffer = true
+            }
             outcome.currentBecameKeyframe = true
             outcome.telemetryCommitted = true
             outcome.telemetryFrameId = String(format: "kf_%05d", keyframe3DGSCount)
@@ -1659,27 +1837,20 @@ final class CaptureSessionController {
         return outcome
     }
 
-    @discardableResult
-    private func tryHoldEarlyRiskPending(
-        frame: ARFrame,
-        transform: simd_float4x4,
-        trackingLabel: String,
-        exposureScore: Double,
-        lowTexture: Double,
-        sharpSnap: FrameSharpnessAnalyzer.Snapshot,
-        lastSample: TelemetrySample?,
-        eval: TranslationBaselineAnalyzer.Evaluation
-    ) -> Bool {
-        _ = exposureScore
-        guard keyframe3DGSCount < SpatialCaptureConfig.candidateSafetyCap else { return false }
+    /// Pure early-risk decision (no pixel copy). Caller must already hold `captureStateQueue`.
+    private func evaluateEarlyRiskPendingDecision(
+        frameTimestamp: Double,
+        transform: simd_float4x4
+    ) -> KeyframeSelector3DGS.Decision? {
+        guard keyframe3DGSCount < SpatialCaptureConfig.candidateSafetyCap else { return nil }
         guard let cont = bridgeSession.continuityAnchorTransform,
               let lastReg = pendingAngularRescue.lastRegularTimestamp
-        else { return false }
+        else { return nil }
         let minIv = PendingAngularRescuePolicy.replayMinBridgeIntervalSec
-        let t = frame.timestamp
-        guard (t - lastReg) < minIv else { return false }
+        let t = frameTimestamp
+        guard (t - lastReg) < minIv else { return nil }
         let (okL, _, lm) = PendingAngularRescueLinkGate.linkOK(from: cont, to: transform)
-        guard okL else { return false }
+        guard okL else { return nil }
         let theta = lm.angular
         let thPrev: Double?
         let tPrev: Double?
@@ -1698,8 +1869,8 @@ final class CaptureSessionController {
             lastRegular: lastReg,
             minInterval: minIv
         )
-        guard risk else { return false }
-        let decision = KeyframeSelector3DGS.Decision(
+        guard risk else { return nil }
+        return KeyframeSelector3DGS.Decision(
             accept: true,
             reason: "early_risk_bridge",
             bridgeVerdict: .accept,
@@ -1709,22 +1880,12 @@ final class CaptureSessionController {
             forwardAngleDeg: lm.fwd,
             yawDeltaDeg: lm.yaw
         )
-        // Early holds do NOT update last_regular or saved anchors.
-        return holdPendingFromFrame(
-            frame: frame,
-            transform: transform,
-            decision: decision,
-            early: true,
-            trackingLabel: trackingLabel,
-            sharpSnap: sharpSnap,
-            lastSample: lastSample,
-            eval: eval,
-            lowTexture: lowTexture
-        )
     }
 
+    /// Install pending slot with an already-copied buffer. Caller must hold `captureStateQueue`.
     @discardableResult
-    private func holdPendingFromFrame(
+    private func commitPendingHold(
+        ownedBuffer: CVPixelBuffer,
         frame: ARFrame,
         transform: simd_float4x4,
         decision: KeyframeSelector3DGS.Decision,
@@ -1736,9 +1897,6 @@ final class CaptureSessionController {
         lowTexture: Double
     ) -> Bool {
         preparePendingForIncomingCandidate(transform: transform, isRecon: false)
-        guard let owned = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) else {
-            return false
-        }
         let featureHold = frameContinuityTelemetry.captureFeaturesForPendingHold(frame: frame)
         var dual = DualAnchorTelemetrySnapshot(
             continuityTranslationM: nil,
@@ -1798,7 +1956,7 @@ final class CaptureSessionController {
             imageResolutionWidth: Int(frame.camera.imageResolution.width),
             imageResolutionHeight: Int(frame.camera.imageResolution.height),
             quality: quality,
-            ownedPixelBuffer: owned
+            ownedPixelBuffer: ownedBuffer
         )
         _ = trackingLabel
         pendingAngularRescue.holdPending(slot, discardPrevious: false)
