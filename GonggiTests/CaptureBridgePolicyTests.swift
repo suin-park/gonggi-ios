@@ -306,7 +306,7 @@ final class CaptureBridgePolicyTests: XCTestCase {
             kind: .continuityBridgeObservation
         )
         XCTAssertEqual(session.reconstructionAnchorTimestamp, 0)
-        XCTAssertEqual(session.continuityAnchorTimestamp, 0.10, accuracy: 1e-9)
+        XCTAssertEqual(session.continuityAnchorTimestamp!, 0.10, accuracy: 1e-9)
         // dt vs continuity = 0.25 ≥ bridge interval, but would be <0.30 if wrongly using bridge clock
         // for recon demote after a hypothetical later bridge — here recon clock is 0.35 ≥ 0.30.
         let cand = yawTransform(degrees: 8, translation: SIMD3(0.12, 0, 0))
