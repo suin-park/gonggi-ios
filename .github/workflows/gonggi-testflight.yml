@@ -14,6 +14,11 @@ on:
         required: false
         default: '1.0'
         type: string
+      check_asc_only:
+        description: 'If true, only query ASC for build existence (no archive/upload)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: gonggi-testflight
@@ -26,8 +31,50 @@ env:
   OPENCV_VERSION: "4.10.0"
 
 jobs:
+  asc_probe:
+    name: ASC build existence
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Query ASC
+        id: check
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          BUNDLE_ID: ${{ env.BUNDLE_ID }}
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'PyJWT[crypto]>=2.8'
+          set +e
+          python scripts/check-asc-build-exists.py
+          code=$?
+          set -e
+          if [[ $code -eq 2 ]]; then
+            echo "exists=yes" >> "$GITHUB_OUTPUT"
+            echo "ASC: ${MARKETING_VERSION} (${BUILD_NUMBER}) EXISTS"
+            if [[ "${{ inputs.check_asc_only }}" == "true" ]]; then
+              exit 0
+            fi
+            echo "::error::Build ${MARKETING_VERSION} (${BUILD_NUMBER}) already exists — aborting before archive"
+            exit 1
+          fi
+          if [[ $code -ne 0 ]]; then
+            exit "${code}"
+          fi
+          echo "exists=no" >> "$GITHUB_OUTPUT"
+          echo "ASC: ${MARKETING_VERSION} (${BUILD_NUMBER}) AVAILABLE"
+
   testflight:
     name: Archive, sign, and upload to TestFlight
+    needs: asc_probe
+    if: ${{ inputs.check_asc_only != true }}
     runs-on: macos-15
     timeout-minutes: 150
     steps:
@@ -84,27 +131,6 @@ jobs:
 
       - name: Validate AppIcon sources
         run: python3 scripts/validate-app-icon-sources.py
-
-      - name: Fail if ASC already has this marketing/build
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-          MARKETING_VERSION: ${{ inputs.marketing_version }}
-          BUILD_NUMBER: ${{ inputs.build_number }}
-          BUNDLE_ID: ${{ env.BUNDLE_ID }}
-        run: |
-          set -euo pipefail
-          python -m pip install --quiet 'PyJWT[crypto]>=2.8'
-          set +e
-          python scripts/check-asc-build-exists.py
-          code=$?
-          set -e
-          if [[ $code -eq 2 ]]; then
-            echo "::error::Build ${MARKETING_VERSION} (${BUILD_NUMBER}) already exists in App Store Connect — aborting before archive"
-            exit 1
-          fi
-          exit "${code}"
 
       - name: Select Xcode
         run: |
