@@ -365,7 +365,7 @@ final class PendingAngularRescueTests: XCTestCase {
         )
         let row = try XCTUnwrap(collector.snapshotFile().records.last)
         XCTAssertEqual(row.arTimestampSeconds, pendingT, accuracy: 1e-6)
-        XCTAssertEqual(row.imageTimestampSeconds, pendingT, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(row.imageTimestampSeconds), pendingT, accuracy: 1e-6)
         XCTAssertNotEqual(row.arTimestampSeconds, sessionEndT)
         XCTAssertTrue(row.committed)
         XCTAssertEqual(row.frameId, "kf_00454")
