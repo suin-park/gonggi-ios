@@ -135,7 +135,10 @@ enum SpatialCapturePackageBuilder {
             packageSchemaVersion: SpatialCaptureConfig.packageSchemaVersion,
             regionCount: input.regionCount,
             candidateSafetyCap: SpatialCaptureConfig.candidateSafetyCap,
-            selectionDiagnostics: input.selectionDiagnostics
+            selectionDiagnostics: input.selectionDiagnostics,
+            policyVersion: FrameContinuityTelemetryConfig.activePolicyVersion,
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+            buildNumber: Bundle.main.infoDictionary?["CFBundleVersion"] as? String
         )
 
         let poses = SpatialCapturePosesFile(

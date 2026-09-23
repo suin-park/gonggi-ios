@@ -34,6 +34,10 @@ struct SpatialCapturePackageMetadata: Codable, Equatable, Sendable {
     var candidateSafetyCap: Int?
     /// TF62 additive selection diagnostics (ignored by schema v1 readers).
     var selectionDiagnostics: SpatialCaptureSelectionDiagnostics?
+    /// Active capture policy at package write (`capture_pending_angular_rescue_v1` when ON).
+    var policyVersion: String? = nil
+    var appVersion: String? = nil
+    var buildNumber: String? = nil
 }
 
 struct SpatialCapturePoseEntry: Codable, Equatable, Sendable {

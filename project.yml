@@ -11,7 +11,7 @@ settings:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: ""
     MARKETING_VERSION: "2.0"
-    CURRENT_PROJECT_VERSION: "65"
+    CURRENT_PROJECT_VERSION: "67"
     GONGGI_BUILD_SHA: "local"
 
 configs:
@@ -82,6 +82,9 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         GonggiBuildSHA: $(GONGGI_BUILD_SHA)
+        # Internal TestFlight ONLY: bake pending-angular-rescue ON into this IPA.
+        # Product default in Swift remains OFF when this key is removed/false.
+        GonggiPendingAngularRescueDefault: true
         CFBundleIconName: AppIcon
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}

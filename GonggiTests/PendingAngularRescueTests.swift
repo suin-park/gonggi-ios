@@ -5,16 +5,23 @@ import XCTest
 @testable import Gonggi
 
 /// Failure-path + pose-only state-transition tests for `capture_pending_angular_rescue_v1`.
-/// Default policy remains OFF — these tests enable it only inside the test process.
+/// This internal IPA bakes policy ON via Info.plist; tests isolate with UserDefaults overrides.
 final class PendingAngularRescueTests: XCTestCase {
+
+    override func setUp() {
+        super.setUp()
+        // Isolate from Info.plist ON bake used by the internal TestFlight IPA.
+        PendingAngularRescuePolicy.setEnabledForTesting(false)
+    }
 
     override func tearDown() {
         PendingAngularRescuePolicy.setEnabledForTesting(nil)
         super.tearDown()
     }
 
-    func testPolicyDefaultOffAndVersionDistinct() {
-        PendingAngularRescuePolicy.setEnabledForTesting(nil)
+    func testProductDefaultConstantRemainsOff() {
+        XCTAssertFalse(PendingAngularRescuePolicy.productDefaultEnabled)
+        PendingAngularRescuePolicy.setEnabledForTesting(false)
         XCTAssertFalse(PendingAngularRescuePolicy.isEnabled)
         XCTAssertEqual(
             PendingAngularRescuePolicy.policyVersion,
@@ -28,11 +35,24 @@ final class PendingAngularRescueTests: XCTestCase {
             FrameContinuityTelemetryConfig.activePolicyVersion,
             FrameContinuityTelemetryConfig.policyVersion
         )
-        PendingAngularRescuePolicy.setEnabledForTesting(true)
+    }
+
+    /// This internal build must bake ON into Info.plist so TestFlight cannot silently fall back to OFF.
+    func testInternalTestFlightBuildBakesPolicyOnInInfoPlist() {
+        PendingAngularRescuePolicy.setEnabledForTesting(nil)
+        XCTAssertEqual(
+            PendingAngularRescuePolicy.infoPlistEnabledFlag,
+            true,
+            "GonggiPendingAngularRescueDefault must be true in app Info.plist for this TF IPA"
+        )
         XCTAssertTrue(PendingAngularRescuePolicy.isEnabled)
         XCTAssertEqual(
             FrameContinuityTelemetryConfig.activePolicyVersion,
             PendingAngularRescuePolicy.policyVersion
+        )
+        XCTAssertEqual(
+            Bundle.main.infoDictionary?["CFBundleVersion"] as? String,
+            "67"
         )
     }
 

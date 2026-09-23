@@ -221,6 +221,8 @@ struct CaptureSessionSummaryDiagnostics: Codable, Equatable, Sendable {
     var generation: CaptureGenerationDiagnostics
     var appVersion: String
     var buildNumber: String
+    /// Active capture policy id at finish (`capture_pending_angular_rescue_v1` when ON).
+    var policyVersion: String
     /// Session reconstruction + sector/ring metrics used by CaptureCompletionGate (P1+).
     var reconstructionMetrics: CaptureReconstructionMetricsSnapshot?
     /// Explicit P1 device-validation completion snapshot (section 9 fields).

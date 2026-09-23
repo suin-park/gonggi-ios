@@ -1329,6 +1329,7 @@ final class CaptureSessionController {
             generation: CaptureDiagnosticsStore.loadGenerationDiagnostics(sessionId: sessionId),
             appVersion: info?["CFBundleShortVersionString"] as? String ?? "0",
             buildNumber: info?["CFBundleVersion"] as? String ?? "0",
+            policyVersion: FrameContinuityTelemetryConfig.activePolicyVersion,
             reconstructionMetrics: reconSnap,
             reconstructionCompletion: completionRecord
         )

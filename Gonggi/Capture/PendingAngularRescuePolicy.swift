@@ -10,21 +10,42 @@ enum PendingAngularRescuePolicy {
     /// Distinct from `capture_bridge_dual_anchor_v1` when this candidate is active.
     static let policyVersion = "capture_pending_angular_rescue_v1"
 
-    /// UserDefaults / env override for tests and internal builds.
+    /// UserDefaults override for XCTest isolation (not used as the TestFlight enable path).
     static let defaultsKey = "GonggiEnablePendingAngularRescue"
+    /// Info.plist key baked into a specific IPA — survives TestFlight install (no env/UserDefaults).
+    static let infoPlistKey = "GonggiPendingAngularRescueDefault"
     private static let envKey = "GONGGI_ENABLE_PENDING_ANGULAR_RESCUE"
 
-    /// Product default: **false** (Release and DEBUG). Tests may override via UserDefaults/env.
+    /// Product ship default when Info.plist / env / testing override are absent — always **false**.
+    static let productDefaultEnabled = false
+
+    /// `true`/`false` when the installed app Info.plist sets `GonggiPendingAngularRescueDefault`.
+    static var infoPlistEnabledFlag: Bool? {
+        let info = Bundle.main.infoDictionary
+        if let b = info?[infoPlistKey] as? Bool { return b }
+        if let n = info?[infoPlistKey] as? NSNumber { return n.boolValue }
+        if let s = info?[infoPlistKey] as? String {
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if t.isEmpty { return nil }
+            return t == "1" || t == "true" || t == "yes"
+        }
+        return nil
+    }
+
+    /// Enable order: XCTest UserDefaults override → Info.plist (IPA) → env (local) → product default OFF.
     static var isEnabled: Bool {
+        if UserDefaults.standard.object(forKey: defaultsKey) != nil {
+            return UserDefaults.standard.bool(forKey: defaultsKey)
+        }
+        if let plist = infoPlistEnabledFlag {
+            return plist
+        }
         if let env = ProcessInfo.processInfo.environment[envKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !env.isEmpty
         {
             return env == "1" || env.lowercased() == "true" || env.lowercased() == "yes"
         }
-        if UserDefaults.standard.object(forKey: defaultsKey) != nil {
-            return UserDefaults.standard.bool(forKey: defaultsKey)
-        }
-        return false
+        return productDefaultEnabled
     }
 
     static func setEnabledForTesting(_ enabled: Bool?) {
