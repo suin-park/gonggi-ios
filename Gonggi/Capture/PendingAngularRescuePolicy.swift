@@ -84,6 +84,62 @@ enum PendingAngularRescueLinkGate {
     }
 }
 
+/// Feature / image-quality snapshot from the held ARFrame — flush must reuse these values.
+/// Fields not measured at hold stay `nil` (never invent fixed placeholders).
+struct PendingHeldQuality: Equatable {
+    var features: ARKitFeatureSummary
+    /// Identifier set for continuity-anchor update on successful flush (not written to JSON).
+    var continuityIdentifiers: Set<UInt64>
+    var sharpnessScore: Double?
+    var sharpnessState: String?
+    var brightness: Double?
+    var lowTextureScore: Double?
+    var overlapScore: Double?
+    var overlapState: String?
+    var motionSpeed: Double?
+    var angularVelocity: Double?
+    var parallaxGrade: String?
+    var translationBaselineM: Float?
+    /// Dual-anchor metrics captured at hold (pose relative to then-current anchors).
+    var dualAnchor: DualAnchorTelemetrySnapshot
+
+    /// Explicit unavailable feature payload when hold could not sample ARKit features.
+    static func unavailable(
+        trackingState: String,
+        dualAnchor: DualAnchorTelemetrySnapshot,
+        reason: FeatureTelemetryUnavailableReason = .samplingSkipped
+    ) -> PendingHeldQuality {
+        PendingHeldQuality(
+            features: ARKitFeatureSummary(
+                rawFeaturePointCount: nil,
+                grid: nil,
+                persistent: PersistentFeatureStats(
+                    previousFramePersistentCount: nil,
+                    previousFramePersistentRatio: nil,
+                    continuityAnchorPersistentCount: nil,
+                    continuityAnchorPersistentRatio: nil,
+                    unavailableReason: reason
+                ),
+                trackingState: trackingState,
+                trackingLimitationReason: nil,
+                unavailableReason: reason
+            ),
+            continuityIdentifiers: [],
+            sharpnessScore: nil,
+            sharpnessState: nil,
+            brightness: nil,
+            lowTextureScore: nil,
+            overlapScore: nil,
+            overlapState: nil,
+            motionSpeed: nil,
+            angularVelocity: nil,
+            parallaxGrade: nil,
+            translationBaselineM: nil,
+            dualAnchor: dualAnchor
+        )
+    }
+}
+
 /// Held bridge / early candidate — pose + owned pixel buffer + same-frame camera metadata.
 final class PendingAngularRescueSlot {
     var timestamp: Double
@@ -102,6 +158,8 @@ final class PendingAngularRescueSlot {
     /// `ARCamera.imageResolution` at hold time (may differ from pixel-buffer size).
     var imageResolutionWidth: Int
     var imageResolutionHeight: Int
+    /// Same-frame feature/quality summary; flush reuses this (nil → write unavailable/null).
+    var quality: PendingHeldQuality?
     /// Deep-copied pixel buffer; released on discard / after successful enqueue handoff.
     private(set) var ownedPixelBuffer: CVPixelBuffer?
 
@@ -120,6 +178,7 @@ final class PendingAngularRescueSlot {
         cy: Float,
         imageResolutionWidth: Int,
         imageResolutionHeight: Int,
+        quality: PendingHeldQuality? = nil,
         ownedPixelBuffer: CVPixelBuffer?
     ) {
         self.timestamp = timestamp
@@ -136,6 +195,7 @@ final class PendingAngularRescueSlot {
         self.cy = cy
         self.imageResolutionWidth = imageResolutionWidth
         self.imageResolutionHeight = imageResolutionHeight
+        self.quality = quality
         self.ownedPixelBuffer = ownedPixelBuffer
     }
 
@@ -155,6 +215,7 @@ final class PendingAngularRescueSlot {
         cy: Float,
         imageResolutionWidth: Int,
         imageResolutionHeight: Int,
+        quality: PendingHeldQuality? = nil,
         ownedPixelBuffer: CVPixelBuffer?
     ) -> PendingAngularRescueSlot {
         PendingAngularRescueSlot(
@@ -172,6 +233,7 @@ final class PendingAngularRescueSlot {
             cy: cy,
             imageResolutionWidth: imageResolutionWidth,
             imageResolutionHeight: imageResolutionHeight,
+            quality: quality,
             ownedPixelBuffer: ownedPixelBuffer
         )
     }

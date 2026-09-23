@@ -1191,7 +1191,12 @@ final class CaptureSessionController {
                 frame: frame,
                 transform: transform,
                 decision: decision,
-                early: false
+                early: false,
+                trackingLabel: trackingLabel,
+                sharpSnap: sharpSnap,
+                lastSample: lastSample,
+                eval: eval,
+                lowTexture: lowTexture
             ) {
                 rejectedKeyframeDecisionCount += 1
                 runtimeTelemetry.recordReject(reason: "pending_pixel_copy_failed")
@@ -1269,12 +1274,7 @@ final class CaptureSessionController {
         lastSample: TelemetrySample?,
         eval: TranslationBaselineAnalyzer.Evaluation
     ) -> Bool {
-        _ = trackingLabel
         _ = exposureScore
-        _ = lowTexture
-        _ = sharpSnap
-        _ = lastSample
-        _ = eval
         guard keyframe3DGSCount < SpatialCaptureConfig.candidateSafetyCap else { return false }
         guard let cont = bridgeSession.continuityAnchorTransform,
               let lastReg = pendingAngularRescue.lastRegularTimestamp
@@ -1318,7 +1318,12 @@ final class CaptureSessionController {
             frame: frame,
             transform: transform,
             decision: decision,
-            early: true
+            early: true,
+            trackingLabel: trackingLabel,
+            sharpSnap: sharpSnap,
+            lastSample: lastSample,
+            eval: eval,
+            lowTexture: lowTexture
         )
     }
 
@@ -1327,12 +1332,60 @@ final class CaptureSessionController {
         frame: ARFrame,
         transform: simd_float4x4,
         decision: KeyframeSelector3DGS.Decision,
-        early: Bool
+        early: Bool,
+        trackingLabel: String,
+        sharpSnap: FrameSharpnessAnalyzer.Snapshot,
+        lastSample: TelemetrySample?,
+        eval: TranslationBaselineAnalyzer.Evaluation,
+        lowTexture: Double
     ) -> Bool {
         preparePendingForIncomingCandidate(transform: transform, isRecon: false)
         guard let owned = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) else {
             return false
         }
+        let featureHold = frameContinuityTelemetry.captureFeaturesForPendingHold(frame: frame)
+        var dual = DualAnchorTelemetrySnapshot(
+            continuityTranslationM: nil,
+            continuityYawDeg: decision.yawDeltaDeg,
+            continuityForwardAngleDeg: decision.forwardAngleDeg,
+            reconstructionCumulativeTranslationM: nil,
+            frustumOverlap: decision.frustumOverlap,
+            reconstructionCoverageEstimate: reconstructionCoverageModel.reconstructionCoverageEstimate,
+            bridgeMode: bridgeSession.mode.rawValue,
+            verdict: decision.bridgeVerdict?.rawValue,
+            reason: decision.reason,
+            acceptKind: decision.acceptKind.rawValue
+        )
+        if let cont = bridgeSession.continuityAnchorTransform {
+            let sample = FrustumOverlapProxy.sample(from: cont, to: transform)
+            dual.continuityTranslationM = sample.translationM
+            if dual.continuityYawDeg == nil { dual.continuityYawDeg = sample.yawDeltaDeg }
+            if dual.continuityForwardAngleDeg == nil {
+                dual.continuityForwardAngleDeg = sample.forwardAngleDeg
+            }
+            if dual.frustumOverlap == nil { dual.frustumOverlap = sample.frustumOverlap }
+        }
+        if let recon = bridgeSession.reconstructionAnchorTransform {
+            dual.reconstructionCumulativeTranslationM = CaptureMath.translationMeters(
+                from: recon,
+                to: transform
+            )
+        }
+        let quality = PendingHeldQuality(
+            features: featureHold.summary,
+            continuityIdentifiers: featureHold.identifiers,
+            sharpnessScore: sharpSnap.score,
+            sharpnessState: sharpSnap.state.rawValue,
+            brightness: lastSample?.brightness,
+            lowTextureScore: lowTexture,
+            overlapScore: overlapAnalyzer.lastScore,
+            overlapState: overlapAnalyzer.lastState.rawValue,
+            motionSpeed: lastSample?.translationSpeedMps,
+            angularVelocity: lastSample?.angularVelocityRadPerSec,
+            parallaxGrade: eval.grade.rawValue,
+            translationBaselineM: eval.translationBaselineM,
+            dualAnchor: dual
+        )
         let slot = PendingAngularRescueSlot(
             timestamp: frame.timestamp,
             transform: transform,
@@ -1348,8 +1401,10 @@ final class CaptureSessionController {
             cy: frame.camera.intrinsics.columns.2.y,
             imageResolutionWidth: Int(frame.camera.imageResolution.width),
             imageResolutionHeight: Int(frame.camera.imageResolution.height),
+            quality: quality,
             ownedPixelBuffer: owned
         )
+        _ = trackingLabel
         pendingAngularRescue.holdPending(slot, discardPrevious: false)
         return true
     }
@@ -1471,16 +1526,6 @@ final class CaptureSessionController {
             slot: slot,
             trackingLabel: "normal",
             keyDecision: decision,
-            sharpSnap: FrameSharpnessAnalyzer.Snapshot(
-                state: .sharp, score: 1, variance: 100, blurryFraction: 0
-            ),
-            lastSample: nil,
-            eval: TranslationBaselineAnalyzer.Evaluation(
-                translationBaselineM: 0,
-                grade: .acceptable,
-                isInPlaceRotation: false
-            ),
-            lowTexture: 0.2,
             paths: paths
         )
         guard let frameId = enqueuedId else {
@@ -1514,16 +1559,12 @@ final class CaptureSessionController {
                 parallaxOK: true
             )
         }
-        // Continuity telemetry for the **pending** photo (its AR timestamp / frameId).
-        frameContinuityTelemetry.recordSyntheticCandidate(
-            arTimestampSeconds: slot.timestamp,
-            committed: true,
+        // Continuity telemetry for the **pending** photo — hold-time quality, not synthetic defaults.
+        PendingAngularRescueFlushDiagnostics.recordCommittedFlush(
+            collector: frameContinuityTelemetry,
+            slot: slot,
             frameId: frameId,
-            verdict: CaptureBridgeVerdict.accept.rawValue,
-            reason: slot.reason,
-            acceptKind: slot.acceptKind.rawValue,
-            bridgeMode: bridgeSession.mode.rawValue,
-            updateContinuitySet: true
+            bridgeMode: bridgeSession.mode.rawValue
         )
         return frameId
     }
@@ -1587,10 +1628,6 @@ final class CaptureSessionController {
         slot: PendingAngularRescueSlot,
         trackingLabel: String,
         keyDecision: KeyframeSelector3DGS.Decision,
-        sharpSnap: FrameSharpnessAnalyzer.Snapshot,
-        lastSample: TelemetrySample?,
-        eval: TranslationBaselineAnalyzer.Evaluation,
-        lowTexture: Double,
         paths: SpatialCapturePackagePaths
     ) -> String? {
         if jpegEncodeQueue.currentDepth >= SpatialCaptureConfig.jpegQueueMaxDepth {
@@ -1619,13 +1656,7 @@ final class CaptureSessionController {
             slot: slot,
             frameId: frameId,
             trackingLabel: trackingLabel,
-            paths: paths,
-            sharpSnap: sharpSnap,
-            lastSample: lastSample,
-            eval: eval,
-            lowTexture: lowTexture,
-            overlapScore: overlapAnalyzer.lastScore,
-            overlapState: overlapAnalyzer.lastState.rawValue
+            paths: paths
         )
 
         let enqueued = jpegEncodeQueue.tryEnqueue(

@@ -60,7 +60,7 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
             || decision?.reason == "first"
         )
 
-        let featureSummary = sampleFeatures(
+        let (featureSummary, _) = sampleFeatures(
             frame: frame,
             trackingState: trackingLabel,
             trackingLimitationReason: limitation,
@@ -153,8 +153,97 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Inject retention decisions without ARFrame (XCTest sizing / transition retention).
-    /// Mirrors `recordCandidate` permanent-vs-stable policy with a fixed feature payload shape.
+    /// Capture ARKit feature summary at pending **hold** without mutating continuity/previous sets.
+    /// Flush later reuses this summary; identifiers update continuity only on successful enqueue.
+    func captureFeaturesForPendingHold(frame: ARFrame) -> (summary: ARKitFeatureSummary, identifiers: Set<UInt64>) {
+        let trackingLabel = CaptureFrameContract.trackingLabel(frame.camera.trackingState)
+        let limitation = Self.trackingLimitationReason(frame.camera.trackingState)
+        return sampleFeatures(
+            frame: frame,
+            trackingState: trackingLabel,
+            trackingLimitationReason: limitation,
+            updatePreviousSet: false,
+            updateContinuitySet: false
+        )
+    }
+
+    /// Record a **held** pending flush using values captured at hold time.
+    /// Does not invent feature counts / brightness / sharpness — pass `nil` when unavailable.
+    func recordHeldFlushCandidate(
+        arTimestampSeconds: Double,
+        imageTimestampSeconds: Double?,
+        committed: Bool,
+        frameId: String?,
+        features: ARKitFeatureSummary,
+        sharpnessScore: Double?,
+        sharpnessState: String?,
+        brightness: Double?,
+        lowTextureScore: Double?,
+        overlapScore: Double?,
+        dualAnchor: DualAnchorTelemetrySnapshot,
+        continuityIdentifiers: Set<UInt64>,
+        updateContinuitySet: Bool
+    ) {
+        lock.lock()
+        if updateContinuitySet, !continuityIdentifiers.isEmpty {
+            continuityAnchorIdentifiers = continuityIdentifiers
+        }
+        candidateSequence += 1
+        let seq = candidateSequence
+        let record = FrameContinuityTelemetryRecord(
+            schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
+            policyVersion: FrameContinuityTelemetryConfig.activePolicyVersion,
+            candidateSequence: seq,
+            arTimestampSeconds: arTimestampSeconds,
+            imageTimestampSeconds: imageTimestampSeconds ?? arTimestampSeconds,
+            frameId: frameId,
+            committed: committed,
+            jpegEnqueueSucceeded: committed,
+            durableJPEGPresent: nil,
+            features: features,
+            sharpnessScore: sharpnessScore,
+            sharpnessState: sharpnessState,
+            brightness: brightness,
+            lowTextureScore: lowTextureScore,
+            overlapScore: overlapScore,
+            dualAnchor: dualAnchor
+        )
+        let verdict = dualAnchor.verdict
+        let reason = dualAnchor.reason
+        let acceptKind = dualAnchor.acceptKind
+        let isTransition =
+            committed
+            || verdict == CaptureBridgeVerdict.bridgeRequired.rawValue
+            || verdict == CaptureBridgeVerdict.reacquire.rawValue
+            || verdict != lastPermanentVerdict
+            || reason != lastPermanentReason
+            || acceptKind != lastPermanentAcceptKind
+            || updateContinuitySet
+        if isTransition {
+            permanentRecords.append(record)
+            if permanentRecords.count > FrameContinuityTelemetryConfig.maxPermanentTransitionRecords {
+                let overflow = permanentRecords.count
+                    - FrameContinuityTelemetryConfig.maxPermanentTransitionRecords
+                permanentRecords.removeFirst(overflow)
+            }
+            lastPermanentVerdict = verdict
+            lastPermanentReason = reason
+            lastPermanentAcceptKind = acceptKind
+        } else {
+            stableKeepCounter += 1
+            if stableKeepCounter % FrameContinuityTelemetryConfig.stableDownsampleStride == 0 {
+                stableRecords.append(record)
+            }
+            if stableRecords.count > FrameContinuityTelemetryConfig.maxInMemoryRecords {
+                let overflow = stableRecords.count - FrameContinuityTelemetryConfig.maxInMemoryRecords
+                stableRecords.removeFirst(overflow)
+            }
+        }
+        lock.unlock()
+    }
+
+    /// Inject retention decisions without ARFrame (XCTest sizing / transition retention only).
+    /// Production pending flush must use `recordHeldFlushCandidate` — never this helper.
     func recordSyntheticCandidate(
         arTimestampSeconds: Double,
         committed: Bool,
@@ -199,56 +288,21 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
             reason: reason,
             acceptKind: acceptKind
         )
-        lock.lock()
-        candidateSequence += 1
-        let seq = candidateSequence
-        let record = FrameContinuityTelemetryRecord(
-            schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
-            policyVersion: FrameContinuityTelemetryConfig.activePolicyVersion,
-            candidateSequence: seq,
+        recordHeldFlushCandidate(
             arTimestampSeconds: arTimestampSeconds,
             imageTimestampSeconds: arTimestampSeconds,
-            frameId: frameId,
             committed: committed,
-            jpegEnqueueSucceeded: committed,
-            durableJPEGPresent: nil,
+            frameId: frameId,
             features: featureSummary,
             sharpnessScore: 0.85,
             sharpnessState: "sharp",
             brightness: 0.55,
             lowTextureScore: 0.2,
             overlapScore: 0.8,
-            dualAnchor: dual
+            dualAnchor: dual,
+            continuityIdentifiers: [],
+            updateContinuitySet: updateContinuitySet
         )
-        let isTransition =
-            committed
-            || verdict == CaptureBridgeVerdict.bridgeRequired.rawValue
-            || verdict == CaptureBridgeVerdict.reacquire.rawValue
-            || verdict != lastPermanentVerdict
-            || reason != lastPermanentReason
-            || acceptKind != lastPermanentAcceptKind
-            || updateContinuitySet
-        if isTransition {
-            permanentRecords.append(record)
-            if permanentRecords.count > FrameContinuityTelemetryConfig.maxPermanentTransitionRecords {
-                let overflow = permanentRecords.count
-                    - FrameContinuityTelemetryConfig.maxPermanentTransitionRecords
-                permanentRecords.removeFirst(overflow)
-            }
-            lastPermanentVerdict = verdict
-            lastPermanentReason = reason
-            lastPermanentAcceptKind = acceptKind
-        } else {
-            stableKeepCounter += 1
-            if stableKeepCounter % FrameContinuityTelemetryConfig.stableDownsampleStride == 0 {
-                stableRecords.append(record)
-            }
-            if stableRecords.count > FrameContinuityTelemetryConfig.maxInMemoryRecords {
-                let overflow = stableRecords.count - FrameContinuityTelemetryConfig.maxInMemoryRecords
-                stableRecords.removeFirst(overflow)
-            }
-        }
-        lock.unlock()
     }
 
     func snapshotFile() -> FrameContinuityTelemetryFile {
@@ -326,22 +380,25 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
         trackingLimitationReason: String?,
         updatePreviousSet: Bool,
         updateContinuitySet: Bool
-    ) -> ARKitFeatureSummary {
+    ) -> (ARKitFeatureSummary, Set<UInt64>) {
         guard let cloud = frame.rawFeaturePoints else {
             noteUnavailable(.pointCloudNil)
-            return ARKitFeatureSummary(
-                rawFeaturePointCount: nil,
-                grid: nil,
-                persistent: PersistentFeatureStats(
-                    previousFramePersistentCount: nil,
-                    previousFramePersistentRatio: nil,
-                    continuityAnchorPersistentCount: nil,
-                    continuityAnchorPersistentRatio: nil,
+            return (
+                ARKitFeatureSummary(
+                    rawFeaturePointCount: nil,
+                    grid: nil,
+                    persistent: PersistentFeatureStats(
+                        previousFramePersistentCount: nil,
+                        previousFramePersistentRatio: nil,
+                        continuityAnchorPersistentCount: nil,
+                        continuityAnchorPersistentRatio: nil,
+                        unavailableReason: .pointCloudNil
+                    ),
+                    trackingState: trackingState,
+                    trackingLimitationReason: trackingLimitationReason,
                     unavailableReason: .pointCloudNil
                 ),
-                trackingState: trackingState,
-                trackingLimitationReason: trackingLimitationReason,
-                unavailableReason: .pointCloudNil
+                []
             )
         }
 
@@ -407,7 +464,7 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
         }
         lock.unlock()
 
-        return ARKitFeatureSummary(
+        let summary = ARKitFeatureSummary(
             rawFeaturePointCount: count,
             grid: grid,
             persistent: PersistentFeatureStats(
@@ -421,6 +478,7 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
             trackingLimitationReason: trackingLimitationReason,
             unavailableReason: grid == nil ? .projectionFailed : .none
         )
+        return (summary, idSet)
     }
 
     private static func trackingLimitationReason(_ state: ARCamera.TrackingState) -> String? {

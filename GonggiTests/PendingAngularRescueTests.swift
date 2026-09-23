@@ -150,6 +150,45 @@ final class PendingAngularRescueTests: XCTestCase {
         )
         let owned = try XCTUnwrap(buffer)
 
+        let quality = PendingHeldQuality(
+            features: ARKitFeatureSummary(
+                rawFeaturePointCount: 88,
+                grid: nil,
+                persistent: PersistentFeatureStats(
+                    previousFramePersistentCount: nil,
+                    previousFramePersistentRatio: nil,
+                    continuityAnchorPersistentCount: nil,
+                    continuityAnchorPersistentRatio: nil,
+                    unavailableReason: .none
+                ),
+                trackingState: "normal",
+                trackingLimitationReason: nil,
+                unavailableReason: .none
+            ),
+            continuityIdentifiers: [],
+            sharpnessScore: 1,
+            sharpnessState: "sharp",
+            brightness: 0.62,
+            lowTextureScore: 0.1,
+            overlapScore: 0.7,
+            overlapState: "good",
+            motionSpeed: nil,
+            angularVelocity: nil,
+            parallaxGrade: "acceptable",
+            translationBaselineM: 0.05,
+            dualAnchor: DualAnchorTelemetrySnapshot(
+                continuityTranslationM: nil,
+                continuityYawDeg: 9,
+                continuityForwardAngleDeg: 8,
+                reconstructionCumulativeTranslationM: nil,
+                frustumOverlap: 0.8,
+                reconstructionCoverageEstimate: nil,
+                bridgeMode: "idle",
+                verdict: "accept",
+                reason: "early_risk_bridge",
+                acceptKind: CaptureAcceptKind.continuityBridgeObservation.rawValue
+            )
+        )
         let slot = PendingAngularRescueSlot(
             timestamp: 12.5,
             transform: matrix_identity_float4x4,
@@ -162,6 +201,7 @@ final class PendingAngularRescueTests: XCTestCase {
             fx: 1435.25, fy: 1435.25, cx: 960.0, cy: 540.0,
             imageResolutionWidth: 1920,
             imageResolutionHeight: 1080,
+            quality: quality,
             ownedPixelBuffer: owned
         )
         let taken = try XCTUnwrap(slot.takePixelBuffer())
@@ -171,20 +211,10 @@ final class PendingAngularRescueTests: XCTestCase {
             frameId: "kf_00007",
             trackingLabel: "normal",
             paths: paths,
-            sharpSnap: FrameSharpnessAnalyzer.Snapshot(
-                state: .sharp, score: 1, variance: 100, blurryFraction: 0
-            ),
-            lastSample: nil,
-            eval: TranslationBaselineAnalyzer.Evaluation(
-                translationBaselineM: 0.05,
-                grade: .acceptable,
-                isInPlaceRotation: false
-            ),
-            lowTexture: 0.1,
-            overlapScore: 0.7,
-            overlapState: "good",
             debugPrincipalPoint: false
         )
+        XCTAssertEqual(snap.sharpnessScore, 1)
+        XCTAssertEqual(snap.lowTextureScore, 0.1)
         XCTAssertGreaterThan(snap.fx, 0)
         XCTAssertGreaterThan(snap.fy, 0)
         XCTAssertEqual(snap.fx, 1435.25, accuracy: 1e-3)
@@ -232,17 +262,17 @@ final class PendingAngularRescueTests: XCTestCase {
             jpegByteCount: written.byteCount,
             quality: SpatialCaptureFrameQuality(
                 frameId: written.frameId,
-                sharpnessScore: 1,
-                sharpnessState: "sharp",
-                motionSpeed: nil,
-                angularVelocity: nil,
-                parallaxGrade: "acceptable",
-                translationBaselineM: 0.05,
-                overlapScore: 0.7,
-                overlapState: "good",
+                sharpnessScore: snap.sharpnessScore,
+                sharpnessState: snap.sharpnessState,
+                motionSpeed: snap.motionSpeed,
+                angularVelocity: snap.angularVelocity,
+                parallaxGrade: snap.parallaxGrade,
+                translationBaselineM: snap.translationBaselineM,
+                overlapScore: snap.overlapScore,
+                overlapState: snap.overlapState,
                 trackingState: "normal",
-                lowTextureScore: 0.1,
-                acceptReason: "early_risk_bridge"
+                lowTextureScore: snap.lowTextureScore,
+                acceptReason: snap.acceptReason
             ),
             optionalDepthRelativePath: nil
         )
@@ -287,6 +317,219 @@ final class PendingAngularRescueTests: XCTestCase {
         XCTAssertEqual(row.fx, written.fx, accuracy: 1e-3)
         XCTAssertEqual(row.cx, written.cx, accuracy: 1e-3)
         XCTAssertEqual(row.cy, written.cy, accuracy: 1e-3)
+    }
+
+    /// Two pending holds with distinct feature/brightness must survive the real flush record path
+    /// (`PendingAngularRescueFlushDiagnostics` + snapshot builder) into telemetry and package quality.
+    func testPendingFlushPreservesHeldFeatureCountAndBrightness() async throws {
+        let sessionId = "unit-pending-quality-\(UUID().uuidString)"
+        defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
+        let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
+        let collector = FrameContinuityTelemetryCollector()
+
+        struct Case {
+            let frameId: String
+            let timestamp: Double
+            let featureCount: Int
+            let brightness: Double
+            let sharpness: Double
+            let lowTexture: Double?
+        }
+        let cases: [Case] = [
+            Case(frameId: "kf_00011", timestamp: 20.0, featureCount: 42, brightness: 0.31,
+                 sharpness: 0.72, lowTexture: 0.15),
+            Case(frameId: "kf_00012", timestamp: 20.4, featureCount: 210, brightness: 0.88,
+                 sharpness: 0.91, lowTexture: nil), // unavailable → must stay null, not 0.2
+        ]
+
+        var packageKeyframes: [SpatialCapturePackageBuilder.AcceptedKeyframe] = []
+
+        for c in cases {
+            var buffer: CVPixelBuffer?
+            CVPixelBufferCreate(
+                kCFAllocatorDefault, 16, 10,
+                kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary,
+                &buffer
+            )
+            let owned = try XCTUnwrap(buffer)
+            let held = PendingHeldQuality(
+                features: ARKitFeatureSummary(
+                    rawFeaturePointCount: c.featureCount,
+                    grid: nil,
+                    persistent: PersistentFeatureStats(
+                        previousFramePersistentCount: nil,
+                        previousFramePersistentRatio: nil,
+                        continuityAnchorPersistentCount: nil,
+                        continuityAnchorPersistentRatio: nil,
+                        unavailableReason: .none
+                    ),
+                    trackingState: "normal",
+                    trackingLimitationReason: nil,
+                    unavailableReason: .none
+                ),
+                continuityIdentifiers: [UInt64(c.featureCount)],
+                sharpnessScore: c.sharpness,
+                sharpnessState: "sharp",
+                brightness: c.brightness,
+                lowTextureScore: c.lowTexture,
+                overlapScore: nil,
+                overlapState: nil,
+                motionSpeed: nil,
+                angularVelocity: nil,
+                parallaxGrade: nil,
+                translationBaselineM: nil,
+                dualAnchor: DualAnchorTelemetrySnapshot(
+                    continuityTranslationM: 0.04,
+                    continuityYawDeg: 5,
+                    continuityForwardAngleDeg: 4,
+                    reconstructionCumulativeTranslationM: nil,
+                    frustumOverlap: 0.85,
+                    reconstructionCoverageEstimate: nil,
+                    bridgeMode: "idle",
+                    verdict: CaptureBridgeVerdict.accept.rawValue,
+                    reason: "early_risk_bridge",
+                    acceptKind: CaptureAcceptKind.continuityBridgeObservation.rawValue
+                )
+            )
+            let slot = PendingAngularRescueSlot(
+                timestamp: c.timestamp,
+                transform: matrix_identity_float4x4,
+                acceptKind: .continuityBridgeObservation,
+                reason: "early_risk_bridge",
+                yawDeltaDeg: 5,
+                frustumOverlap: 0.85,
+                forwardAngleDeg: 4,
+                early: true,
+                fx: 1000, fy: 1000, cx: 500, cy: 300,
+                imageResolutionWidth: 1000,
+                imageResolutionHeight: 600,
+                quality: held,
+                ownedPixelBuffer: owned
+            )
+
+            // Same APIs production flush uses after sync enqueue succeeds.
+            PendingAngularRescueFlushDiagnostics.recordCommittedFlush(
+                collector: collector,
+                slot: slot,
+                frameId: c.frameId,
+                bridgeMode: "idle"
+            )
+
+            let taken = try XCTUnwrap(slot.takePixelBuffer())
+            let snap = PendingAngularRescueSnapshotBuilder.makeSnapshot(
+                ownedBuffer: taken,
+                slot: slot,
+                frameId: c.frameId,
+                trackingLabel: "normal",
+                paths: paths,
+                debugPrincipalPoint: false
+            )
+            XCTAssertEqual(snap.sharpnessScore, c.sharpness)
+            XCTAssertEqual(snap.lowTextureScore, c.lowTexture)
+            XCTAssertNil(snap.overlapScore, "unmeasured overlap must stay nil")
+
+            let queue = SpatialJPEGEncodeQueue()
+            var success: SpatialJPEGEncodeQueue.Success?
+            let exp = expectation(description: "jpeg-\(c.frameId)")
+            XCTAssertTrue(queue.tryEnqueue(SpatialJPEGEncodeQueue.Job(snapshot: snap), completion: { result in
+                if case .success(let s) = result { success = s }
+                exp.fulfill()
+            }))
+            await fulfillment(of: [exp], timeout: 5)
+            let written = try XCTUnwrap(success)
+
+            packageKeyframes.append(
+                SpatialCapturePackageBuilder.AcceptedKeyframe(
+                    frameId: written.frameId,
+                    arTimestampSeconds: snap.arTimestampSeconds,
+                    cameraToWorldColumnMajor: CaptureFrameContract.encodeTransform(snap.cameraToWorld),
+                    translationMeters: [0, 0, 0],
+                    rotationQuaternionXYZw: [0, 0, 0, 1],
+                    trackingState: "normal",
+                    fx: written.fx,
+                    fy: written.fy,
+                    cx: written.cx,
+                    cy: written.cy,
+                    width: written.width,
+                    height: written.height,
+                    sensorImageWidth: snap.sensorImageWidth,
+                    sensorImageHeight: snap.sensorImageHeight,
+                    jpegByteCount: written.byteCount,
+                    quality: SpatialCaptureFrameQuality(
+                        frameId: written.frameId,
+                        sharpnessScore: snap.sharpnessScore,
+                        sharpnessState: snap.sharpnessState,
+                        motionSpeed: snap.motionSpeed,
+                        angularVelocity: snap.angularVelocity,
+                        parallaxGrade: snap.parallaxGrade,
+                        translationBaselineM: snap.translationBaselineM,
+                        overlapScore: snap.overlapScore,
+                        overlapState: snap.overlapState,
+                        trackingState: "normal",
+                        lowTextureScore: snap.lowTextureScore,
+                        acceptReason: snap.acceptReason
+                    ),
+                    optionalDepthRelativePath: nil
+                )
+            )
+        }
+
+        let tel = collector.snapshotFile()
+        XCTAssertEqual(tel.records.count, 2)
+        XCTAssertEqual(tel.records[0].features.rawFeaturePointCount, 42)
+        XCTAssertEqual(tel.records[0].brightness, 0.31, accuracy: 1e-9)
+        XCTAssertEqual(tel.records[0].sharpnessScore, 0.72, accuracy: 1e-9)
+        XCTAssertEqual(tel.records[0].lowTextureScore, 0.15, accuracy: 1e-9)
+        XCTAssertEqual(tel.records[0].frameId, "kf_00011")
+        XCTAssertEqual(tel.records[0].arTimestampSeconds, 20.0, accuracy: 1e-9)
+        XCTAssertNotEqual(tel.records[0].brightness, 0.55)
+
+        XCTAssertEqual(tel.records[1].features.rawFeaturePointCount, 210)
+        XCTAssertEqual(tel.records[1].brightness, 0.88, accuracy: 1e-9)
+        XCTAssertEqual(tel.records[1].sharpnessScore, 0.91, accuracy: 1e-9)
+        XCTAssertNil(tel.records[1].lowTextureScore)
+        XCTAssertNil(tel.records[1].overlapScore)
+        XCTAssertEqual(tel.records[1].frameId, "kf_00012")
+        XCTAssertNotEqual(tel.records[1].features.rawFeaturePointCount, 120)
+
+        let built = try SpatialCapturePackageBuilder.build(
+            input: SpatialCapturePackageBuilder.BuildInput(
+                captureId: "c",
+                sessionId: sessionId,
+                startedAt: Date(timeIntervalSince1970: 0),
+                endedAt: Date(timeIntervalSince1970: 1),
+                keyframes: packageKeyframes,
+                rejectedDecisionCount: 0,
+                trackingFailureCount: 0,
+                totalTranslationDistanceM: 0.1,
+                observedCoverage: 0.1,
+                qualityCoverage: 0.1,
+                viewAngleDiversity: 0.1,
+                translationBaselineGrade: "acceptable",
+                averageSharpness: 0.8,
+                videoRelativePath: nil,
+                hasLiDAR: false,
+                supportsSceneDepth: false,
+                supportsSmoothedSceneDepth: false,
+                supportsSceneReconstruction: false,
+                decisions: [],
+                telemetry: nil,
+                reconstructionMetrics: nil,
+                reconstructionCompletion: nil,
+                frameContinuityTelemetry: tel
+            )
+        )
+        let qualityFile = try JSONDecoder().decode(
+            SpatialCaptureQualityFile.self,
+            from: Data(contentsOf: built.qualityURL)
+        )
+        XCTAssertEqual(qualityFile.frames.count, 2)
+        XCTAssertEqual(qualityFile.frames[0].sharpnessScore, 0.72)
+        XCTAssertEqual(qualityFile.frames[0].lowTextureScore, 0.15)
+        XCTAssertEqual(qualityFile.frames[1].sharpnessScore, 0.91)
+        XCTAssertNil(qualityFile.frames[1].lowTextureScore)
+        XCTAssertNil(qualityFile.frames[1].overlapScore)
     }
 
     /// Rescue pending save and current-frame verdict must use separate timestamps / frameIds.

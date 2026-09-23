@@ -4,6 +4,7 @@ import simd
 
 /// Builds JPEG enqueue snapshots from a held pending slot — same intrinsics / resolution
 /// contract as the live `ARFrame` path (`enqueueSpatialKeyframe`).
+/// Quality fields come from `slot.quality` (hold-time measurements); missing → nil, never fakes.
 enum PendingAngularRescueSnapshotBuilder {
     static func makeSnapshot(
         ownedBuffer: CVPixelBuffer,
@@ -11,12 +12,6 @@ enum PendingAngularRescueSnapshotBuilder {
         frameId: String,
         trackingLabel: String,
         paths: SpatialCapturePackagePaths,
-        sharpSnap: FrameSharpnessAnalyzer.Snapshot,
-        lastSample: TelemetrySample?,
-        eval: TranslationBaselineAnalyzer.Evaluation,
-        lowTexture: Double,
-        overlapScore: Double?,
-        overlapState: String?,
         debugPrincipalPoint: Bool = SpatialCaptureConfig.debugDrawPrincipalPoint
     ) -> SpatialKeyframeSnapshot {
         let sensorW = CVPixelBufferGetWidth(ownedBuffer)
@@ -25,6 +20,7 @@ enum PendingAngularRescueSnapshotBuilder {
         let debugURL: URL? = debugPrincipalPoint
             ? SpatialCapturePackageBuilder.debugPrincipalPointJPEGURL(paths: paths, frameId: frameId)
             : nil
+        let q = slot.quality
         return SpatialKeyframeSnapshot(
             frameId: frameId,
             arTimestampSeconds: slot.timestamp,
@@ -39,15 +35,15 @@ enum PendingAngularRescueSnapshotBuilder {
             sensorImageHeight: sensorH,
             imageResolutionWidth: slot.imageResolutionWidth,
             imageResolutionHeight: slot.imageResolutionHeight,
-            sharpnessScore: sharpSnap.score,
-            sharpnessState: sharpSnap.state.rawValue,
-            motionSpeed: lastSample?.translationSpeedMps,
-            angularVelocity: lastSample?.angularVelocityRadPerSec,
-            parallaxGrade: eval.grade.rawValue,
-            translationBaselineM: eval.translationBaselineM,
-            overlapScore: overlapScore,
-            overlapState: overlapState,
-            lowTextureScore: lowTexture,
+            sharpnessScore: q?.sharpnessScore,
+            sharpnessState: q?.sharpnessState,
+            motionSpeed: q?.motionSpeed,
+            angularVelocity: q?.angularVelocity,
+            parallaxGrade: q?.parallaxGrade,
+            translationBaselineM: q?.translationBaselineM,
+            overlapScore: q?.overlapScore,
+            overlapState: q?.overlapState,
+            lowTextureScore: q?.lowTextureScore,
             acceptReason: slot.reason,
             jpegURL: jpegURL,
             debugPrincipalPointJPEGURL: debugURL,
