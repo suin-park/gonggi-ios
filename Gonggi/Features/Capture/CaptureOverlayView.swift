@@ -113,7 +113,12 @@ struct CaptureOverlayView: View {
         VStack(spacing: GonggiSpacing.sm) {
             Text(CaptureQuietUIPresenter.statusLine(for: guidance.quality))
                 .font(GonggiTypography.caption(13))
-                .foregroundStyle(isReady ? GonggiColors.successGreen : GonggiColors.textSecondary)
+                .foregroundStyle(
+                    guidance.quality.candidateSafetyCapReached
+                        ? GonggiColors.warning
+                        : (isReady ? GonggiColors.successGreen : GonggiColors.textSecondary)
+                )
+                .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel(CaptureQuietUIPresenter.statusLine(for: guidance.quality))
 
@@ -135,7 +140,10 @@ struct CaptureOverlayView: View {
 
                 CaptureFinishPillButton(
                     isReady: isReady,
-                    title: CaptureQuietUIPresenter.finishTitle(isReady: isReady),
+                    title: CaptureQuietUIPresenter.finishTitle(
+                        isReady: isReady,
+                        candidateSafetyCapReached: guidance.quality.candidateSafetyCapReached
+                    ),
                     action: onFinish
                 )
             }

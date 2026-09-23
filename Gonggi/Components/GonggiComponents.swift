@@ -730,6 +730,7 @@ struct GonggiSummaryHero: View {
     let duration: String
     /// When false (notReady / early finish), avoid "촬영이 완료되었어요".
     var captureFullyReady: Bool = true
+    var candidateSafetyCapReached: Bool = false
 
     var body: some View {
         HStack(spacing: GonggiSpacing.lg) {
@@ -739,12 +740,23 @@ struct GonggiSummaryHero: View {
                 Label(
                     CaptureSummaryPresentation.heroTitle(
                         completionState: captureFullyReady ? .ready : .notReady,
-                        terminalContinuityOK: captureFullyReady
+                        terminalContinuityOK: captureFullyReady,
+                        candidateSafetyCapReached: candidateSafetyCapReached
                     ),
                     systemImage: captureFullyReady ? "checkmark.seal.fill" : "externaldrive.fill"
                 )
                 .font(GonggiTypography.headline(17))
                 .foregroundStyle(captureFullyReady ? GonggiColors.successGreen : GonggiColors.textPrimary)
+                if let subtitle = CaptureSummaryPresentation.heroSubtitle(
+                    completionState: captureFullyReady ? .ready : .notReady,
+                    terminalContinuityOK: captureFullyReady,
+                    candidateSafetyCapReached: candidateSafetyCapReached
+                ) {
+                    Text(subtitle)
+                        .font(GonggiTypography.caption(13))
+                        .foregroundStyle(GonggiColors.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Text("품질 \(qualityLabel) · \(duration)")
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textSecondary)

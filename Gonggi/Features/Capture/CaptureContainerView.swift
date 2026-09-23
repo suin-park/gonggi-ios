@@ -479,12 +479,19 @@ struct CaptureFlowView: View {
             }
         }
         .confirmationDialog(
-            "조금 더 촬영하면 3D 공간 품질이 좋아질 수 있어요.",
+            CaptureSummaryPresentation.earlyFinishDialogTitle(
+                candidateSafetyCapReached: viewModel.guidance.quality.candidateSafetyCapReached
+            ),
             isPresented: $showEarlyFinishConfirm,
             titleVisibility: .visible
         ) {
-            Button("추가 촬영", role: .cancel) {}
-            Button("이대로 완료") { finishCapture(finishedBy: .manualEarlyFinish) }
+            if viewModel.guidance.quality.candidateSafetyCapReached {
+                Button("촬영 종료") { finishCapture(finishedBy: .manualEarlyFinish) }
+                Button("닫기", role: .cancel) {}
+            } else {
+                Button("추가 촬영", role: .cancel) {}
+                Button("이대로 완료") { finishCapture(finishedBy: .manualEarlyFinish) }
+            }
         }
         .sheet(isPresented: $showSummary) {
             if let summary = viewModel.lastSummary {

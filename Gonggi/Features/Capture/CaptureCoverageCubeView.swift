@@ -150,6 +150,8 @@ enum CaptureQuietUIPhase: Equatable {
     case capturing
     case nearlyReady
     case ready
+    /// Enqueue safety cap reached — new keyframes will not be reserved.
+    case storageCapReached
 }
 
 enum CaptureQuietUIPresenter {
@@ -161,6 +163,8 @@ enum CaptureQuietUIPresenter {
     }
 
     static func phase(for quality: CaptureQualityState) -> CaptureQuietUIPhase {
+        // Cap takes priority over "recording / ready" copy so users never think saves continue.
+        if quality.candidateSafetyCapReached { return .storageCapReached }
         if !isSpatialRecognitionReady(quality: quality) { return .recognizing }
         if quality.completionState == .ready || quality.reconstructionReady { return .ready }
         if quality.completionState == .nearlyReady { return .nearlyReady }
@@ -178,15 +182,24 @@ enum CaptureQuietUIPresenter {
         case .ready:
             // reconstructionReady ≠ session end (multi-room may continue).
             return "공간이 충분히 기록됐어요"
+        case .storageCapReached:
+            // Enqueue cap — do not claim a durable on-disk JPEG count.
+            return "새 사진이 더 이상 저장되지 않습니다"
         }
     }
 
-    static func finishTitle(isReady: Bool) -> String {
-        isReady ? "촬영 완료" : "촬영 종료"
+    static func finishTitle(isReady: Bool, candidateSafetyCapReached: Bool = false) -> String {
+        if candidateSafetyCapReached {
+            return isReady ? "촬영 완료" : "촬영 종료"
+        }
+        return isReady ? "촬영 완료" : "촬영 종료"
     }
 
     /// Short intervention toast — only when recognizing is done and something blocks progress.
     static func toastHint(for quality: CaptureQualityState) -> String? {
+        if quality.candidateSafetyCapReached {
+            return "새 사진이 더 이상 저장되지 않습니다"
+        }
         guard isSpatialRecognitionReady(quality: quality) else { return nil }
         // Ready / latched: allow continue capture — no nag to finish, no overlap return.
         if quality.completionState == .ready || quality.reconstructionReady {

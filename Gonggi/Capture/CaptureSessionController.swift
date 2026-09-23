@@ -966,7 +966,9 @@ final class CaptureSessionController {
             reacquireSignedYawDeg: lastReacquireThumbnail.signedYawDeg,
             reacquireProximity: lastReacquireThumbnail.proximity,
             reacquireThumbnailTitle: lastReacquireThumbnail.title,
-            reacquireThumbnailGuidance: lastReacquireThumbnail.guidance
+            reacquireThumbnailGuidance: lastReacquireThumbnail.guidance,
+            candidateSafetyCapReached: keyframe3DGSCount >= SpatialCaptureConfig.candidateSafetyCap,
+            spatialKeyframeEnqueueCount: keyframe3DGSCount
         )
     }
 

@@ -25,7 +25,8 @@ struct CaptureSummaryView: View {
                         qualityLabel: summary.qualityLabel,
                         duration: formattedDuration(summary.duration),
                         captureFullyReady: summary.quality.completionState == .ready
-                            && summary.quality.terminalContinuityOK
+                            && summary.quality.terminalContinuityOK,
+                        candidateSafetyCapReached: summary.quality.candidateSafetyCapReached
                     )
 
                     Text("촬영 결과")
@@ -69,11 +70,15 @@ struct CaptureSummaryView: View {
                             GonggiHaptics.success()
                             onCreateSpace()
                         }
-                        SecondaryButton(
-                            title: CaptureSummaryPresentation.continueButtonTitle(weakTerminal: weakTerminal),
-                            icon: "camera"
+                        if CaptureSummaryPresentation.shouldOfferContinueCapture(
+                            candidateSafetyCapReached: summary.quality.candidateSafetyCapReached
                         ) {
-                            onContinueCapture()
+                            SecondaryButton(
+                                title: CaptureSummaryPresentation.continueButtonTitle(weakTerminal: weakTerminal),
+                                icon: "camera"
+                            ) {
+                                onContinueCapture()
+                            }
                         }
                         if !summary.sessionId.isEmpty {
                             SecondaryButton(title: "촬영 진단 공유", icon: "square.and.arrow.up") {

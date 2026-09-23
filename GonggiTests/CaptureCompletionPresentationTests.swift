@@ -37,5 +37,13 @@ final class CaptureCompletionPresentationTests: XCTestCase {
             CaptureSummaryPresentation.createButtonTitle(weakTerminal: false),
             "이대로 공간 생성"
         )
+        XCTAssertEqual(
+            CaptureSummaryPresentation.heroTitle(
+                completionState: .notReady,
+                terminalContinuityOK: false,
+                candidateSafetyCapReached: true
+            ),
+            "촬영 데이터가 부분 저장되었어요"
+        )
     }
 }

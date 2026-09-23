@@ -113,6 +113,11 @@ struct CaptureQualityState: Equatable {
     var reacquireProximity: Double
     var reacquireThumbnailTitle: String
     var reacquireThumbnailGuidance: String
+    /// Enqueue reservation count (`keyframe3DGSCount`) hit `candidateSafetyCap`.
+    /// Not a durable on-disk JPEG count — encode may still be pending/failing.
+    var candidateSafetyCapReached: Bool
+    /// Enqueue reservation count for UI/tests (same counter as selector cap).
+    var spatialKeyframeEnqueueCount: Int
 
     init(
         overallCoverage: Double,
@@ -154,7 +159,9 @@ struct CaptureQualityState: Equatable {
         reacquireSignedYawDeg: Double? = nil,
         reacquireProximity: Double = 0,
         reacquireThumbnailTitle: String = "마지막 연결 화면",
-        reacquireThumbnailGuidance: String = "이 장면이 다시 보이도록 천천히 움직여주세요"
+        reacquireThumbnailGuidance: String = "이 장면이 다시 보이도록 천천히 움직여주세요",
+        candidateSafetyCapReached: Bool = false,
+        spatialKeyframeEnqueueCount: Int = 0
     ) {
         self.overallCoverage = overallCoverage
         self.observedCoverage = observedCoverage ?? overallCoverage
@@ -206,6 +213,8 @@ struct CaptureQualityState: Equatable {
         self.reacquireProximity = reacquireProximity
         self.reacquireThumbnailTitle = reacquireThumbnailTitle
         self.reacquireThumbnailGuidance = reacquireThumbnailGuidance
+        self.candidateSafetyCapReached = candidateSafetyCapReached
+        self.spatialKeyframeEnqueueCount = spatialKeyframeEnqueueCount
     }
 
     static let zero = CaptureQualityState(
