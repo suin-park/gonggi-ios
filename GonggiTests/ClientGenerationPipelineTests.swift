@@ -77,13 +77,23 @@ final class ClientGenerationPipelineTests: XCTestCase {
         XCTAssertEqual(a, "gonggi-capture-GONGGI_CAPTURE_V1_041")
     }
 
-    func testSpatialPackageRetentionDetectsFrames() throws {
+    func testSpatialPackageRetentionRequiresValidatorNotJustJpegs() throws {
         let sessionId = "SESSION_PKG_\(UUID().uuidString.prefix(8))"
         defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
         let root = try CaptureSessionStore.spatialCapturePackageDirectory(sessionId: sessionId)
         let frames = root.appendingPathComponent(SpatialCaptureConfig.framesDirectoryName, isDirectory: true)
         try FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
         try Data([0xFF, 0xD8, 0xFF]).write(to: frames.appendingPathComponent("kf_00001.jpg"))
+        // JPEG alone must not pass — poses/intrinsics/validator required.
+        XCTAssertFalse(
+            CapturePackageRetention.hasRetainedSpatialPackage(sessionId: sessionId, packageRootHint: root)
+        )
+    }
+
+    func testSpatialPackageRetentionTrueWhenValidatorPasses() throws {
+        let sessionId = "SESSION_PKG_OK_\(UUID().uuidString.prefix(8))"
+        defer { CaptureSessionStore.deleteSession(sessionId: sessionId) }
+        let root = try makeZipReadyPackage(sessionId: sessionId)
         XCTAssertTrue(
             CapturePackageRetention.hasRetainedSpatialPackage(sessionId: sessionId, packageRootHint: root)
         )

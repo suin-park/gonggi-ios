@@ -33,7 +33,8 @@ struct ClientPipelineStepState: Identifiable, Equatable, Sendable {
 }
 
 enum CapturePackageRetention {
-    /// True when on-device spatial package (frames + metadata) is still available for retry.
+    /// True only when the on-device spatial package passes validator
+    /// (JPEG / poses / intrinsics counts aligned). Folder presence alone is not enough.
     /// PC absence must not be used as a proxy for device absence.
     static func hasRetainedSpatialPackage(
         sessionId: String,
@@ -46,16 +47,33 @@ enum CapturePackageRetention {
             try SpatialCapturePackageValidator.validate(packageRoot: root)
             return true
         } catch {
-            // Soft check: at least one JPEG under frames/ means package body still on device.
-            let frames = root.appendingPathComponent(
-                SpatialCaptureConfig.framesDirectoryName,
-                isDirectory: true
-            )
-            let jpgs = (try? FileManager.default.contentsOfDirectory(atPath: frames.path))?
-                .filter { $0.lowercased().hasSuffix(".jpg") || $0.lowercased().hasSuffix(".jpeg") }
-                ?? []
-            return !jpgs.isEmpty
+            return false
         }
+    }
+
+    /// Counts used for capture reports (validator must still pass for retry).
+    static func packageInventory(packageRoot: URL) -> (jpeg: Int, poses: Int, intrinsics: Int)? {
+        let fm = FileManager.default
+        let frames = packageRoot.appendingPathComponent(
+            SpatialCaptureConfig.framesDirectoryName,
+            isDirectory: true
+        )
+        let jpeg = ((try? fm.contentsOfDirectory(atPath: frames.path)) ?? [])
+            .filter { $0.lowercased().hasSuffix(".jpg") || $0.lowercased().hasSuffix(".jpeg") }
+            .count
+        guard
+            let posesData = try? Data(
+                contentsOf: packageRoot.appendingPathComponent(SpatialCaptureConfig.posesFileName)
+            ),
+            let poses = try? JSONDecoder().decode(SpatialCapturePosesFile.self, from: posesData),
+            let intrData = try? Data(
+                contentsOf: packageRoot.appendingPathComponent(SpatialCaptureConfig.intrinsicsFileName)
+            ),
+            let intrinsics = try? JSONDecoder().decode(SpatialCaptureIntrinsicsFile.self, from: intrData)
+        else {
+            return nil
+        }
+        return (jpeg, poses.frames.count, intrinsics.frames.count)
     }
 
     static func hasRetainedVideo(sessionId: String, videoURL: URL?) -> Bool {

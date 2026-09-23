@@ -9,6 +9,10 @@ struct CaptureSummaryView: View {
     @State private var showDiagShare = false
     @State private var diagShareItems: [URL] = []
     @State private var diagShareError: String?
+    @State private var showOriginalShare = false
+    @State private var originalShareItems: [URL] = []
+    @State private var originalShareError: String?
+    @State private var isExportingOriginal = false
 
     #if DEBUG
     @State private var showExportShare = false
@@ -50,7 +54,7 @@ struct CaptureSummaryView: View {
                     }
 
                     if summary.manifestURL != nil {
-                        Text("촬영 데이터는 기기에만 저장됩니다.")
+                        Text("촬영 데이터는 기기에만 저장됩니다. 진단 공유에는 원본 사진이 포함되지 않습니다.")
                             .font(GonggiTypography.caption(12))
                             .foregroundStyle(GonggiColors.textTertiary)
                     }
@@ -81,12 +85,24 @@ struct CaptureSummaryView: View {
                             }
                         }
                         if !summary.sessionId.isEmpty {
-                            SecondaryButton(title: "촬영 진단 공유", icon: "square.and.arrow.up") {
+                            SecondaryButton(title: "촬영 진단 공유 (사진 제외)", icon: "doc.text") {
                                 prepareDiagnosticsShare()
                             }
+                            SecondaryButton(
+                                title: isExportingOriginal ? "원본 패키지 준비 중…" : "원본 패키지 내보내기",
+                                icon: "square.and.arrow.up"
+                            ) {
+                                prepareOriginalPackageShare()
+                            }
+                            .disabled(isExportingOriginal)
                         }
                         if let diagShareError {
                             Text(diagShareError)
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.warning)
+                        }
+                        if let originalShareError {
+                            Text(originalShareError)
                                 .font(GonggiTypography.caption(12))
                                 .foregroundStyle(GonggiColors.warning)
                         }
@@ -115,6 +131,11 @@ struct CaptureSummaryView: View {
                     showDiagShare = false
                 }
             }
+            .sheet(isPresented: $showOriginalShare) {
+                CaptureExportShareSheet(items: originalShareItems) {
+                    showOriginalShare = false
+                }
+            }
             #if DEBUG
             .sheet(isPresented: $showExportShare) {
                 CaptureExportShareSheet(items: exportShareItems) {
@@ -136,7 +157,29 @@ struct CaptureSummaryView: View {
             diagShareItems = [folder]
             showDiagShare = true
         } catch {
-            diagShareError = "진단 공유 준비에 실패했어요."
+            diagShareError = "진단 공유 준비에 실패했어요. (원본 사진은 포함되지 않습니다)"
+        }
+    }
+
+    private func prepareOriginalPackageShare() {
+        originalShareError = nil
+        isExportingOriginal = true
+        let sessionId = summary.sessionId
+        let captureId = summary.captureId.isEmpty ? summary.sessionId : summary.captureId
+        Task {
+            defer { isExportingOriginal = false }
+            do {
+                let folder = try await Task.detached(priority: .userInitiated) {
+                    try CaptureDiagnosticsStore.buildFullSpatialPackageShare(
+                        sessionId: sessionId,
+                        captureId: captureId
+                    )
+                }.value
+                originalShareItems = [folder]
+                showOriginalShare = true
+            } catch {
+                originalShareError = "원본 패키지를 내보낼 수 없어요. 패키지가 완전한지 확인해 주세요."
+            }
         }
     }
 

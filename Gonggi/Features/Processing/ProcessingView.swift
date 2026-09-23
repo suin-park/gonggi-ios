@@ -414,6 +414,10 @@ struct ProcessingView: View {
     @State private var showDiagShare = false
     @State private var diagShareItems: [URL] = []
     @State private var diagShareError: String?
+    @State private var showOriginalShare = false
+    @State private var originalShareItems: [URL] = []
+    @State private var originalShareError: String?
+    @State private var isExportingOriginal = false
     @State private var didStart = false
 
     init(
@@ -465,11 +469,28 @@ struct ProcessingView: View {
                                 )
                             }
                         }
-                        SecondaryButton(title: "촬영 진단 공유", icon: "square.and.arrow.up") {
+                        SecondaryButton(title: "촬영 진단 공유 (사진 제외)", icon: "doc.text") {
                             shareDiagnostics()
+                        }
+                        if viewModel.canRetrySameCapture || CapturePackageRetention.hasRetainedSpatialPackage(
+                            sessionId: summary.sessionId,
+                            packageRootHint: summary.dataFoundation?.spatialCapturePackageURL
+                        ) {
+                            SecondaryButton(
+                                title: isExportingOriginal ? "원본 패키지 준비 중…" : "원본 패키지 내보내기",
+                                icon: "square.and.arrow.up"
+                            ) {
+                                shareOriginalPackage()
+                            }
+                            .disabled(isExportingOriginal)
                         }
                         if let diagShareError {
                             Text(diagShareError)
+                                .font(GonggiTypography.caption(12))
+                                .foregroundStyle(GonggiColors.warning)
+                        }
+                        if let originalShareError {
+                            Text(originalShareError)
                                 .font(GonggiTypography.caption(12))
                                 .foregroundStyle(GonggiColors.warning)
                         }
@@ -504,6 +525,11 @@ struct ProcessingView: View {
         .sheet(isPresented: $showDiagShare) {
             CaptureExportShareSheet(items: diagShareItems) {
                 showDiagShare = false
+            }
+        }
+        .sheet(isPresented: $showOriginalShare) {
+            CaptureExportShareSheet(items: originalShareItems) {
+                showOriginalShare = false
             }
         }
         .onAppear {
@@ -546,7 +572,29 @@ struct ProcessingView: View {
             diagShareItems = [folder]
             showDiagShare = true
         } catch {
-            diagShareError = "진단 공유 준비에 실패했어요."
+            diagShareError = "진단 공유 준비에 실패했어요. (원본 사진은 포함되지 않습니다)"
+        }
+    }
+
+    private func shareOriginalPackage() {
+        originalShareError = nil
+        isExportingOriginal = true
+        let sessionId = summary.sessionId
+        let captureId = summary.captureId
+        Task {
+            defer { isExportingOriginal = false }
+            do {
+                let folder = try await Task.detached(priority: .userInitiated) {
+                    try CaptureDiagnosticsStore.buildFullSpatialPackageShare(
+                        sessionId: sessionId,
+                        captureId: captureId
+                    )
+                }.value
+                originalShareItems = [folder]
+                showOriginalShare = true
+            } catch {
+                originalShareError = "원본 패키지를 내보낼 수 없어요. 패키지가 완전한지 확인해 주세요."
+            }
         }
     }
 

@@ -137,9 +137,12 @@ enum CaptureDiagnosticsStore {
         }
 
         let readme = """
-        Gonggi capture diagnostics
+        Gonggi capture diagnostics (NOT a full backup)
         sessionId=\(sessionId)
         captureId=\(captureId)
+        IMPORTANT: frames/*.jpg (원본 사진) are OMITTED from this share.
+        Do not treat this diagnostics package as a backup of the capture.
+        Use “원본 패키지 내보내기” to export the full package including JPEGs.
         Includes:
         - session-summary.json, guidance-history.json, generation-diagnostics.json
         - manifest.json, poses.json
@@ -153,6 +156,56 @@ enum CaptureDiagnosticsStore {
         """
         try readme.data(using: .utf8)?.write(to: exportRoot.appendingPathComponent("README.txt"))
         return exportRoot
+    }
+
+    /// Full spatial package share (includes `frames/*.jpg`). Validates before export; leaves device original intact.
+    /// Prefer this for backup — diagnostics share is **not** a backup of originals.
+    static func buildFullSpatialPackageShare(
+        sessionId: String,
+        captureId: String
+    ) throws -> URL {
+        let packageRoot = try CaptureSessionStore.spatialCapturePackageDirectory(sessionId: sessionId)
+        try SpatialCapturePackageValidator.validate(packageRoot: packageRoot)
+
+        let zipDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GonggiOriginal-\(captureId)-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        let zipped = try SpatialCapturePackageZipper.buildArchive(
+            packageRoot: packageRoot,
+            destinationDirectory: zipDir
+        )
+
+        let inventory = CapturePackageRetention.packageInventory(packageRoot: packageRoot)
+        var manifest: [String: Any] = [
+            "kind": "gonggi_full_spatial_package_export",
+            "sessionId": sessionId,
+            "captureId": captureId,
+            "jpegCount": inventory?.jpeg ?? zipped.frameCount,
+            "zipByteSize": zipped.byteSize,
+            "zipFileName": SpatialCapturePackageZipper.archiveFileName,
+            "validatorPassed": true,
+            "note": "Device original under Caches/Captures remains; this is a copy only.",
+            "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
+            "buildNumber": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "",
+        ]
+        if let inventory {
+            manifest["poseCount"] = inventory.poses
+            manifest["intrinsicsCount"] = inventory.intrinsics
+        }
+        let manifestURL = zipDir.appendingPathComponent("export-manifest.json")
+        try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+            .write(to: manifestURL, options: .atomic)
+
+        let readme = """
+        Gonggi FULL spatial package export (원본 포함)
+        sessionId=\(sessionId)
+        captureId=\(captureId)
+        frames JPEG count=\(zipped.frameCount)
+        zip bytes=\(zipped.byteSize)
+        Device original is preserved — this folder is a copy for backup/AirDrop.
+        Do NOT treat the diagnostics share (frames omitted) as a backup of this package.
+        """
+        try readme.data(using: .utf8)?.write(to: zipDir.appendingPathComponent("README.txt"))
+        return zipDir
     }
 
     /// Copies Spatial Capture package diagnostics (not full JPEG set) into the share root.
