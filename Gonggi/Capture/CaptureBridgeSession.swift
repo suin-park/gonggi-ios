@@ -110,14 +110,16 @@ struct CaptureBridgeSession: Equatable {
     }
 
     /// After async JPEG encode/write failure: restore anchors to the last durable JPEG pose
-    /// and enter reacquire. Does **not** decrement bridge/recon observation counters or reuse ids.
+    /// (or **clear** them when none exist) and enter reacquire.
+    /// Does **not** decrement bridge/recon observation counters or reuse ids.
     mutating func restoreAfterAsyncJPEGFailure(
         at timestamp: Double,
         continuityTimestamp: Double?,
         continuityTransform: simd_float4x4?,
         reconstructionTimestamp: Double?,
         reconstructionTransform: simd_float4x4?,
-        enterReacquire: Bool
+        enterReacquire: Bool,
+        clearReconstructionAnchor: Bool
     ) {
         if enterReacquire {
             mode = .reacquiring
@@ -130,10 +132,18 @@ struct CaptureBridgeSession: Equatable {
         if let t = continuityTimestamp, let x = continuityTransform {
             continuityAnchorTimestamp = t
             continuityAnchorTransform = x
+        } else {
+            continuityAnchorTimestamp = nil
+            continuityAnchorTransform = nil
         }
-        if let t = reconstructionTimestamp, let x = reconstructionTransform {
-            reconstructionAnchorTimestamp = t
-            reconstructionAnchorTransform = x
+        if clearReconstructionAnchor {
+            if let t = reconstructionTimestamp, let x = reconstructionTransform {
+                reconstructionAnchorTimestamp = t
+                reconstructionAnchorTransform = x
+            } else {
+                reconstructionAnchorTimestamp = nil
+                reconstructionAnchorTransform = nil
+            }
         }
     }
 

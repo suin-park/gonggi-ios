@@ -6,18 +6,21 @@ import simd
 /// must not leave the session trusting a JPEG-less pose as the continuity anchor.
 ///
 /// Does **not** reuse frameIds or decrement the reservation/`keyframe3DGSCount` cap —
-/// those slots stay burned. Callers restore transforms to the last durable photo and
-/// enter continuity-uncertain / reacquire guidance instead.
+/// those slots stay burned. Callers restore transforms to the last durable photo
+/// (or clear anchors when none exist) and enter continuity-uncertain / reacquire.
 struct AsyncJPEGDurableContinuityState: Equatable {
     var lastDurableContinuityTimestamp: Double?
     var lastDurableContinuityTransform: simd_float4x4?
     var lastDurableReconstructionTimestamp: Double?
     var lastDurableReconstructionTransform: simd_float4x4?
-    /// True after at least one reserved enqueue lost its JPEG while anchors had already advanced.
+    /// True after at least one reserved enqueue lost its JPEG while anchors had already advanced,
+    /// or a durable JPEG succeeded that does not link to the prior durable photo.
     var continuityUncertain: Bool = false
     var lastFailedReservedFrameId: String?
     var lastFailureReason: String?
     var failedReservationCount: Int = 0
+    /// Disk JPEGs that are kept in the package but were not accepted as a continuity-chain step.
+    var orphanDurableFrameIds: [String] = []
 
     mutating func reset() {
         lastDurableContinuityTimestamp = nil
@@ -28,6 +31,11 @@ struct AsyncJPEGDurableContinuityState: Equatable {
         lastFailedReservedFrameId = nil
         lastFailureReason = nil
         failedReservationCount = 0
+        orphanDurableFrameIds = []
+    }
+
+    var hasDurableContinuity: Bool {
+        lastDurableContinuityTransform != nil
     }
 
     mutating func noteDurableJPEGSuccess(
@@ -45,19 +53,27 @@ struct AsyncJPEGDurableContinuityState: Equatable {
         }
     }
 
+    /// Disk write succeeded but pose does not link to the prior durable photo — keep file, break chain.
+    mutating func noteOrphanDurableJPEG(frameId: String, reason: String) {
+        continuityUncertain = true
+        lastFailureReason = reason
+        if !orphanDurableFrameIds.contains(frameId) {
+            orphanDurableFrameIds.append(frameId)
+        }
+    }
+
     /// Snapshot of what to restore after a failed write (policy-ON path).
     func repairSnapshot(failedKind: CaptureAcceptKind) -> AsyncJPEGDurableContinuityRepair {
-        AsyncJPEGDurableContinuityRepair(
+        let hasCont = lastDurableContinuityTransform != nil
+        let clearRecon = failedKind == .reconstructionKeyframe || !hasCont
+        return AsyncJPEGDurableContinuityRepair(
             restoreContinuityTimestamp: lastDurableContinuityTimestamp,
             restoreContinuityTransform: lastDurableContinuityTransform,
-            restoreReconstructionTimestamp: failedKind == .reconstructionKeyframe
-                ? lastDurableReconstructionTimestamp
-                : nil,
-            restoreReconstructionTransform: failedKind == .reconstructionKeyframe
-                ? lastDurableReconstructionTransform
-                : nil,
+            restoreReconstructionTimestamp: clearRecon ? lastDurableReconstructionTimestamp : nil,
+            restoreReconstructionTransform: clearRecon ? lastDurableReconstructionTransform : nil,
             enterReacquire: true,
-            markUncertain: true
+            markUncertain: true,
+            clearReconstructionAnchor: clearRecon
         )
     }
 
@@ -76,6 +92,7 @@ struct AsyncJPEGDurableContinuityRepair: Equatable {
     var restoreReconstructionTransform: simd_float4x4?
     var enterReacquire: Bool
     var markUncertain: Bool
+    var clearReconstructionAnchor: Bool
 }
 
 enum AsyncJPEGDurableContinuity {
@@ -92,7 +109,8 @@ enum AsyncJPEGDurableContinuity {
             continuityTransform: repair.restoreContinuityTransform,
             reconstructionTimestamp: repair.restoreReconstructionTimestamp,
             reconstructionTransform: repair.restoreReconstructionTransform,
-            enterReacquire: repair.enterReacquire
+            enterReacquire: repair.enterReacquire,
+            clearReconstructionAnchor: repair.clearReconstructionAnchor
         )
         if repair.markUncertain {
             coverage.noteContinuityReject()
@@ -107,7 +125,6 @@ enum AsyncJPEGDurableContinuity {
         if reason == "first" || reason.contains("continuity_ok") || reason.contains("recon") {
             return .reconstructionKeyframe
         }
-        // Default: treat as bridge-class for restore scope (safer — does not touch recon anchor).
         return .continuityBridgeObservation
     }
 }

@@ -45,6 +45,10 @@ final class SpatialJPEGEncodeQueue {
     private var flushWaiters: [CheckedContinuation<Void, Never>] = []
     /// Test-only: when true for a snapshot, skip write and fail deterministically.
     private var failureInjector: ((SpatialKeyframeSnapshot) -> Bool)?
+    /// Test-only: hold process for these ids until `releaseStallForTesting()`.
+    private var stallFrameIds: Set<String> = []
+    private var stallCondition = NSCondition()
+    private var stallActive = false
 
     var currentDepth: Int {
         lock.lock()
@@ -67,12 +71,28 @@ final class SpatialJPEGEncodeQueue {
         lock.unlock()
     }
 
+    /// XCTest: stall encode for these frameIds until `releaseStallForTesting()`.
+    func setStallFrameIdsForTesting(_ ids: Set<String>) {
+        stallCondition.lock()
+        stallFrameIds = ids
+        stallActive = !ids.isEmpty
+        stallCondition.unlock()
+    }
+
+    func releaseStallForTesting() {
+        stallCondition.lock()
+        stallActive = false
+        stallFrameIds = []
+        stallCondition.broadcast()
+        stallCondition.unlock()
+    }
+
     func reset() {
         lock.lock()
         accepting = true
         failureInjector = nil
-        // Pending jobs may still finish; depth drains via completions.
         lock.unlock()
+        releaseStallForTesting()
     }
 
     /// Stop accepting new jobs (capture finishing). Pending jobs still run.
@@ -102,11 +122,20 @@ final class SpatialJPEGEncodeQueue {
 
         workQueue.async { [weak self] in
             guard let self else { return }
+            self.waitIfStalled(frameId: job.snapshot.frameId)
             let result = Self.process(job, failureInjector: injector)
             completion(result)
             self.jobDidFinish(onDepthChange: onDepthChange)
         }
         return true
+    }
+
+    private func waitIfStalled(frameId: String) {
+        stallCondition.lock()
+        while stallActive && stallFrameIds.contains(frameId) {
+            stallCondition.wait()
+        }
+        stallCondition.unlock()
     }
 
     /// Wait until all pending encode/write jobs complete.

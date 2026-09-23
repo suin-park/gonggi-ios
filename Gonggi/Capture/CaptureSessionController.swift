@@ -63,6 +63,9 @@ final class CaptureSessionController {
     private let pendingAngularRescue = PendingAngularRescueCoordinator()
     /// Last JPEG-confirmed continuity/recon poses — policy-ON async write failure repair.
     private var durableJPEGContinuity = AsyncJPEGDurableContinuityState()
+    /// Serializes capture-state mutations used by AR-path reservation and JPEG completions.
+    private let captureStateQueue = DispatchQueue(label: "com.whik.gonggi.capture.state")
+    private static let captureStateQueueKey = DispatchSpecificKey<UInt8>()
 
     init(
         captureId: String = CaptureIdRegistry.nextCaptureId(),
@@ -72,6 +75,16 @@ final class CaptureSessionController {
         self.captureId = captureId
         self.sessionId = sessionId ?? captureId
         self.coverageSpatialIndex = coverageSpatialIndex
+        captureStateQueue.setSpecific(key: Self.captureStateQueueKey, value: 1)
+    }
+
+    /// Run `body` on the capture-state serial queue (re-entrant if already on it).
+    private func mutateCaptureState(_ body: () -> Void) {
+        if DispatchQueue.getSpecific(key: Self.captureStateQueueKey) != nil {
+            body()
+        } else {
+            captureStateQueue.sync(execute: body)
+        }
     }
 
     func start() throws {
@@ -493,7 +506,9 @@ final class CaptureSessionController {
                 self?.runtimeTelemetry.updateQueueDepth(depth)
             },
             completion: { [weak self] result in
-                self?.handleJPEGEncodeResult(result)
+                self?.mutateCaptureState {
+                    self?.handleJPEGEncodeResult(result)
+                }
             }
         )
 
@@ -522,12 +537,11 @@ final class CaptureSessionController {
     private func handleJPEGEncodeResult(
         _ result: Result<SpatialJPEGEncodeQueue.Success, SpatialJPEGEncodeQueue.Failure>
     ) {
+        // Caller must already be on `captureStateQueue` via `mutateCaptureState`.
         switch result {
         case .success(let success):
             let snap = success.snapshot
-            spatialStateLock.lock()
             let depthPath = pendingDepthByFrameId.removeValue(forKey: success.frameId) ?? snap.optionalDepthRelativePath
-            spatialStateLock.unlock()
             let quat = CaptureFrameContract.quaternion(from: snap.cameraToWorld)
             let translation = CaptureFrameContract.translation(from: snap.cameraToWorld)
             let keyframe = SpatialCapturePackageBuilder.AcceptedKeyframe(
@@ -562,7 +576,6 @@ final class CaptureSessionController {
                 ),
                 optionalDepthRelativePath: depthPath
             )
-            spatialStateLock.lock()
             acceptedSpatialKeyframes.append(keyframe)
             keyframeDecisions.append(
                 SpatialCaptureKeyframeDecision(
@@ -572,22 +585,13 @@ final class CaptureSessionController {
                     frameId: success.frameId
                 )
             )
-            spatialStateLock.unlock()
             runtimeTelemetry.recordJPEGSuccess(encodeMs: success.encodeMs, writeMs: success.writeMs)
             if PendingAngularRescuePolicy.isEnabled {
-                let kind = CaptureAcceptKind(rawValue: snap.acceptKindRaw ?? "")
-                    ?? AsyncJPEGDurableContinuity.acceptKind(fromAcceptReason: snap.acceptReason)
-                durableJPEGContinuity.noteDurableJPEGSuccess(
-                    frameId: success.frameId,
-                    timestamp: snap.arTimestampSeconds,
-                    transform: snap.cameraToWorld,
-                    acceptKind: kind
-                )
+                applyDurableJPEGSuccess(snapshot: snap)
             }
 
         case .failure(let failure):
             let snap = failure.snapshot
-            spatialStateLock.lock()
             rejectedKeyframeDecisionCount += 1
             // Keep reserved frameId visible as a **failed** decision — never as an accepted photo.
             keyframeDecisions.append(
@@ -598,12 +602,119 @@ final class CaptureSessionController {
                     frameId: snap.frameId
                 )
             )
-            spatialStateLock.unlock()
             runtimeTelemetry.recordJPEGFailure()
             // Policy OFF / Lat Long: leave prior behavior (no anchor repair).
             guard PendingAngularRescuePolicy.isEnabled else { return }
             applyAsyncJPEGFailureRepair(snapshot: snap, reason: failure.reason.rawValue)
         }
+    }
+
+    /// Policy-ON: advance durable only when linked to prior durable (or first durable).
+    private func applyDurableJPEGSuccess(snapshot: SpatialKeyframeSnapshot) {
+        let kind = CaptureAcceptKind(rawValue: snapshot.acceptKindRaw ?? "")
+            ?? AsyncJPEGDurableContinuity.acceptKind(fromAcceptReason: snapshot.acceptReason)
+        if let prior = durableJPEGContinuity.lastDurableContinuityTransform {
+            let (ok, _, _) = PendingAngularRescueLinkGate.linkOK(
+                from: prior,
+                to: snapshot.cameraToWorld
+            )
+            if !ok {
+                // Disk JPEG is real and stays in accepted list — not a continuity-chain step from A.
+                durableJPEGContinuity.noteOrphanDurableJPEG(
+                    frameId: snapshot.frameId,
+                    reason: "durable_link_broken"
+                )
+                AsyncJPEGDurableContinuity.apply(
+                    repair: durableJPEGContinuity.repairSnapshot(failedKind: kind),
+                    at: snapshot.arTimestampSeconds,
+                    bridgeSession: &bridgeSession,
+                    coverage: &reconstructionCoverageModel
+                )
+                if let t = durableJPEGContinuity.lastDurableContinuityTimestamp,
+                   let x = durableJPEGContinuity.lastDurableContinuityTransform
+                {
+                    lastKeyframeTimestamp = t
+                    lastKeyframeTransform = x
+                }
+                lastBridgeVerdict = .reacquire
+                lastGuidanceAction = .reacquireView
+                lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
+                    jpegData: lastReacquireThumbnail.jpegData,
+                    visible: true,
+                    signedYawDeg: lastReacquireThumbnail.signedYawDeg,
+                    proximity: lastReacquireThumbnail.proximity,
+                    title: "연결이 불확실합니다",
+                    guidance: "저장된 사진 사이 연결이 끊겼습니다. 마지막 연결 화면이 다시 보이도록 천천히 움직여 연결을 보강해주세요"
+                )
+                frameContinuityTelemetry.recordHeldFlushCandidate(
+                    arTimestampSeconds: snapshot.arTimestampSeconds,
+                    imageTimestampSeconds: snapshot.arTimestampSeconds,
+                    committed: true,
+                    frameId: snapshot.frameId,
+                    features: ARKitFeatureSummary(
+                        rawFeaturePointCount: nil,
+                        grid: nil,
+                        persistent: PersistentFeatureStats(
+                            previousFramePersistentCount: nil,
+                            previousFramePersistentRatio: nil,
+                            continuityAnchorPersistentCount: nil,
+                            continuityAnchorPersistentRatio: nil,
+                            unavailableReason: .samplingSkipped
+                        ),
+                        trackingState: snapshot.trackingState,
+                        trackingLimitationReason: nil,
+                        unavailableReason: .samplingSkipped
+                    ),
+                    sharpnessScore: snapshot.sharpnessScore,
+                    sharpnessState: snapshot.sharpnessState,
+                    brightness: nil,
+                    lowTextureScore: snapshot.lowTextureScore,
+                    overlapScore: snapshot.overlapScore,
+                    dualAnchor: DualAnchorTelemetrySnapshot(
+                        continuityTranslationM: nil,
+                        continuityYawDeg: nil,
+                        continuityForwardAngleDeg: nil,
+                        reconstructionCumulativeTranslationM: nil,
+                        frustumOverlap: nil,
+                        reconstructionCoverageEstimate: reconstructionCoverageModel.reconstructionCoverageEstimate,
+                        bridgeMode: bridgeSession.mode.rawValue,
+                        verdict: CaptureBridgeVerdict.reacquire.rawValue,
+                        reason: "durable_link_broken",
+                        acceptKind: kind.rawValue
+                    ),
+                    continuityIdentifiers: [],
+                    updateContinuitySet: false
+                )
+                return
+            }
+        }
+        durableJPEGContinuity.noteDurableJPEGSuccess(
+            frameId: snapshot.frameId,
+            timestamp: snapshot.arTimestampSeconds,
+            transform: snapshot.cameraToWorld,
+            acceptKind: kind
+        )
+        // Re-align anchors only when an intervening failure restored them away from this pose.
+        let alreadyAligned = bridgeSession.continuityAnchorTransform.map {
+            Self.poseTranslationDistance($0, snapshot.cameraToWorld) < 1e-3
+        } ?? false
+        if !alreadyAligned {
+            bridgeSession.noteAccepted(
+                timestamp: snapshot.arTimestampSeconds,
+                transform: snapshot.cameraToWorld,
+                yawDeltaDeg: 0,
+                frustumOverlap: 1,
+                kind: kind
+            )
+        }
+        lastKeyframeTimestamp = snapshot.arTimestampSeconds
+        lastKeyframeTransform = snapshot.cameraToWorld
+    }
+
+    private static func poseTranslationDistance(_ a: simd_float4x4, _ b: simd_float4x4) -> Float {
+        let pa = SIMD3<Float>(a.columns.3.x, a.columns.3.y, a.columns.3.z)
+        let pb = SIMD3<Float>(b.columns.3.x, b.columns.3.y, b.columns.3.z)
+        return simd_distance(pa, pb)
     }
 
     /// Policy-ON only: restore continuity to last durable JPEG; do not reuse frameId / decrement cap.
@@ -618,20 +729,26 @@ final class CaptureSessionController {
             bridgeSession: &bridgeSession,
             coverage: &reconstructionCoverageModel
         )
-        // Selector interval must track last durable photo, not the burned reservation pose.
+        // Selector interval must track last durable photo, or clear when none exists.
         if let t = repair.restoreContinuityTimestamp, let x = repair.restoreContinuityTransform {
             lastKeyframeTimestamp = t
             lastKeyframeTransform = x
+        } else {
+            lastKeyframeTimestamp = nil
+            lastKeyframeTransform = nil
         }
         lastBridgeVerdict = .reacquire
         lastGuidanceAction = .reacquireView
+        let guidanceBody = repair.restoreContinuityTransform == nil
+            ? "첫 저장에 실패했습니다. 같은 장면을 다시 맞춰 연결을 시작해 주세요"
+            : "저장에 실패한 장면이 있습니다. 마지막 연결 화면이 다시 보이도록 천천히 움직여 연결을 보강해주세요"
         lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
             jpegData: lastReacquireThumbnail.jpegData,
             visible: true,
             signedYawDeg: lastReacquireThumbnail.signedYawDeg,
             proximity: lastReacquireThumbnail.proximity,
             title: "연결이 불확실합니다",
-            guidance: "저장에 실패한 장면이 있습니다. 마지막 연결 화면이 다시 보이도록 천천히 움직여 연결을 보강해주세요"
+            guidance: guidanceBody
         )
         frameContinuityTelemetry.recordHeldFlushCandidate(
             arTimestampSeconds: snapshot.arTimestampSeconds,
@@ -709,28 +826,29 @@ final class CaptureSessionController {
     ) async -> String? {
         var snap = snapshot
         snap.acceptKindRaw = kind.rawValue
-        // Optimistic advance first (same thread) so async fail repair cannot race ahead of noteAccepted.
-        let idx = Int(snap.frameId.split(separator: "_").last ?? "0") ?? (keyframe3DGSCount + 1)
-        keyframe3DGSCount = max(keyframe3DGSCount, idx)
-        lastKeyframeTimestamp = snap.arTimestampSeconds
-        lastKeyframeTransform = snap.cameraToWorld
-        bridgeSession.noteAccepted(
-            timestamp: snap.arTimestampSeconds,
-            transform: snap.cameraToWorld,
-            yawDeltaDeg: 5,
-            frustumOverlap: 0.85,
-            kind: kind
-        )
-        if kind == .continuityBridgeObservation {
-            reconstructionCoverageModel.noteContinuityBridgeObservation()
-        } else if kind == .reconstructionKeyframe {
-            reconstructionCoverageModel.commitReconstructionKeyframe(
+        mutateCaptureState {
+            let idx = Int(snap.frameId.split(separator: "_").last ?? "0") ?? (keyframe3DGSCount + 1)
+            keyframe3DGSCount = max(keyframe3DGSCount, idx)
+            lastKeyframeTimestamp = snap.arTimestampSeconds
+            lastKeyframeTransform = snap.cameraToWorld
+            bridgeSession.noteAccepted(
+                timestamp: snap.arTimestampSeconds,
                 transform: snap.cameraToWorld,
-                countsForReconstruction: true,
-                wasBridgeStep: false,
-                opticalOK: true,
-                parallaxOK: true
+                yawDeltaDeg: 5,
+                frustumOverlap: 0.85,
+                kind: kind
             )
+            if kind == .continuityBridgeObservation {
+                reconstructionCoverageModel.noteContinuityBridgeObservation()
+            } else if kind == .reconstructionKeyframe {
+                reconstructionCoverageModel.commitReconstructionKeyframe(
+                    transform: snap.cameraToWorld,
+                    countsForReconstruction: true,
+                    wasBridgeStep: false,
+                    opticalOK: true,
+                    parallaxOK: true
+                )
+            }
         }
         if failEncode {
             jpegEncodeQueue.setFailureInjectorForTesting { $0.frameId == snap.frameId }
@@ -743,13 +861,113 @@ final class CaptureSessionController {
                 self?.runtimeTelemetry.updateQueueDepth(depth)
             },
             completion: { [weak self] result in
-                self?.handleJPEGEncodeResult(result)
+                self?.mutateCaptureState {
+                    self?.handleJPEGEncodeResult(result)
+                }
             }
         )
         guard enqueued else { return nil }
         await jpegEncodeQueue.flush()
         jpegEncodeQueue.setFailureInjectorForTesting(nil)
         return snap.frameId
+    }
+
+    /// Enqueue without waiting — for in-flight A/B/C race tests (policy ON).
+    @discardableResult
+    func testHookReserveAndEnqueueNoFlush(
+        snapshot: SpatialKeyframeSnapshot,
+        kind: CaptureAcceptKind
+    ) -> String? {
+        var resultId: String?
+        mutateCaptureState {
+            var snap = snapshot
+            snap.acceptKindRaw = kind.rawValue
+            let idx = Int(snap.frameId.split(separator: "_").last ?? "0") ?? (keyframe3DGSCount + 1)
+            keyframe3DGSCount = max(keyframe3DGSCount, idx)
+            lastKeyframeTimestamp = snap.arTimestampSeconds
+            lastKeyframeTransform = snap.cameraToWorld
+            bridgeSession.noteAccepted(
+                timestamp: snap.arTimestampSeconds,
+                transform: snap.cameraToWorld,
+                yawDeltaDeg: 5,
+                frustumOverlap: 0.85,
+                kind: kind
+            )
+            if kind == .continuityBridgeObservation {
+                reconstructionCoverageModel.noteContinuityBridgeObservation()
+            } else if kind == .reconstructionKeyframe {
+                reconstructionCoverageModel.commitReconstructionKeyframe(
+                    transform: snap.cameraToWorld,
+                    countsForReconstruction: true,
+                    wasBridgeStep: false,
+                    opticalOK: true,
+                    parallaxOK: true
+                )
+            }
+            let enqueued = jpegEncodeQueue.tryEnqueue(
+                SpatialJPEGEncodeQueue.Job(snapshot: snap),
+                onDepthChange: { [weak self] depth in
+                    self?.runtimeTelemetry.updateQueueDepth(depth)
+                },
+                completion: { [weak self] result in
+                    self?.mutateCaptureState {
+                        self?.handleJPEGEncodeResult(result)
+                    }
+                }
+            )
+            resultId = enqueued ? snap.frameId : nil
+        }
+        return resultId
+    }
+
+    func setJPEGStallFrameIdsForTesting(_ ids: Set<String>) {
+        jpegEncodeQueue.setStallFrameIdsForTesting(ids)
+    }
+
+    func releaseJPEGStallForTesting() {
+        jpegEncodeQueue.releaseStallForTesting()
+    }
+
+    func flushJPEGEncodeQueueForTesting() async {
+        await jpegEncodeQueue.flush()
+    }
+
+    func completionStateForTesting() -> CaptureCompletionState { completionState }
+    func lastTerminalContinuityForTesting() -> (Bool, String) {
+        (lastTerminalContinuityOK, lastTerminalContinuityReason)
+    }
+
+    /// Refresh completion gate as AR path would (policy-ON durable count / uncertain).
+    func refreshCompletionGateForTesting(elapsed: Double = 60) {
+        mutateCaptureState {
+            let terminalRaw = bridgeSession.terminalContinuityStatus()
+            let terminal: (ok: Bool, reason: String)
+            if PendingAngularRescuePolicy.isEnabled, durableJPEGContinuity.continuityUncertain {
+                terminal = (false, durableJPEGContinuity.lastFailureReason ?? "durable_jpeg_mismatch")
+            } else {
+                terminal = terminalRaw
+            }
+            lastTerminalContinuityOK = terminal.ok
+            lastTerminalContinuityReason = terminal.reason
+            let keyframeCount = PendingAngularRescuePolicy.isEnabled
+                ? acceptedSpatialKeyframes.count
+                : reconstructionCoverageModel.committedKeyframeCount
+            completionState = CaptureCompletionGate.evaluate(
+                durationSec: elapsed,
+                keyframeCount: keyframeCount,
+                pathLengthM: 5,
+                qualityCoverage: 0.9,
+                overlapState: .good,
+                sharpnessBlurryFraction: 0,
+                trackingNormal: true,
+                baselineGrade: .acceptable,
+                reconstruction: nil,
+                sectorProgress: sectorRingProgress,
+                reconstructionCoverage: reconstructionCoverageModel.reconstructionCoverageEstimate,
+                terminalContinuityOK: terminal.ok,
+                bridgeMode: bridgeSession.mode
+            )
+        }
     }
 
     private func appendKeyframeDecision(_ decision: SpatialCaptureKeyframeDecision) {
@@ -1193,12 +1411,25 @@ final class CaptureSessionController {
 
         let sharp = sharpnessAnalyzer.snapshot()
         reconstructionCoverageModel.updateLive(from: coverage)
-        let terminal = bridgeSession.terminalContinuityStatus()
+        let terminalRaw = bridgeSession.terminalContinuityStatus()
+        let terminal: (ok: Bool, reason: String)
+        if PendingAngularRescuePolicy.isEnabled, durableJPEGContinuity.continuityUncertain {
+            terminal = (false, durableJPEGContinuity.lastFailureReason ?? "durable_jpeg_mismatch")
+        } else {
+            terminal = terminalRaw
+        }
         lastTerminalContinuityOK = terminal.ok
         lastTerminalContinuityReason = terminal.reason
+        // Policy ON: completion keyframe count follows durable accepted JPEGs, not optimistic enqueue.
+        let completionKeyframeCount: Int
+        if PendingAngularRescuePolicy.isEnabled {
+            completionKeyframeCount = acceptedSpatialKeyframes.count
+        } else {
+            completionKeyframeCount = reconstructionCoverageModel.committedKeyframeCount
+        }
         completionState = CaptureCompletionGate.evaluate(
             durationSec: elapsed,
-            keyframeCount: reconstructionCoverageModel.committedKeyframeCount,
+            keyframeCount: completionKeyframeCount,
             pathLengthM: pathM,
             qualityCoverage: qCov,
             overlapState: overlapAnalyzer.lastState,
@@ -1696,41 +1927,42 @@ final class CaptureSessionController {
         guard let frameId = enqueuedId else {
             return nil
         }
-        if live {
-            pendingAngularRescue.markLiveEnqueue()
-        } else {
-            pendingAngularRescue.markEosEnqueue()
-        }
-        bridgeSession.noteAccepted(
-            timestamp: slot.timestamp,
-            transform: slot.transform,
-            yawDeltaDeg: slot.yawDeltaDeg,
-            frustumOverlap: slot.frustumOverlap,
-            kind: slot.acceptKind
-        )
-        continuityThumbnailStore.updateContinuityAnchorImage(
-            pixelBuffer: buffer,
-            timestamp: slot.timestamp
-        )
-        if slot.acceptKind == .continuityBridgeObservation {
-            reconstructionCoverageModel.noteContinuityBridgeObservation()
-        } else if slot.acceptKind == .reconstructionKeyframe {
-            translationBaseline.acceptKeyframe(transform: slot.transform)
-            reconstructionCoverageModel.commitReconstructionKeyframe(
+        mutateCaptureState {
+            if live {
+                pendingAngularRescue.markLiveEnqueue()
+            } else {
+                pendingAngularRescue.markEosEnqueue()
+            }
+            bridgeSession.noteAccepted(
+                timestamp: slot.timestamp,
                 transform: slot.transform,
-                countsForReconstruction: true,
-                wasBridgeStep: false,
-                opticalOK: slot.frustumOverlap >= CaptureBridgeConfig.minFrustumOverlapBridge,
-                parallaxOK: true
+                yawDeltaDeg: slot.yawDeltaDeg,
+                frustumOverlap: slot.frustumOverlap,
+                kind: slot.acceptKind
+            )
+            continuityThumbnailStore.updateContinuityAnchorImage(
+                pixelBuffer: buffer,
+                timestamp: slot.timestamp
+            )
+            if slot.acceptKind == .continuityBridgeObservation {
+                reconstructionCoverageModel.noteContinuityBridgeObservation()
+            } else if slot.acceptKind == .reconstructionKeyframe {
+                translationBaseline.acceptKeyframe(transform: slot.transform)
+                reconstructionCoverageModel.commitReconstructionKeyframe(
+                    transform: slot.transform,
+                    countsForReconstruction: true,
+                    wasBridgeStep: false,
+                    opticalOK: slot.frustumOverlap >= CaptureBridgeConfig.minFrustumOverlapBridge,
+                    parallaxOK: true
+                )
+            }
+            PendingAngularRescueFlushDiagnostics.recordCommittedFlush(
+                collector: frameContinuityTelemetry,
+                slot: slot,
+                frameId: frameId,
+                bridgeMode: bridgeSession.mode.rawValue
             )
         }
-        // Continuity telemetry for the **pending** photo — hold-time quality, not synthetic defaults.
-        PendingAngularRescueFlushDiagnostics.recordCommittedFlush(
-            collector: frameContinuityTelemetry,
-            slot: slot,
-            frameId: frameId,
-            bridgeMode: bridgeSession.mode.rawValue
-        )
         return frameId
     }
 
@@ -1830,7 +2062,9 @@ final class CaptureSessionController {
                 self?.runtimeTelemetry.updateQueueDepth(depth)
             },
             completion: { [weak self] result in
-                self?.handleJPEGEncodeResult(result)
+                self?.mutateCaptureState {
+                    self?.handleJPEGEncodeResult(result)
+                }
             }
         )
         if !enqueued {
