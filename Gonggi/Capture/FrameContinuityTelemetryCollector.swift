@@ -153,6 +153,104 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Inject retention decisions without ARFrame (XCTest sizing / transition retention).
+    /// Mirrors `recordCandidate` permanent-vs-stable policy with a fixed feature payload shape.
+    func recordSyntheticCandidate(
+        arTimestampSeconds: Double,
+        committed: Bool,
+        frameId: String? = nil,
+        verdict: String?,
+        reason: String?,
+        acceptKind: String? = nil,
+        bridgeMode: String = "idle",
+        updateContinuitySet: Bool = false,
+        features: ARKitFeatureSummary? = nil
+    ) {
+        let featureSummary = features ?? ARKitFeatureSummary(
+            rawFeaturePointCount: 120,
+            grid: FeatureGridOccupancy(
+                rows: FrameContinuityTelemetryConfig.gridRows,
+                cols: FrameContinuityTelemetryConfig.gridCols,
+                cellCounts: [4, 3, 2, 5, 8, 4, 3, 2, 1],
+                occupiedCellCount: 9,
+                totalInBoundsPoints: 32,
+                maxCellFraction: 0.25
+            ),
+            persistent: PersistentFeatureStats(
+                previousFramePersistentCount: 80,
+                previousFramePersistentRatio: 0.67,
+                continuityAnchorPersistentCount: committed ? 70 : 10,
+                continuityAnchorPersistentRatio: committed ? 0.58 : 0.08,
+                unavailableReason: .none
+            ),
+            trackingState: "normal",
+            trackingLimitationReason: nil,
+            unavailableReason: .none
+        )
+        let dual = DualAnchorTelemetrySnapshot(
+            continuityTranslationM: 0.05,
+            continuityYawDeg: 4.0,
+            continuityForwardAngleDeg: 3.5,
+            reconstructionCumulativeTranslationM: 0.12,
+            frustumOverlap: 0.72,
+            reconstructionCoverageEstimate: 0.4,
+            bridgeMode: bridgeMode,
+            verdict: verdict,
+            reason: reason,
+            acceptKind: acceptKind
+        )
+        lock.lock()
+        candidateSequence += 1
+        let seq = candidateSequence
+        let record = FrameContinuityTelemetryRecord(
+            schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
+            policyVersion: FrameContinuityTelemetryConfig.policyVersion,
+            candidateSequence: seq,
+            arTimestampSeconds: arTimestampSeconds,
+            imageTimestampSeconds: arTimestampSeconds,
+            frameId: frameId,
+            committed: committed,
+            jpegEnqueueSucceeded: committed,
+            durableJPEGPresent: nil,
+            features: featureSummary,
+            sharpnessScore: 0.85,
+            sharpnessState: "sharp",
+            brightness: 0.55,
+            lowTextureScore: 0.2,
+            overlapScore: 0.8,
+            dualAnchor: dual
+        )
+        let isTransition =
+            committed
+            || verdict == CaptureBridgeVerdict.bridgeRequired.rawValue
+            || verdict == CaptureBridgeVerdict.reacquire.rawValue
+            || verdict != lastPermanentVerdict
+            || reason != lastPermanentReason
+            || acceptKind != lastPermanentAcceptKind
+            || updateContinuitySet
+        if isTransition {
+            permanentRecords.append(record)
+            if permanentRecords.count > FrameContinuityTelemetryConfig.maxPermanentTransitionRecords {
+                let overflow = permanentRecords.count
+                    - FrameContinuityTelemetryConfig.maxPermanentTransitionRecords
+                permanentRecords.removeFirst(overflow)
+            }
+            lastPermanentVerdict = verdict
+            lastPermanentReason = reason
+            lastPermanentAcceptKind = acceptKind
+        } else {
+            stableKeepCounter += 1
+            if stableKeepCounter % FrameContinuityTelemetryConfig.stableDownsampleStride == 0 {
+                stableRecords.append(record)
+            }
+            if stableRecords.count > FrameContinuityTelemetryConfig.maxInMemoryRecords {
+                let overflow = stableRecords.count - FrameContinuityTelemetryConfig.maxInMemoryRecords
+                stableRecords.removeFirst(overflow)
+            }
+        }
+        lock.unlock()
+    }
+
     func snapshotFile() -> FrameContinuityTelemetryFile {
         lock.lock()
         defer { lock.unlock() }
@@ -163,12 +261,13 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
             gridRows: FrameContinuityTelemetryConfig.gridRows,
             gridCols: FrameContinuityTelemetryConfig.gridCols,
             recordCount: merged.count,
-            approximateBytesPerRecordEstimate: 420,
+            approximateBytesPerRecordEstimate:
+                FrameContinuityTelemetryConfig.approximateBytesPerPrettyPrintedRecord,
             records: merged
         )
     }
 
-    /// Approximate archive footprint for reporting.
+    /// Approximate archive footprint for reporting (pretty-printed package root encoding).
     func retentionStats() -> (permanent: Int, stable: Int, merged: Int, approxBytes: Int) {
         lock.lock()
         defer { lock.unlock() }
@@ -177,7 +276,7 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
             permanentRecords.count,
             stableRecords.count,
             merged.count,
-            merged.count * 420
+            merged.count * FrameContinuityTelemetryConfig.approximateBytesPerPrettyPrintedRecord
         )
     }
 

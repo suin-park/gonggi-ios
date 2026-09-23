@@ -561,7 +561,8 @@ final class SpatialCapturePackageTests: XCTestCase {
             gridRows: 3,
             gridCols: 3,
             recordCount: 1,
-            approximateBytesPerRecordEstimate: 420,
+            approximateBytesPerRecordEstimate:
+                FrameContinuityTelemetryConfig.approximateBytesPerPrettyPrintedRecord,
             records: [
                 FrameContinuityTelemetryRecord(
                     schemaVersion: 1,

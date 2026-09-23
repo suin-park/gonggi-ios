@@ -225,7 +225,8 @@ final class CaptureSessionController {
                 signedYawDeg: signed,
                 frustumOverlap: lastFrustumOverlap,
                 at: frame.timestamp,
-                verdict: keyDecision.bridgeVerdict
+                verdict: keyDecision.bridgeVerdict,
+                yawHintReliable: ContinuityYawHint.isYawHintReliable(frustumOverlap: lastFrustumOverlap)
             )
         } else {
             continuityThumbnailStore.noteBridgeVerdict(keyDecision.bridgeVerdict, at: frame.timestamp)

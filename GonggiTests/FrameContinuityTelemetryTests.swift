@@ -58,7 +58,8 @@ final class FrameContinuityTelemetryTests: XCTestCase {
             gridRows: 3,
             gridCols: 3,
             recordCount: 1,
-            approximateBytesPerRecordEstimate: 420,
+            approximateBytesPerRecordEstimate:
+                FrameContinuityTelemetryConfig.approximateBytesPerPrettyPrintedRecord,
             records: [record]
         )
         let data = try JSONEncoder().encode(file)
@@ -211,7 +212,8 @@ final class FrameContinuityTelemetryTests: XCTestCase {
             gridRows: 3,
             gridCols: 3,
             recordCount: 2,
-            approximateBytesPerRecordEstimate: 420,
+            approximateBytesPerRecordEstimate:
+                FrameContinuityTelemetryConfig.approximateBytesPerPrettyPrintedRecord,
             records: [
                 FrameContinuityTelemetryRecord(
                     schemaVersion: 1,
@@ -444,23 +446,205 @@ final class FrameContinuityTelemetryTests: XCTestCase {
     }
 
     func testRetentionKeepsTransitionsBeyondStableRingCap() throws {
-        // Simulate many stable rejects then a late reacquire transition — permanent must retain it.
         let collector = FrameContinuityTelemetryCollector()
-        // We cannot easily feed ARFrames on Windows; exercise merge helpers via snapshot after
-        // constructing records through package path is heavy. Instead verify config + merge policy
-        // via public retentionStats after direct internal simulation is unavailable.
-        // Soft assertion on config contract:
-        XCTAssertEqual(FrameContinuityTelemetryConfig.maxInMemoryRecords, 2_500)
-        XCTAssertEqual(FrameContinuityTelemetryConfig.maxPermanentTransitionRecords, 4_000)
-        XCTAssertEqual(FrameContinuityTelemetryConfig.stableDownsampleStride, 8)
-        // Archive size estimate for a 150s session with ~4500 candidates:
-        // permanent ≤4000 + stable ≤2500 downsampled ≈ up to ~6500 * 420 ≈ 2.7MB JSON.
-        let worstCaseRecords =
-            FrameContinuityTelemetryConfig.maxPermanentTransitionRecords
-            + FrameContinuityTelemetryConfig.maxInMemoryRecords
-        let approxBytes = worstCaseRecords * 420
-        XCTAssertLessThan(approxBytes, 4_000_000)
-        XCTAssertGreaterThan(approxBytes, 500_000)
-        _ = collector
+        // Flood stable rejects past the 2_500 stable ring, then emit a late reacquire + recovery.
+        let firstFaultTs = 10.0
+        collector.recordSyntheticCandidate(
+            arTimestampSeconds: firstFaultTs,
+            committed: false,
+            verdict: CaptureBridgeVerdict.reacquire.rawValue,
+            reason: "reacquire_continuity_lost",
+            acceptKind: CaptureAcceptKind.none.rawValue,
+            bridgeMode: "reacquiring"
+        )
+        // Many identical stable rejects — must downsample, not permanently duplicate.
+        for i in 1...20_000 {
+            collector.recordSyntheticCandidate(
+                arTimestampSeconds: firstFaultTs + Double(i) * (1.0 / 60.0),
+                committed: false,
+                verdict: CaptureBridgeVerdict.reject.rawValue,
+                reason: "pose_jitter",
+                acceptKind: CaptureAcceptKind.none.rawValue
+            )
+        }
+        let recoveryTs = firstFaultTs + 400.0
+        collector.recordSyntheticCandidate(
+            arTimestampSeconds: recoveryTs,
+            committed: true,
+            frameId: "kf_00999",
+            verdict: CaptureBridgeVerdict.accept.rawValue,
+            reason: "continuity_ok",
+            acceptKind: CaptureAcceptKind.reconstructionKeyframe.rawValue,
+            updateContinuitySet: true
+        )
+        let snap = collector.snapshotFile()
+        let stats = collector.retentionStats()
+        XCTAssertGreaterThan(stats.permanent, 0)
+        XCTAssertLessThanOrEqual(stats.stable, FrameContinuityTelemetryConfig.maxInMemoryRecords)
+        XCTAssertTrue(
+            snap.records.contains { $0.dualAnchor.reason == "reacquire_continuity_lost" },
+            "first fault transition must survive beyond stable ring"
+        )
+        XCTAssertTrue(
+            snap.records.contains { $0.dualAnchor.reason == "continuity_ok" && $0.committed },
+            "last recovery transition must remain"
+        )
+        // Ordering + unique sequences.
+        var seen = Set<Int>()
+        var lastTs = -Double.infinity
+        for r in snap.records {
+            XCTAssertFalse(seen.contains(r.candidateSequence))
+            seen.insert(r.candidateSequence)
+            XCTAssertGreaterThanOrEqual(r.arTimestampSeconds, lastTs - 1e-9)
+            lastTs = r.arTimestampSeconds
+        }
+        // Same transition reason must not be permanently stored every stable frame.
+        let reacquirePerm = snap.records.filter { $0.dualAnchor.reason == "reacquire_continuity_lost" }
+        XCTAssertEqual(reacquirePerm.count, 1)
+    }
+
+    /// Real `JSONEncoder` byte measurement for a ~150s / ~9000 ARFrame-style synthetic session.
+    func testSyntheticSessionTelemetryByteMeasurement() throws {
+        let collector = FrameContinuityTelemetryCollector()
+        let arFrameCount = 9_000 // ~150s @ 60 Hz
+        let dt = 150.0 / Double(arFrameCount)
+
+        // Seed accept
+        collector.recordSyntheticCandidate(
+            arTimestampSeconds: 0,
+            committed: true,
+            frameId: "kf_00001",
+            verdict: CaptureBridgeVerdict.accept.rawValue,
+            reason: "first",
+            acceptKind: CaptureAcceptKind.reconstructionKeyframe.rawValue,
+            updateContinuitySet: true
+        )
+
+        var nextAccept = 180
+        for i in 1..<arFrameCount {
+            let t = Double(i) * dt
+            if i == 500 {
+                collector.recordSyntheticCandidate(
+                    arTimestampSeconds: t,
+                    committed: false,
+                    verdict: CaptureBridgeVerdict.bridgeRequired.rawValue,
+                    reason: "bridge_step_too_large",
+                    acceptKind: CaptureAcceptKind.none.rawValue,
+                    bridgeMode: "bridging"
+                )
+            } else if i == 800 {
+                collector.recordSyntheticCandidate(
+                    arTimestampSeconds: t,
+                    committed: false,
+                    verdict: CaptureBridgeVerdict.reacquire.rawValue,
+                    reason: "reacquire_continuity_lost",
+                    acceptKind: CaptureAcceptKind.none.rawValue,
+                    bridgeMode: "reacquiring"
+                )
+            } else if i == 1_200 {
+                collector.recordSyntheticCandidate(
+                    arTimestampSeconds: t,
+                    committed: true,
+                    frameId: "kf_00050",
+                    verdict: CaptureBridgeVerdict.accept.rawValue,
+                    reason: "continuity_ok",
+                    acceptKind: CaptureAcceptKind.reconstructionKeyframe.rawValue,
+                    updateContinuitySet: true
+                )
+            } else if i == nextAccept {
+                collector.recordSyntheticCandidate(
+                    arTimestampSeconds: t,
+                    committed: true,
+                    frameId: String(format: "kf_%05d", i),
+                    verdict: CaptureBridgeVerdict.accept.rawValue,
+                    reason: "continuity_ok",
+                    acceptKind: CaptureAcceptKind.reconstructionKeyframe.rawValue,
+                    updateContinuitySet: true
+                )
+                nextAccept += 180
+            } else if i == 2_000 {
+                collector.recordSyntheticCandidate(
+                    arTimestampSeconds: t,
+                    committed: true,
+                    frameId: "kf_bridge",
+                    verdict: CaptureBridgeVerdict.accept.rawValue,
+                    reason: "continuity_bridge_observation",
+                    acceptKind: CaptureAcceptKind.continuityBridgeObservation.rawValue,
+                    bridgeMode: "bridging",
+                    updateContinuitySet: true
+                )
+            } else {
+                collector.recordSyntheticCandidate(
+                    arTimestampSeconds: t,
+                    committed: false,
+                    verdict: CaptureBridgeVerdict.reject.rawValue,
+                    reason: "min_interval",
+                    acceptKind: CaptureAcceptKind.none.rawValue
+                )
+            }
+        }
+
+        let file = collector.snapshotFile()
+        let stats = collector.retentionStats()
+        let pretty = JSONEncoder()
+        pretty.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let prettyData = try pretty.encode(file)
+        let compact = JSONEncoder()
+        let compactData = try compact.encode(file)
+
+        let lineEncoder = JSONEncoder()
+        var jsonlBytes = 0
+        for r in file.records {
+            let line = try lineEncoder.encode(r)
+            jsonlBytes += line.count + 1
+        }
+
+        let bytesPerPretty = file.recordCount == 0 ? 0 : prettyData.count / file.recordCount
+        let bytesPerCompact = file.recordCount == 0 ? 0 : compactData.count / file.recordCount
+
+        // Scale retained count linearly for duration estimates (same mix density).
+        func projectedPrettyBytes(minutes: Double) -> Int {
+            let scale = (minutes * 60.0) / 150.0
+            return Int(Double(prettyData.count) * scale)
+        }
+
+        XCTAssertEqual(arFrameCount, 9_000)
+        XCTAssertEqual(stats.merged, file.recordCount)
+        XCTAssertGreaterThan(stats.permanent, 5)
+        XCTAssertGreaterThan(stats.stable, 0)
+        XCTAssertLessThanOrEqual(stats.stable, FrameContinuityTelemetryConfig.maxInMemoryRecords)
+        XCTAssertTrue(file.records.contains { $0.dualAnchor.reason == "reacquire_continuity_lost" })
+        XCTAssertTrue(file.records.contains { $0.dualAnchor.reason == "continuity_bridge_observation" })
+        XCTAssertTrue(file.records.contains { $0.dualAnchor.reason == "first" })
+        // Old 420B estimate is incompatible with pretty-printed package encoding.
+        XCTAssertGreaterThan(bytesPerPretty, 800)
+        XCTAssertLessThan(bytesPerPretty, 3_500)
+        XCTAssertEqual(
+            file.approximateBytesPerRecordEstimate,
+            FrameContinuityTelemetryConfig.approximateBytesPerPrettyPrintedRecord
+        )
+        // Keep estimate within ~25% of measured pretty bytes/record.
+        let est = FrameContinuityTelemetryConfig.approximateBytesPerPrettyPrintedRecord
+        XCTAssertLessThan(abs(bytesPerPretty - est), max(400, est / 3))
+
+        // Surface measured sizes in failure messages for Gate logs / report.
+        XCTAssertGreaterThan(
+            prettyData.count,
+            0,
+            """
+            telemetry measure: ARFrames=\(arFrameCount) retained=\(file.recordCount) \
+            permanent=\(stats.permanent) stable=\(stats.stable) \
+            prettyJSON=\(prettyData.count)B compactJSON=\(compactData.count)B jsonl=\(jsonlBytes)B \
+            B/rec_pretty=\(bytesPerPretty) B/rec_compact=\(bytesPerCompact) \
+            proj2min=\(projectedPrettyBytes(minutes: 2)) \
+            proj4min=\(projectedPrettyBytes(minutes: 4)) \
+            proj8min=\(projectedPrettyBytes(minutes: 8))
+            """
+        )
+        _ = projectedPrettyBytes(minutes: 2)
+        _ = projectedPrettyBytes(minutes: 4)
+        _ = projectedPrettyBytes(minutes: 8)
+        _ = bytesPerCompact
+        _ = jsonlBytes
     }
 }

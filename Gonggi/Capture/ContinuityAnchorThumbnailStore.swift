@@ -34,9 +34,19 @@ final class ContinuityAnchorThumbnailStore: @unchecked Sendable {
     }
 
     /// Call when continuityAnchor advances (recon KF or saved bridge obs) with the same ARFrame image.
+    /// While REACQUIRE is active the stored target must stay frozen (do not chase live frames).
     func updateContinuityAnchorImage(pixelBuffer: CVPixelBuffer, timestamp: Double) {
+        lock.lock()
+        let frozen = reacquireSince != nil
+        lock.unlock()
+        if frozen { return }
         guard let data = Self.encodeThumbnailJPEG(pixelBuffer: pixelBuffer) else { return }
         lock.lock()
+        // Re-check: REACQUIRE may have started while encoding.
+        if reacquireSince != nil {
+            lock.unlock()
+            return
+        }
         jpegData = data
         anchorTimestamp = timestamp
         lock.unlock()
@@ -56,11 +66,13 @@ final class ContinuityAnchorThumbnailStore: @unchecked Sendable {
         signedYawDeg: Double?,
         frustumOverlap: Double,
         at timestamp: Double,
-        verdict: CaptureBridgeVerdict?
+        verdict: CaptureBridgeVerdict?,
+        yawHintReliable: Bool = true
     ) {
         lock.lock()
         defer { lock.unlock() }
-        lastSignedYawDeg = signedYawDeg
+        // Hide left/right arrows when yaw hint is unreliable (prefer no arrow over wrong direction).
+        lastSignedYawDeg = yawHintReliable ? signedYawDeg : nil
         // Proximity: blend frustum toward reacquire floor and angular closeness.
         let yawAbs = abs(signedYawDeg ?? 90)
         let yawScore = max(0, 1 - yawAbs / CaptureBridgeConfig.unsupportedAngularJumpDeg)
@@ -114,12 +126,23 @@ final class ContinuityAnchorThumbnailStore: @unchecked Sendable {
 
 enum ContinuityYawHint {
     /// Signed shortest yaw from `from` → `to` (degrees). Positive = turn right (approx).
+    /// Uses circular normalization (`atan2`-equivalent wrap via ±180 folding).
     static func signedYawDegrees(from: simd_float4x4, to: simd_float4x4) -> Double {
         let a = FrustumOverlapProxy.yawDegrees(from: from)
         let b = FrustumOverlapProxy.yawDegrees(from: to)
-        var d = Double(b - a)
+        return circularDeltaDegrees(Double(b - a))
+    }
+
+    /// Circular signed angle in (−180, 180].
+    static func circularDeltaDegrees(_ delta: Double) -> Double {
+        var d = delta
         while d > 180 { d -= 360 }
         while d < -180 { d += 360 }
         return d
+    }
+
+    /// Frustum too weak → do not trust left/right arrow direction.
+    static func isYawHintReliable(frustumOverlap: Double) -> Bool {
+        frustumOverlap >= CaptureBridgeConfig.frustumOverlapLost
     }
 }

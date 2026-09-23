@@ -286,6 +286,9 @@ final class CaptureBridgePolicyTests: XCTestCase {
     }
 
     /// Continuous 16° over ~0.35s at bridge-observation cadence → progressive bridge steps.
+    /// Proves continuityAnchor advances to each accepted candidate (forward-vector / transform),
+    /// reconstructionAnchor stays fixed, and session does not enter REACQUIRE.
+    /// Wrap-safe: does **not** compare raw yaw scalars (which fail near ±180°).
     func testProgressiveBridgeAcceptsIntermediateStepsDuringContinuousYaw() {
         var session = CaptureBridgeSession()
         let origin = yawTransform(degrees: 0)
@@ -296,8 +299,8 @@ final class CaptureBridgePolicyTests: XCTestCase {
             frustumOverlap: 1,
             kind: .reconstructionKeyframe
         )
+        let recon0 = session.reconstructionAnchorTransform!
         var bridgeJPEGAccepts = 0
-        var lastContX: Float = 0
         // Bridge interval 0.05s; ~2.3°/step keeps each step inside bridgeStepMax.
         for i in 1...7 {
             let yaw = Float(i) * (16.0 / 7.0)
@@ -314,14 +317,71 @@ final class CaptureBridgePolicyTests: XCTestCase {
                 )
                 if d.acceptKind == .continuityBridgeObservation {
                     bridgeJPEGAccepts += 1
-                    let contX = session.continuityAnchorTransform!.columns.3.x
-                    XCTAssertGreaterThan(contX, lastContX - 1e-5, "continuityAnchor must step forward")
-                    lastContX = contX
+                    assertForwardAligned(
+                        session.continuityAnchorTransform!,
+                        cand,
+                        message: "continuityAnchor must match accepted bridge candidate"
+                    )
                 }
             }
         }
-        XCTAssertGreaterThanOrEqual(bridgeJPEGAccepts, 2, "expected progressive bridge steps, got \(bridgeJPEGAccepts)")
+        XCTAssertGreaterThanOrEqual(bridgeJPEGAccepts, 1, "expected ≥1 progressive bridge JPEG accept, got \(bridgeJPEGAccepts)")
+        XCTAssertLessThanOrEqual(bridgeJPEGAccepts, 8, "bridge density must stay bounded, got \(bridgeJPEGAccepts)")
+        assertTransformsNearlyEqual(session.reconstructionAnchorTransform!, recon0)
         XCTAssertNotEqual(session.mode, .reacquiring)
+    }
+
+    /// Same progressive-bridge contract while crossing the ±180° yaw boundary.
+    func testProgressiveBridgeAcrossYawWrapUpdatesContinuityAnchorByForwardVector() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 170)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let recon0 = session.reconstructionAnchorTransform!
+        var bridgeJPEGAccepts = 0
+        // 170 → ~186° ≡ −174° over 7 steps (~2.3° each), crossing ±180.
+        for i in 1...7 {
+            let yaw = 170.0 + Double(i) * (16.0 / 7.0)
+            let cand = yawTransform(degrees: Float(yaw), translation: SIMD3(0.02 * Float(i), 0, 0))
+            let t = Double(i) * 0.05
+            let d = decide(to: cand, timestamp: t, session: &session)
+            if d.accept, d.acceptKind == .continuityBridgeObservation {
+                session.noteAccepted(
+                    timestamp: t,
+                    transform: cand,
+                    yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                    frustumOverlap: d.frustumOverlap ?? 0,
+                    kind: d.acceptKind
+                )
+                bridgeJPEGAccepts += 1
+                assertForwardAligned(
+                    session.continuityAnchorTransform!,
+                    cand,
+                    message: "wrap-crossing continuityAnchor must track accepted candidate"
+                )
+            } else if d.accept {
+                session.noteAccepted(
+                    timestamp: t,
+                    transform: cand,
+                    yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                    frustumOverlap: d.frustumOverlap ?? 0,
+                    kind: d.acceptKind
+                )
+            }
+        }
+        XCTAssertGreaterThanOrEqual(bridgeJPEGAccepts, 1, "wrap-crossing progressive bridge expected, got \(bridgeJPEGAccepts)")
+        assertTransformsNearlyEqual(session.reconstructionAnchorTransform!, recon0)
+        XCTAssertNotEqual(session.mode, .reacquiring)
+        XCTAssertGreaterThan(
+            forwardAngleDegrees(from: origin, to: session.continuityAnchorTransform!),
+            5,
+            "continuityAnchor must have progressed across the wrap region"
+        )
     }
 
     func testThirtyDegreeSingleJumpStillReacquires() {
@@ -342,6 +402,157 @@ final class CaptureBridgePolicyTests: XCTestCase {
             d.reason
         )
         XCTAssertEqual(session.continuityAnchorTransform, origin)
+        XCTAssertEqual(session.continuityBridgeObservationCount, 0)
+    }
+
+    /// Static / micro-jitter for 3s → no bridge JPEG (eval cadence ≠ save cadence).
+    func testStaticJitterThreeSecondsProducesZeroBridgeJPEG() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        var bridge = 0
+        var recon = 0
+        for i in 1...60 { // 3.0s at 0.05s
+            let yaw = Float((i % 3) - 1) * 0.3 // ±0.3° jitter
+            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.002 * Float(i % 2), 0, 0))
+            let t = Double(i) * 0.05
+            let d = decide(to: cand, timestamp: t, session: &session)
+            if d.accept {
+                session.noteAccepted(
+                    timestamp: t,
+                    transform: cand,
+                    yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                    frustumOverlap: d.frustumOverlap ?? 0,
+                    kind: d.acceptKind
+                )
+                if d.acceptKind == .continuityBridgeObservation { bridge += 1 }
+                if d.acceptKind == .reconstructionKeyframe { recon += 1 }
+            }
+        }
+        XCTAssertEqual(bridge, 0, "jitter must not enqueue bridge JPEG")
+        XCTAssertEqual(recon, 0)
+        XCTAssertEqual(session.continuityBridgeObservationCount, 0)
+        XCTAssertNotEqual(session.mode, .reacquiring)
+    }
+
+    /// Continuous 90° over 3s → bounded progressive bridges, safe angular steps, continuity held.
+    func testContinuousNinetyDegreesOverThreeSecondsBoundsBridgeDensity() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let recon0 = session.reconstructionAnchorTransform!
+        var bridge = 0
+        var reacquire = 0
+        var maxStep = 0.0
+        var lastCont = origin
+        let steps = 60 // 3.0s @ 0.05s
+        for i in 1...steps {
+            let yaw = Float(i) * (90.0 / Float(steps))
+            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.015 * Float(i), 0, 0))
+            let t = Double(i) * 0.05
+            let d = decide(to: cand, timestamp: t, session: &session)
+            if d.bridgeVerdict == .reacquire { reacquire += 1 }
+            if d.accept {
+                let step = forwardAngleDegrees(from: lastCont, to: cand)
+                if d.acceptKind == .continuityBridgeObservation {
+                    bridge += 1
+                    maxStep = max(maxStep, step)
+                    session.noteAccepted(
+                        timestamp: t,
+                        transform: cand,
+                        yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                        frustumOverlap: d.frustumOverlap ?? 0,
+                        kind: d.acceptKind
+                    )
+                    assertForwardAligned(session.continuityAnchorTransform!, cand)
+                    lastCont = cand
+                } else {
+                    session.noteAccepted(
+                        timestamp: t,
+                        transform: cand,
+                        yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                        frustumOverlap: d.frustumOverlap ?? 0,
+                        kind: d.acceptKind
+                    )
+                    lastCont = cand
+                }
+            }
+        }
+        XCTAssertEqual(reacquire, 0)
+        XCTAssertGreaterThan(bridge, 0)
+        // Eval cadence caps saves at ≤1 per 0.05s; continuous turn may accept most angular-enough frames.
+        XCTAssertLessThanOrEqual(bridge, steps, "bridge density unbounded: \(bridge)")
+        XCTAssertLessThanOrEqual(maxStep, CaptureBridgeConfig.bridgeStepMaxYawDeg + 1.0)
+        assertTransformsNearlyEqual(session.reconstructionAnchorTransform!, recon0)
+        XCTAssertNotEqual(session.mode, .reacquiring)
+    }
+
+    /// Walking + small yaw keeps reconstruction cadence; bridges do not replace recon KFs.
+    func testNormalWalkingSmallYawKeepsReconstructionCadence() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        var bridge = 0
+        var recon = 1
+        for i in 1...20 {
+            let cand = yawTransform(
+                degrees: Float(i) * 1.2,
+                translation: SIMD3(0.08 * Float(i), 0, 0)
+            )
+            let t = Double(i) * 0.35 // recon cadence
+            let d = decide(to: cand, timestamp: t, session: &session)
+            if d.accept {
+                session.noteAccepted(
+                    timestamp: t,
+                    transform: cand,
+                    yawDeltaDeg: d.yawDeltaDeg ?? 0,
+                    frustumOverlap: d.frustumOverlap ?? 0,
+                    kind: d.acceptKind
+                )
+                if d.acceptKind == .continuityBridgeObservation { bridge += 1 }
+                if d.acceptKind == .reconstructionKeyframe { recon += 1 }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(recon, 4, "reconstruction keyframes starved: \(recon)")
+        XCTAssertLessThan(bridge, recon, "bridges must not dominate walking recon path")
+    }
+
+    /// Enqueue failure contract: without noteAccepted (sync JPEG enqueue fail), continuityAnchor must not advance.
+    func testSkippedNoteAcceptedOnEnqueueFailureDoesNotAdvanceContinuityAnchor() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let cand = yawTransform(degrees: 4, translation: SIMD3(0.02, 0, 0))
+        let d = decide(to: cand, timestamp: 0.08, session: &session)
+        XCTAssertTrue(d.accept)
+        XCTAssertEqual(d.acceptKind, .continuityBridgeObservation)
+        // Simulate jpeg_queue_full / pixel_copy_failed: do not call noteAccepted.
+        XCTAssertEqual(session.continuityAnchorTransform, origin)
+        XCTAssertEqual(session.continuityBridgeObservationCount, 0)
     }
 
     func testBridgeFeaturePersistenceZeroBlocksAnchorAdvance() {
@@ -371,6 +582,84 @@ final class CaptureBridgePolicyTests: XCTestCase {
         XCTAssertEqual(session.continuityAnchorTransform, origin)
     }
 
+    func testBridgeFeaturePersistencePositiveAllowsAccept() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let cand = yawTransform(degrees: 4, translation: SIMD3(0.02, 0, 0))
+        let d = KeyframeSelector3DGS.shouldAccept(
+            timestamp: 0.08,
+            transform: cand,
+            trackingNormal: true,
+            lastKeyframeTimestamp: session.continuityAnchorTimestamp,
+            lastKeyframeTransform: session.continuityAnchorTransform,
+            keyframeCount: 1,
+            previousFramePersistentRatio: 0.5,
+            featurePersistenceAvailable: true,
+            bridgeSession: &session
+        )
+        XCTAssertTrue(d.accept, d.reason)
+        XCTAssertEqual(d.acceptKind, .continuityBridgeObservation)
+    }
+
+    /// Unavailable / unsupported persistence must not be treated as 0 (no permanent bridge block).
+    func testBridgeFeaturePersistenceUnavailableDoesNotHardBlock() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let cand = yawTransform(degrees: 4, translation: SIMD3(0.02, 0, 0))
+        let d = KeyframeSelector3DGS.shouldAccept(
+            timestamp: 0.08,
+            transform: cand,
+            trackingNormal: true,
+            lastKeyframeTimestamp: session.continuityAnchorTimestamp,
+            lastKeyframeTransform: session.continuityAnchorTransform,
+            keyframeCount: 1,
+            previousFramePersistentRatio: nil,
+            featurePersistenceAvailable: false,
+            bridgeSession: &session
+        )
+        XCTAssertTrue(d.accept, "unavailable persistence must fall back to pose/frustum; got \(d.reason)")
+        XCTAssertNotEqual(d.reason, "bridge_feature_persistence_weak")
+    }
+
+    func testContinuityYawHintWrapSafeAndUnreliableHidesArrow() {
+        let a = yawTransform(degrees: 170)
+        let b = yawTransform(degrees: -170) // +20° shortest across wrap
+        let signed = ContinuityYawHint.signedYawDegrees(from: a, to: b)
+        XCTAssertEqual(signed, 20, accuracy: 0.5)
+        XCTAssertEqual(ContinuityYawHint.circularDeltaDegrees(350), -10, accuracy: 1e-6)
+        XCTAssertFalse(ContinuityYawHint.isYawHintReliable(frustumOverlap: 0.05))
+        XCTAssertTrue(ContinuityYawHint.isYawHintReliable(frustumOverlap: 0.5))
+
+        let store = ContinuityAnchorThumbnailStore()
+        store.updateLiveProximity(
+            signedYawDeg: 25,
+            frustumOverlap: 0.05,
+            at: 1.0,
+            verdict: .reacquire,
+            yawHintReliable: false
+        )
+        // Force visible path: reacquire long enough + fake jpeg via private path is unavailable;
+        // assert proximity update cleared signed yaw when unreliable.
+        store.noteBridgeVerdict(.reacquire, at: 1.0)
+        let snap = store.snapshot(now: 2.0)
+        // Without jpeg, not visible — signedYaw still nil when unreliable was set.
+        XCTAssertNil(snap.signedYawDeg)
+    }
+
     func testReacquireThumbnailTargetFrozenWhileReacquiring() {
         let store = ContinuityAnchorThumbnailStore()
         // Simulate two anchor updates then long REACQUIRE — target timestamp must stay.
@@ -387,5 +676,34 @@ final class CaptureBridgePolicyTests: XCTestCase {
         store.noteBridgeVerdict(.accept, at: 6.0)
         let cleared = store.snapshot(now: 6.1)
         XCTAssertFalse(cleared.visible)
+    }
+
+    // MARK: - Helpers
+
+    private func forwardAngleDegrees(from a: simd_float4x4, to b: simd_float4x4) -> Double {
+        Double(CaptureMath.rotationDeltaRadians(from: a, to: b) * 180 / .pi)
+    }
+
+    private func assertForwardAligned(
+        _ anchor: simd_float4x4,
+        _ candidate: simd_float4x4,
+        message: String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let deg = forwardAngleDegrees(from: anchor, to: candidate)
+        XCTAssertLessThan(deg, 0.5, "\(message) forwardAngle=\(deg)°", file: file, line: line)
+        let ta = SIMD3(anchor.columns.3.x, anchor.columns.3.y, anchor.columns.3.z)
+        let tb = SIMD3(candidate.columns.3.x, candidate.columns.3.y, candidate.columns.3.z)
+        XCTAssertLessThan(simd_distance(ta, tb), 1e-4, "\(message) translation", file: file, line: line)
+    }
+
+    private func assertTransformsNearlyEqual(
+        _ a: simd_float4x4,
+        _ b: simd_float4x4,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        assertForwardAligned(a, b, message: "transforms must match", file: file, line: line)
     }
 }

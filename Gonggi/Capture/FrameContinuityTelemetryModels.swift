@@ -18,6 +18,10 @@ enum FrameContinuityTelemetryConfig {
     static let maxPermanentTransitionRecords = 4_000
     /// Downsample every N-th stable record when over soft cap.
     static let stableDownsampleStride = 8
+    /// Measured via `JSONEncoder` with `[.prettyPrinted, .sortedKeys]` (package root encoding).
+    /// Compact/JSONL is much smaller; do not use for archive size planning alone.
+    /// Updated from synthetic XCTest measurement — not a hard cap.
+    static let approximateBytesPerPrettyPrintedRecord = 1_750
     static let fileName = "frame_continuity_telemetry.json"
     static let debugJSONLFileName = "frame_continuity_telemetry.jsonl"
 }
