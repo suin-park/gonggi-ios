@@ -5,7 +5,14 @@ import simd
 /// Does **not** feed CaptureBridgeSession decisions or thresholds.
 enum FrameContinuityTelemetryConfig {
     static let schemaVersion = 1
+    /// Shipped dual-anchor policy id (default capture path).
     static let policyVersion = "capture_bridge_dual_anchor_v1"
+    /// Active id written into telemetry — switches only when pending-angular-rescue candidate is ON.
+    static var activePolicyVersion: String {
+        PendingAngularRescuePolicy.isEnabled
+            ? PendingAngularRescuePolicy.policyVersion
+            : policyVersion
+    }
     /// Fixed grid for occupancy histogram (recorded in schema).
     static let gridRows = 3
     static let gridCols = 3

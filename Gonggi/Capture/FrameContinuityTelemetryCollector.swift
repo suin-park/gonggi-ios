@@ -103,7 +103,7 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
         let seq = candidateSequence
         let record = FrameContinuityTelemetryRecord(
             schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
-            policyVersion: FrameContinuityTelemetryConfig.policyVersion,
+            policyVersion: FrameContinuityTelemetryConfig.activePolicyVersion,
             candidateSequence: seq,
             arTimestampSeconds: arTs,
             imageTimestampSeconds: imageTimestampSeconds ?? arTs,
@@ -204,7 +204,7 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
         let seq = candidateSequence
         let record = FrameContinuityTelemetryRecord(
             schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
-            policyVersion: FrameContinuityTelemetryConfig.policyVersion,
+            policyVersion: FrameContinuityTelemetryConfig.activePolicyVersion,
             candidateSequence: seq,
             arTimestampSeconds: arTimestampSeconds,
             imageTimestampSeconds: arTimestampSeconds,
@@ -257,7 +257,7 @@ final class FrameContinuityTelemetryCollector: @unchecked Sendable {
         let merged = Self.mergeBySequence(permanent: permanentRecords, stable: stableRecords)
         return FrameContinuityTelemetryFile(
             schemaVersion: FrameContinuityTelemetryConfig.schemaVersion,
-            policyVersion: FrameContinuityTelemetryConfig.policyVersion,
+            policyVersion: FrameContinuityTelemetryConfig.activePolicyVersion,
             gridRows: FrameContinuityTelemetryConfig.gridRows,
             gridCols: FrameContinuityTelemetryConfig.gridCols,
             recordCount: merged.count,
