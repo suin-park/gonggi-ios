@@ -194,17 +194,17 @@ final class ClientGenerationPipelineTests: XCTestCase {
             return uploads >= 1 || vm.errorMessage != nil
         }
         vm.cancel()
-        try await waitUntil(timeout: 5) { !vm.isRunning }
+        try await waitUntil(timeout: 5) {
+            !vm.isRunning && (vm.canRetrySameCapture || vm.errorMessage != nil)
+        }
 
         XCTAssertTrue(
             CapturePackageRetention.hasRetainedSpatialPackage(sessionId: sessionId, packageRootHint: root)
         )
         let cancelCount = await service.cancelCount
         XCTAssertEqual(cancelCount, 0, "local cancel must not DELETE server draft")
-        XCTAssertTrue(
-            vm.canRetrySameCapture
-                || vm.errorMessage == SpaceGenerationErrorPresenter.uploadCancelled
-        )
+        XCTAssertTrue(vm.canRetrySameCapture)
+        XCTAssertEqual(vm.errorMessage, SpaceGenerationErrorPresenter.uploadCancelled)
     }
 
     func testMissingPackageBlocksRetry() async throws {

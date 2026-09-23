@@ -67,7 +67,7 @@ final class ProcessingViewModel: ObservableObject {
     func cancel() {
         pollTask?.cancel()
         pollTask = nil
-        isRunning = false
+        // isRunning stays true until the cancelled Task finishes cleanup (retry flags / copy).
     }
 
     private func runPipeline(
