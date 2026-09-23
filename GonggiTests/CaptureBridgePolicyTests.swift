@@ -72,7 +72,7 @@ final class CaptureBridgePolicyTests: XCTestCase {
         let est0 = coverage.reconstructionCoverageEstimate
         let reconT0 = session.reconstructionAnchorTimestamp
         for i in 1...6 {
-            let cand = yawTransform(degrees: Float(i * 5))
+            let cand = yawTransform(degrees: Float(i * 8))
             let d = decide(to: cand, timestamp: Double(i) * 0.35, session: &session)
             if d.accept {
                 session.noteAccepted(
@@ -285,6 +285,56 @@ final class CaptureBridgePolicyTests: XCTestCase {
         XCTAssertNotEqual(session.mode, .reacquiring)
     }
 
+    /// Bridge accepts must not permanently demote recon KF: recon interval is vs last recon timestamp.
+    func testReconstructionIntervalUsesLastReconNotLastBridge() {
+        var session = CaptureBridgeSession()
+        let origin = yawTransform(degrees: 0)
+        session.noteAccepted(
+            timestamp: 0,
+            transform: origin,
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        // Bridge accept at 0.10s — advances continuity clock but not reconstructionAnchor time.
+        let bridgePose = yawTransform(degrees: 7, translation: SIMD3(0.015, 0, 0))
+        session.noteAccepted(
+            timestamp: 0.10,
+            transform: bridgePose,
+            yawDeltaDeg: 7,
+            frustumOverlap: 0.9,
+            kind: .continuityBridgeObservation
+        )
+        XCTAssertEqual(session.reconstructionAnchorTimestamp, 0)
+        XCTAssertEqual(session.continuityAnchorTimestamp, 0.10, accuracy: 1e-9)
+        // dt vs continuity = 0.25 ≥ bridge interval, but would be <0.30 if wrongly using bridge clock
+        // for recon demote after a hypothetical later bridge — here recon clock is 0.35 ≥ 0.30.
+        let cand = yawTransform(degrees: 8, translation: SIMD3(0.12, 0, 0))
+        let d = decide(to: cand, timestamp: 0.35, session: &session)
+        XCTAssertTrue(d.accept, d.reason)
+        XCTAssertEqual(
+            d.acceptKind,
+            .reconstructionKeyframe,
+            "recon interval must use reconstructionAnchorTimestamp; got \(d.reason) kind=\(d.acceptKind)"
+        )
+    }
+
+    /// Idle soft-band must not enqueue bridge JPEG below minBridgeSaveAngularDeg.
+    func testIdleSoftBandBelowSaveFloorDoesNotEnqueueBridgeJPEG() {
+        var session = CaptureBridgeSession()
+        session.noteAccepted(
+            timestamp: 0,
+            transform: yawTransform(degrees: 0),
+            yawDeltaDeg: 0,
+            frustumOverlap: 1,
+            kind: .reconstructionKeyframe
+        )
+        let cand = yawTransform(degrees: 4, translation: SIMD3(0.02, 0, 0))
+        let d = decide(to: cand, timestamp: 0.25, session: &session)
+        XCTAssertFalse(d.accept, "4° < minBridgeSaveAngularDeg should not save bridge; got \(d.reason)")
+        XCTAssertNotEqual(d.acceptKind, .continuityBridgeObservation)
+    }
+
     /// Continuous 16° over ~0.35s at bridge-observation cadence → progressive bridge steps.
     /// Proves continuityAnchor advances to each accepted candidate (forward-vector / transform),
     /// reconstructionAnchor stays fixed, and session does not enter REACQUIRE.
@@ -301,11 +351,12 @@ final class CaptureBridgePolicyTests: XCTestCase {
         )
         let recon0 = session.reconstructionAnchorTransform!
         var bridgeJPEGAccepts = 0
-        // Bridge interval 0.05s; ~2.3°/step keeps each step inside bridgeStepMax.
-        for i in 1...7 {
-            let yaw = Float(i) * (16.0 / 7.0)
-            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.02 * Float(i), 0, 0))
-            let t = Double(i) * 0.05
+        // Bridge interval; accumulate past minBridgeSaveAngularDeg (8°) before soft max (12°).
+        // 16° over ~0.40s at 0.20s cadence (2 steps) — V1_036-class continuous turn.
+        for i in 1...3 {
+            let yaw = Float(i) * (16.0 / 3.0)
+            let cand = yawTransform(degrees: yaw, translation: SIMD3(0.03 * Float(i), 0, 0))
+            let t = Double(i) * CaptureBridgeConfig.minBridgeObservationIntervalSec
             let d = decide(to: cand, timestamp: t, session: &session)
             if d.accept {
                 session.noteAccepted(
@@ -326,7 +377,7 @@ final class CaptureBridgePolicyTests: XCTestCase {
             }
         }
         XCTAssertGreaterThanOrEqual(bridgeJPEGAccepts, 1, "expected ≥1 progressive bridge JPEG accept, got \(bridgeJPEGAccepts)")
-        XCTAssertLessThanOrEqual(bridgeJPEGAccepts, 8, "bridge density must stay bounded, got \(bridgeJPEGAccepts)")
+        XCTAssertLessThanOrEqual(bridgeJPEGAccepts, 3, "bridge density must stay bounded, got \(bridgeJPEGAccepts)")
         assertTransformsNearlyEqual(session.reconstructionAnchorTransform!, recon0)
         XCTAssertNotEqual(session.mode, .reacquiring)
     }
@@ -344,11 +395,11 @@ final class CaptureBridgePolicyTests: XCTestCase {
         )
         let recon0 = session.reconstructionAnchorTransform!
         var bridgeJPEGAccepts = 0
-        // 170 → ~186° ≡ −174° over 7 steps (~2.3° each), crossing ±180.
-        for i in 1...7 {
-            let yaw = 170.0 + Double(i) * (16.0 / 7.0)
-            let cand = yawTransform(degrees: Float(yaw), translation: SIMD3(0.02 * Float(i), 0, 0))
-            let t = Double(i) * 0.05
+        // Cross ±180 with 0.20s cadence and ≥ save-floor steps.
+        for i in 1...3 {
+            let yaw = 170.0 + Double(i) * (16.0 / 3.0)
+            let cand = yawTransform(degrees: Float(yaw), translation: SIMD3(0.03 * Float(i), 0, 0))
+            let t = Double(i) * CaptureBridgeConfig.minBridgeObservationIntervalSec
             let d = decide(to: cand, timestamp: t, session: &session)
             if d.accept, d.acceptKind == .continuityBridgeObservation {
                 session.noteAccepted(
@@ -418,10 +469,10 @@ final class CaptureBridgePolicyTests: XCTestCase {
         )
         var bridge = 0
         var recon = 0
-        for i in 1...60 { // 3.0s at 0.05s
+        for i in 1...15 { // 3.0s at bridge cadence
             let yaw = Float((i % 3) - 1) * 0.3 // ±0.3° jitter
             let cand = yawTransform(degrees: yaw, translation: SIMD3(0.002 * Float(i % 2), 0, 0))
-            let t = Double(i) * 0.05
+            let t = Double(i) * CaptureBridgeConfig.minBridgeObservationIntervalSec
             let d = decide(to: cand, timestamp: t, session: &session)
             if d.accept {
                 session.noteAccepted(
@@ -457,11 +508,12 @@ final class CaptureBridgePolicyTests: XCTestCase {
         var reacquire = 0
         var maxStep = 0.0
         var lastCont = origin
-        let steps = 60 // 3.0s @ 0.05s
+        let stepDt = CaptureBridgeConfig.minBridgeObservationIntervalSec
+        let steps = Int((3.0 / stepDt).rounded(.down))
         for i in 1...steps {
             let yaw = Float(i) * (90.0 / Float(steps))
             let cand = yawTransform(degrees: yaw, translation: SIMD3(0.015 * Float(i), 0, 0))
-            let t = Double(i) * 0.05
+            let t = Double(i) * stepDt
             let d = decide(to: cand, timestamp: t, session: &session)
             if d.bridgeVerdict == .reacquire { reacquire += 1 }
             if d.accept {
@@ -492,8 +544,7 @@ final class CaptureBridgePolicyTests: XCTestCase {
         }
         XCTAssertEqual(reacquire, 0)
         XCTAssertGreaterThan(bridge, 0)
-        // Eval cadence caps saves at ≤1 per 0.05s; continuous turn may accept most angular-enough frames.
-        XCTAssertLessThanOrEqual(bridge, steps, "bridge density unbounded: \(bridge)")
+        XCTAssertLessThanOrEqual(bridge, 15, "bridge density too high under save-floor policy: \(bridge)")
         XCTAssertLessThanOrEqual(maxStep, CaptureBridgeConfig.bridgeStepMaxYawDeg + 1.0)
         assertTransformsNearlyEqual(session.reconstructionAnchorTransform!, recon0)
         XCTAssertNotEqual(session.mode, .reacquiring)
@@ -546,9 +597,9 @@ final class CaptureBridgePolicyTests: XCTestCase {
             frustumOverlap: 1,
             kind: .reconstructionKeyframe
         )
-        let cand = yawTransform(degrees: 4, translation: SIMD3(0.02, 0, 0))
-        let d = decide(to: cand, timestamp: 0.08, session: &session)
-        XCTAssertTrue(d.accept)
+        let cand = yawTransform(degrees: 9, translation: SIMD3(0.02, 0, 0))
+        let d = decide(to: cand, timestamp: 0.25, session: &session)
+        XCTAssertTrue(d.accept, d.reason)
         XCTAssertEqual(d.acceptKind, .continuityBridgeObservation)
         // Simulate jpeg_queue_full / pixel_copy_failed: do not call noteAccepted.
         XCTAssertEqual(session.continuityAnchorTransform, origin)
@@ -565,9 +616,9 @@ final class CaptureBridgePolicyTests: XCTestCase {
             frustumOverlap: 1,
             kind: .reconstructionKeyframe
         )
-        let cand = yawTransform(degrees: 4, translation: SIMD3(0.01, 0, 0))
+        let cand = yawTransform(degrees: 9, translation: SIMD3(0.01, 0, 0))
         let d = KeyframeSelector3DGS.shouldAccept(
-            timestamp: 0.08,
+            timestamp: 0.25,
             transform: cand,
             trackingNormal: true,
             lastKeyframeTimestamp: session.continuityAnchorTimestamp,
@@ -592,9 +643,9 @@ final class CaptureBridgePolicyTests: XCTestCase {
             frustumOverlap: 1,
             kind: .reconstructionKeyframe
         )
-        let cand = yawTransform(degrees: 4, translation: SIMD3(0.02, 0, 0))
+        let cand = yawTransform(degrees: 9, translation: SIMD3(0.02, 0, 0))
         let d = KeyframeSelector3DGS.shouldAccept(
-            timestamp: 0.08,
+            timestamp: 0.25,
             transform: cand,
             trackingNormal: true,
             lastKeyframeTimestamp: session.continuityAnchorTimestamp,
@@ -619,9 +670,9 @@ final class CaptureBridgePolicyTests: XCTestCase {
             frustumOverlap: 1,
             kind: .reconstructionKeyframe
         )
-        let cand = yawTransform(degrees: 4, translation: SIMD3(0.02, 0, 0))
+        let cand = yawTransform(degrees: 9, translation: SIMD3(0.02, 0, 0))
         let d = KeyframeSelector3DGS.shouldAccept(
-            timestamp: 0.08,
+            timestamp: 0.25,
             transform: cand,
             trackingNormal: true,
             lastKeyframeTimestamp: session.continuityAnchorTimestamp,

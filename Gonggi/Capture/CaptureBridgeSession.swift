@@ -261,9 +261,12 @@ struct CaptureBridgeSession: Equatable {
             return decision(.accept, "continuity_ok", signals, kind: .reconstructionKeyframe, counts: true)
         }
 
-        let angularEnough = max(signals.yawDeltaDeg, signals.forwardAngleDeg)
-            >= CaptureBridgeConfig.minBridgeAngularDeg
-        if angularEnough && signals.frustumOverlap >= CaptureBridgeConfig.minFrustumOverlapBridge {
+        let angular = max(signals.yawDeltaDeg, signals.forwardAngleDeg)
+        let frustumOK = signals.frustumOverlap >= CaptureBridgeConfig.minFrustumOverlapBridge
+        // Bridge JPEG density: require save-floor angular change in soft-band and while bridging.
+        // Soft-exit `evaluateBridgeStep` uses the same floor so progressive steps stay sparse
+        // but still ≤ bridgeStepMaxYawDeg.
+        if frustumOK && angular >= CaptureBridgeConfig.minBridgeSaveAngularDeg {
             if mode == .idle {
                 enterBridge(toward: transform)
             }
@@ -276,9 +279,11 @@ struct CaptureBridgeSession: Equatable {
             )
         }
 
-        // Pure micro-translate without enough angular change and below recon baseline.
-        if signals.translationM > CaptureBridgeConfig.poseJitterTranslationM {
-            // Allow tiny forward creep as bridge obs so cumulative baseline can grow.
+        // Pure micro-translate: only while already bridging (do not spam JPEG on walking creep).
+        if mode == .bridging || mode == .reacquiring,
+           signals.translationM > CaptureBridgeConfig.poseJitterTranslationM,
+           angular >= CaptureBridgeConfig.minBridgeAngularDeg
+        {
             return decision(
                 .accept,
                 "continuity_bridge_observation",
@@ -341,9 +346,14 @@ struct CaptureBridgeSession: Equatable {
             return decision(.bridgeRequired, "bridge_step_too_large", signals, kind: .none, counts: false)
         }
         let angularEnough = max(signals.yawDeltaDeg, signals.forwardAngleDeg)
-            >= CaptureBridgeConfig.minBridgeAngularDeg
+            >= CaptureBridgeConfig.minBridgeSaveAngularDeg
         if !angularEnough && signals.translationM < CaptureBridgeConfig.poseJitterTranslationM {
             return decision(.reject, "pose_jitter", signals, kind: .none, counts: false)
+        }
+        if !angularEnough {
+            // Not enough angular close yet; stay bridging without advancing the anchor.
+            if mode != .reacquiring { mode = .bridging }
+            return decision(.bridgeRequired, "bridge_step_too_large", signals, kind: .none, counts: false)
         }
         // Cumulative baseline vs reconstructionAnchor — not adjacent continuity step.
         if signals.baselineFromReconstructionAnchorM >= CaptureBridgeConfig.minReconstructionTranslationM {

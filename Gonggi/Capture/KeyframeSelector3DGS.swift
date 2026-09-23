@@ -163,8 +163,16 @@ enum KeyframeSelector3DGS {
         var counts = bridge.countsForReconstruction
         var verdict = bridge.verdict
 
-        // Reconstruction KF keeps the longer interval; early recon → bridge obs when possible.
-        if accept && kind == .reconstructionKeyframe && dt < config.minIntervalSec {
+        // Reconstruction KF interval is vs last *reconstruction* accept, not last bridge.
+        // Bridge advances continuityAnchor / lastKeyframeTimestamp at 0.05s; using that dt
+        // would permanently demote every recon candidate during progressive bridging.
+        let dtRecon: Double = {
+            if let reconT = bridgeSession.reconstructionAnchorTimestamp {
+                return timestamp - reconT
+            }
+            return dt
+        }()
+        if accept && kind == .reconstructionKeyframe && dtRecon < config.minIntervalSec {
             if signals.frustumOverlap >= CaptureBridgeConfig.minFrustumOverlapBridge,
                max(signals.yawDeltaDeg, signals.forwardAngleDeg) >= CaptureBridgeConfig.minBridgeAngularDeg
                 || signals.translationM > CaptureBridgeConfig.poseJitterTranslationM
