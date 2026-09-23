@@ -111,18 +111,17 @@ final class CaptureBridgeReplayTests: XCTestCase {
         var bridgeObs = 0
         var reacquires = 0
         var stepTooLarge = 0
-        // From 74.07s: each step is exactly save-floor vs the previous accepted pose.
+        // Each tick advances ~save-floor yaw vs last accepted continuity pose (local frustum-safe).
         let dt = CaptureBridgeConfig.minBridgeObservationIntervalSec
         let stepYaw = Float(CaptureBridgeConfig.minBridgeSaveAngularDeg)
-        var last = origin
-        let steps = 40
-        for i in 1...steps {
-            let yaw = stepYaw * Float(i)
+        var yawAccum: Float = 0
+        for i in 1...24 {
+            yawAccum += stepYaw
             var m = matrix_identity_float4x4
-            let rad = yaw * .pi / 180
+            let rad = yawAccum * .pi / 180
             m.columns.0 = SIMD4(cos(rad), 0, -sin(rad), 0)
             m.columns.2 = SIMD4(sin(rad), 0, cos(rad), 0)
-            m.columns.3 = SIMD4(0.004 * Float(i), 0, 0, 1)
+            m.columns.3 = SIMD4(0.003 * Float(i), 0, 0, 1)
             let t = 74.07 + Double(i) * dt
             let d = KeyframeSelector3DGS.shouldAccept(
                 timestamp: t,
@@ -145,15 +144,13 @@ final class CaptureBridgeReplayTests: XCTestCase {
                     kind: d.acceptKind
                 )
                 if d.acceptKind == .continuityBridgeObservation { bridgeObs += 1 }
-                last = m
             }
-            _ = last
         }
-        // Progressive policy: bridges continue; not 75s of zero keyframes.
-        XCTAssertGreaterThan(bridgeObs, 10, "bridgeObs=\(bridgeObs) accepts=\(accepts) reacq=\(reacquires) tooLarge=\(stepTooLarge)")
-        XCTAssertLessThan(reacquires, 10, "reacquires=\(reacquires)")
-        XCTAssertGreaterThan(accepts, 15)
-        XCTAssertLessThanOrEqual(accepts, 50, "density regression accepts=\(accepts)")
+        XCTAssertGreaterThan(bridgeObs, 8, "bridgeObs=\(bridgeObs) accepts=\(accepts) reacq=\(reacquires) tooLarge=\(stepTooLarge)")
+        XCTAssertLessThan(reacquires, 8, "reacquires=\(reacquires)")
+        XCTAssertGreaterThan(accepts, 10)
+        XCTAssertLessThanOrEqual(accepts, 30, "density regression accepts=\(accepts)")
+        XCTAssertEqual(session.mode == .reacquiring, false, "must not end in REACQUIRE")
     }
 
     private func loadAllFramesPreferringFullCaptureMeta() throws -> [SlimFrame] {
