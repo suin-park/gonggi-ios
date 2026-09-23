@@ -1,4 +1,5 @@
 import Foundation
+@testable import Gonggi
 
 /// Test double for staged create / upload / start failure injection.
 actor FailureInjectingSpaceGenerationService: SpaceGenerationService {
