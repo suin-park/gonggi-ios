@@ -1314,7 +1314,7 @@ final class CaptureSessionController {
     private func preparePendingForIncomingCandidate(transform: simd_float4x4, isRecon: Bool) {
         guard pendingAngularRescue.pending != nil else { return }
         if let cont = bridgeSession.continuityAnchorTransform {
-            let (ok, reason) = PendingAngularRescueLinkGate.linkOK(from: cont, to: transform)
+            let (ok, reason, _) = PendingAngularRescueLinkGate.linkOK(from: cont, to: transform)
             if ok {
                 pendingAngularRescue.discardPending(why: "next_links_to_saved_anchor")
             } else {
