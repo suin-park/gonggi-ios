@@ -207,9 +207,16 @@ final class PendingAngularRescueTests: XCTestCase {
     }
 
     private static func loadV1036Poses() throws -> [PoseReplayHarness.PoseRow] {
+        let bundle = Bundle(for: PendingAngularRescueTests.self)
+        let candidates: [URL?] = [
+            bundle.url(forResource: "v1_036_poses_compact", withExtension: "json", subdirectory: "Fixtures"),
+            bundle.url(forResource: "v1_036_poses_compact", withExtension: "json"),
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .appendingPathComponent("Fixtures/v1_036_poses_compact.json"),
+        ]
         let url = try XCTUnwrap(
-            Bundle(for: PendingAngularRescueTests.self)
-                .url(forResource: "v1_036_poses_compact", withExtension: "json"),
+            candidates.compactMap { $0 }.first { FileManager.default.fileExists(atPath: $0.path) },
             "Missing GonggiTests/Fixtures/v1_036_poses_compact.json"
         )
         let file = try JSONDecoder().decode(CompactFile.self, from: Data(contentsOf: url))
