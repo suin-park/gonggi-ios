@@ -73,9 +73,13 @@ enum GaussianViewerFailure: Equatable {
 /// Decisions + bounded counters + telemetry for one presentation.
 struct GaussianViewerSession {
     static let maxAutoRecoveries = 2
-    static let downloadStallSeconds: TimeInterval = 30
+    /// No change in the downloaded percent (≈2 MB of a 207 MB PLY) for this long ⇒ stalled.
+    static let downloadStallSeconds: TimeInterval = 60
     static let prepareTimeoutSeconds: TimeInterval = 90
+    /// Page committed (HTML arrived) but the viewer never reported.
     static let noResponseSeconds: TimeInterval = 25
+    /// Viewer script started but never reached a load stage.
+    static let noStageSeconds: TimeInterval = 60
 
     let sessionId = UUID().uuidString
     let openedAt = Date()
@@ -92,6 +96,13 @@ struct GaussianViewerSession {
     private(set) var lastProgressAt = Date()
     private(set) var phaseEnteredAt = Date()
     private(set) var lastBridgeMessageAt: Date?
+    /// WebKit committed the viewer document (before this, WebKit's own request timeout applies).
+    private(set) var navigationCommittedAt: Date?
+    /// Set while the app is in the background: watchdog is paused and elapsed time is shifted.
+    private(set) var pausedAt: Date?
+    private(set) var backgroundMs = 0
+    /// Last JS error code reported before display (kept for the failure record; not a failure itself).
+    private(set) var lastSoftErrorCode: String?
     private(set) var lastPercent: Int?
     var bytesTotal: Int64?
     var profile: [String: Any] = [:]
@@ -112,6 +123,36 @@ struct GaussianViewerSession {
     }
 
     mutating func noteBridgeMessage() { lastBridgeMessageAt = Date() }
+
+    mutating func noteNavigationCommitted(at now: Date = Date()) {
+        if navigationCommittedAt == nil { navigationCommittedAt = now }
+    }
+
+    mutating func noteSoftError(_ code: String) {
+        noteBridgeMessage()
+        lastSoftErrorCode = String(code.prefix(60))
+    }
+
+    /// App went to background: stop judging timeouts (WebKit suspends the page).
+    mutating func pause(at now: Date = Date()) {
+        guard pausedAt == nil else { return }
+        pausedAt = now
+        backgrounded += 1
+    }
+
+    /// Back to foreground: background time never counts toward any timeout.
+    mutating func resume(at now: Date = Date()) {
+        guard let start = pausedAt else { return }
+        pausedAt = nil
+        let gap = max(0, now.timeIntervalSince(start))
+        backgroundMs += Int(gap * 1000)
+        phaseEnteredAt = phaseEnteredAt.addingTimeInterval(gap)
+        lastProgressAt = lastProgressAt.addingTimeInterval(gap)
+        navigationCommittedAt = navigationCommittedAt?.addingTimeInterval(gap)
+        lastBridgeMessageAt = lastBridgeMessageAt?.addingTimeInterval(gap)
+    }
+
+    var isPaused: Bool { pausedAt != nil }
 
     /// Bridge stage → phase (never regresses from ready; failures stay until retry).
     mutating func applyStage(_ stage: String) {
@@ -164,7 +205,6 @@ struct GaussianViewerSession {
     }
 
     mutating func noteContextRestored() { contextRestored += 1 }
-    mutating func noteBackground() { backgrounded += 1 }
     mutating func noteJSError() { jsErrors += 1 }
 
     /// A new document load (auto recovery or manual retry).
@@ -177,29 +217,38 @@ struct GaussianViewerSession {
         lastPercent = nil
         lastProgressAt = Date()
         lastBridgeMessageAt = nil
+        navigationCommittedAt = nil
+        lastSoftErrorCode = nil
         if manual || !(phase.isRecovering) { enter(.connecting) }
     }
 
     /// Periodic watchdog — returns a failure when the current phase is stuck.
+    /// Paused in background; a download that keeps advancing never times out.
     func watchdog(now: Date = Date()) -> GaussianViewerFailure? {
+        if pausedAt != nil { return nil }
         switch phase {
         case .connecting:
-            if lastBridgeMessageAt == nil, now.timeIntervalSince(phaseEnteredAt) > Self.noResponseSeconds {
-                return .noResponse
-            }
+            if let noResponse = connectingFailure(now: now) { return noResponse }
         case .downloading:
             if now.timeIntervalSince(lastProgressAt) > Self.downloadStallSeconds { return .downloadStalled }
         case .preparing, .displaying:
             if now.timeIntervalSince(phaseEnteredAt) > Self.prepareTimeoutSeconds { return .prepareTimeout }
         case .recovering(let reason):
             // Recovery reload whose page never answered.
-            if lastBridgeMessageAt == nil, now.timeIntervalSince(phaseEnteredAt) > Self.noResponseSeconds {
-                return .recoveryExhausted(reason)
-            }
+            if connectingFailure(now: now) != nil { return .recoveryExhausted(reason) }
         default:
             break
         }
         return nil
+    }
+
+    private func connectingFailure(now: Date) -> GaussianViewerFailure? {
+        guard let committed = navigationCommittedAt else { return nil }
+        if let last = lastBridgeMessageAt {
+            // Script alive but no load stage yet.
+            return now.timeIntervalSince(last) > Self.noStageSeconds ? .noResponse : nil
+        }
+        return now.timeIntervalSince(committed) > Self.noResponseSeconds ? .noResponse : nil
     }
 
     var outcome: String {
@@ -211,7 +260,9 @@ struct GaussianViewerSession {
     func telemetryPayload() -> [String: Any] {
         func num(_ k: String) -> Any { (profile[k] as? NSNumber) ?? NSNull() }
         var failureCode: Any = NSNull()
-        if case .failed(let f) = phase { failureCode = f.code }
+        if case .failed(let f) = phase {
+            failureCode = String((lastSoftErrorCode.map { "\(f.code)|\($0)" } ?? f.code).prefix(80))
+        }
         let info = Bundle.main.infoDictionary
         return [
             "sessionId": sessionId,
@@ -235,6 +286,13 @@ struct GaussianViewerSession {
                 "firstFrameMs": num("firstFrameMs"),
                 "readyMs": num("readyMs"),
                 "nativeReadyMs": nativeReadyMs.map { NSNumber(value: $0) } ?? NSNull(),
+                "hiddenMs": num("hiddenMs"),
+                "nativeBackgroundMs": backgroundMs + (pausedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0),
+                "contentFetchMs": num("contentFetchMs"),
+            ],
+            "content": [
+                "transferSize": num("contentTransferSize"),
+                "encodedSize": num("contentEncodedSize"),
             ],
             "canvas": [
                 "width": num("canvasWidth"),

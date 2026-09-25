@@ -41,6 +41,8 @@ struct GaussianSplatWebViewer: View {
     @State private var navigationStarted = false
     @State private var telemetrySent = false
     @State private var closeRecorded = false
+    /// Context lost while backgrounded: judge restoration only once the app is active again.
+    @State private var pendingContextCheck: (wasReady: Bool, restoredBefore: Int)?
 
     private var viewerURL: URL {
         let root = AppConfiguration.production.apiBaseURL.absoluteString
@@ -174,7 +176,7 @@ struct GaussianSplatWebViewer: View {
             startWatchdog()
             // Navigation must start; if WebKit never begins the request, reload once (bounded).
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                guard !navigationStarted, session.phase == .connecting else { return }
+                guard !navigationStarted, !session.isPaused, session.phase == .connecting else { return }
                 if session.requestRecovery(.navigationDidNotStart) {
                     reload(manual: false, reason: "navigation_did_not_start")
                 }
@@ -187,10 +189,16 @@ struct GaussianSplatWebViewer: View {
             GaussianViewerLoadLog.mark("scenePhase=\(String(describing: phase))", since: session.openedAt)
             switch phase {
             case .background:
-                session.noteBackground()
+                session.pause()
                 session.log("background")
             case .active:
+                guard session.isPaused else { break }
+                session.resume()
                 session.log("foreground")
+                if let pending = pendingContextCheck {
+                    pendingContextCheck = nil
+                    startContextRestoreCheck(wasReady: pending.wasReady, restoredBefore: pending.restoredBefore)
+                }
                 verifyRenderAfterForeground()
             default:
                 break
@@ -299,6 +307,7 @@ struct GaussianSplatWebViewer: View {
         resumeCameraJSON = lastCameraJSON
         if manual { telemetrySent = false }
         navigationStarted = false
+        pendingContextCheck = nil
         hasCollision = false
         contextRestoreTask?.cancel()
         resumeCheckTask?.cancel()
@@ -340,11 +349,19 @@ struct GaussianSplatWebViewer: View {
         }
     }
 
+    /// Displayed, or recovering from a loss after it was displayed.
+    private var canVerifyFrame: Bool {
+        session.phase == .ready || (session.phase.isRecovering && session.everDisplayed)
+    }
+
     /// After returning from background: ask for one verified frame; recreate if it never comes.
     private func verifyRenderAfterForeground() {
-        guard session.phase == .ready, let bridge = webBridge else { return }
+        guard canVerifyFrame, let bridge = webBridge else { return }
         resumeCheckTask?.cancel()
         resumeCheckTask = Task { @MainActor in
+            // Let WebKit resume the page first (the page also self-checks on visibilitychange).
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled, canVerifyFrame else { return }
             let requested = await bridge.requestFrame(reason: "foreground")
             if !requested {
                 // JS unreachable (content process gone). didTerminate normally fires too.
@@ -358,6 +375,14 @@ struct GaussianSplatWebViewer: View {
         case .timeline(let name):
             GaussianViewerLoadLog.mark(name, since: session.openedAt)
             if name.hasPrefix("didStartProvisionalNavigation") { navigationStarted = true }
+
+        case .navigationCommitted:
+            navigationStarted = true
+            session.noteNavigationCommitted()
+
+        case .shellLoaded:
+            session.noteNavigationCommitted()
+            session.noteBridgeMessage()
 
         case .loadStage(let stage, let profile):
             GaussianViewerLoadLog.mark("load_stage=\(stage)", since: session.openedAt)
@@ -389,6 +414,11 @@ struct GaussianSplatWebViewer: View {
             GaussianViewerLoadLog.mark("viewer_error code=\(code)", since: session.openedAt)
             session.log("error", code)
             guard session.phase != .ready else { return }
+            if code.contains("WINDOW_ERROR") || code.contains("UNHANDLED_REJECTION") {
+                // A script error is not proof the load failed: keep loading; the watchdog decides.
+                session.noteSoftError(code)
+                return
+            }
             if code.contains("FETCH") || code.contains("CONTENT_HTTP") || code.hasPrefix("NAV_") {
                 session.fail(.network)
             } else {
@@ -413,15 +443,11 @@ struct GaussianSplatWebViewer: View {
                 }
             }
             let restoredBefore = session.contextRestored
-            contextRestoreTask = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                guard !Task.isCancelled, session.contextRestored == restoredBefore else { return }
-                // Context never came back: recreate the viewer (at the last camera).
-                if wasReady {
-                    if session.phase.isRecovering { reload(manual: false, reason: "webgl_context_not_restored") }
-                } else if session.phase != .ready, !session.phase.isTerminalFailure {
-                    recover(.webGLContextLost)
-                }
+            if session.isPaused {
+                // iOS drops GPU contexts of background pages; restoration happens on return.
+                pendingContextCheck = (wasReady, restoredBefore)
+            } else {
+                startContextRestoreCheck(wasReady: wasReady, restoredBefore: restoredBefore)
             }
 
         case .contextRestored:
@@ -439,13 +465,29 @@ struct GaussianSplatWebViewer: View {
 
         case .renderResumeFailed(let reason):
             session.log("render_resume_failed", reason)
-            // Only a displayed (or recovering-after-display) viewer can stall; ignore during load.
-            guard session.everDisplayed, session.phase == .ready || session.phase.isRecovering else { return }
+            // Only a displayed (or recovering-after-display) viewer can stall; ignore during load
+            // and while backgrounded (no frames are drawn then; foreground re-checks).
+            guard !session.isPaused, session.everDisplayed, session.phase == .ready || session.phase.isRecovering else { return }
             recover(.renderStalledAfterResume)
 
         case .processTerminated:
             GaussianViewerLoadLog.mark("webContentProcessDidTerminate", since: session.openedAt)
             recover(.webContentProcessTerminated)
+        }
+    }
+
+    /// Give PlayCanvas 5 s (foreground time) to restore the context before recreating the viewer.
+    private func startContextRestoreCheck(wasReady: Bool, restoredBefore: Int) {
+        contextRestoreTask?.cancel()
+        contextRestoreTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, !session.isPaused, session.contextRestored == restoredBefore else { return }
+            // Context never came back: recreate the viewer (at the last camera).
+            if wasReady {
+                if session.phase.isRecovering { reload(manual: false, reason: "webgl_context_not_restored") }
+            } else if session.phase != .ready, !session.phase.isTerminalFailure {
+                recover(.webGLContextLost)
+            }
         }
     }
 
@@ -493,6 +535,8 @@ private enum GaussianNavMode: String, Hashable {
 
 private enum GaussianViewerBridgeEvent {
     case timeline(String)
+    case navigationCommitted
+    case shellLoaded
     case loadStage(stage: String, profile: [String: Any]?)
     case progress(percent: Int, bytesTotal: Int64?)
     case profile([String: Any])
@@ -749,6 +793,7 @@ private struct GaussianSplatWebView: UIViewRepresentable {
                 onTimeline("page_visibility \((body["state"] as? String) ?? "")")
             case "viewer_shell_loaded":
                 onTimeline("JS_initialized viewer_shell_loaded")
+                onBridgeEvent(.shellLoaded)
             default:
                 break
             }
@@ -760,6 +805,7 @@ private struct GaussianSplatWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             onTimeline("didCommitNavigation (HTML first content)")
+            onBridgeEvent(.navigationCommitted)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

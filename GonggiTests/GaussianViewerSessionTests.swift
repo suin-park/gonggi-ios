@@ -55,7 +55,10 @@ final class GaussianViewerSessionTests: XCTestCase {
     func testWatchdogReasons() {
         var s = GaussianViewerSession()
         let t0 = Date()
-        XCTAssertNil(s.watchdog(now: t0))
+        // Before the document commits, WebKit's own request timeout applies (slow HTML ≠ no response).
+        XCTAssertNil(s.watchdog(now: t0.addingTimeInterval(GaussianViewerSession.noResponseSeconds + 60)))
+        s.noteNavigationCommitted(at: t0)
+        XCTAssertNil(s.watchdog(now: t0.addingTimeInterval(5)))
         XCTAssertEqual(s.watchdog(now: t0.addingTimeInterval(GaussianViewerSession.noResponseSeconds + 1)), .noResponse)
 
         s.applyStage("downloading")
@@ -76,15 +79,64 @@ final class GaussianViewerSessionTests: XCTestCase {
         XCTAssertNil(s.watchdog(now: Date().addingTimeInterval(3600)), "no timer-driven action once displayed")
     }
 
+    func testAdvancingDownloadNeverTimesOut() {
+        var s = GaussianViewerSession()
+        s.noteNavigationCommitted()
+        s.applyStage("downloading")
+        // A slow download: one percent step every 50 s for a long time is still progress.
+        for pct in 1...5 {
+            s.applyProgress(percent: pct)
+            XCTAssertNil(s.watchdog(now: Date().addingTimeInterval(50)))
+        }
+    }
+
+    func testBackgroundTimeIsExcludedFromTimeouts() {
+        var s = GaussianViewerSession()
+        s.noteNavigationCommitted()
+        s.applyStage("downloading")
+        s.applyProgress(percent: 10)
+        let t = Date()
+        s.pause(at: t)
+        XCTAssertNil(s.watchdog(now: t.addingTimeInterval(600)), "paused while backgrounded")
+        s.resume(at: t.addingTimeInterval(600))
+        XCTAssertNil(s.watchdog(now: t.addingTimeInterval(610)), "10 s of foreground time after 10 min away")
+        XCTAssertEqual(s.backgrounded, 1)
+        XCTAssertGreaterThanOrEqual(s.backgroundMs, 600_000)
+
+        s.applyStage("preparing")
+        let p = Date()
+        s.pause(at: p.addingTimeInterval(1))
+        s.resume(at: p.addingTimeInterval(1 + 3600))
+        XCTAssertNil(s.watchdog(now: p.addingTimeInterval(3600 + 30)))
+        XCTAssertEqual(
+            s.watchdog(now: p.addingTimeInterval(3600 + GaussianViewerSession.prepareTimeoutSeconds + 2)),
+            .prepareTimeout
+        )
+    }
+
     func testRecoveryReloadThatNeverAnswersFails() {
         var s = GaussianViewerSession()
         s.markReady()
         XCTAssertTrue(s.requestRecovery(.webContentProcessTerminated))
         s.beginReload(manual: false)
+        let t = Date()
+        s.noteNavigationCommitted(at: t)
         XCTAssertEqual(
-            s.watchdog(now: Date().addingTimeInterval(GaussianViewerSession.noResponseSeconds + 1)),
+            s.watchdog(now: t.addingTimeInterval(GaussianViewerSession.noResponseSeconds + 1)),
             .recoveryExhausted(.webContentProcessTerminated)
         )
+    }
+
+    func testSoftScriptErrorDoesNotFailButIsRecorded() throws {
+        var s = GaussianViewerSession()
+        s.noteNavigationCommitted()
+        s.applyStage("preparing")
+        s.noteSoftError("GAUSSIAN_VIEWER_WINDOW_ERROR")
+        XCTAssertEqual(s.phase, .preparing)
+        s.fail(.prepareTimeout)
+        let code = try XCTUnwrap(s.telemetryPayload()["failureCode"] as? String)
+        XCTAssertEqual(code, "PREPARE_TIMEOUT|GAUSSIAN_VIEWER_WINDOW_ERROR")
+        XCTAssertLessThanOrEqual(code.count, 80)
     }
 
     func testTelemetryHasNoURLsAndReportsRecovered() throws {
@@ -95,6 +147,8 @@ final class GaussianViewerSessionTests: XCTestCase {
         s.markReady()
         let payload = s.telemetryPayload()
         XCTAssertEqual(payload["outcome"] as? String, "recovered")
+        let timings = try XCTUnwrap(payload["timings"] as? [String: Any])
+        XCTAssertNotNil(timings["nativeBackgroundMs"] as? Int)
         XCTAssertTrue(JSONSerialization.isValidJSONObject(payload))
         let json = String(data: try JSONSerialization.data(withJSONObject: payload), encoding: .utf8) ?? ""
         XCTAssertFalse(json.contains("http"))
