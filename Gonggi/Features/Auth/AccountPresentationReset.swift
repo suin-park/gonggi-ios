@@ -32,7 +32,9 @@ enum AccountPresentationReset {
     static func resetForSignOut() {
         AuthSessionGeneration.bump(reason: "signOut")
         SpaceLibraryReconciler.shared.cancelInFlight()
+        GaussianLibraryReconciler.shared.cancelInFlight()
         SpaceJobStore.shared.bind(.none)
+        GaussianGenerationStore.shared.unbind()
         SpaceJobRuntimeSharedHook.cancelForAccountChange()
         SpaceThumbnailCache.shared.clearAll(includingDisk: true)
         Task { await SpaceThumbnailLoader.shared.cancelAll() }
@@ -50,7 +52,9 @@ enum AccountPresentationReset {
         AuthSessionGeneration.bump(reason: "signedIn")
         SpaceLibraryReconciler.shared.cancelInFlight()
         SpaceJobRuntimeSharedHook.cancelForAccountChange()
+        GaussianLibraryReconciler.shared.cancelInFlight()
         SpaceJobStore.shared.bind(.user(userId: userId))
+        GaussianGenerationStore.shared.bind(userId: userId)
         SpaceThumbnailCache.shared.clearAll(includingDisk: true)
         Task { await SpaceThumbnailLoader.shared.cancelAll() }
         AssetLibraryStore.shared.clearForAccountChange()

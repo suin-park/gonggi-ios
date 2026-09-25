@@ -342,6 +342,8 @@ final class AuthSessionController: ObservableObject {
         guard AuthSessionGeneration.isCurrent(generation) else { return }
         await SpaceLibraryReconciler.shared.reconcile(accessToken: access, generation: generation)
         guard AuthSessionGeneration.isCurrent(generation) else { return }
+        await GaussianLibraryReconciler.shared.reconcile(accessToken: access, generation: generation)
+        guard AuthSessionGeneration.isCurrent(generation) else { return }
         AssetLibraryStore.shared.refresh(force: true)
     }
 }

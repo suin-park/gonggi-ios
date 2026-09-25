@@ -20,9 +20,36 @@ final class PlacementResultsViewModel: ObservableObject {
     private var isVisible = false
     private let pollIntervalNanoseconds: UInt64 = 3_000_000_000
 
+    private var accountResetObserver: NSObjectProtocol?
+
     init(client: any PlacementResultsServing, highlightId: String? = nil) {
         self.client = client
         self.highlightId = highlightId
+        accountResetObserver = NotificationCenter.default.addObserver(
+            forName: .gonggiAccountPresentationDidReset,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.resetForAccountChange() }
+        }
+    }
+
+    deinit {
+        if let accountResetObserver {
+            NotificationCenter.default.removeObserver(accountResetObserver)
+        }
+    }
+
+    /// Logout / account switch: drop the previous account's results and polling.
+    func resetForAccountChange() {
+        cancelPolling()
+        results = []
+        phase = .idle
+        isRefreshing = false
+        highlightId = nil
+        if isVisible {
+            Task { await refresh(forceLoading: true) }
+        }
     }
 
     var hasInFlight: Bool {
@@ -59,6 +86,7 @@ final class PlacementResultsViewModel: ObservableObject {
     var isPolling: Bool { pollTask != nil }
 
     func refresh(forceLoading: Bool) async {
+        let generation = AuthSessionGeneration.current
         if forceLoading {
             phase = .loading
         } else if !results.isEmpty {
@@ -66,10 +94,13 @@ final class PlacementResultsViewModel: ObservableObject {
         }
         do {
             let list = try await client.listResults()
+            // A response started under the previous account must not fill the new one.
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
             results = list
             phase = .loaded
             startPollingIfNeeded()
         } catch let error as MobilePlacementResultsAPIError {
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
             if results.isEmpty {
                 phase = .failed(error.userMessage)
             }

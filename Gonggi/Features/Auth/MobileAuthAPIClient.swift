@@ -232,6 +232,23 @@ actor MobileAuthAPIClient {
         return spaces
     }
 
+    /// GET /api/gaussian-spaces — owner-filtered 3DGS catalog for the bearer's user.
+    func listGaussianSpaces(accessToken: String) async throws -> [[String: Any]] {
+        var request = URLRequest(url: config.apiBaseURL.appendingPathComponent("api/gaussian-spaces"))
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let spaces = json["spaces"] as? [[String: Any]]
+        else {
+            throw MobileAuthAPIError.invalidResponse
+        }
+        return spaces
+    }
+
     func patchSpace(
         accessToken: String,
         spaceId: String,

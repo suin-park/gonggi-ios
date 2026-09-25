@@ -84,6 +84,15 @@ final class AppState: ObservableObject {
                 self?.rebuildSpaces()
             }
         }
+        NotificationCenter.default.addObserver(
+            forName: .gonggiGaussianCatalogDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.rebuildSpaces()
+            }
+        }
         accountResetObserver = NotificationCenter.default.addObserver(
             forName: .gonggiAccountPresentationDidReset,
             object: nil,
@@ -131,6 +140,9 @@ final class AppState: ObservableObject {
         isExitingVRToHome = false
         forceDismissViewerEpoch &+= 1
         spaceLinkFinalizeTask?.cancel()
+        // Stop polling the previous account's Gaussian jobs with the next account's token.
+        gaussianPollTask?.cancel()
+        gaussianPollTask = nil
         AdvancedCaptureAnalysisStore.shared.clearAll()
         AdvancedCaptureAnalysisRuntime.shared.stopPolling()
         rebuildSpaces()
@@ -203,6 +215,11 @@ final class AppState: ObservableObject {
                 return
             }
             await SpaceLibraryReconciler.shared.reconcile(
+                accessToken: token,
+                generation: generation
+            )
+            guard AuthSessionGeneration.isCurrent(generation) else { return }
+            await GaussianLibraryReconciler.shared.reconcile(
                 accessToken: token,
                 generation: generation
             )
@@ -473,6 +490,8 @@ final class AppState: ObservableObject {
     private func pollGaussianJobsOnce() async {
         let active = GaussianGenerationStore.shared.activeJobs
         guard !active.isEmpty else { return }
+        let generation = AuthSessionGeneration.current
+        let userId = GaussianGenerationStore.shared.boundUserId
         guard let locker = spaceService as? LockerSpaceGenerationService else { return }
         for job in active {
             locker.seedJobContext(
@@ -482,6 +501,10 @@ final class AppState: ObservableObject {
             )
             do {
                 let status = try await locker.fetchStatus(jobId: job.jobId)
+                // Late response after logout / account switch must not touch the new account.
+                guard AuthSessionGeneration.isCurrent(generation),
+                      GaussianGenerationStore.shared.boundUserId == userId
+                else { return }
                 let server = status.steps.contains(where: {
                     if case .failed = $0.status { return true }
                     return false

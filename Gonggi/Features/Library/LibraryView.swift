@@ -131,6 +131,8 @@ struct LibraryView: View {
             .onAppear {
                 appState.ensureSpaceGenerationPolling()
                 applyPreferredLibraryCategory(appState.preferredLibraryCategory ?? appState.pendingLibraryTab)
+                // Pick up server-side 3DGS spaces (other device / restored) for this account.
+                Task { await GaussianLibraryReconciler.shared.reconcileIfStale() }
             }
         }
     }

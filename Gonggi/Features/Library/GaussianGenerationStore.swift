@@ -1,18 +1,53 @@
 import Foundation
 
+extension Notification.Name {
+    /// Gaussian library partition bound/unbound or server catalog merged.
+    static let gonggiGaussianCatalogDidChange = Notification.Name("gonggi.gaussianCatalogDidChange")
+}
+
 /// Persisted tracking for async Spatial / video-gaussian jobs shown in Library.
 /// Cloud GenerationJob is source of truth; this store is a local index + UX cache.
+///
+/// **Account-partitioned** (build 69): records persist under the signed-in `User.id`.
+/// The pre-69 device-global key has no owner, so it is preserved on disk but never
+/// shown or assigned to whoever signs in next.
 @MainActor
 final class GaussianGenerationStore: ObservableObject {
     static let shared = GaussianGenerationStore()
 
     @Published private(set) var jobs: [GaussianGenerationRecord] = []
+    private(set) var boundUserId: String?
 
-    private let defaultsKey = "gonggi.gaussianGenerationJobs.v1"
+    /// Pre-69 device-global records (unknown owner) — kept, never loaded into presentation.
+    static let legacyUnownedDefaultsKey = "gonggi.gaussianGenerationJobs.v1"
     private let thumbDirName = "GaussianThumbnails"
+    private let defaults: UserDefaults
 
-    private init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        // Empty until an account is bound (no foreign/legacy bleed before sign-in).
+        jobs = []
+    }
+
+    static func storageKey(userId: String) -> String {
+        "gonggi.gaussianGenerationJobs.v2.user.\(userId)"
+    }
+
+    /// Bind presentation + persistence to the signed-in account.
+    func bind(userId: String) {
+        guard !userId.isEmpty else { unbind(); return }
+        boundUserId = userId
         load()
+        objectWillChange.send()
+        NotificationCenter.default.post(name: .gonggiGaussianCatalogDidChange, object: nil)
+    }
+
+    /// Signed out / switching: empty presentation, other partitions untouched.
+    func unbind() {
+        boundUserId = nil
+        jobs = []
+        objectWillChange.send()
+        NotificationCenter.default.post(name: .gonggiGaussianCatalogDidChange, object: nil)
     }
 
     struct GaussianGenerationRecord: Codable, Equatable, Identifiable, Sendable {
@@ -33,6 +68,10 @@ final class GaussianGenerationStore: ObservableObject {
         var updatedAt: Date
         var handedOffToLibraryAt: Date?
         var completedAt: Date?
+        /// "local" (started on this device) or "remote" (server catalog only). nil = local (pre-69).
+        var origin: String?
+
+        var isRemoteOnly: Bool { origin == "remote" }
 
         var spaceStatus: SpaceGenerationStatus {
             switch status {
@@ -70,6 +109,7 @@ final class GaussianGenerationStore: ObservableObject {
         progress: Double = 0.05,
         thumbnailSourceJPEG: URL? = nil
     ) {
+        guard boundUserId != nil else { return }
         var thumbRel: String?
         if let jpeg = thumbnailSourceJPEG {
             thumbRel = copyThumbnail(from: jpeg, spaceId: spaceId)
@@ -137,7 +177,78 @@ final class GaussianGenerationStore: ObservableObject {
     }
 
     var activeJobs: [GaussianGenerationRecord] {
-        jobs.filter { !$0.isTerminal }
+        // Remote-only rows have no job id to poll; the catalog reconcile refreshes them.
+        jobs.filter { !$0.isTerminal && !$0.jobId.isEmpty }
+    }
+
+    struct RemoteSpace: Equatable, Sendable {
+        var spaceId: String
+        var name: String
+        /// Server GaussianSpace.status (uploading | processing | ready | failed | …).
+        var status: String
+        var createdAt: Date
+    }
+
+    /// Server catalog (owner-filtered by the API) is authoritative for this account:
+    /// - remote spaces are shown (ready / in-progress); remote-only failures are skipped,
+    /// - local in-flight generations not yet on the server are kept,
+    /// - local finished rows the server no longer lists are dropped.
+    func applyRemoteCatalog(_ remote: [RemoteSpace], forUserId userId: String) {
+        guard boundUserId == userId else { return }
+        let byId = Dictionary(remote.map { ($0.spaceId, $0) }, uniquingKeysWith: { a, _ in a })
+        var next: [GaussianGenerationRecord] = []
+        var seen = Set<String>()
+        for var local in jobs {
+            if let r = byId[local.spaceId] {
+                local.name = r.name.isEmpty ? local.name : r.name
+                local.status = Self.presentationStatus(r.status)
+                if local.status == "ready" {
+                    local.progress = 1
+                    local.completedAt = local.completedAt ?? Date()
+                }
+                next.append(local)
+                seen.insert(local.spaceId)
+            } else if !local.isTerminal && !local.isRemoteOnly {
+                next.append(local)
+                seen.insert(local.spaceId)
+            }
+        }
+        for r in remote where !seen.contains(r.spaceId) {
+            let status = Self.presentationStatus(r.status)
+            guard status != "failed" else { continue }
+            next.append(
+                GaussianGenerationRecord(
+                    spaceId: r.spaceId,
+                    jobId: "",
+                    name: r.name.isEmpty ? "3D 공간" : r.name,
+                    captureId: nil,
+                    sessionId: nil,
+                    qualityProfile: "",
+                    status: status,
+                    stage: nil,
+                    progress: status == "ready" ? 1 : 0.3,
+                    failureCode: nil,
+                    thumbnailRelativePath: nil,
+                    createdAt: r.createdAt,
+                    updatedAt: Date(),
+                    handedOffToLibraryAt: nil,
+                    completedAt: status == "ready" ? r.createdAt : nil,
+                    origin: "remote"
+                )
+            )
+        }
+        jobs = next.sorted { $0.createdAt > $1.createdAt }
+        persist()
+        NotificationCenter.default.post(name: .gonggiGaussianCatalogDidChange, object: nil)
+    }
+
+    static func presentationStatus(_ server: String) -> String {
+        switch server {
+        case "ready", "completed": return "ready"
+        case "failed", "cancelled", "expired", "deleted": return "failed"
+        case "uploading": return "uploading"
+        default: return "processing"
+        }
     }
 
     func asSpaceRecords() -> [SpaceRecord] {
@@ -194,13 +305,19 @@ final class GaussianGenerationStore: ObservableObject {
     }
 
     private func persist() {
-        guard let data = try? JSONEncoder().encode(jobs) else { return }
-        UserDefaults.standard.set(data, forKey: defaultsKey)
+        guard let userId = boundUserId,
+              let data = try? JSONEncoder().encode(jobs)
+        else {
+            objectWillChange.send()
+            return
+        }
+        defaults.set(data, forKey: Self.storageKey(userId: userId))
         objectWillChange.send()
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+        guard let userId = boundUserId,
+              let data = defaults.data(forKey: Self.storageKey(userId: userId)),
               let decoded = try? JSONDecoder().decode([GaussianGenerationRecord].self, from: data)
         else {
             jobs = []
