@@ -3,10 +3,16 @@ import WebKit
 
 /// Embeds 3D Locker SuperSplat viewer HTML for free navigation inside a completed Gaussian space.
 ///
-/// Loading UX is driven by a **native** overlay (not HTML-only):
-/// - Shows immediately on entry (`isLoading = true`) so WKWebView black never owns the screen.
-/// - Stage copy updates from `gonggiViewer` bridge messages when available.
-/// - Dismisses only on `render_ready` (or explicit retry after hard error).
+/// Loading UX (build 70):
+/// - Native overlay from the first frame with distinct phases:
+///   공간 다운로드 중 → 공간 준비 중 → (hidden) 표시 완료, or 실패 + 다시 시도.
+/// - The overlay hides only on bridge `render_ready`, which viewer-html sends after the package's
+///   first valid frame with splats loaded and a readable camera — never on "download 100%".
+/// - Stuck phases end in a reason-specific failure (no blind timer reloads).
+/// - Recovery: WKWebView content-process termination, WebGL context loss that does not restore,
+///   and a render loop that does not resume after foregrounding recreate the viewer at the last
+///   camera. Automatic recovery is bounded (`GaussianViewerSession.maxAutoRecoveries`).
+/// - One viewer per load token; retry is disabled while a load is running.
 struct GaussianSplatWebViewer: View {
     let spaceId: String
     /// When true, shows Original / Cleaned PLY A/B (cleanupMode query). Default on for TF62 compare.
@@ -23,17 +29,18 @@ struct GaussianSplatWebViewer: View {
     @State private var reloadToken = 0
     /// Stable cache-bust — set once at State init (never `Date()` inside a computed URL).
     @State private var assetRev: String = String(Int(Date().timeIntervalSince1970))
-
-    /// Native loading gate — true from first frame; never waits for WKWebView/JS.
-    @State private var isLoading = true
-    @State private var loadMessage = GaussianViewerLoadCopy.defaultMessage
-    @State private var loadSubMessage: String? = nil
-    @State private var loadFailed = false
-    @State private var slowLoadHintShown = false
-    @State private var appearAt = Date()
-    @State private var slowLoadTask: Task<Void, Never>?
-    @State private var didReceiveLoadStage = false
-    @State private var resumeReloadArmed = false
+    @State private var session = GaussianViewerSession()
+    /// Last engine camera (viewer-y-up) captured while displayed — used to resume after recovery.
+    @State private var lastCameraJSON: String?
+    /// Camera frozen at the moment of a recovery reload (keeps the URL stable for that load).
+    @State private var resumeCameraJSON: String?
+    @State private var watchdogTask: Task<Void, Never>?
+    @State private var cameraTask: Task<Void, Never>?
+    @State private var contextRestoreTask: Task<Void, Never>?
+    @State private var resumeCheckTask: Task<Void, Never>?
+    @State private var navigationStarted = false
+    @State private var telemetrySent = false
+    @State private var closeRecorded = false
 
     private var viewerURL: URL {
         let root = AppConfiguration.production.apiBaseURL.absoluteString
@@ -48,8 +55,21 @@ struct GaussianSplatWebViewer: View {
         if enableCleanupCompare, cleanupMode != .original {
             items.append(URLQueryItem(name: "cleanupMode", value: cleanupMode.rawValue))
         }
+        // Resume at the last camera after a recovery (one-shot, never persisted server-side).
+        if reloadToken > 0, let cam = resumeCameraJSON,
+           let tcam = cam.data(using: .utf8)?.base64URLEncoded(), tcam.count <= 2048 {
+            items.append(URLQueryItem(name: "tcam", value: tcam))
+            items.append(URLQueryItem(name: "treq", value: "resume\(reloadToken)"))
+        }
         components.queryItems = items
         return components.url!
+    }
+
+    private var isLoading: Bool {
+        switch session.phase {
+        case .ready: return false
+        default: return true
+        }
     }
 
     var body: some View {
@@ -61,7 +81,7 @@ struct GaussianSplatWebViewer: View {
                 bridge: $webBridge,
                 onCollisionDetected: { hasCollision = $0 },
                 onTimeline: { event in
-                    GaussianViewerLoadLog.mark(event, since: appearAt)
+                    GaussianViewerLoadLog.mark(event, since: session.openedAt)
                 },
                 onBridgeEvent: { event in
                     handleBridgeEvent(event)
@@ -70,7 +90,7 @@ struct GaussianSplatWebViewer: View {
             .id("\(spaceId)-\(cleanupMode.rawValue)-\(reloadToken)")
             .ignoresSafeArea()
 
-            if isLoading || loadFailed {
+            if isLoading {
                 nativeLoadingOverlay
                     .transition(.opacity)
                     .zIndex(50)
@@ -78,6 +98,7 @@ struct GaussianSplatWebViewer: View {
 
             VStack(alignment: .trailing, spacing: 10) {
                 Button {
+                    finishSession()
                     onClose()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -98,11 +119,11 @@ struct GaussianSplatWebViewer: View {
                     .frame(width: 180)
                     .padding(.trailing, 12)
                     .onChange(of: cleanupMode) { _, _ in
-                        beginLoadCycle(reason: "cleanup_mode_changed")
+                        reload(manual: true, reason: "cleanup_mode_changed")
                     }
                 }
 
-                if hasCollision, !isLoading, !loadFailed {
+                if hasCollision, !isLoading {
                     Picker("이동 모드", selection: $navigationMode) {
                         Text("자유 이동").tag(GaussianNavMode.fly)
                         Text("걷기").tag(GaussianNavMode.walk)
@@ -123,7 +144,7 @@ struct GaussianSplatWebViewer: View {
             }
             .zIndex(60)
 
-            if showHint, !isLoading, !loadFailed {
+            if showHint, !isLoading {
                 VStack {
                     Spacer()
                     Text(
@@ -148,31 +169,75 @@ struct GaussianSplatWebViewer: View {
         }
         .background(Color.black.ignoresSafeArea())
         .onAppear {
-            appearAt = Date()
-            GaussianViewerLoadLog.mark("ViewerView.onAppear isLoading=\(isLoading)", since: appearAt)
-            beginLoadCycle(reason: "onAppear")
-            // first-entry WebKit stall: if no bridge stage after layout, nudge once.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-                guard isLoading, !loadFailed, !didReceiveLoadStage, !resumeReloadArmed else { return }
-                resumeReloadArmed = true
-                GaussianViewerLoadLog.mark("first_entry_nudge_reload", since: appearAt)
-                beginLoadCycle(reason: "first_entry_stall")
+            session.log("open")
+            GaussianViewerLoadLog.mark("ViewerView.onAppear space=\(spaceId)", since: session.openedAt)
+            startWatchdog()
+            // Navigation must start; if WebKit never begins the request, reload once (bounded).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                guard !navigationStarted, session.phase == .connecting else { return }
+                if session.requestRecovery(.navigationDidNotStart) {
+                    reload(manual: false, reason: "navigation_did_not_start")
+                }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.5) {
                 withAnimation(.easeOut(duration: 0.4)) { showHint = false }
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            GaussianViewerLoadLog.mark("scenePhase=\(String(describing: phase))", since: appearAt)
-            // Background→foreground often unsticks WebKit; force one reload if still silent.
-            if phase == .active, isLoading, !loadFailed, !didReceiveLoadStage {
-                GaussianViewerLoadLog.mark("resume_nudge_reload", since: appearAt)
-                beginLoadCycle(reason: "scene_active_stall")
+            GaussianViewerLoadLog.mark("scenePhase=\(String(describing: phase))", since: session.openedAt)
+            switch phase {
+            case .background:
+                session.noteBackground()
+                session.log("background")
+            case .active:
+                session.log("foreground")
+                verifyRenderAfterForeground()
+            default:
+                break
             }
         }
         .onDisappear {
-            slowLoadTask?.cancel()
-            slowLoadTask = nil
+            finishSession()
+            watchdogTask?.cancel()
+            cameraTask?.cancel()
+            contextRestoreTask?.cancel()
+            resumeCheckTask?.cancel()
+        }
+    }
+
+    // MARK: Overlay
+
+    private var overlayTitle: String {
+        switch session.phase {
+        case .connecting: return "공간을 여는 중이에요"
+        case .downloading: return "공간 다운로드 중"
+        case .preparing: return "공간 준비 중"
+        case .displaying: return "공간 준비 중"
+        case .ready: return ""
+        case .recovering: return "화면을 복구하고 있어요"
+        case .failed(let f): return f.title
+        }
+    }
+
+    private var overlaySubtitle: String? {
+        switch session.phase {
+        case .downloading(let percent):
+            var parts: [String] = []
+            if let percent { parts.append("\(percent)%") }
+            if let total = session.bytesTotal, total > 0 {
+                let mb = Double(total) / 1_048_576
+                if let percent {
+                    parts.append(String(format: "%.0f / %.0f MB", mb * Double(percent) / 100, mb))
+                } else {
+                    parts.append(String(format: "%.0f MB", mb))
+                }
+            }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        case .preparing: return "3D 데이터를 읽고 있어요"
+        case .displaying: return "화면에 그릴 준비를 하고 있어요"
+        case .recovering: return "마지막 위치에서 다시 열어요"
+        case .failed(let f): return f.detail
+        default: return nil
         }
     }
 
@@ -181,32 +246,32 @@ struct GaussianSplatWebViewer: View {
             Color.black.opacity(0.92)
                 .ignoresSafeArea()
             VStack(spacing: 16) {
-                if !loadFailed {
+                if case .failed = session.phase {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.white.opacity(0.9))
+                } else {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .tint(.white)
                         .scaleEffect(1.15)
-                } else {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.white.opacity(0.9))
                 }
 
-                Text(loadMessage)
+                Text(overlayTitle)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
 
-                if let sub = loadSubMessage, !sub.isEmpty {
+                if let sub = overlaySubtitle, !sub.isEmpty {
                     Text(sub)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.white.opacity(0.72))
                         .multilineTextAlignment(.center)
                 }
 
-                if loadFailed {
+                if case .failed = session.phase {
                     Button {
-                        beginLoadCycle(reason: "retry_tapped")
+                        reload(manual: true, reason: "retry_tapped")
                     } label: {
                         Text("다시 시도")
                             .font(.system(size: 15, weight: .semibold))
@@ -223,126 +288,191 @@ struct GaussianSplatWebViewer: View {
         .allowsHitTesting(true)
     }
 
-    private func beginLoadCycle(reason: String) {
-        slowLoadTask?.cancel()
-        isLoading = true
-        loadFailed = false
-        loadMessage = GaussianViewerLoadCopy.defaultMessage
-        loadSubMessage = nil
-        slowLoadHintShown = false
+    // MARK: Load / recovery
+
+    /// New document load. Old WKWebView is torn down by the `.id` change (dismantleUIView).
+    private func reload(manual: Bool, reason: String) {
+        // Retry only from a failure (or explicit mode change) — never stack loads.
+        if manual, reason == "retry_tapped", !session.phase.isTerminalFailure { return }
+        session.beginReload(manual: manual)
+        session.log("reload", reason)
+        resumeCameraJSON = lastCameraJSON
+        if manual { telemetrySent = false }
+        navigationStarted = false
         hasCollision = false
-        didReceiveLoadStage = false
-        GaussianViewerLoadLog.mark("beginLoadCycle reason=\(reason)", since: appearAt)
+        contextRestoreTask?.cancel()
+        resumeCheckTask?.cancel()
+        GaussianViewerLoadLog.mark("reload reason=\(reason) token=\(reloadToken + 1)", since: session.openedAt)
+        reloadToken += 1
+    }
 
-        // Always bump token except the very first onAppear (WebView makeUIView already loads).
-        // Stall / retry / mode change must reload.
-        if reason != "onAppear" {
-            reloadToken += 1
-        }
-
-        slowLoadTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 12_000_000_000)
-            guard !Task.isCancelled, isLoading, !loadFailed else { return }
-            if !didReceiveLoadStage {
-                // Still no bridge traffic — force a reload once.
-                GaussianViewerLoadLog.mark("stall_12s_force_reload", since: appearAt)
-                loadMessage = GaussianViewerLoadCopy.slowMessage
-                reloadToken += 1
-                didReceiveLoadStage = false
-            } else if !slowLoadHintShown {
-                slowLoadHintShown = true
-                loadMessage = GaussianViewerLoadCopy.slowMessage
-                GaussianViewerLoadLog.mark("slow_load_hint", since: appearAt)
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if let failure = session.watchdog() {
+                    GaussianViewerLoadLog.mark("watchdog \(failure.code)", since: session.openedAt)
+                    session.fail(failure)
+                    sendTelemetryOnce()
+                }
             }
         }
+    }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            if !isLoading { webBridge?.probeCollision() }
+    /// While displayed, remember the camera so a recovery reopens at the same place.
+    private func startCameraTracking() {
+        cameraTask?.cancel()
+        cameraTask = Task { @MainActor in
+            while !Task.isCancelled {
+                if let cam = await webBridge?.readCameraJSON() { lastCameraJSON = cam }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    private func recover(_ reason: GaussianViewerRecoveryReason) {
+        cameraTask?.cancel()
+        if session.requestRecovery(reason) {
+            reload(manual: false, reason: reason.rawValue)
+        } else {
+            sendTelemetryOnce()
+        }
+    }
+
+    /// After returning from background: ask for one verified frame; recreate if it never comes.
+    private func verifyRenderAfterForeground() {
+        guard session.phase == .ready, let bridge = webBridge else { return }
+        resumeCheckTask?.cancel()
+        resumeCheckTask = Task { @MainActor in
+            let requested = await bridge.requestFrame(reason: "foreground")
+            if !requested {
+                // JS unreachable (content process gone). didTerminate normally fires too.
+                recover(.webContentProcessTerminated)
+            }
         }
     }
 
     private func handleBridgeEvent(_ event: GaussianViewerBridgeEvent) {
         switch event {
         case .timeline(let name):
-            GaussianViewerLoadLog.mark(name, since: appearAt)
+            GaussianViewerLoadLog.mark(name, since: session.openedAt)
+            if name.hasPrefix("didStartProvisionalNavigation") { navigationStarted = true }
 
-        case .loadStage(let stage, let label, let sub):
-            GaussianViewerLoadLog.mark("load_stage=\(stage)", since: appearAt)
-            didReceiveLoadStage = true
-            resumeReloadArmed = false
-            guard isLoading, !loadFailed else { return }
-            loadMessage = GaussianViewerLoadCopy.message(forStage: stage, fallbackLabel: label)
-            if let sub, !sub.isEmpty {
-                loadSubMessage = sub
-            }
+        case .loadStage(let stage, let profile):
+            GaussianViewerLoadLog.mark("load_stage=\(stage)", since: session.openedAt)
+            navigationStarted = true
+            if let profile { mergeProfile(profile) }
+            session.applyStage(stage)
+            session.log("stage", stage)
+
+        case .progress(let percent, let bytesTotal):
+            navigationStarted = true
+            if let bytesTotal { session.bytesTotal = bytesTotal }
+            session.applyProgress(percent: percent)
+
+        case .profile(let profile):
+            mergeProfile(profile)
 
         case .ready:
-            GaussianViewerLoadLog.mark("render_ready → hide native overlay", since: appearAt)
-            didReceiveLoadStage = true
-            resumeReloadArmed = false
-            slowLoadTask?.cancel()
-            withAnimation(.easeOut(duration: 0.25)) {
-                isLoading = false
-                loadFailed = false
-            }
+            GaussianViewerLoadLog.mark("render_ready → hide native overlay", since: session.openedAt)
+            let wasRecovering = session.phase.isRecovering
+            withAnimation(.easeOut(duration: 0.25)) { session.markReady() }
+            session.log(wasRecovering ? "recovered_ready" : "ready")
+            startCameraTracking()
+            sendTelemetryOnce()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 webBridge?.probeCollision()
             }
 
         case .error(let code):
-            GaussianViewerLoadLog.mark("viewer_error code=\(code)", since: appearAt)
-            if GaussianViewerLoadCopy.isHardFailure(code) {
-                slowLoadTask?.cancel()
-                loadFailed = true
-                isLoading = true
-                loadMessage = GaussianViewerLoadCopy.failedMessage
-                loadSubMessage = nil
+            GaussianViewerLoadLog.mark("viewer_error code=\(code)", since: session.openedAt)
+            session.log("error", code)
+            guard session.phase != .ready else { return }
+            if code.contains("FETCH") || code.contains("CONTENT_HTTP") || code.hasPrefix("NAV_") {
+                session.fail(.network)
+            } else {
+                session.fail(.viewNotReady(code: String(code.prefix(40))))
             }
+            sendTelemetryOnce()
+
+        case .jsError(let wasReady):
+            session.noteJSError()
+            session.log("js_error", wasReady ? "after_ready" : "before_ready")
+
+        case .contextLost:
+            session.log("webgl_context_lost")
+            contextRestoreTask?.cancel()
+            cameraTask?.cancel()
+            let wasReady = session.phase == .ready
+            if wasReady {
+                // Visible black screen → show "복구 중" while PlayCanvas tries to restore.
+                guard session.requestRecovery(.webGLContextLost) else {
+                    sendTelemetryOnce()
+                    return
+                }
+            }
+            let restoredBefore = session.contextRestored
+            contextRestoreTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled, session.contextRestored == restoredBefore else { return }
+                // Context never came back: recreate the viewer (at the last camera).
+                if wasReady {
+                    if session.phase.isRecovering { reload(manual: false, reason: "webgl_context_not_restored") }
+                } else if session.phase != .ready, !session.phase.isTerminalFailure {
+                    recover(.webGLContextLost)
+                }
+            }
+
+        case .contextRestored:
+            session.noteContextRestored()
+            session.log("webgl_context_restored")
+
+        case .renderResumed(let reason):
+            session.log("render_resumed", reason)
+            resumeCheckTask?.cancel()
+            if session.phase.isRecovering, session.everDisplayed {
+                contextRestoreTask?.cancel()
+                withAnimation { session.markReady() }
+                startCameraTracking()
+            }
+
+        case .renderResumeFailed(let reason):
+            session.log("render_resume_failed", reason)
+            // Only a displayed (or recovering-after-display) viewer can stall; ignore during load.
+            guard session.everDisplayed, session.phase == .ready || session.phase.isRecovering else { return }
+            recover(.renderStalledAfterResume)
+
+        case .processTerminated:
+            GaussianViewerLoadLog.mark("webContentProcessDidTerminate", since: session.openedAt)
+            recover(.webContentProcessTerminated)
         }
+    }
+
+    private func mergeProfile(_ profile: [String: Any]) {
+        for (k, v) in profile { session.profile[k] = v }
+        if let total = profile["bytesTotal"] as? NSNumber { session.bytesTotal = total.int64Value }
+    }
+
+    private func sendTelemetryOnce() {
+        guard !telemetrySent else { return }
+        telemetrySent = true
+        GaussianViewerTelemetryUploader.send(spaceId: spaceId, payload: session.telemetryPayload())
+    }
+
+    /// Final record on close (only if nothing terminal was sent, or recoveries happened later).
+    private func finishSession() {
+        guard !closeRecorded else { return }
+        closeRecorded = true
+        let recoveredLater = session.everDisplayed && (session.processTerminated + session.contextLost) > 0
+        guard !telemetrySent || recoveredLater else { return }
+        session.log("close")
+        telemetrySent = true
+        GaussianViewerTelemetryUploader.send(spaceId: spaceId, payload: session.telemetryPayload())
     }
 }
 
-// MARK: - Copy / logging helpers
-
-private enum GaussianViewerLoadCopy {
-    static let defaultMessage = "공간을 불러오고 있어요"
-    static let slowMessage = "공간을 불러오는 데 시간이 걸리고 있어요"
-    static let failedMessage = "공간을 불러오지 못했어요"
-
-    static func message(forStage stage: String, fallbackLabel: String?) -> String {
-        let s = stage.lowercased()
-        if let fallbackLabel, !fallbackLabel.isEmpty,
-           s == "boot" || s == "error" {
-            return fallbackLabel
-        }
-        if s.contains("download") || s == "content_request" {
-            return "공간 데이터를 불러오고 있어요"
-        }
-        if s.contains("pars") || s.contains("prepar") {
-            return "3D 데이터를 준비하고 있어요"
-        }
-        if s.contains("display") || s.contains("gpu") || s.contains("upload") || s.contains("render") {
-            return "공간을 표시하고 있어요"
-        }
-        if s == "error" {
-            return failedMessage
-        }
-        return fallbackLabel?.isEmpty == false ? fallbackLabel! : defaultMessage
-    }
-
-    static func isHardFailure(_ code: String) -> Bool {
-        let c = code.uppercased()
-        if c.contains("FETCH_FAILED") { return true }
-        if c.contains("CONTENT_HTTP") { return true }
-        if c.contains("CONTENT_FETCH") { return true }
-        if c.contains("WEBGL_CONTEXT_LOST") { return true }
-        if c.contains("GAUSSIAN_VIEWER_WINDOW_ERROR") { return true }
-        if c.contains("NAV_PROVISIONAL_FAILED") { return true }
-        if c.contains("NAV_FAILED") { return true }
-        if c.contains("PLY") && c.contains("FAIL") { return true }
-        return false
-    }
-}
+// MARK: - Logging helpers
 
 private enum GaussianViewerLoadLog {
     static func mark(_ event: String, since t0: Date) {
@@ -363,9 +493,26 @@ private enum GaussianNavMode: String, Hashable {
 
 private enum GaussianViewerBridgeEvent {
     case timeline(String)
-    case loadStage(stage: String, label: String?, sub: String?)
+    case loadStage(stage: String, profile: [String: Any]?)
+    case progress(percent: Int, bytesTotal: Int64?)
+    case profile([String: Any])
     case ready
     case error(code: String)
+    case jsError(wasReady: Bool)
+    case contextLost
+    case contextRestored
+    case renderResumed(reason: String)
+    case renderResumeFailed(reason: String)
+    case processTerminated
+}
+
+private extension Data {
+    func base64URLEncoded() -> String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
 }
 
 @MainActor
@@ -381,6 +528,29 @@ final class GaussianSplatWebBridge: NSObject {
         })();
         """
         webView?.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    /// Engine camera as JSON (viewer-y-up camera_state payload), or nil.
+    func readCameraJSON() async -> String? {
+        guard let webView else { return nil }
+        let js = "(function(){ try { var c = window.__gonggiViewer && window.__gonggiViewer.readCamera(); return c ? JSON.stringify(c) : null; } catch (e) { return null; } })();"
+        return await withCheckedContinuation { cont in
+            webView.evaluateJavaScript(js) { result, _ in
+                cont.resume(returning: result as? String)
+            }
+        }
+    }
+
+    /// Request one verified frame; false when the page's JS is unreachable.
+    func requestFrame(reason: String) async -> Bool {
+        guard let webView else { return false }
+        let safe = reason.filter { $0.isLetter || $0 == "_" }
+        let js = "(function(){ try { return !!(window.__gonggiViewer && window.__gonggiViewer.requestFrame('\(safe)')); } catch (e) { return false; } })();"
+        return await withCheckedContinuation { cont in
+            webView.evaluateJavaScript(js) { result, error in
+                cont.resume(returning: error == nil && (result as? Bool) == true)
+            }
+        }
     }
 
     func probeCollision() {
@@ -429,8 +599,7 @@ private struct GaussianSplatWebView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        context.coordinator.onTimeline("WKWebView.created")
-        context.coordinator.onBridgeEvent(.timeline("message_handler_ready gonggiViewer"))
+        context.coordinator.onTimeline("WKWebView.created token=\(reloadToken)")
 
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
@@ -438,8 +607,8 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         if #available(iOS 14.0, *) {
             config.defaultWebpagePreferences.allowsContentJavaScript = true
         }
-        let contentController = config.userContentController
-        contentController.add(context.coordinator, name: "gonggiViewer")
+        // Weak proxy: the content controller must not retain the coordinator (released on close).
+        config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "gonggiViewer")
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
         webView.backgroundColor = .black
@@ -471,20 +640,23 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         context.coordinator.onCollisionDetected = onCollisionDetected
         context.coordinator.onTimeline = onTimeline
         context.coordinator.onBridgeEvent = onBridgeEvent
-        let urlChanged = context.coordinator.lastLoadedURL != url
-        let tokenChanged = context.coordinator.lastReloadToken != reloadToken
-        if urlChanged || tokenChanged {
-            context.coordinator.lastLoadedURL = url
-            context.coordinator.lastReloadToken = reloadToken
-            context.coordinator.didReceiveFirstStage = false
-            // Slight defer so SwiftUI finishes the current update pass.
-            DispatchQueue.main.async {
-                self.load(url, into: uiView, coordinator: context.coordinator)
-            }
-        }
+        // Loads happen only in makeUIView: every reload / mode change is a new `.id` (one viewer
+        // per load, old one dismantled) — never a second in-place load into the same page.
+    }
+
+    /// Release the page (PLY buffers, WebGL context) as soon as the viewer leaves.
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        coordinator.onTimeline("WKWebView.dismantled")
+        coordinator.isDismantled = true
+        uiView.stopLoading()
+        uiView.navigationDelegate = nil
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "gonggiViewer")
+        uiView.loadHTMLString("", baseURL: nil)
     }
 
     private func load(_ url: URL, into webView: WKWebView, coordinator: Coordinator) {
+        guard !coordinator.isDismantled else { return }
+        // Path only — never log the query (tcam) or the bearer token.
         coordinator.onTimeline("load_request_started \(url.path)")
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 120)
         if let token = MobileAuthTokenStore.shared.getAccessToken() {
@@ -500,7 +672,7 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         var onBridgeEvent: (GaussianViewerBridgeEvent) -> Void
         var lastLoadedURL: URL?
         var lastReloadToken: Int = -1
-        var didReceiveFirstStage = false
+        var isDismantled = false
         private var observer: NSObjectProtocol?
 
         init(
@@ -534,78 +706,56 @@ private struct GaussianSplatWebView: UIViewRepresentable {
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage
         ) {
-            guard message.name == "gonggiViewer" else { return }
+            guard !isDismantled, message.name == "gonggiViewer" else { return }
             guard let body = message.body as? [String: Any],
                   let type = body["type"] as? String
             else { return }
+            let profile = body["profile"] as? [String: Any]
 
             switch type {
             case "load_stage":
                 let stage = (body["stage"] as? String) ?? "unknown"
-                let label = body["label"] as? String
-                var sub: String?
-                if let profile = body["profile"] as? [String: Any] {
-                    var parts: [String] = []
-                    if let bytes = profile["downloadedBytes"] as? Double, bytes > 0 {
-                        parts.append(String(format: "%.1f MB", bytes / (1024 * 1024)))
-                    } else if let bytes = profile["downloadedBytes"] as? Int, bytes > 0 {
-                        parts.append(String(format: "%.1f MB", Double(bytes) / (1024 * 1024)))
-                    }
-                    if let elapsed = profile["elapsedMs"] as? Double {
-                        parts.append(String(format: "%.0fs", elapsed / 1000))
-                    } else if let elapsed = profile["elapsedMs"] as? Int {
-                        parts.append("\(elapsed / 1000)s")
-                    }
-                    if !parts.isEmpty { sub = parts.joined(separator: " · ") }
-                }
-                if !didReceiveFirstStage {
-                    didReceiveFirstStage = true
-                    onTimeline("first_loading_stage_message stage=\(stage)")
-                }
-                onBridgeEvent(.loadStage(stage: stage, label: label, sub: sub))
-
+                onBridgeEvent(.loadStage(stage: stage, profile: profile))
+            case "content_download_progress":
+                let pct = (body["percent"] as? NSNumber)?.intValue ?? 0
+                let total = (body["bytesTotal"] as? NSNumber)?.int64Value
+                onBridgeEvent(.progress(percent: pct, bytesTotal: total))
+            case "load_profile":
+                if let profile { onBridgeEvent(.profile(profile)) }
             case "render_ready":
                 onTimeline("render_ready")
                 onBridgeEvent(.ready)
-
             case "content_request_started":
                 onTimeline("PLY_download_start")
-                onBridgeEvent(.loadStage(stage: "downloading", label: nil, sub: nil))
-
             case "content_downloaded":
                 onTimeline("PLY_download_end")
-
-            case "content_parsing":
-                onTimeline("parse_start")
-                onBridgeEvent(.loadStage(stage: "preparing", label: nil, sub: nil))
-
             case "content_fetch_failed", "render_failed":
-                let code = (body["errorCode"] as? String) ?? type
-                onBridgeEvent(.error(code: code))
-
+                if let profile { onBridgeEvent(.profile(profile)) }
+                onBridgeEvent(.error(code: (body["errorCode"] as? String) ?? type))
             case "viewer_error":
                 let code = (body["errorCode"] as? String) ?? "VIEWER_ERROR"
-                if code == "CAMERA_NOT_READY" || code == "CAMERA_ENTITY_UNAVAILABLE" {
-                    onTimeline("viewer_error_soft \(code)")
-                } else {
-                    onBridgeEvent(.error(code: code))
-                }
-
+                onTimeline("viewer_error_soft \(code)")
+            case "js_error":
+                onBridgeEvent(.jsError(wasReady: (body["wasReady"] as? Bool) ?? false))
+            case "webgl_context_lost":
+                onBridgeEvent(.contextLost)
+            case "webgl_context_restored":
+                onBridgeEvent(.contextRestored)
+            case "render_resumed":
+                onBridgeEvent(.renderResumed(reason: (body["reason"] as? String) ?? ""))
+            case "render_resume_failed":
+                onBridgeEvent(.renderResumeFailed(reason: (body["errorCode"] as? String) ?? ""))
+            case "page_visibility":
+                onTimeline("page_visibility \((body["state"] as? String) ?? "")")
             case "viewer_shell_loaded":
                 onTimeline("JS_initialized viewer_shell_loaded")
-                onBridgeEvent(.loadStage(stage: "boot", label: "공간을 준비하고 있어요", sub: nil))
-
             default:
-                #if DEBUG
-                print("[gonggiViewer] \(type)")
-                #endif
                 break
             }
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            onTimeline("didStartProvisionalNavigation")
-            onBridgeEvent(.loadStage(stage: "boot", label: "공간을 불러오고 있어요", sub: nil))
+            onBridgeEvent(.timeline("didStartProvisionalNavigation"))
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -624,13 +774,28 @@ private struct GaussianSplatWebView: UIViewRepresentable {
             didFailProvisionalNavigation navigation: WKNavigation!,
             withError error: Error
         ) {
-            onTimeline("didFailProvisionalNavigation \(error.localizedDescription)")
+            onTimeline("didFailProvisionalNavigation code=\((error as NSError).code)")
             onBridgeEvent(.error(code: "NAV_PROVISIONAL_FAILED"))
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            onTimeline("didFailNavigation \(error.localizedDescription)")
+            onTimeline("didFailNavigation code=\((error as NSError).code)")
             onBridgeEvent(.error(code: "NAV_FAILED"))
         }
+
+        /// WebContent process crashed / was killed (e.g. memory pressure) → black page.
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            guard !isDismantled else { return }
+            onBridgeEvent(.processTerminated)
+        }
+    }
+}
+
+/// Breaks the WKUserContentController → handler retain so the viewer can deallocate.
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+    init(_ target: WKScriptMessageHandler) { self.target = target }
+    func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.userContentController(c, didReceive: message)
     }
 }
