@@ -35,6 +35,14 @@ final class CaptureSessionController {
     private var surfaceCoverage = SurfaceCoverageModel()
     /// ARFrame callback thread only.
     private var surfaceFrameCounter = 0
+    /// Save-stall tracking (living-room capture saved nothing for 99.4 s). ARFrame callback thread.
+    private var latestFrameTimestamp: Double = 0
+    private var lastCandidateEvaluationTimestamp: Double?
+    private var longestCandidateEvaluationGapSec: Double = 0
+    private var saveStallActiveSince: Double?
+    private var saveStallEpisodes = 0
+    private var longestSaveStallNoticeSec: Double = 0
+    private var currentSaveStallSec: Double = 0
     private var packagePaths: SpatialCapturePackagePaths?
     private var startedAt = Date()
     private var sessionStartTimestamp: TimeInterval = 0
@@ -118,6 +126,13 @@ final class CaptureSessionController {
         trackingFailureEventCount = 0
         surfaceQueue.sync { surfaceCoverage.reset() }
         surfaceFrameCounter = 0
+        latestFrameTimestamp = 0
+        lastCandidateEvaluationTimestamp = nil
+        longestCandidateEvaluationGapSec = 0
+        saveStallActiveSince = nil
+        saveStallEpisodes = 0
+        longestSaveStallNoticeSec = 0
+        currentSaveStallSec = 0
         packagePaths = nil
         orientationContract = nil
         acceptingSpatialKeyframes = true
@@ -163,6 +178,7 @@ final class CaptureSessionController {
             telemetry.reset(startTime: frame.timestamp)
         }
         feedSurfaceCoverage(frame: frame)
+        latestFrameTimestamp = frame.timestamp
 
         // Critical: pose/intrinsics only when this ARFrame's image is written to MOV.
         guard let written = videoRecorder.append(frame: frame) else {
@@ -183,6 +199,7 @@ final class CaptureSessionController {
             _ = overlapAnalyzer.ingest(currentCellId: cellId, isKeyframe: false)
             updatePhaseAndCompletion(trackingNormal: trackingNormal, transform: transform)
             let trackingLimited = !trackingNormal
+            updateSaveStall(transform: transform, timestamp: frame.timestamp, trackingNormal: trackingNormal)
             let decision = guidanceRules.evaluateDecision(
                 quality: qualityState(trackingLimited: trackingLimited),
                 trackingLimited: trackingLimited
@@ -437,6 +454,7 @@ final class CaptureSessionController {
             }
         }
 
+        noteCandidateEvaluated(at: frame.timestamp)
         // Observe-only: never fail capture if telemetry sampling throws/unavailable.
         recordFrameContinuityTelemetry(
             frame: frame,
@@ -483,6 +501,7 @@ final class CaptureSessionController {
         frameSamples.append(sample)
 
         let trackingLimited = !trackingNormal
+        updateSaveStall(transform: transform, timestamp: frame.timestamp, trackingNormal: trackingNormal)
         let decision = guidanceRules.evaluateDecision(
             quality: qualityState(trackingLimited: trackingLimited),
             trackingLimited: trackingLimited
@@ -702,7 +721,10 @@ final class CaptureSessionController {
     private func applyDurableJPEGSuccess(snapshot: SpatialKeyframeSnapshot) {
         let kind = CaptureAcceptKind(rawValue: snapshot.acceptKindRaw ?? "")
             ?? AsyncJPEGDurableContinuity.acceptKind(fromAcceptReason: snapshot.acceptReason)
-        if let prior = durableJPEGContinuity.lastDurableContinuityTransform {
+        // A stale-anchor escape starts a new continuity segment on purpose: it is not a link from
+        // the prior durable photo, so it must not be orphaned / repaired back into REACQUIRE.
+        let isReanchor = snapshot.acceptReason == CaptureBridgeSession.reanchorReason
+        if let prior = durableJPEGContinuity.lastDurableContinuityTransform, !isReanchor {
             let (ok, _, _) = PendingAngularRescueLinkGate.linkOK(
                 from: prior,
                 to: snapshot.cameraToWorld
@@ -1431,7 +1453,14 @@ final class CaptureSessionController {
                         reconstructionMetrics: reconSnap,
                         reconstructionCompletion: completionRecord,
                         frameContinuityTelemetry: frameContinuityTelemetry.snapshotFile(),
-                        surfaceCoverage: surfaceQueue.sync { surfaceCoverage.summary() }
+                        surfaceCoverage: surfaceQueue.sync { surfaceCoverage.summary() },
+                        saveContinuity: SpatialCaptureSaveContinuity(
+                            keyframeTimestamps: finalizedKeyframes.map(\.arTimestampSeconds),
+                            reanchorCount: bridgeSession.reanchorCount,
+                            stallNoticeEpisodes: saveStallEpisodes,
+                            longestStallNoticeSec: longestSaveStallNoticeSec,
+                            longestCandidateEvaluationGapSec: longestCandidateEvaluationGapSec
+                        )
                     )
                 )
                 packageURL = built.root
@@ -1522,7 +1551,7 @@ final class CaptureSessionController {
         let lastSample = telemetry.samples.last
         let grade = translationBaseline.bestGrade
         let sharp = sharpnessAnalyzer.snapshot()
-        return CaptureQualityState(
+        var q = CaptureQualityState(
             overallCoverage: overall,
             motionSpeed: lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed,
             angularVelocity: lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity,
@@ -1565,6 +1594,8 @@ final class CaptureSessionController {
             candidateSafetyCapReached: keyframe3DGSCount >= SpatialCaptureConfig.candidateSafetyCap,
             spatialKeyframeEnqueueCount: keyframe3DGSCount
         )
+        q.saveStalledSec = currentSaveStallSec
+        return q
     }
 
     private func updatePhaseAndCompletion(trackingNormal: Bool, transform: simd_float4x4) {
@@ -2263,6 +2294,43 @@ final class CaptureSessionController {
         keyframe3DGSCount = nextIndex
         _ = keyDecision
         return frameId
+    }
+
+    private func noteCandidateEvaluated(at timestamp: Double) {
+        if let last = lastCandidateEvaluationTimestamp {
+            longestCandidateEvaluationGapSec = max(longestCandidateEvaluationGapSec, timestamp - last)
+        }
+        lastCandidateEvaluationTimestamp = timestamp
+    }
+
+    /// "사진이 저장되지 않고 있어요": no photo saved for `saveStallNoticeSec` while the camera clearly
+    /// moved and candidates are blocked by continuity (REACQUIRE) or not evaluated at all
+    /// (frames not reaching the selector). Standing still is not a stall.
+    private func updateSaveStall(transform: simd_float4x4, timestamp: Double, trackingNormal: Bool) {
+        var stalled = false
+        if acceptingSpatialKeyframes, trackingNormal,
+           let lastT = lastKeyframeTimestamp, let lastX = lastKeyframeTransform
+        {
+            let since = timestamp - lastT
+            let s = FrustumOverlapProxy.sample(from: lastX, to: transform)
+            let moved = s.translationM >= CaptureBridgeConfig.saveStallMinMoveM
+                || max(s.yawDeltaDeg, s.forwardAngleDeg) >= CaptureBridgeConfig.saveStallMinTurnDeg
+            let blocked = lastBridgeVerdict == .reacquire
+                || timestamp - (lastCandidateEvaluationTimestamp ?? timestamp) >= 1.0
+            stalled = since >= CaptureBridgeConfig.saveStallNoticeSec && moved && blocked
+            if stalled {
+                if saveStallActiveSince == nil {
+                    saveStallActiveSince = lastT
+                    saveStallEpisodes += 1
+                }
+                currentSaveStallSec = since
+                longestSaveStallNoticeSec = max(longestSaveStallNoticeSec, since)
+            }
+        }
+        if !stalled {
+            saveStallActiveSince = nil
+            currentSaveStallSec = 0
+        }
     }
 
     /// Guide v2 stage 1 (observe-only): plane anchors (~1 s) and feature points (every 3rd frame)

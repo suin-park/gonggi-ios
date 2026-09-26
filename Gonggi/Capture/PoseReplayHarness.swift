@@ -42,7 +42,10 @@ enum PoseReplayHarness {
         var earlyDiscarded = 0
         var eosFlushN = 0
         var maxLiveNoAcceptSec: Double = 0
+        /// Every consecutive live pair links, except at stale-anchor escapes (segment starts).
         var chainIntactLive = true
+        /// Continuity segments among live saves (1 + stale-anchor escapes).
+        var liveSegments = 0
         var lastLiveFrameRel: Double?
         var lastAcceptFrameRel: Double?
         var enqueued: [Enqueued] = []
@@ -98,7 +101,9 @@ enum PoseReplayHarness {
             if m.capCount >= config.maxFrames {
                 return false
             }
-            if config.enforceLinkGate, let last = m.enqueued.last, let lastX = posesByRel[last.rel] {
+            // A stale-anchor escape starts a new continuity segment (app exempts it the same way).
+            if config.enforceLinkGate, item.reason != CaptureBridgeSession.reanchorReason,
+               let last = m.enqueued.last, let lastX = posesByRel[last.rel] {
                 let (ok, reason) = linkOK(lastX, item.x)
                 if !ok {
                     m.linkViolations += 1
@@ -379,6 +384,7 @@ enum PoseReplayHarness {
         m.lastAcceptFrameRel = m.enqueued.last?.rel
         m.maxLiveNoAcceptSec = gapMetrics(live.map(\.rel), duration: duration)
         m.chainIntactLive = chainIntact(live: live, posesByRel: posesByRel)
+        m.liveSegments = live.isEmpty ? 0 : 1 + live.dropFirst().filter { $0.reason == CaptureBridgeSession.reanchorReason }.count
         return m
     }
 
@@ -397,6 +403,8 @@ enum PoseReplayHarness {
     static func chainIntact(live: [Enqueued], posesByRel: [Double: simd_float4x4]) -> Bool {
         guard live.count >= 2 else { return true }
         for i in 0..<(live.count - 1) {
+            // A stale-anchor escape starts a new segment on purpose — not a link to check.
+            if live[i + 1].reason == CaptureBridgeSession.reanchorReason { continue }
             guard let a = posesByRel[live[i].rel], let b = posesByRel[live[i + 1].rel] else {
                 return false
             }

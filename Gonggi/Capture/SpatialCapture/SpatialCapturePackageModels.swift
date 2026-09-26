@@ -126,6 +126,35 @@ struct SpatialCaptureQualityFile: Codable, Equatable, Sendable {
     var frames: [SpatialCaptureFrameQuality]
     /// Guide v2 stage 1: what surfaces were seen, how close and from how many directions (nil on older packages).
     var surfaceCoverage: SpatialCaptureSurfaceCoverage? = nil
+    /// Photo-save continuity: gaps between saved photos, stale-anchor escapes, stall notices (nil on older packages).
+    var saveContinuity: SpatialCaptureSaveContinuity? = nil
+}
+
+struct SpatialCaptureSaveContinuity: Codable, Equatable, Sendable {
+    var keyframeCount: Int
+    var longestSaveGapSec: Double
+    var saveGapsOver3Sec: Int
+    var saveGapsOver10Sec: Int
+    /// Stale-anchor escapes (`reanchor_after_stall`): each starts a new continuity segment.
+    var reanchorCount: Int
+    var stallNoticeEpisodes: Int
+    var longestStallNoticeSec: Double
+    /// Longest time no candidate reached the selector (e.g. frames not written to the MOV).
+    var longestCandidateEvaluationGapSec: Double
+
+    init(keyframeTimestamps: [Double], reanchorCount: Int, stallNoticeEpisodes: Int,
+         longestStallNoticeSec: Double, longestCandidateEvaluationGapSec: Double) {
+        let ts = keyframeTimestamps.sorted()
+        let gaps = zip(ts.dropFirst(), ts).map { $0 - $1 }
+        keyframeCount = ts.count
+        longestSaveGapSec = gaps.max() ?? 0
+        saveGapsOver3Sec = gaps.filter { $0 > 3 }.count
+        saveGapsOver10Sec = gaps.filter { $0 > 10 }.count
+        self.reanchorCount = reanchorCount
+        self.stallNoticeEpisodes = stallNoticeEpisodes
+        self.longestStallNoticeSec = longestStallNoticeSec
+        self.longestCandidateEvaluationGapSec = longestCandidateEvaluationGapSec
+    }
 }
 
 /// Surface ("what was seen") coverage summary. World coordinates = ARKit world, same as poses.json.

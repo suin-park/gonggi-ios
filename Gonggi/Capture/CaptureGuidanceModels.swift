@@ -124,6 +124,8 @@ enum GuidanceAction: String, Codable, Equatable, Sendable {
     case needLowerCoverage
     case bridgeContinuity
     case reacquireView
+    /// Photos stopped saving while the camera keeps moving (continuity blocked / frames not evaluated).
+    case saveStalled
     case finishBlockedWeakTerminal
     case captureNearlyComplete
     case captureComplete

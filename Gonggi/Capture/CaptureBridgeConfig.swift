@@ -41,6 +41,25 @@ enum CaptureBridgeConfig {
     /// Show REACQUIRE continuity-anchor thumbnail after this duration in reacquiring mode.
     static var reacquireThumbnailMinDurationSec: Double = 0.5
 
+    // MARK: Stale-anchor escape (reacquire trap)
+
+    /// REACQUIRE only recovers when the user faces the last saved view again. When they never do
+    /// (2026-09-23 living-room capture: 99.4 s, ~3,900 sharp candidates rejected as
+    /// `reacquire_unsupported_jump`), nothing is saved. After this long in REACQUIRE, a steady,
+    /// sharp, tracking-normal view starts a **new continuity segment** (`reanchor_after_stall`).
+    /// Inside a segment every continuity rule above still applies. 0 disables.
+    static var reanchorAfterStallSec: Double = 3.0
+    /// The view must stay within this angle / translation for `reanchorSteadyMinSec` (no mid-turn anchors).
+    static var reanchorSteadyMinSec: Double = 0.5
+    static var reanchorSteadyMaxAngularDeg: Double = 3.0
+    static var reanchorSteadyMaxTranslationM: Float = 0.05
+    /// "사진이 저장되지 않고 있어요" notice: no saved photo for this long while the camera is moving
+    /// and candidates are being rejected for continuity (or not evaluated at all).
+    static var saveStallNoticeSec: Double = 3.0
+    /// Camera must have moved at least this much since the last saved photo for the notice.
+    static var saveStallMinMoveM: Float = 0.3
+    static var saveStallMinTurnDeg: Double = 20
+
     // MARK: Reconstruction keyframe translation (vs reconstructionAnchor)
 
     /// Minimum **cumulative** translation from last reconstructionAnchor (meters). Provisional.

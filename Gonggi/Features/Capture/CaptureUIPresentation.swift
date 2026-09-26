@@ -196,7 +196,7 @@ enum CaptureUIPresenter {
     static func hasLiveCorrection(quality: CaptureQualityState) -> Bool {
         if warningKind(for: quality) != nil { return true }
         switch quality.guidanceAction {
-        case .trackingRecovery, .returnToPreviousArea, .reacquireView, .bridgeContinuity,
+        case .trackingRecovery, .returnToPreviousArea, .reacquireView, .saveStalled, .bridgeContinuity,
              .finishBlockedWeakTerminal, .slowDown, .holdSteady,
              .improveBaseline, .moveLaterally, .lowTextureWarning:
             return true
@@ -236,7 +236,7 @@ enum CaptureUIPresenter {
     static func severity(for action: GuidanceAction, warning: CaptureWarningKind?) -> PrimaryGuidanceSeverity {
         if warning == .trackingLimited || warning == .overlapWeak { return .critical }
         switch action {
-        case .trackingRecovery, .returnToPreviousArea, .reacquireView, .finishBlockedWeakTerminal:
+        case .trackingRecovery, .returnToPreviousArea, .reacquireView, .saveStalled, .finishBlockedWeakTerminal:
             return .critical
         case .bridgeContinuity, .slowDown, .holdSteady, .lowTextureWarning, .improveBaseline, .moveLaterally,
              .scanNewArea, .needMoreYaw, .needUpperCoverage, .needLowerCoverage:
@@ -398,6 +398,11 @@ enum CaptureUIPresenter {
             return (
                 "방향을 조금 더 천천히 이어가 주세요",
                 "중간 장면을 담아 연결을 유지하고 있어요"
+            )
+        case .saveStalled:
+            return (
+                "사진이 저장되지 않고 있어요",
+                "잠시 멈춰 한 곳을 비추면 다시 저장돼요. 방향은 천천히 바꿔 주세요"
             )
         case .finishBlockedWeakTerminal:
             return (

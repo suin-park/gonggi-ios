@@ -92,6 +92,16 @@ struct GuidanceRuleEngine {
             ))
         }
 
+        // 1a. Photos stopped saving while the user keeps filming — must outrank REACQUIRE, which
+        //     only asks to return to the last saved view (the 99 s living-room capture never did).
+        if quality.saveStalledSec > 0, !trackingLimited {
+            candidates.append(GuidanceDecision(
+                action: .saveStalled,
+                priority: .critical,
+                ruleId: "save_stall"
+            ))
+        }
+
         // 1b. Bridge / reacquisition / weak terminal (SfM continuity) — above cell-overlap alone
         switch quality.bridgeMode {
         case .reacquiring:

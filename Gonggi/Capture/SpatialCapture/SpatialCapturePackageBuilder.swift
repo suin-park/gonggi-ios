@@ -58,6 +58,7 @@ enum SpatialCapturePackageBuilder {
         var frameContinuityTelemetry: FrameContinuityTelemetryFile? = nil
         /// Guide v2 stage 1 surface coverage summary (observe-only).
         var surfaceCoverage: SpatialCaptureSurfaceCoverage? = nil
+        var saveContinuity: SpatialCaptureSaveContinuity? = nil
     }
 
     static func prepareDirectories(sessionId: String) throws -> SpatialCapturePackagePaths {
@@ -202,7 +203,8 @@ enum SpatialCapturePackageBuilder {
                 transitionSegmentHint: input.transitionScore
             ),
             frames: keyframes.map(\.quality),
-            surfaceCoverage: input.surfaceCoverage
+            surfaceCoverage: input.surfaceCoverage,
+            saveContinuity: input.saveContinuity
         )
 
         try encoder.encode(metadata).write(to: paths.metadataURL, options: [.atomic])

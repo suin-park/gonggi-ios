@@ -118,6 +118,8 @@ struct CaptureQualityState: Equatable {
     var candidateSafetyCapReached: Bool
     /// Enqueue reservation count for UI/tests (same counter as selector cap).
     var spatialKeyframeEnqueueCount: Int
+    /// Seconds since the last saved photo while saving is blocked and the camera moves (0 = not stalled).
+    var saveStalledSec: Double = 0
 
     init(
         overallCoverage: Double,

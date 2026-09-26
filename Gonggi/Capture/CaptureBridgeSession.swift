@@ -85,6 +85,14 @@ struct CaptureBridgeSession: Equatable {
     private(set) var continuityBrokenSince: Double?
     private(set) var continuityBridgeObservationCount: Int = 0
     private(set) var reconstructionKeyframeCount: Int = 0
+    /// Stale-anchor escapes (each starts a new continuity segment).
+    private(set) var reanchorCount: Int = 0
+    /// Steady-view window while reacquiring (reference pose + since).
+    private var reacquireSteadyRef: simd_float4x4?
+    private var reacquireSteadySince: Double?
+
+    /// Accept reason of a stale-anchor escape keyframe (segment start; link checks exempt it).
+    static let reanchorReason = "reanchor_after_stall"
 
     // Compatibility aliases
     var lastAnchorTimestamp: Double? { continuityAnchorTimestamp }
@@ -107,6 +115,9 @@ struct CaptureBridgeSession: Equatable {
         continuityBrokenSince = nil
         continuityBridgeObservationCount = 0
         reconstructionKeyframeCount = 0
+        reanchorCount = 0
+        reacquireSteadyRef = nil
+        reacquireSteadySince = nil
     }
 
     /// After async JPEG encode/write failure: restore anchors to the last durable JPEG pose
@@ -159,6 +170,8 @@ struct CaptureBridgeSession: Equatable {
         continuityAnchorTimestamp = timestamp
         continuityAnchorTransform = transform
         continuityBrokenSince = nil
+        reacquireSteadyRef = nil
+        reacquireSteadySince = nil
 
         switch kind {
         case .reconstructionKeyframe:
@@ -238,6 +251,12 @@ struct CaptureBridgeSession: Equatable {
                 countsForReconstruction: true,
                 acceptKind: .reconstructionKeyframe
             )
+        }
+
+        if mode == .reacquiring,
+           let escape = reanchorIfStalled(timestamp: timestamp, transform: transform, signals: signals)
+        {
+            return escape
         }
 
         if signals.translationM < CaptureBridgeConfig.poseJitterTranslationM
@@ -361,6 +380,41 @@ struct CaptureBridgeSession: Equatable {
     }
 
     // MARK: - Private
+
+    /// Stale-anchor escape. Only reached for candidates that already passed the hard gates
+    /// (sharpness, tracking normal) and only after `reanchorAfterStallSec` in REACQUIRE with the
+    /// view held steady — so a quick return to the last saved view still reconnects normally,
+    /// and no anchor is taken mid-turn.
+    private mutating func reanchorIfStalled(
+        timestamp: Double,
+        transform: simd_float4x4,
+        signals: CaptureBridgeCandidateSignals
+    ) -> CaptureBridgeDecision? {
+        guard CaptureBridgeConfig.reanchorAfterStallSec > 0, let broken = continuityBrokenSince else { return nil }
+        if let ref = reacquireSteadyRef {
+            let s = FrustumOverlapProxy.sample(from: ref, to: transform)
+            if max(s.yawDeltaDeg, s.forwardAngleDeg) > CaptureBridgeConfig.reanchorSteadyMaxAngularDeg
+                || s.translationM > CaptureBridgeConfig.reanchorSteadyMaxTranslationM
+            {
+                reacquireSteadyRef = transform
+                reacquireSteadySince = timestamp
+            }
+        } else {
+            reacquireSteadyRef = transform
+            reacquireSteadySince = timestamp
+        }
+        guard timestamp - broken >= CaptureBridgeConfig.reanchorAfterStallSec,
+              let since = reacquireSteadySince,
+              timestamp - since >= CaptureBridgeConfig.reanchorSteadyMinSec
+        else { return nil }
+        mode = .idle
+        bridgeTargetYawDeg = nil
+        bridgeStepsAccepted = 0
+        reacquireSteadyRef = nil
+        reacquireSteadySince = nil
+        reanchorCount += 1
+        return decision(.accept, Self.reanchorReason, signals, kind: .reconstructionKeyframe, counts: true)
+    }
 
     private mutating func enterBridge(toward transform: simd_float4x4) {
         mode = .bridging
