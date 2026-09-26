@@ -131,7 +131,7 @@ struct SurfaceCoverageModel {
 
     mutating func addFeaturePoints(_ points: [simd_float3]) {
         let size = SurfaceCoverageConfig.voxelSizeM
-        for p in points {
+        for p in points where p.x.isFinite && p.y.isFinite && p.z.isFinite && simd_length(p) < 1000 {
             let key = SIMD3<Int32>(Int32(floor(p.x / size)), Int32(floor(p.y / size)), Int32(floor(p.z / size)))
             if let n = voxelCounts[key] {
                 voxelCounts[key] = n + 1
@@ -173,6 +173,7 @@ struct SurfaceCoverageModel {
         for s in all where s.state != .enough {
             let d = s.center - centroid
             let az = (atan2(d.x, d.z) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+            guard az.isFinite else { continue }
             directionDeficit[min(7, Int(az / 45))] += Double(s.areaM2)
         }
         let deficits = all.filter { $0.state != .enough }
@@ -235,7 +236,7 @@ struct SurfaceCoverageModel {
             }
             let offset = simd_dot(n, plane.center)
             // Bounding range of the plane rectangle in lattice coordinates.
-            var lo = SIMD2<Float>(.infinity, .infinity), hi = SIMD2<Float>(-.infinity, .infinity)
+            var lo = SIMD2<Float>(.infinity, .infinity), hi = SIMD2<Float>(-.infinity, -.infinity)
             for su in [-1, 1] as [Float] {
                 for sv in [-1, 1] as [Float] {
                     let corner = plane.center + plane.axisU * (su * plane.halfU) + plane.axisV * (sv * plane.halfV)
@@ -244,6 +245,9 @@ struct SurfaceCoverageModel {
                     hi = simd_max(hi, q)
                 }
             }
+            // Never trap on degenerate anchor data (Float → Int of NaN/∞ is a crash).
+            guard lo.x.isFinite, lo.y.isFinite, hi.x.isFinite, hi.y.isFinite, offset.isFinite,
+                  (hi.x - lo.x) / size < 200, (hi.y - lo.y) / size < 200 else { continue }
             let i0 = Int((lo.x / size).rounded(.down)), i1 = Int((hi.x / size).rounded(.down))
             let j0 = Int((lo.y / size).rounded(.down)), j1 = Int((hi.y / size).rounded(.down))
             for i in i0...max(i0, i1) {
@@ -347,6 +351,7 @@ struct SurfaceCoverageModel {
         if dist <= SurfaceCoverageConfig.nearDistanceM { s.nearViews += 1 }
         s.minDistanceM = min(s.minDistanceM, dist)
         let az = (atan2(d.x, d.z) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+        guard az.isFinite else { return }
         let bucket = min(11, Int(az / SurfaceCoverageConfig.azimuthBucketDeg))
         s.azimuthMask |= UInt16(1) << UInt16(bucket)
     }
