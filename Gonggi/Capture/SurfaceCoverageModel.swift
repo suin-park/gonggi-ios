@@ -100,6 +100,11 @@ struct SurfaceCoverageModel {
     private var tiles: [String: Surface] = [:]
     private var voxelCounts: [SIMD3<Int32>: Int] = [:]
     private var voxels: [SIMD3<Int32>: Surface] = [:]
+    /// Compute cost per call (ms), for the device performance record.
+    private var observeMs: [Double] = []
+    private var planeUpdateMs: [Double] = []
+
+    private static func nowMs() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000 }
 
     mutating func reset() {
         self = SurfaceCoverageModel()
@@ -108,6 +113,8 @@ struct SurfaceCoverageModel {
     // MARK: Inputs
 
     mutating func updatePlanes(_ samples: [SurfacePlaneSample]) {
+        let t0 = Self.nowMs()
+        defer { planeUpdateMs.append(Self.nowMs() - t0) }
         var next: [UUID: PlaneRect] = [:]
         for s in samples where s.width > 0.2 && s.height > 0.2 {
             let rotY = simd_quatf(angle: s.rotationOnYAxis, axis: simd_float3(0, 1, 0))
@@ -142,6 +149,8 @@ struct SurfaceCoverageModel {
     }
 
     mutating func observeKeyframe(_ kf: Keyframe) {
+        let t0 = Self.nowMs()
+        defer { observeMs.append(Self.nowMs() - t0) }
         keyframes.append(kf)
         promoteVoxels()
         catchUp()
@@ -152,6 +161,7 @@ struct SurfaceCoverageModel {
     var surfaces: [Surface] { Array(tiles.values) + Array(voxels.values) }
 
     func summary() -> SpatialCaptureSurfaceCoverage {
+        let t0 = Self.nowMs()
         var model = self
         model.promoteVoxels()
         model.catchUp()
@@ -208,11 +218,27 @@ struct SurfaceCoverageModel {
             sharpKeyframeCount: model.keyframes.filter(\.sharp).count,
             areaM2ByState: area,
             countByState: count,
-            enoughAreaRatio: total > 0 ? (area[SurfaceCoverageState.enough.rawValue] ?? 0) / total : 0,
+            scope: "detected_surfaces_only",
+            detectedSurfaceEnoughAreaRatio: total > 0 ? (area[SurfaceCoverageState.enough.rawValue] ?? 0) / total : 0,
             pathCentroid: [centroid.x, centroid.y, centroid.z].map { Double($0) },
             directionDeficitM2: directionDeficit,
-            deficits: Array(deficits)
+            deficits: Array(deficits),
+            performance: .init(
+                keyframeObserveMsP50: Self.percentile(observeMs, 0.5),
+                keyframeObserveMsP95: Self.percentile(observeMs, 0.95),
+                keyframeObserveMsMax: observeMs.max() ?? 0,
+                planeUpdateMsP95: Self.percentile(planeUpdateMs, 0.95),
+                planeUpdateMsMax: planeUpdateMs.max() ?? 0,
+                planeUpdateCount: planeUpdateMs.count,
+                summaryMs: Self.nowMs() - t0
+            )
         )
+    }
+
+    private static func percentile(_ xs: [Double], _ q: Double) -> Double {
+        guard !xs.isEmpty else { return 0 }
+        let s = xs.sorted()
+        return s[min(s.count - 1, Int(Double(s.count - 1) * q))]
     }
 
     // MARK: Surfaces

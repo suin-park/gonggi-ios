@@ -41,7 +41,11 @@ final class SurfaceCoverageModelTests: XCTestCase {
         model.updatePlanes([wall()])
         walkAlongWall(&model, z: -1)
         XCTAssertEqual(nearest(model, simd_float3(0, 0, -3)).state, .enough)
-        XCTAssertGreaterThan(model.summary().enoughAreaRatio, 0)
+        let summary = model.summary()
+        XCTAssertGreaterThan(summary.detectedSurfaceEnoughAreaRatio, 0)
+        XCTAssertEqual(summary.scope, "detected_surfaces_only")
+        XCTAssertEqual(summary.performance?.planeUpdateCount, 1)
+        XCTAssertGreaterThanOrEqual(summary.performance?.keyframeObserveMsMax ?? -1, 0)
     }
 
     func testViewsOnlyFromFarAwayAreFarOnly() {

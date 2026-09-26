@@ -163,12 +163,28 @@ struct SpatialCaptureSurfaceCoverage: Codable, Equatable, Sendable {
     /// unseen / farOnly / oneSide / fewViews / enough
     var areaM2ByState: [String: Double]
     var countByState: [String: Int]
-    var enoughAreaRatio: Double
+    /// Always "detected_surfaces_only": ratios cover surfaces ARKit detected (planes + feature voxels).
+    /// Parts of the room never looked at are never detected, so this is **not** whole-space completeness.
+    var scope: String
+    /// "enough" area / detected surface area. Not a completeness score (see `scope`).
+    var detectedSurfaceEnoughAreaRatio: Double
     var pathCentroid: [Double]
     /// Not-enough area per 45° world-azimuth sector around the path centroid (0 = +z, clockwise to +x).
     var directionDeficitM2: [Double]
     /// Largest not-enough surfaces (up to 40).
     var deficits: [Deficit]
+    /// On-device compute cost of this model (device performance check).
+    var performance: Performance?
+
+    struct Performance: Codable, Equatable, Sendable {
+        var keyframeObserveMsP50: Double
+        var keyframeObserveMsP95: Double
+        var keyframeObserveMsMax: Double
+        var planeUpdateMsP95: Double
+        var planeUpdateMsMax: Double
+        var planeUpdateCount: Int
+        var summaryMs: Double
+    }
 }
 
 struct SpatialCaptureKeyframeDecision: Codable, Equatable, Sendable {
