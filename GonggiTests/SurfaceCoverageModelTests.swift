@@ -111,6 +111,17 @@ final class SurfaceCoverageModelTests: XCTestCase {
         XCTAssertGreaterThan(nearest(model, simd_float3(0.1, 0.6, -2.1)).views, 0)
     }
 
+    func testDegenerateInputsNeverTrap() {
+        var model = SurfaceCoverageModel()
+        var bad = wall()
+        bad.transform.columns.3 = simd_float4(.nan, 0, .infinity, 1)
+        model.updatePlanes([bad, wall()])
+        model.addFeaturePoints([simd_float3(.nan, 0, 0), simd_float3(.infinity, 1, 1), simd_float3(1e9, 0, 0)])
+        walkAlongWall(&model, z: -1)
+        _ = model.summary()
+        XCTAssertEqual(nearest(model, simd_float3(0, 0, -3)).state, .enough)
+    }
+
     func testQualityFileDecodesWithAndWithoutSurfaceCoverage() throws {
         var model = SurfaceCoverageModel()
         model.updatePlanes([wall()])
