@@ -30,6 +30,11 @@ final class CaptureSessionController {
     private var keyframeDecisions: [SpatialCaptureKeyframeDecision] = []
     private var rejectedKeyframeDecisionCount = 0
     private var trackingFailureEventCount = 0
+    /// Guide v2 stage 1 (observe-only): surface coverage. Touched only on `surfaceQueue`.
+    private let surfaceQueue = DispatchQueue(label: "com.whik.gonggi.capture.surface", qos: .utility)
+    private var surfaceCoverage = SurfaceCoverageModel()
+    /// ARFrame callback thread only.
+    private var surfaceFrameCounter = 0
     private var packagePaths: SpatialCapturePackagePaths?
     private var startedAt = Date()
     private var sessionStartTimestamp: TimeInterval = 0
@@ -111,6 +116,8 @@ final class CaptureSessionController {
         keyframeDecisions = []
         rejectedKeyframeDecisionCount = 0
         trackingFailureEventCount = 0
+        surfaceQueue.sync { surfaceCoverage.reset() }
+        surfaceFrameCounter = 0
         packagePaths = nil
         orientationContract = nil
         acceptingSpatialKeyframes = true
@@ -155,6 +162,7 @@ final class CaptureSessionController {
             sessionStartTimestamp = frame.timestamp
             telemetry.reset(startTime: frame.timestamp)
         }
+        feedSurfaceCoverage(frame: frame)
 
         // Critical: pose/intrinsics only when this ARFrame's image is written to MOV.
         guard let written = videoRecorder.append(frame: frame) else {
@@ -649,6 +657,15 @@ final class CaptureSessionController {
                 optionalDepthRelativePath: depthPath
             )
             acceptedSpatialKeyframes.append(keyframe)
+            let surfaceKeyframe = SurfaceCoverageModel.Keyframe(
+                cameraToWorld: snap.cameraToWorld,
+                fx: success.fx, fy: success.fy, cx: success.cx, cy: success.cy,
+                width: Float(success.width), height: Float(success.height),
+                sharp: snap.sharpnessState != CaptureSharpnessState.blurry.rawValue
+            )
+            surfaceQueue.async { [weak self] in
+                self?.surfaceCoverage.observeKeyframe(surfaceKeyframe)
+            }
             keyframeDecisions.append(
                 SpatialCaptureKeyframeDecision(
                     arTimestampSeconds: snap.arTimestampSeconds,
@@ -1192,6 +1209,7 @@ final class CaptureSessionController {
         keyframeDecisions = []
         pendingDepthByFrameId = [:]
         spatialStateLock.unlock()
+        surfaceQueue.sync { surfaceCoverage.reset() }
         packagePaths = nil
     }
 
@@ -1412,7 +1430,8 @@ final class CaptureSessionController {
                         telemetry: telemetryReport,
                         reconstructionMetrics: reconSnap,
                         reconstructionCompletion: completionRecord,
-                        frameContinuityTelemetry: frameContinuityTelemetry.snapshotFile()
+                        frameContinuityTelemetry: frameContinuityTelemetry.snapshotFile(),
+                        surfaceCoverage: surfaceQueue.sync { surfaceCoverage.summary() }
                     )
                 )
                 packageURL = built.root
@@ -2244,6 +2263,37 @@ final class CaptureSessionController {
         keyframe3DGSCount = nextIndex
         _ = keyDecision
         return frameId
+    }
+
+    /// Guide v2 stage 1 (observe-only): plane anchors (~1 s) and feature points (every 3rd frame)
+    /// feed the surface coverage model off the AR callback thread.
+    private func feedSurfaceCoverage(frame: ARFrame) {
+        surfaceFrameCounter &+= 1
+        guard surfaceFrameCounter % 3 == 0, frame.camera.trackingState == .normal else { return }
+        var points: [simd_float3] = []
+        if let raw = frame.rawFeaturePoints?.points, !raw.isEmpty {
+            let step = max(1, raw.count / 300)
+            points = stride(from: 0, to: raw.count, by: step).map { raw[$0] }
+        }
+        var planes: [SurfacePlaneSample]?
+        if surfaceFrameCounter % 30 == 0 {
+            planes = frame.anchors.compactMap { $0 as? ARPlaneAnchor }.map { anchor in
+                SurfacePlaneSample(
+                    id: anchor.identifier,
+                    transform: anchor.transform,
+                    center: anchor.center,
+                    width: anchor.planeExtent.width,
+                    height: anchor.planeExtent.height,
+                    rotationOnYAxis: anchor.planeExtent.rotationOnYAxis,
+                    isVertical: anchor.alignment == .vertical
+                )
+            }
+        }
+        surfaceQueue.async { [weak self] in
+            guard let self else { return }
+            if let planes { self.surfaceCoverage.updatePlanes(planes) }
+            if !points.isEmpty { self.surfaceCoverage.addFeaturePoints(points) }
+        }
     }
 
     private func estimateLowTexture() -> Double {
