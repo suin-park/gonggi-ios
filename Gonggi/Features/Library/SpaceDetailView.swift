@@ -459,7 +459,7 @@ struct SpaceDetailView: View {
                     .foregroundStyle(GonggiColors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if GonggiFeatureFlags.show3DGSCaptureFlows {
+                if appState.showsSpatialRecord {
                     advancedCaptureActions
                 }
             }

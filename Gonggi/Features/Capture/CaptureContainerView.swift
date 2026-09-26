@@ -117,7 +117,7 @@ struct CaptureContainerView: View {
             set: { presented in
                 if !presented {
                     activeFlow = .none
-                    if !GonggiFeatureFlags.show3DGSCaptureFlows {
+                    if spatialRecordHidden {
                         appState.selectedTab = .home
                     }
                 }
@@ -125,7 +125,7 @@ struct CaptureContainerView: View {
         )) {
             DirectionCaptureView(onClose: {
                 activeFlow = .none
-                if !GonggiFeatureFlags.show3DGSCaptureFlows {
+                if spatialRecordHidden {
                     appState.selectedTab = .home
                 }
             })
@@ -157,16 +157,28 @@ struct CaptureContainerView: View {
         }
         .onAppear {
             autoStart360CaptureIfNeeded()
+            Task { await appState.refreshSpatialRecordAvailability() }
         }
         .onChange(of: appState.selectedTab) { _, tab in
             if tab == .record {
                 autoStart360CaptureIfNeeded()
+                Task { await appState.refreshSpatialRecordAvailability() }
             }
+        }
+        .onChange(of: appState.spatialRecordAvailable) { _, _ in
+            autoStart360CaptureIfNeeded()
         }
     }
 
+    /// Accounts outside the 3D 공간 기록 rollout keep the previous Record tab (360° starts directly).
+    /// While the scope is unknown (nil) the chooser stays, so a tester is never pushed into 360°.
+    private var spatialRecordHidden: Bool {
+        !GonggiFeatureFlags.show3DGSCaptureFlows
+            || (!appState.isMockMode && appState.spatialRecordAvailable == false)
+    }
+
     private func autoStart360CaptureIfNeeded() {
-        guard !GonggiFeatureFlags.show3DGSCaptureFlows else { return }
+        guard spatialRecordHidden else { return }
         guard appState.selectedTab == .record else { return }
         guard activeFlow == .none else { return }
         activeFlow = .directionCapture
@@ -198,7 +210,7 @@ struct CaptureContainerView: View {
                     }
                 )
 
-                if GonggiFeatureFlags.show3DGSCaptureFlows {
+                if appState.showsSpatialRecord {
                     productionChoiceCard(
                         icon: "figure.walk.motion",
                         title: "3D 공간 기록",

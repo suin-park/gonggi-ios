@@ -36,6 +36,8 @@ final class AppState: ObservableObject {
     @Published private(set) var libraryRefreshEpoch: UInt64 = 0
     /// Banner after Spatial Capture handoff to Library ("3D 공간 생성을 시작했어요.").
     @Published var gaussianLibraryBanner: String?
+    /// Server rollout scope for 3D 공간 기록 (nil = not known yet for this account).
+    @Published private(set) var spatialRecordAvailable: Bool?
     /// Unread Gonggi notification badge (likes, comments, admin announcements).
     @Published var notificationUnreadCount: Int = 0
     /// Debounce repeated 「보관함」/「홈」 taps while covers tear down.
@@ -142,6 +144,7 @@ final class AppState: ObservableObject {
         spaceLinkFinalizeTask?.cancel()
         // Stop polling the previous account's Gaussian jobs with the next account's token.
         gaussianPollTask?.cancel()
+        spatialRecordAvailable = nil
         gaussianPollTask = nil
         AdvancedCaptureAnalysisStore.shared.clearAll()
         AdvancedCaptureAnalysisRuntime.shared.stopPolling()
@@ -390,6 +393,34 @@ final class AppState: ObservableObject {
         case .failure(let error):
             pendingViewerJobId = nil
             pendingViewerError = error.userMessage
+        }
+    }
+
+    /// 3D 공간 기록 entry points are shown only when the server includes this account in the rollout.
+    var showsSpatialRecord: Bool {
+        guard GonggiFeatureFlags.show3DGSCaptureFlows else { return false }
+        if isMockMode { return true }
+        return spatialRecordAvailable == true
+    }
+
+    private static func spatialAvailabilityKey(_ userId: String) -> String {
+        "gonggi.spatialRecordAvailable.user.\(userId)"
+    }
+
+    /// Refresh the rollout scope (Record tab / foreground). Cached per account for instant display.
+    func refreshSpatialRecordAvailability() async {
+        guard !isMockMode, let locker = spaceService as? LockerSpaceGenerationService else { return }
+        let userId = GaussianGenerationStore.shared.boundUserId
+        if let userId, spatialRecordAvailable == nil,
+           UserDefaults.standard.object(forKey: Self.spatialAvailabilityKey(userId)) != nil {
+            spatialRecordAvailable = UserDefaults.standard.bool(forKey: Self.spatialAvailabilityKey(userId))
+        }
+        guard let fresh = await locker.fetchSpatialRecordAvailability(),
+              GaussianGenerationStore.shared.boundUserId == userId
+        else { return }
+        spatialRecordAvailable = fresh
+        if let userId {
+            UserDefaults.standard.set(fresh, forKey: Self.spatialAvailabilityKey(userId))
         }
     }
 

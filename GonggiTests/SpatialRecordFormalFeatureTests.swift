@@ -80,6 +80,14 @@ final class SpatialRecordFormalFeatureTests: XCTestCase {
         XCTAssertFalse(store.isUploadActive(spaceId: "s1"))
     }
 
+    func testSpatialRecordHiddenUntilServerIncludesAccount() {
+        let live = AppState(isMockMode: false, spaceService: MockSpaceGenerationService())
+        XCTAssertNil(live.spatialRecordAvailable)
+        XCTAssertFalse(live.showsSpatialRecord, "unknown rollout scope must not show 3D 공간 기록")
+        let mock = AppState(isMockMode: true)
+        XCTAssertTrue(mock.showsSpatialRecord)
+    }
+
     func testServerCodesHaveClearMessagesWithoutRawCodes() {
         for code in ["NATIVE_UNAVAILABLE", "JOB_LIMIT_ACTIVE", "JOB_LIMIT_DAILY", "RETRY_LIMIT", "ORG_REQUIRED", "JOB_EXPIRED"] {
             let message = SpaceGenerationErrorPresenter.userMessage(

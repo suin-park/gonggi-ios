@@ -347,6 +347,30 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         }
     }
 
+    /// Server rollout scope for the signed-in user (`available` on the capability GET).
+    /// false when the feature is off (404) or out of scope; nil when unknown (network / auth).
+    func fetchSpatialRecordAvailability() async -> Bool? {
+        guard let url = try? Self.apiURL(base: config.apiBaseURL, path: "/api/gaussian-spaces/spatial-package") else {
+            return nil
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard (try? attachAuth(&req)) != nil,
+              let (data, response) = try? await session.data(for: req),
+              let http = response as? HTTPURLResponse
+        else {
+            return nil
+        }
+        if http.statusCode == 404 || http.statusCode == 403 { return false }
+        guard (200..<300).contains(http.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        return (json["available"] as? Bool) ?? false
+    }
+
     func seedJobContext(jobId: String, spaceId: String, qualityProfile: String) {
         lock.lock()
         if jobContext[jobId] == nil {
