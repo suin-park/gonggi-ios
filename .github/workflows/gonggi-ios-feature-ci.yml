@@ -240,8 +240,7 @@ jobs:
           echo "::endgroup::"
           exit "${STATUS}"
 
-      - name: Unit tests — full GonggiTests (report only; pre-existing failures allowed)
-        continue-on-error: true
+      - name: Unit tests — full GonggiTests (gate — no new failures, no crashes, every declared test runs)
         run: |
           set -euo pipefail
           set +e
@@ -264,8 +263,8 @@ jobs:
           echo "::group::full suite summary"
           grep -E "Executed [0-9]+ tests|Test Case .* failed|error:" xcodebuild-feature-test.log | tail -n 80 || true
           echo "::endgroup::"
-          echo "Full GonggiTests exit=${STATUS} (non-blocking for Catalog feature gate)"
-          exit 0
+          echo "xcodebuild exit=${STATUS} (baseline failures make this non-zero; the gate below decides)"
+          python3 scripts/ci/check_test_log.py --log xcodebuild-feature-test.log --known ci/known_test_failures.txt --tests-dir GonggiTests --exclude-class CatalogModelsTests
 
       - name: Upload test artifacts
         if: always()
