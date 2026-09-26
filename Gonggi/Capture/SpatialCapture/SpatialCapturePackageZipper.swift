@@ -170,7 +170,7 @@ enum SpatialCapturePackageZipper {
 
         var errorDescription: String? {
             switch self {
-            case .packageMissing: return "Spatial Capture package가 없습니다."
+            case .packageMissing: return "3D 공간 기록 촬영 데이터가 없습니다."
             case .missingRequired(let n): return "필수 파일 누락: \(n)"
             case .insufficientFrames(let n): return "JPEG keyframe이 부족합니다 (\(n))."
             case .nameTooLong(let n): return "ZIP 경로가 너무 깁니다: \(n)"

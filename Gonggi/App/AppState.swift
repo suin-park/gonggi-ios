@@ -393,6 +393,15 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Library retry for a 3D 공간 기록 card — same server job, same on-device package.
+    /// Returns a user-facing error message, or nil when the job is running again.
+    func retryGaussianGeneration(spaceId: String) async -> String? {
+        let message = await GaussianGenerationResumer.resume(spaceId: spaceId, service: spaceService)
+        rebuildSpaces()
+        ensureGaussianGenerationPolling()
+        return message
+    }
+
     func retrySpaceGeneration(jobId: String) {
         jobRuntime.retryFailed(jobId: jobId)
         rebuildSpaces()
@@ -500,30 +509,34 @@ final class AppState: ObservableObject {
                 qualityProfile: job.qualityProfile
             )
             do {
-                let status = try await locker.fetchStatus(jobId: job.jobId)
+                let snap = try await locker.fetchJobSnapshot(jobId: job.jobId, spaceId: job.spaceId)
                 // Late response after logout / account switch must not touch the new account.
                 guard AuthSessionGeneration.isCurrent(generation),
                       GaussianGenerationStore.shared.boundUserId == userId
                 else { return }
-                let server = status.steps.contains(where: {
-                    if case .failed = $0.status { return true }
-                    return false
-                }) ? "failed" : (status.overallProgress >= 0.99 ? "ready" : "processing")
-                let mapped: String
-                if server == "failed" {
-                    mapped = "failed"
-                } else if status.overallProgress >= 0.99 {
-                    mapped = "ready"
-                } else {
-                    mapped = "processing"
+                let store = GaussianGenerationStore.shared
+                switch snap.status {
+                case "completed":
+                    store.applyRemote(spaceId: job.spaceId, status: "ready", stage: nil, progress: 1, failureCode: nil)
+                case "failed", "cancelled", "expired":
+                    let code = snap.errorCode
+                        ?? (snap.status == "expired" ? "JOB_EXPIRED" : (snap.status == "cancelled" ? "cancelled" : "generation_failed"))
+                    store.applyRemote(spaceId: job.spaceId, status: "failed", stage: snap.stage, progress: 0, failureCode: code)
+                case "uploading":
+                    // Upload still running in this process → keep "uploading"; otherwise it was
+                    // interrupted (app left / locked / killed) and must not look like "생성 중".
+                    if !store.isUploadActive(spaceId: job.spaceId) {
+                        store.markInterrupted(spaceId: job.spaceId)
+                    }
+                default:
+                    store.applyRemote(
+                        spaceId: job.spaceId,
+                        status: "processing",
+                        stage: snap.stage,
+                        progress: max(job.progress, 0.2),
+                        failureCode: nil
+                    )
                 }
-                GaussianGenerationStore.shared.applyRemote(
-                    spaceId: job.spaceId,
-                    status: mapped,
-                    stage: nil,
-                    progress: status.overallProgress,
-                    failureCode: mapped == "failed" ? "generation_failed" : nil
-                )
             } catch {
                 // Keep polling; transient network.
             }

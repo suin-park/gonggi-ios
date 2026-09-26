@@ -4,7 +4,8 @@ import OSLog
 /// Maps client-side capture *guide* identity to server video-gaussian `qualityProfile`.
 ///
 /// Backend source of truth (`whik/apps/cloud/src/lib/video-gaussian/runpodSubmit.ts`):
-/// Mainline (product): `fullres_max`, `fullres_max_raw`, `fullres_dense_d1`, `capture_dense_v2`, `spatial_package_v1`
+/// Mainline (product): `fullres_max`, `fullres_max_raw`, `fullres_dense_d1`, `capture_dense_v2`,
+/// `spatial_package_v1`, `spatial_package_v2`, `spatial_package_colmap_fastergs_native_v1`
 /// Default product profile: `capture_dense_v2`
 /// Experimental (admin): `capture_quality_v1`, `geometry_stable_v1`
 ///
@@ -13,8 +14,11 @@ enum ServerGenerationProfileMapper {
     /// Product default — matches `VIDEO_GAUSSIAN_DEFAULT_PROFILE`.
     static let defaultServerProfile = "capture_dense_v2"
 
-    /// Spatial Capture Package (JPEG keyframes) — Baseline A frozen.
-    static let spatialPackageProfile = "spatial_package_v1"
+    /// 3D 공간 기록 (formal, build 72+): official native Faster-GS without the 3D filter.
+    /// The server runs exactly this profile or fails with `NATIVE_UNAVAILABLE` (never gsplat).
+    static let spatialPackageProfile = "spatial_package_colmap_fastergs_native_v1"
+    /// Build ≤71 spatial request (server resolves it to its product default).
+    static let legacySpatialPackageV1Profile = "spatial_package_v1"
     static let spatialPackageColmapV2Profile = "spatial_package_colmap_v2"
     static let spatialPackageVggtV1Profile = "spatial_package_vggt_v1"
     static let spatialPackageHybridV1Profile = "spatial_package_hybrid_v1"
@@ -28,6 +32,8 @@ enum ServerGenerationProfileMapper {
         "fullres_dense_d1",
         "capture_dense_v2",
         "spatial_package_v1",
+        "spatial_package_v2",
+        spatialPackageProfile,
     ]
 
     /// Experiment allowlist (admin / internal tools / same-ZIP matrix).

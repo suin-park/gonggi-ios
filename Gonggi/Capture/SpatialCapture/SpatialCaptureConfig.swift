@@ -131,9 +131,9 @@ enum SpatialCaptureConfig {
     /// Draw `(cx, cy)` crosshair on debug JPEG copies (not reconstruction frames).
     static var debugDrawPrincipalPoint: Bool = true
     #else
-    /// TestFlight internal: when Spatial Capture beta is on, write principal-point debug copies.
+    /// TestFlight internal tools only: write principal-point debug copies (never for regular users).
     static var debugDrawPrincipalPoint: Bool {
-        GonggiFeatureFlags.show3DGSCaptureFlows
+        GonggiFeatureFlags.isInternalToolsUnlocked
     }
     #endif
 

@@ -11,7 +11,11 @@ final class SpatialCapturePackageTests: XCTestCase {
         super.tearDown()
     }
 
-    func testFeatureFlagRespectsUserDefaultsOverride() {
+    func testSpatialCaptureIsFormalFeatureAndIgnoresOldBetaToggle() {
+        // Build ≤71 beta toggle value must not hide the formal feature.
+        UserDefaults.standard.set(false, forKey: GonggiFeatureFlags.enableSpatialCaptureDefaultsKey)
+        defer { UserDefaults.standard.removeObject(forKey: GonggiFeatureFlags.enableSpatialCaptureDefaultsKey) }
+        XCTAssertTrue(GonggiFeatureFlags.show3DGSCaptureFlows)
         GonggiFeatureFlags.setEnableSpatialCaptureForTesting(false)
         XCTAssertFalse(GonggiFeatureFlags.show3DGSCaptureFlows)
         GonggiFeatureFlags.setEnableSpatialCaptureForTesting(true)

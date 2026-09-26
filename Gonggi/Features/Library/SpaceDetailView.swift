@@ -35,6 +35,9 @@ struct SpaceDetailView: View {
     @State private var showGuidedCapture = false
     @State private var guidedPlan: AdvancedCaptureGuidePlan?
     @State private var gaussianViewer: GaussianViewerPresentation?
+    @State private var isRetryingGaussian = false
+    @State private var gaussianRetryError: String?
+    @ObservedObject private var gaussianStore = GaussianGenerationStore.shared
     @State private var showSpaceCleanupSheet = false
     @StateObject private var spaceCleanupSession = SpaceCleanupSession()
 
@@ -485,9 +488,13 @@ struct SpaceDetailView: View {
                     }
                 }
             case .failed:
-                PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
-                    GonggiHaptics.medium()
-                    appState.retrySpaceGeneration(jobId: liveSpace.id)
+                if let gid = gaussianStore.spaceId(fromLibraryId: liveSpace.id) {
+                    gaussianRetrySection(spaceId: gid)
+                } else {
+                    PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
+                        GonggiHaptics.medium()
+                        appState.retrySpaceGeneration(jobId: liveSpace.id)
+                    }
                 }
             case .processing, .uploading:
                 GonggiElevatedCard {
@@ -513,6 +520,46 @@ struct SpaceDetailView: View {
             .disabled(liveSpace.status != .ready)
         }
         .padding(.top, GonggiSpacing.xs)
+    }
+
+    /// 3D 공간 기록 failure: real reason + retry with the same capture (same server job).
+    @ViewBuilder
+    private func gaussianRetrySection(spaceId: String) -> some View {
+        let record = gaussianStore.record(spaceId: spaceId)
+        VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            Text(record?.failureLabel ?? "생성 실패")
+                .font(GonggiTypography.body(15))
+                .foregroundStyle(GonggiColors.textSecondary)
+            if let record, record.canRetry {
+                PrimaryButton(
+                    title: isRetryingGaussian ? "다시 시도하는 중…" : "같은 촬영으로 다시 시도",
+                    icon: "arrow.clockwise"
+                ) {
+                    guard !isRetryingGaussian else { return }
+                    GonggiHaptics.medium()
+                    gaussianRetryError = nil
+                    isRetryingGaussian = true
+                    Task {
+                        gaussianRetryError = await appState.retryGaussianGeneration(spaceId: spaceId)
+                        isRetryingGaussian = false
+                    }
+                }
+                .disabled(isRetryingGaussian)
+                Text("업로드가 끝날 때까지 앱을 열어 두세요. 촬영 원본은 기기에 보관돼 있어요.")
+                    .font(GonggiTypography.caption(12))
+                    .foregroundStyle(GonggiColors.textTertiary)
+            } else {
+                Text("이 기록은 다시 시도할 수 없어요. 새로 촬영해 주세요.")
+                    .font(GonggiTypography.caption(12))
+                    .foregroundStyle(GonggiColors.textTertiary)
+            }
+            if let gaussianRetryError {
+                Text(gaussianRetryError)
+                    .font(GonggiTypography.caption(12))
+                    .foregroundStyle(GonggiColors.warning)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder

@@ -299,6 +299,54 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         lock.unlock()
     }
 
+    /// Server truth for one job (status + errorCode) — Library shows this, not a local guess.
+    func fetchJobSnapshot(jobId: String, spaceId: String) async throws -> GaussianJobSnapshot {
+        let path = "/api/gaussian-spaces/\(spaceId)/video-conversion/\(jobId)"
+        let url = try Self.apiURL(base: config.apiBaseURL, path: path)
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        try attachAuth(&req)
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw SpaceGenerationError.networkUnavailable
+        }
+        if http.statusCode == 401 { throw SpaceGenerationError.unauthorized }
+        if http.statusCode == 404 { throw SpaceGenerationError.jobNotFound }
+        guard (200..<300).contains(http.statusCode) else {
+            throw SpaceGenerationError.server(code: "status_failed_\(http.statusCode)", httpStatus: http.statusCode)
+        }
+        let decoded = try JSONDecoder().decode(SnapshotDTO.self, from: data)
+        return GaussianJobSnapshot(
+            status: decoded.job.status ?? "processing",
+            stage: decoded.job.stage,
+            errorCode: decoded.job.errorCode,
+            runpodSubmitted: decoded.job.runpodJobId != nil
+        )
+    }
+
+    /// Re-run a failed / expired job on the server with the package already uploaded (no re-upload).
+    /// Throws `.server(code: "VIDEO_NOT_UPLOADED")` when the package never reached storage.
+    func retryGeneration(jobId: String, spaceId: String) async throws {
+        let path = "/api/gaussian-spaces/\(spaceId)/video-conversion/\(jobId)/start"
+        let url = try Self.apiURL(base: config.apiBaseURL, path: path)
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try attachAuth(&req)
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["retry": true])
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw SpaceGenerationError.networkUnavailable
+        }
+        if http.statusCode == 401 { throw SpaceGenerationError.unauthorized }
+        guard (200..<300).contains(http.statusCode) else {
+            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            let code = (json["error"] as? String) ?? "retry_failed_\(http.statusCode)"
+            throw SpaceGenerationError.server(code: code, httpStatus: http.statusCode)
+        }
+    }
+
     func seedJobContext(jobId: String, spaceId: String, qualityProfile: String) {
         lock.lock()
         if jobContext[jobId] == nil {
@@ -427,6 +475,16 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         }
     }
 
+    private struct SnapshotDTO: Decodable {
+        struct Job: Decodable {
+            var status: String?
+            var stage: String?
+            var errorCode: String?
+            var runpodJobId: String?
+        }
+        var job: Job
+    }
+
     private struct GaussianListDTO: Decodable {
         var spaces: [GaussianSpaceDTO]
     }
@@ -436,6 +494,14 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         var name: String
         var status: String?
     }
+}
+
+struct GaussianJobSnapshot: Equatable, Sendable {
+    /// Server job status: uploading | queued | preprocessing | … | completed | failed | expired | cancelled
+    var status: String
+    var stage: String?
+    var errorCode: String?
+    var runpodSubmitted: Bool
 }
 
 struct GaussianSpaceListItem: Equatable, Sendable {

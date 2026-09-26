@@ -1,6 +1,7 @@
 import ARKit
 import OSLog
 import SwiftUI
+import UIKit
 
 @MainActor
 final class ProcessingViewModel: ObservableObject {
@@ -42,6 +43,13 @@ final class ProcessingViewModel: ObservableObject {
 
         pollTask = Task { [weak self] in
             guard let self else { return }
+            // Keep create → upload → start running when the app is backgrounded or the screen
+            // locks, for as long as iOS allows. If iOS ends the time, the upload is cancelled,
+            // the card shows "업로드 중단" and the same capture can be retried from Library.
+            let background = UploadBackgroundTask(name: "gonggi.3d-record.upload") { [weak self] in
+                self?.cancel()
+            }
+            defer { background.end() }
             await self.runPipeline(
                 summary: summary,
                 qualityProfile: qualityProfile,
@@ -80,6 +88,13 @@ final class ProcessingViewModel: ObservableObject {
             generation = .empty
         }
         var currentStage: ClientGenerationPipelineStep = .preparePackage
+        /// Set once the server job exists — Library card + active-upload tracking use it.
+        var createdSpaceId: String?
+        defer {
+            if let createdSpaceId {
+                GaussianGenerationStore.shared.endActiveUpload(spaceId: createdSpaceId)
+            }
+        }
 
         func persistGeneration() {
             CaptureDiagnosticsStore.writeGenerationDiagnostics(
@@ -218,6 +233,8 @@ final class ProcessingViewModel: ObservableObject {
             generation.jobId = created.jobId
             persistGeneration()
 
+            createdSpaceId = created.spaceId
+            GaussianGenerationStore.shared.beginActiveUpload(spaceId: created.spaceId)
             guard created.uploadURL != nil else {
                 throw SpaceGenerationError.uploadFailed
             }
@@ -304,7 +321,10 @@ final class ProcessingViewModel: ObservableObject {
             generation.failedStage = "cancelled"
             generation.backendErrorCode = "cancelled"
             persistGeneration()
-            failActiveStep(currentStage, message: "취소됨")
+            failActiveStep(currentStage, message: "중단됨")
+            if let createdSpaceId {
+                GaussianGenerationStore.shared.markInterrupted(spaceId: createdSpaceId)
+            }
             // Preserve original capture; allow resume when package still on device.
             canRetrySameCapture = CapturePackageRetention.hasRetainedSpatialPackage(
                 sessionId: summary.sessionId,
@@ -327,6 +347,17 @@ final class ProcessingViewModel: ObservableObject {
             }
             generation.failedStage = currentStage.diagnosticsStageName
             persistGeneration()
+            // Library card shows the real state: a server-confirmed code (e.g. NATIVE_UNAVAILABLE)
+            // or "업로드 중단" when the device never finished upload / start.
+            if let createdSpaceId {
+                if case .server(let code, _) = error as? SpaceGenerationError {
+                    GaussianGenerationStore.shared.applyRemote(
+                        spaceId: createdSpaceId, status: "failed", stage: nil, progress: 0, failureCode: code
+                    )
+                } else {
+                    GaussianGenerationStore.shared.markInterrupted(spaceId: createdSpaceId)
+                }
+            }
             // Never delete Captures/{sessionId} on failure — original stays for retry.
             let retained = CapturePackageRetention.hasRetainedSpatialPackage(
                 sessionId: summary.sessionId,
@@ -510,12 +541,11 @@ struct ProcessingView: View {
                 .padding(.bottom, GonggiSpacing.xxl)
             }
             .background(GonggiAmbientBackground(showGlow: false))
-            .navigationTitle("3DGS 생성")
+            .navigationTitle("3D 공간 기록")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("닫기") {
-                        viewModel.cancel()
                         onDismiss()
                     }
                     .foregroundStyle(GonggiColors.textSecondary)
@@ -552,13 +582,8 @@ struct ProcessingView: View {
             GonggiHaptics.success()
             onHandedOff(handoff.jobId, spaceId)
         }
-        .onChange(of: scenePhase) { _, phase in
-            // Backgrounding cancels in-flight PUT; user can resume via retry if package remains.
-            if phase == .background, viewModel.isRunning {
-                viewModel.cancel()
-            }
-        }
-        .onDisappear { viewModel.cancel() }
+        // Leaving the screen / app does not cancel the upload: it continues under a background
+        // task while iOS allows it; the Library card tracks it (업로드 중 → 생성 중 / 업로드 중단).
     }
 
     private func shareDiagnostics() {

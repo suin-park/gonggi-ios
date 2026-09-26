@@ -490,7 +490,33 @@ enum SpaceGenerationErrorPresenter {
         "기기에서 원본 촬영 패키지를 찾을 수 없어요.\n같은 촬영으로 다시 시도할 수 없습니다. 새로 촬영해 주세요."
 
     static let uploadCancelled =
-        "업로드가 취소됐어요.\n원본 촬영 데이터는 기기에 남아 있어요."
+        "업로드가 중단됐어요.\n원본 촬영 데이터는 기기에 남아 있어요. 보관함에서 같은 촬영으로 다시 시도할 수 있어요."
+
+    /// Server error codes of the 3D 공간 기록 path → user copy (never raw codes / tokens).
+    static func message(forServerCode code: String) -> String? {
+        switch code {
+        case "NATIVE_UNAVAILABLE":
+            return "3D 공간 생성 서버가 아직 준비되지 않았어요.\n촬영 원본은 기기에 보관돼 있어요. 잠시 후 보관함에서 다시 시도해 주세요."
+        case "RUNPOD_SUBMIT_FAILED":
+            return "3D 공간 생성 요청을 서버에 전달하지 못했어요.\n촬영 원본은 기기에 보관돼 있어요. 잠시 후 보관함에서 다시 시도해 주세요."
+        case "JOB_LIMIT_ACTIVE":
+            return "이미 만들고 있는 3D 공간이 있어요.\n완료된 뒤 다시 시도해 주세요. 촬영 원본은 기기에 보관돼 있어요."
+        case "JOB_LIMIT_DAILY":
+            return "오늘 만들 수 있는 3D 공간 수를 모두 사용했어요.\n내일 다시 시도해 주세요. 촬영 원본은 기기에 보관돼 있어요."
+        case "RETRY_LIMIT":
+            return "이 촬영으로 다시 시도할 수 있는 횟수를 모두 사용했어요.\n새로 촬영해 주세요."
+        case "ORG_REQUIRED":
+            return "계정에 조직 정보가 없어 3D 공간을 만들 수 없어요.\n도움말 및 문의에서 알려 주세요."
+        case "VIDEO_GAUSSIAN_DISABLED", "VIDEO_GAUSSIAN_CREATE_FORBIDDEN":
+            return "지금은 3D 공간 기록을 이용할 수 없어요.\n잠시 후 다시 시도해 주세요. 촬영 원본은 기기에 보관돼 있어요."
+        case "PACKAGE_TOO_LARGE", "VIDEO_TOO_LARGE":
+            return "촬영 데이터가 너무 커서 올릴 수 없어요.\n조금 더 짧게 다시 촬영해 주세요."
+        case "JOB_EXPIRED":
+            return "생성 대기 시간이 지나 작업이 만료됐어요.\n보관함에서 같은 촬영으로 다시 시도해 주세요."
+        default:
+            return nil
+        }
+    }
 
     static func userMessage(for error: Error) -> String {
         if error is CancellationError {
@@ -506,8 +532,8 @@ enum SpaceGenerationErrorPresenter {
                 return genericCreateFailure
             case .uploadFailed:
                 return uploadFailure
-            case .server:
-                return genericCreateFailure
+            case .server(let code, _):
+                return message(forServerCode: code) ?? genericCreateFailure
             case .unknown(let raw):
                 if Self.looksLikeUploadNetworkLoss(raw) {
                     return uploadFailure

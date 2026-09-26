@@ -17,6 +17,13 @@ final class GaussianGenerationStore: ObservableObject {
 
     @Published private(set) var jobs: [GaussianGenerationRecord] = []
     private(set) var boundUserId: String?
+    /// Space ids whose package upload / start is running in this process right now (not persisted).
+    /// A server job still "uploading" without an entry here was interrupted (app left, locked, killed).
+    private(set) var activeUploadSpaceIds: Set<String> = []
+
+    /// Local-only status: the device did not finish upload / start. Server job stays `uploading`.
+    static let interruptedStatus = "interrupted"
+    static let uploadInterruptedCode = "upload_interrupted"
 
     /// Pre-69 device-global records (unknown owner) — kept, never loaded into presentation.
     static let legacyUnownedDefaultsKey = "gonggi.gaussianGenerationJobs.v1"
@@ -58,7 +65,7 @@ final class GaussianGenerationStore: ObservableObject {
         var captureId: String?
         var sessionId: String?
         var qualityProfile: String
-        /// uploading | processing | ready | failed
+        /// uploading | processing | ready | failed | interrupted (local: upload/start not finished)
         var status: String
         var stage: String?
         var progress: Double
@@ -76,7 +83,7 @@ final class GaussianGenerationStore: ObservableObject {
         var spaceStatus: SpaceGenerationStatus {
             switch status {
             case "ready", "completed": return .ready
-            case "failed", "cancelled", "expired": return .failed
+            case "failed", "cancelled", "expired", GaussianGenerationStore.interruptedStatus: return .failed
             case "uploading": return .uploading
             default: return .processing
             }
@@ -87,9 +94,33 @@ final class GaussianGenerationStore: ObservableObject {
             case .uploading: return "업로드 중"
             case .processing: return "3D 공간 생성 중"
             case .ready: return "생성 완료"
-            case .failed: return "생성 실패"
+            case .failed: return failureLabel
             case .draft: return "준비 중"
             }
+        }
+
+        /// Failure reason + that the same capture can be retried (original kept on device).
+        var failureLabel: String {
+            if status == GaussianGenerationStore.interruptedStatus
+                || failureCode == GaussianGenerationStore.uploadInterruptedCode {
+                return "업로드 중단 · 다시 시도할 수 있어요"
+            }
+            switch failureCode {
+            case "NATIVE_UNAVAILABLE", "RUNPOD_SUBMIT_FAILED":
+                return "생성 서버 준비 안 됨 · 다시 시도할 수 있어요"
+            case "JOB_EXPIRED":
+                return "시간 초과 · 다시 시도할 수 있어요"
+            case "RUNPOD_CANCELLED", "cancelled":
+                return "생성 취소됨"
+            default:
+                return "생성 실패 · 다시 시도할 수 있어요"
+            }
+        }
+
+        /// Library retry is possible when the job is known (same package / server job reused).
+        var canRetry: Bool {
+            spaceStatus == .failed && !jobId.isEmpty && failureCode != "RUNPOD_CANCELLED"
+                && failureCode != "cancelled" && failureCode != "RETRY_LIMIT"
         }
 
         var isTerminal: Bool {
@@ -151,6 +182,27 @@ final class GaussianGenerationStore: ObservableObject {
         persist()
     }
 
+    func beginActiveUpload(spaceId: String) {
+        activeUploadSpaceIds.insert(spaceId)
+    }
+
+    func endActiveUpload(spaceId: String) {
+        activeUploadSpaceIds.remove(spaceId)
+    }
+
+    func isUploadActive(spaceId: String) -> Bool {
+        activeUploadSpaceIds.contains(spaceId)
+    }
+
+    /// Upload or start did not finish on this device. Original stays on device; retry from Library.
+    func markInterrupted(spaceId: String, code: String = GaussianGenerationStore.uploadInterruptedCode) {
+        guard let idx = jobs.firstIndex(where: { $0.spaceId == spaceId }) else { return }
+        jobs[idx].status = Self.interruptedStatus
+        jobs[idx].failureCode = code
+        jobs[idx].updatedAt = Date()
+        persist()
+    }
+
     func markHandedOff(spaceId: String) {
         guard let idx = jobs.firstIndex(where: { $0.spaceId == spaceId }) else { return }
         jobs[idx].handedOffToLibraryAt = Date()
@@ -201,7 +253,15 @@ final class GaussianGenerationStore: ObservableObject {
         for var local in jobs {
             if let r = byId[local.spaceId] {
                 local.name = r.name.isEmpty ? local.name : r.name
-                local.status = Self.presentationStatus(r.status)
+                let serverStatus = Self.presentationStatus(r.status)
+                // A local failure / interruption with a known job is fresher than the space row
+                // (space status can lag the job, e.g. expired or never-started uploads).
+                // Only "ready" from the server overrides it; job polling / retry move it forward.
+                let keepLocalFailure = local.spaceStatus == .failed && !local.jobId.isEmpty
+                    && serverStatus != "ready"
+                if !keepLocalFailure {
+                    local.status = serverStatus
+                }
                 if local.status == "ready" {
                     local.progress = 1
                     local.completedAt = local.completedAt ?? Date()

@@ -665,7 +665,6 @@ struct ProfileHelpView: View {
     @State private var safariURL: SpaceLinkIdentifiedURL?
     @State private var versionTapCount = 0
     @State private var showInternalTools = GonggiFeatureFlags.isInternalToolsUnlocked
-    @State private var spatialCaptureEnabled = GonggiFeatureFlags.show3DGSCaptureFlows
     @State private var unlockHint: String?
 
     private var versionLine: String {
@@ -712,16 +711,6 @@ struct ProfileHelpView: View {
 
             if showInternalTools {
                 Section {
-                    Toggle("Spatial Capture Beta", isOn: Binding(
-                        get: { spatialCaptureEnabled },
-                        set: { newValue in
-                            spatialCaptureEnabled = newValue
-                            GonggiFeatureFlags.setEnableSpatialCapture(newValue)
-                        }
-                    ))
-                    Text("켜면 기록 탭에서 360° / 3D 공간 기록 선택 화면이 나타납니다. 끄면 기존처럼 360°만 바로 시작합니다.")
-                        .font(.caption)
-                        .foregroundStyle(GonggiColors.textSecondary)
                     Text("Test A–E 산출물: Captures/*/capture/debug/ (telemetry, sensor_space, camera_path_xz, decisions)")
                         .font(.caption2)
                         .foregroundStyle(GonggiColors.textSecondary)
@@ -737,7 +726,6 @@ struct ProfileHelpView: View {
         .navigationTitle("도움말 및 문의")
         .onAppear {
             showInternalTools = GonggiFeatureFlags.isInternalToolsUnlocked
-            spatialCaptureEnabled = GonggiFeatureFlags.show3DGSCaptureFlows
         }
         .sheet(item: $safariURL) { item in
             SpaceLinkSafariView(url: item.url) { safariURL = nil }
