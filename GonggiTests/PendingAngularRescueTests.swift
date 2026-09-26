@@ -52,7 +52,7 @@ final class PendingAngularRescueTests: XCTestCase {
         )
         XCTAssertEqual(
             Bundle.main.infoDictionary?["CFBundleVersion"] as? String,
-            "71"
+            "72"
         )
     }
 
