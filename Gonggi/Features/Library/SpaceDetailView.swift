@@ -34,7 +34,7 @@ struct SpaceDetailView: View {
     @State private var advancedAnalyzeError: String?
     @State private var showGuidedCapture = false
     @State private var guidedPlan: AdvancedCaptureGuidePlan?
-    @State private var showGaussianViewer = false
+    @State private var gaussianViewer: GaussianViewerPresentation?
     @State private var showSpaceCleanupSheet = false
     @StateObject private var spaceCleanupSession = SpaceCleanupSession()
 
@@ -122,11 +122,9 @@ struct SpaceDetailView: View {
                 .environmentObject(appState)
             }
         }
-        .fullScreenCover(isPresented: $showGaussianViewer) {
-            if let spaceId = advancedRecord?.linkedGaussianSpaceId {
-                GaussianSplatWebViewer(spaceId: spaceId) {
-                    showGaussianViewer = false
-                }
+        .fullScreenCover(item: $gaussianViewer) { presentation in
+            GaussianSplatWebViewer(spaceId: presentation.spaceId, presentedAt: presentation.requestedAt) {
+                gaussianViewer = nil
             }
         }
         .sheet(isPresented: $showShareSheet) {
@@ -541,7 +539,9 @@ struct SpaceDetailView: View {
             // 3D space already exists — show viewer only (no expand CTA).
             SecondaryButton(title: "3D 공간 보기", icon: "move.3d") {
                 GonggiHaptics.medium()
-                showGaussianViewer = true
+                if let spaceId = advancedRecord?.linkedGaussianSpaceId {
+                    gaussianViewer = GaussianViewerPresentation(spaceId: spaceId)
+                }
             }
             .accessibilityLabel("3D 공간 보기")
         } else if let record, record.canStartGuidedCapture,

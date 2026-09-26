@@ -10,8 +10,7 @@ struct LibraryView: View {
     @State private var viewerError: String?
     @State private var retryJobId: String?
     @State private var showImportSheet = false
-    @State private var gaussianViewerSpaceId: String?
-    @State private var showGaussianViewer = false
+    @State private var gaussianViewer: GaussianViewerPresentation?
     @State private var placementHighlightId: String?
 
     var body: some View {
@@ -56,18 +55,14 @@ struct LibraryView: View {
                         Task { await openViewer(jobId: jobId) }
                     },
                     onGaussianImported: { spaceId in
-                        gaussianViewerSpaceId = spaceId
-                        showGaussianViewer = true
+                        gaussianViewer = GaussianViewerPresentation(spaceId: spaceId)
                     }
                 )
                 .environmentObject(appState)
             }
-            .fullScreenCover(isPresented: $showGaussianViewer) {
-                if let spaceId = gaussianViewerSpaceId {
-                    GaussianSplatWebViewer(spaceId: spaceId) {
-                        showGaussianViewer = false
-                        gaussianViewerSpaceId = nil
-                    }
+            .fullScreenCover(item: $gaussianViewer) { presentation in
+                GaussianSplatWebViewer(spaceId: presentation.spaceId, presentedAt: presentation.requestedAt) {
+                    gaussianViewer = nil
                 }
             }
             .navigationDestination(item: $selectedSpace) { space in
@@ -175,8 +170,7 @@ struct LibraryView: View {
                         onOpenDetail: {
                             if let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: space.id) {
                                 if space.status == .ready {
-                                    gaussianViewerSpaceId = gid
-                                    showGaussianViewer = true
+                                    gaussianViewer = GaussianViewerPresentation(spaceId: gid)
                                 } else {
                                     selectedSpace = space
                                 }
@@ -187,8 +181,7 @@ struct LibraryView: View {
                         onViewSpace: {
                             if let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: space.id) {
                                 guard space.status == .ready else { return }
-                                gaussianViewerSpaceId = gid
-                                showGaussianViewer = true
+                                gaussianViewer = GaussianViewerPresentation(spaceId: gid)
                             } else {
                                 Task { await openViewer(jobId: space.id) }
                             }

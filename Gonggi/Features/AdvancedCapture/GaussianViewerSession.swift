@@ -70,6 +70,15 @@ enum GaussianViewerFailure: Equatable {
     }
 }
 
+/// One request to show a Gaussian space. Presenting with `fullScreenCover(item:)` hands the
+/// space id to the cover content directly — with `isPresented:` + a separate optional id the first
+/// presentation could render with a stale nil id (empty black cover until the next body update).
+struct GaussianViewerPresentation: Identifiable, Equatable {
+    let id = UUID()
+    let spaceId: String
+    let requestedAt = Date()
+}
+
 /// Decisions + bounded counters + telemetry for one presentation.
 struct GaussianViewerSession {
     static let maxAutoRecoveries = 2
@@ -107,19 +116,37 @@ struct GaussianViewerSession {
     var bytesTotal: Int64?
     var profile: [String: Any] = [:]
     var nativeReadyMs: Int?
+    /// Tap → viewer onAppear (presentation latency).
+    var presentToAppearMs: Int?
+    private(set) var bridgeFirstSeq: Int?
+    private(set) var bridgeGaps = 0
     private(set) var events: [(t: Int, e: String, d: String?)] = []
 
     var elapsedMs: Int { Int(Date().timeIntervalSince(openedAt) * 1000) }
 
-    mutating func log(_ e: String, _ d: String? = nil) {
+    mutating func log(_ e: String, _ d: String? = nil, at: Date? = nil) {
         guard events.count < 60 else { return }
-        events.append((elapsedMs, String(e.prefix(80)), d.map { String($0.prefix(160)) }))
+        let t = at.map { max(0, Int($0.timeIntervalSince(openedAt) * 1000)) } ?? elapsedMs
+        events.append((t, String(e.prefix(80)), d.map { String($0.prefix(160)) }))
+    }
+
+    /// First bridge sequence number seen on a page (> 1 ⇒ early messages were lost) and gaps.
+    mutating func noteBridgeSequence(first: Int?, gap: (Int, Int)?) {
+        if let first, bridgeFirstSeq == nil { bridgeFirstSeq = first }
+        if let gap {
+            bridgeGaps += 1
+            log("bridge_gap", "\(gap.0)->\(gap.1)")
+        }
     }
 
     private mutating func enter(_ next: GaussianViewerPhase) {
         guard next != phase else { return }
+        // Downloading percent updates are not UI phase changes worth a timeline entry.
+        let sameKind: Bool
+        if case .downloading = phase, case .downloading = next { sameKind = true } else { sameKind = false }
         phase = next
         phaseEnteredAt = Date()
+        if !sameKind { log("ui", next.logName) }
     }
 
     mutating func noteBridgeMessage() { lastBridgeMessageAt = Date() }
@@ -286,6 +313,7 @@ struct GaussianViewerSession {
                 "firstFrameMs": num("firstFrameMs"),
                 "readyMs": num("readyMs"),
                 "nativeReadyMs": nativeReadyMs.map { NSNumber(value: $0) } ?? NSNull(),
+                "presentToAppearMs": presentToAppearMs.map { NSNumber(value: $0) } ?? NSNull(),
                 "hiddenMs": num("hiddenMs"),
                 "nativeBackgroundMs": backgroundMs + (pausedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0),
                 "contentFetchMs": num("contentFetchMs"),
@@ -309,6 +337,8 @@ struct GaussianViewerSession {
                 "manualRetries": manualRetries,
                 "backgrounded": backgrounded,
                 "jsErrors": jsErrors,
+                "bridgeGaps": bridgeGaps,
+                "bridgeFirstSeq": bridgeFirstSeq.map { NSNumber(value: $0) } ?? NSNull(),
             ],
             "events": events.map { ev -> [String: Any] in
                 var o: [String: Any] = ["t": ev.t, "e": ev.e]
@@ -328,6 +358,18 @@ struct GaussianViewerSession {
 }
 
 extension GaussianViewerPhase {
+    var logName: String {
+        switch self {
+        case .connecting: return "connecting"
+        case .downloading: return "downloading"
+        case .preparing: return "preparing"
+        case .displaying: return "displaying"
+        case .ready: return "ready"
+        case .recovering(let r): return "recovering:\(r.rawValue)"
+        case .failed(let f): return "failed:\(f.code)"
+        }
+    }
+
     var isRecovering: Bool {
         if case .recovering = self { return true }
         return false

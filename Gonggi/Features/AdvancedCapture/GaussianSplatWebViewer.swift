@@ -17,6 +17,8 @@ struct GaussianSplatWebViewer: View {
     let spaceId: String
     /// When true, shows Original / Cleaned PLY A/B (cleanupMode query). Default on for TF62 compare.
     var enableCleanupCompare: Bool = true
+    /// When the user asked to open the space (for presentation-latency telemetry).
+    var presentedAt: Date? = nil
     var onClose: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
@@ -84,6 +86,9 @@ struct GaussianSplatWebViewer: View {
                 onCollisionDetected: { hasCollision = $0 },
                 onTimeline: { event in
                     GaussianViewerLoadLog.mark(event, since: session.openedAt)
+                    // Called from WebKit / UIKit callbacks (some inside SwiftUI updates): record async.
+                    let at = Date()
+                    DispatchQueue.main.async { session.log("native", event, at: at) }
                 },
                 onBridgeEvent: { event in
                     handleBridgeEvent(event)
@@ -172,6 +177,11 @@ struct GaussianSplatWebViewer: View {
         .background(Color.black.ignoresSafeArea())
         .onAppear {
             session.log("open")
+            if let presentedAt {
+                let ms = max(0, Int(Date().timeIntervalSince(presentedAt) * 1000))
+                session.presentToAppearMs = ms
+                session.log("present_to_appear", "\(ms)ms")
+            }
             GaussianViewerLoadLog.mark("ViewerView.onAppear space=\(spaceId)", since: session.openedAt)
             startWatchdog()
             // Navigation must start; if WebKit never begins the request, reload once (bounded).
@@ -217,7 +227,7 @@ struct GaussianSplatWebViewer: View {
 
     private var overlayTitle: String {
         switch session.phase {
-        case .connecting: return "공간을 여는 중이에요"
+        case .connecting: return "공간 연결 중"
         case .downloading: return "공간 다운로드 중"
         case .preparing: return "공간 준비 중"
         case .displaying: return "공간 준비 중"
@@ -384,6 +394,9 @@ struct GaussianSplatWebViewer: View {
             session.noteNavigationCommitted()
             session.noteBridgeMessage()
 
+        case .bridgeSequence(let first, let gap):
+            session.noteBridgeSequence(first: first, gap: gap)
+
         case .loadStage(let stage, let profile):
             GaussianViewerLoadLog.mark("load_stage=\(stage)", since: session.openedAt)
             navigationStarted = true
@@ -537,6 +550,7 @@ private enum GaussianViewerBridgeEvent {
     case timeline(String)
     case navigationCommitted
     case shellLoaded
+    case bridgeSequence(first: Int?, gap: (Int, Int)?)
     case loadStage(stage: String, profile: [String: Any]?)
     case progress(percent: Int, bytesTotal: Int64?)
     case profile([String: Any])
@@ -653,6 +667,7 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         }
         // Weak proxy: the content controller must not retain the coordinator (released on close).
         config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "gonggiViewer")
+        context.coordinator.onTimeline("handler_registered")
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
         webView.backgroundColor = .black
@@ -717,6 +732,8 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         var lastLoadedURL: URL?
         var lastReloadToken: Int = -1
         var isDismantled = false
+        /// Last bridge `seq` received on this page (viewer-html numbers every message from 1).
+        private var lastSeq = 0
         private var observer: NSObjectProtocol?
 
         init(
@@ -755,6 +772,15 @@ private struct GaussianSplatWebView: UIViewRepresentable {
                   let type = body["type"] as? String
             else { return }
             let profile = body["profile"] as? [String: Any]
+            if let seq = (body["seq"] as? NSNumber)?.intValue {
+                if lastSeq == 0 {
+                    onTimeline("bridge_first type=\(type) seq=\(seq)")
+                    onBridgeEvent(.bridgeSequence(first: seq, gap: nil))
+                } else if seq != lastSeq + 1 {
+                    onBridgeEvent(.bridgeSequence(first: nil, gap: (lastSeq, seq)))
+                }
+                lastSeq = max(lastSeq, seq)
+            }
 
             switch type {
             case "load_stage":
@@ -804,7 +830,8 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            onTimeline("didCommitNavigation (HTML first content)")
+            let size = webView.bounds.size
+            onTimeline("didCommitNavigation \(Int(size.width))x\(Int(size.height)) window=\(webView.window != nil)")
             onBridgeEvent(.navigationCommitted)
         }
 

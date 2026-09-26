@@ -139,6 +139,35 @@ final class GaussianViewerSessionTests: XCTestCase {
         XCTAssertLessThanOrEqual(code.count, 80)
     }
 
+    func testPresentationCarriesSpaceIdAndIsUniquePerRequest() {
+        let a = GaussianViewerPresentation(spaceId: "cm1")
+        let b = GaussianViewerPresentation(spaceId: "cm1")
+        XCTAssertEqual(a.spaceId, "cm1")
+        XCTAssertNotEqual(a.id, b.id, "reopening the same space is a new presentation (new viewer)")
+    }
+
+    func testBridgeSequenceRecordsLateFirstMessageAndGaps() throws {
+        var s = GaussianViewerSession()
+        s.noteBridgeSequence(first: 1, gap: nil)
+        s.noteBridgeSequence(first: nil, gap: (4, 6))
+        XCTAssertEqual(s.bridgeFirstSeq, 1)
+        XCTAssertEqual(s.bridgeGaps, 1)
+        let counters = try XCTUnwrap(s.telemetryPayload()["counters"] as? [String: Any])
+        XCTAssertEqual(counters["bridgeGaps"] as? Int, 1)
+        XCTAssertEqual((counters["bridgeFirstSeq"] as? NSNumber)?.intValue, 1)
+    }
+
+    func testUIPhaseChangesAreOnTheTimelineWithoutPercentNoise() throws {
+        var s = GaussianViewerSession()
+        s.applyStage("downloading")
+        for p in 1...50 { s.applyProgress(percent: p) }
+        s.applyStage("preparing")
+        s.markReady()
+        let names = s.telemetryPayload()["events"] as? [[String: Any]] ?? []
+        let ui = names.filter { $0["e"] as? String == "ui" }.compactMap { $0["d"] as? String }
+        XCTAssertEqual(ui, ["downloading", "preparing", "ready"])
+    }
+
     func testTelemetryHasNoURLsAndReportsRecovered() throws {
         var s = GaussianViewerSession()
         s.profile = ["plyName": "viewer-y-up.ply", "bytesTotal": NSNumber(value: 207_573_304), "splats": NSNumber(value: 836_982)]

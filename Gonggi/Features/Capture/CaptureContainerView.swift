@@ -370,8 +370,7 @@ struct CaptureFlowView: View {
     @State private var showSummary = false
     @State private var showProcessing = false
     @State private var showSpacePreview = false
-    @State private var showGaussianViewer = false
-    @State private var completedGaussianSpaceId: String?
+    @State private var gaussianViewer: GaussianViewerPresentation?
     @State private var showEarlyFinishConfirm = false
     let onClose: () -> Void
     /// Optional Astra guide plan — when set, overlay shows segment coaching.
@@ -531,9 +530,8 @@ struct CaptureFlowView: View {
                                 record.linkedGaussianJobId = jobId
                             }
                         }
-                        completedGaussianSpaceId = spaceId
                         showProcessing = false
-                        showGaussianViewer = true
+                        gaussianViewer = GaussianViewerPresentation(spaceId: spaceId)
                     },
                     onHandedOff: { jobId, spaceId in
                         if let latLongId = sourceLatLongSessionId {
@@ -554,13 +552,11 @@ struct CaptureFlowView: View {
                 )
             }
         }
-        .fullScreenCover(isPresented: $showGaussianViewer) {
-            if let spaceId = completedGaussianSpaceId {
-                GaussianSplatWebViewer(spaceId: spaceId) {
-                    showGaussianViewer = false
-                    onClose()
-                    appState.selectTab(.library)
-                }
+        .fullScreenCover(item: $gaussianViewer) { presentation in
+            GaussianSplatWebViewer(spaceId: presentation.spaceId, presentedAt: presentation.requestedAt) {
+                gaussianViewer = nil
+                onClose()
+                appState.selectTab(.library)
             }
         }
     }
