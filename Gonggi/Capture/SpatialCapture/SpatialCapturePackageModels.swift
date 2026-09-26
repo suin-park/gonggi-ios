@@ -124,6 +124,51 @@ struct SpatialCaptureQualityFile: Codable, Equatable, Sendable {
     var schemaVersion: Int
     var session: SpatialCaptureSessionQuality
     var frames: [SpatialCaptureFrameQuality]
+    /// Guide v2 stage 1: what surfaces were seen, how close and from how many directions (nil on older packages).
+    var surfaceCoverage: SpatialCaptureSurfaceCoverage? = nil
+}
+
+/// Surface ("what was seen") coverage summary. World coordinates = ARKit world, same as poses.json.
+struct SpatialCaptureSurfaceCoverage: Codable, Equatable, Sendable {
+    struct Thresholds: Codable, Equatable, Sendable {
+        var minSharpViews: Int
+        var minNearViews: Int
+        var minAzimuthBuckets: Int
+        var nearDistanceM: Double
+        var maxViewDistanceM: Double
+        var maxIncidenceDeg: Double
+        var azimuthBucketDeg: Double
+    }
+
+    struct Deficit: Codable, Equatable, Sendable {
+        var kind: String
+        var state: String
+        var center: [Double]
+        var normal: [Double]?
+        var areaM2: Double
+        var views: Int
+        var nearViews: Int
+        var minDistanceM: Double?
+        var azimuthBuckets: Int
+    }
+
+    var schemaVersion: Int
+    var calibrationId: String
+    var thresholds: Thresholds
+    var planeCount: Int
+    var planeTileCount: Int
+    var featureVoxelCount: Int
+    var keyframeCount: Int
+    var sharpKeyframeCount: Int
+    /// unseen / farOnly / oneSide / fewViews / enough
+    var areaM2ByState: [String: Double]
+    var countByState: [String: Int]
+    var enoughAreaRatio: Double
+    var pathCentroid: [Double]
+    /// Not-enough area per 45° world-azimuth sector around the path centroid (0 = +z, clockwise to +x).
+    var directionDeficitM2: [Double]
+    /// Largest not-enough surfaces (up to 40).
+    var deficits: [Deficit]
 }
 
 struct SpatialCaptureKeyframeDecision: Codable, Equatable, Sendable {
