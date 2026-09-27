@@ -684,11 +684,16 @@ private struct GaussianSplatWebView: UIViewRepresentable {
             coordinator?.onBridgeEvent(.plyCache(detail ?? ""))
         }
         config.setURLSchemeHandler(plyHandler, forURLScheme: GaussianPLYSchemeHandler.scheme)
-        config.userContentController.addUserScript(WKUserScript(
-            source: GaussianPLYCacheScript.source(spaceId: spaceId),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
+        if let owner = cacheOwnerUserId, !owner.isEmpty, GaussianPLYCacheCircuit.isEnabled {
+            config.userContentController.addUserScript(WKUserScript(
+                source: GaussianPLYCacheScript.source(spaceId: spaceId),
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            ))
+        } else {
+            let reason = (cacheOwnerUserId ?? "").isEmpty ? "no_account" : "off_after_failures"
+            DispatchQueue.main.async { context.coordinator.onBridgeEvent(.plyCache("disabled \(reason)")) }
+        }
         context.coordinator.onTimeline("handler_registered")
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
@@ -844,6 +849,8 @@ private struct GaussianSplatWebView: UIViewRepresentable {
                 onBridgeEvent(.shellLoaded)
             case "ply_cache":
                 let kind = (body["kind"] as? String) ?? "unknown"
+                // The page fell back to the network before any PLY byte arrived from the cache route.
+                if kind == "fallback" { GaussianPLYCacheCircuit.noteFallback() }
                 let detail = (body["detail"] as? String).map { " \($0)" } ?? ""
                 onBridgeEvent(.plyCache(String((kind + detail).prefix(120))))
             default:

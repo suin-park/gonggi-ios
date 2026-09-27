@@ -1,18 +1,27 @@
+import CryptoKit
+import Darwin
 import Foundation
 import WebKit
 
 /// Serves `gonggi-ply://ply/<spaceId>/scene.ply?u=<signed R2 url>` to the viewer page.
 ///
 /// The page's fetch of the R2 PLY is redirected here by `GaussianPLYCacheScript`:
-/// - cached (same owner, space and R2 object path) → streamed from disk. A 1-byte ranged GET first
-///   checks the object still has the same size/ETag; when offline the cached file is used as is.
-/// - not cached → downloaded once from R2, streamed to the page while being written to disk, and
-///   committed to the cache only when complete.
-/// Any failure fails the scheme request; the page script then fetches the original R2 URL, so the
-/// worst case is today's behaviour.
+/// - Access: the signed URL comes from viewer-html, which the server renders only for the signed-in
+///   owner. The handler serves nothing without it and only for the cache's owner (`ownerUserId`).
+/// - Change check (separate from access): a 1-byte ranged GET on that signed URL must report the
+///   same total size and the same ETag as the cached copy; otherwise the copy is dropped and the file
+///   is downloaded again. If R2 cannot be reached for this check the copy is served (`hit_unverified`).
+/// - Not cached → downloaded once, streamed to the page while written to disk; committed only when
+///   the byte count matches Content-Length and, for single-part ETags, the MD5 matches the ETag.
+/// - Cached file → streamed from disk in 4 MB chunks, paced by the app's memory footprint.
+/// Any failure before the response fails the request; the page then fetches the original R2 URL
+/// (no PLY bytes were received yet, so nothing is downloaded twice). Repeated failures of the
+/// cache route turn it off for the rest of the app run (`GaussianPLYCacheCircuit`).
 final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "gonggi-ply"
     static let chunkBytes = 4 * 1024 * 1024
+    /// Pause disk streaming while the app holds this much more memory than at the start.
+    static let paceAboveBytes: Int64 = 192 * 1024 * 1024
 
     struct Request: Equatable {
         let spaceId: String
@@ -30,6 +39,13 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
     private var session: URLSession?
     private var sessionDelegate: SessionDelegate?
 
+    init(cache: GaussianPLYCache = .shared, ownerUserId: String?) {
+        self.cache = cache
+        self.ownerUserId = ownerUserId
+    }
+
+    deinit { session?.invalidateAndCancel() }
+
     private func downloadSession() -> (URLSession, SessionDelegate) {
         if let session, let sessionDelegate { return (session, sessionDelegate) }
         let cfg = URLSessionConfiguration.default
@@ -45,14 +61,7 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
         return (s, d)
     }
 
-    init(cache: GaussianPLYCache = .shared, ownerUserId: String?) {
-        self.cache = cache
-        self.ownerUserId = ownerUserId
-    }
-
-    deinit { session?.invalidateAndCancel() }
-
-    // MARK: Parsing (unit-tested)
+    // MARK: Pure helpers (unit-tested)
 
     static func parse(_ url: URL) -> Request? {
         guard url.scheme == scheme, url.host == "ply" else { return nil }
@@ -72,6 +81,29 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
         return Int64(value[value.index(after: slash)...].trimmingCharacters(in: .whitespaces))
     }
 
+    /// `"abc"`, `W/"abc"` → `abc`.
+    static func normalizedETag(_ raw: String?) -> String? {
+        guard var v = raw?.trimmingCharacters(in: .whitespaces), !v.isEmpty else { return nil }
+        if v.hasPrefix("W/") { v.removeFirst(2) }
+        return v.trimmingCharacters(in: CharacterSet(charactersIn: "\"")).lowercased()
+    }
+
+    /// Single-part S3/R2 ETags are the object's MD5 (32 hex); multipart ETags (`…-N`) are not.
+    static func md5FromETag(_ etag: String?) -> String? {
+        guard let e = normalizedETag(etag), e.count == 32, e.allSatisfy(\.isHexDigit) else { return nil }
+        return e
+    }
+
+    /// The object behind the signed URL is the cached one: same total size and same ETag.
+    /// A missing ETag on either side is treated as changed (re-download rather than risk a stale file).
+    static func isSameObject(status: Int?, contentRange: String?, etag: String?,
+                             cachedBytes: Int64, cachedETag: String?) -> Bool {
+        guard status == 206, totalBytes(fromContentRange: contentRange) == cachedBytes,
+              let now = normalizedETag(etag), let then = normalizedETag(cachedETag)
+        else { return false }
+        return now == then
+    }
+
     static func responseHeaders(bytes: Int64) -> [String: String] {
         [
             "Content-Type": "application/octet-stream",
@@ -80,6 +112,18 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Expose-Headers": "Content-Length",
         ]
+    }
+
+    /// Physical memory footprint of the app process (what jetsam counts).
+    static func footprintBytes() -> Int64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return kr == KERN_SUCCESS ? Int64(info.phys_footprint) : 0
     }
 
     // MARK: WKURLSchemeHandler
@@ -107,9 +151,11 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
         t.stopped = true
         if let task = t.dataTask {
             task.cancel()  // didComplete (delegate queue) discards the partial file
+            onEvent?("ply_cache", "closed_during_download net=\(t.receivedBytes)")
         } else {
             try? t.readHandle?.close()
             t.readHandle = nil
+            onEvent?("ply_cache", "closed_during_disk disk=\(t.diskBytes)")
         }
     }
 
@@ -118,19 +164,20 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
     private func validateThenServe(_ t: Transfer, hit: GaussianPLYCache.Hit) {
         var probe = URLRequest(url: t.request.upstream, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4)
         probe.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-        let task = URLSession.shared.dataTask(with: probe) { [weak self] _, response, error in
+        let task = URLSession.shared.dataTask(with: probe) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self, !t.stopped else { return }
+                t.probeBytes = Int64(data?.count ?? 0)
                 if error != nil {
-                    self.onEvent?("ply_cache", "hit_offline bytes=\(hit.bytes)")
+                    self.onEvent?("ply_cache", "hit_unverified bytes=\(hit.bytes)")
                     self.serveFile(t, hit: hit)
                     return
                 }
                 let http = response as? HTTPURLResponse
-                let total = Self.totalBytes(fromContentRange: http?.value(forHTTPHeaderField: "Content-Range"))
-                let etag = http?.value(forHTTPHeaderField: "ETag")
-                let same = http?.statusCode == 206 && total == hit.bytes && (hit.etag == nil || etag == nil || etag == hit.etag)
-                if same {
+                if Self.isSameObject(status: http?.statusCode,
+                                     contentRange: http?.value(forHTTPHeaderField: "Content-Range"),
+                                     etag: http?.value(forHTTPHeaderField: "ETag"),
+                                     cachedBytes: hit.bytes, cachedETag: hit.etag) {
                     self.onEvent?("ply_cache", "hit bytes=\(hit.bytes)")
                     self.serveFile(t, hit: hit)
                 } else {
@@ -149,21 +196,29 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
             return
         }
         t.readHandle = handle
+        t.memBaseline = Self.footprintBytes()
         let response = HTTPURLResponse(url: t.task.request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
                                        headerFields: Self.responseHeaders(bytes: hit.bytes))!
         t.task.didReceive(response)
         sendNextChunk(t)
     }
 
-    /// One chunk per main-queue turn, so the app never holds more than a chunk of the file.
+    /// One chunk per main-queue turn; slows down while the app's footprint grows (WebKit still
+    /// forwarding earlier chunks), so the app never builds up a second copy of the file.
     private func sendNextChunk(_ t: Transfer) {
         guard !t.stopped, let handle = t.readHandle else { return }
         let data = (try? handle.read(upToCount: Self.chunkBytes)) ?? nil
         if let data, !data.isEmpty {
             t.task.didReceive(data)
-            DispatchQueue.main.async { [weak self] in self?.sendNextChunk(t) }
+            t.diskBytes += Int64(data.count)
+            let grown = Self.footprintBytes() - t.memBaseline
+            t.memPeakGrowth = max(t.memPeakGrowth, grown)
+            let delay: TimeInterval = grown > Self.paceAboveBytes ? 0.02 : 0
+            if delay > 0 { t.pacedChunks += 1 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.sendNextChunk(t) }
         } else {
-            finish(t, error: nil, event: nil)
+            let mb = t.memPeakGrowth / 1_048_576
+            finish(t, error: nil, event: "served_disk disk=\(t.diskBytes) net=\(t.probeBytes) mem_peak_growth_mb=\(mb) paced=\(t.pacedChunks)")
         }
     }
 
@@ -180,7 +235,7 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
         task.resume()
     }
 
-    /// Delegate queue → main.
+    /// Delegate queue.
     fileprivate func didReceive(response: URLResponse, for t: Transfer) -> Bool {
         let http = response as? HTTPURLResponse
         guard http?.statusCode == 200, response.expectedContentLength > 0 else {
@@ -202,10 +257,14 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
         return true
     }
 
+    /// Delegate queue. Bytes go to the page and to the temp file; nothing else keeps them.
     fileprivate func didReceive(data: Data, for t: Transfer) {
         if let w = t.writeHandle {
             do { try w.write(contentsOf: data) } catch { t.writeFailed = true }
+        } else {
+            t.writeFailed = true
         }
+        t.md5.update(data: data)
         t.receivedBytes += Int64(data.count)
         DispatchQueue.main.async {
             guard !t.stopped else { return }
@@ -213,22 +272,38 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
         }
     }
 
+    /// Delegate queue.
     fileprivate func didComplete(_ t: Transfer, error: Error?) {
         try? t.writeHandle?.close()
         t.writeHandle = nil
-        var stored = false
-        if error == nil, !t.writeFailed, let temp = t.tempFile, t.receivedBytes == t.expectedBytes {
-            stored = cache.commit(tempFile: temp, ownerUserId: t.owner, spaceId: t.request.spaceId,
-                                  sourcePath: t.request.sourcePath, expectedBytes: t.expectedBytes, etag: t.etag)
-            t.tempFile = nil
+        var outcome = "not_stored"
+        if error == nil, let temp = t.tempFile {
+            let digest = t.md5.finalize().map { String(format: "%02x", $0) }.joined()
+            let expectedMD5 = Self.md5FromETag(t.etag)
+            if t.writeFailed {
+                outcome = "not_stored write_failed"
+            } else if t.receivedBytes != t.expectedBytes {
+                outcome = "not_stored incomplete"
+            } else if let expectedMD5, expectedMD5 != digest {
+                outcome = "not_stored md5_mismatch"
+            } else if Self.normalizedETag(t.etag) == nil {
+                outcome = "not_stored no_etag"
+            } else if cache.commit(tempFile: temp, ownerUserId: t.owner, spaceId: t.request.spaceId,
+                                   sourcePath: t.request.sourcePath, expectedBytes: t.expectedBytes, etag: t.etag) {
+                outcome = expectedMD5 == nil ? "stored md5=multipart" : "stored md5=ok"
+                t.tempFile = nil
+            } else {
+                outcome = "not_stored commit_refused"
+            }
         }
         t.closeAndDiscard()
-        let bytes = t.receivedBytes
+        let net = t.receivedBytes
+        let total = cache.totalBytes
         DispatchQueue.main.async {
             if error != nil {
-                self.finish(t, error: error, event: "failed network")
+                self.finish(t, error: error, event: "failed network net=\(net)")
             } else {
-                self.finish(t, error: nil, event: stored ? "stored bytes=\(bytes)" : "not_stored bytes=\(bytes)")
+                self.finish(t, error: nil, event: "\(outcome) net=\(net) cache_total=\(total)")
             }
         }
     }
@@ -239,6 +314,7 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
         t.readHandle = nil
         guard !t.stopped, live.removeValue(forKey: ObjectIdentifier(t.task)) != nil else { return }
         if let event { onEvent?("ply_cache", event) }
+        if error == nil { GaussianPLYCacheCircuit.noteSuccess() }
         if let error { t.task.didFailWithError(error) } else { t.task.didFinish() }
     }
 
@@ -255,8 +331,14 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
         var tempFile: URL?
         var expectedBytes: Int64 = 0
         var receivedBytes: Int64 = 0
+        var diskBytes: Int64 = 0
+        var probeBytes: Int64 = 0
+        var memBaseline: Int64 = 0
+        var memPeakGrowth: Int64 = 0
+        var pacedChunks = 0
         var etag: String?
         var writeFailed = false
+        var md5 = Insecure.MD5()
 
         init(task: WKURLSchemeTask, request: Request, owner: String) {
             self.task = task
@@ -308,8 +390,33 @@ final class GaussianPLYSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 }
 
+/// Turns the cache route off for the rest of the app run after it fails twice in a row before
+/// delivering a response (e.g. WebKit refusing the custom scheme), so every open does not pay a
+/// failed attempt before falling back to the network.
+enum GaussianPLYCacheCircuit {
+    static let maxConsecutiveFailures = 2
+    private static var consecutiveFailures = 0
+    private static let lock = NSLock()
+
+    static var isEnabled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return consecutiveFailures < maxConsecutiveFailures
+    }
+
+    /// A page fallback: the cache route failed before any PLY byte reached the page.
+    static func noteFallback() {
+        lock.lock(); consecutiveFailures += 1; lock.unlock()
+    }
+
+    static func noteSuccess() {
+        lock.lock(); consecutiveFailures = 0; lock.unlock()
+    }
+
+    static func resetForTesting() { noteSuccess() }
+}
+
 /// Document-start script: redirects the viewer's fetch of the R2 PLY to `gonggi-ply://`, and falls back to
-/// the original request if that fails for any reason.
+/// the original request if that fails before a response (so no PLY byte is fetched twice).
 enum GaussianPLYCacheScript {
     static func source(spaceId: String) -> String {
         let space = (try? String(data: JSONEncoder().encode(spaceId), encoding: .utf8)) ?? "\"\""

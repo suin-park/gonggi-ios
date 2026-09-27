@@ -3,10 +3,17 @@ import Foundation
 
 /// On-device cache of opened Gaussian space PLYs, so reopening a space does not download it again.
 ///
+/// Scope: avoiding re-downloads. Opening a space still needs the network (the viewer page and the
+/// signed content URL come from the server on every open), so offline opening is not supported.
+///
 /// - Identity: owner user + space + the R2 object path of the content (the signed query is ignored).
-///   A space whose source file changes gets a new path, so a stale file is never shown.
-/// - Account isolation: entries carry the owner user id; lookups require the signed-in user, and
-///   signing in as another user purges the previous user's files.
+///   Whether the object at that path changed is checked on every open (size + ETag, see
+///   `GaussianPLYSchemeHandler`).
+/// - Access: the cache never grants access. A cached file is only served for a request carrying a
+///   signed URL the server issued in this open, after it authorised the signed-in owner.
+/// - Account isolation: entries carry the owner user id and lookups require the signed-in user.
+///   Explicit sign-out / account deletion deletes that account's files; signing in as another account
+///   deletes other accounts' files. A plain relaunch keeps them.
 /// - Size: least-recently-opened entries are evicted above `capacityBytes`; files are excluded
 ///   from iCloud backup. Writes land in `tmp/` and are moved in only when complete.
 final class GaussianPLYCache: @unchecked Sendable {
@@ -142,6 +149,14 @@ final class GaussianPLYCache: @unchecked Sendable {
     func remove(ownerUserId: String, spaceId: String, sourcePath: String) {
         queue.sync {
             removeLocked(Self.key(ownerUserId: ownerUserId, spaceId: spaceId, sourcePath: sourcePath))
+            saveIndexLocked()
+        }
+    }
+
+    /// Explicit sign-out or account deletion.
+    func removeAll(ownerUserId: String) {
+        queue.sync {
+            for (k, e) in index where e.ownerUserId == ownerUserId { removeLocked(k) }
             saveIndexLocked()
         }
     }

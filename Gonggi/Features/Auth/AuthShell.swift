@@ -224,9 +224,11 @@ final class AuthSessionController: ObservableObject {
         let access = accessToken
         let refresh = refreshToken
         let sessionId = mobileSessionId
+        let signedOutUserId = profile?.id
         // Clear presentation immediately (before network logout completes).
         clearLocalCredentials()
         AccountPresentationReset.resetForSignOut()
+        removeSavedSpaceFiles(of: signedOutUserId)
         phase = .signedOut
         await api.logout(accessToken: access, refreshToken: refresh, sessionId: sessionId)
     }
@@ -307,9 +309,19 @@ final class AuthSessionController: ObservableObject {
             appleAuthorizationCode: appleAuthorizationCode,
             googleIdToken: googleIdToken
         )
+        let deletedUserId = profile?.id
         clearLocalCredentials()
         AccountPresentationReset.resetForSignOut()
+        removeSavedSpaceFiles(of: deletedUserId)
         phase = .signedOut
+    }
+
+    /// Explicit sign-out / account deletion only — never on a failed session restore at launch.
+    private func removeSavedSpaceFiles(of userId: String?) {
+        guard let userId, !userId.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            GaussianPLYCache.shared.removeAll(ownerUserId: userId)
+        }
     }
 
     private func clearLocalCredentials() {
