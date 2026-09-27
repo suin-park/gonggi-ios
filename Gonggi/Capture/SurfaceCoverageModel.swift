@@ -71,6 +71,8 @@ struct SurfaceCoverageModel {
         var minDistanceM: Float = .infinity
         var azimuthMask: UInt16 = 0
         var processedKeyframes = 0
+        /// Guide v3: saved views looking down onto an up-facing surface (≤ 50° from its normal, ≤ 1.5 m).
+        var topViews = 0
 
         var azimuthBuckets: Int { azimuthMask.nonzeroBitCount }
 
@@ -159,6 +161,14 @@ struct SurfaceCoverageModel {
     // MARK: Output
 
     var surfaces: [Surface] { Array(tiles.values) + Array(voxels.values) }
+
+    /// Plane tiles for the gap guide (far-only area by direction, furniture tops).
+    func gapSurfaces() -> [CaptureGapModel.SurfaceInfo] {
+        tiles.values.filter { $0.views > 0 || ($0.normal?.y ?? 0) > 0.9 }.map {
+            CaptureGapModel.SurfaceInfo(center: $0.center, normal: $0.normal, areaM2: $0.areaM2,
+                                        farOnly: $0.views > 0 && $0.state == .farOnly, topViews: $0.topViews)
+        }
+    }
 
     func summary() -> SpatialCaptureSurfaceCoverage {
         let t0 = Self.nowMs()
@@ -375,6 +385,10 @@ struct SurfaceCoverageModel {
         if occluded(from: cam, to: s.center, dist: dist, ignoring: s.ownerPlane, planes: planes) { return }
         s.views += 1
         if dist <= SurfaceCoverageConfig.nearDistanceM { s.nearViews += 1 }
+        if let n = s.normal, n.y > 0.9, dist <= CaptureGapModel.Config.topNearM,
+           simd_dot(-d / dist, n) >= cos(CaptureGapModel.Config.topMaxFromNormalDeg * .pi / 180) {
+            s.topViews += 1
+        }
         s.minDistanceM = min(s.minDistanceM, dist)
         let az = (atan2(d.x, d.z) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
         guard az.isFinite else { return }

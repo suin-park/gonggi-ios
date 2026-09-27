@@ -33,6 +33,13 @@ final class CaptureSessionController {
     /// Guide v2 stage 1 (observe-only): surface coverage. Touched only on `surfaceQueue`.
     private let surfaceQueue = DispatchQueue(label: "com.whik.gonggi.capture.surface", qos: .utility)
     private var surfaceCoverage = SurfaceCoverageModel()
+    /// Guide v3 (surfaceQueue): gaps in the saved photos. Guidance only.
+    private var gapModel = CaptureGapModel()
+    private var currentGapPrompt: CaptureGapModel.Prompt?
+    /// Saved photos the (disabled) selector speed gates would have rejected — device evidence before enabling them.
+    private var motionGateShadowEvaluated = 0
+    private var motionGateShadowWouldRejectTranslation = 0
+    private var motionGateShadowWouldRejectAngular = 0
     /// ARFrame callback thread only.
     private var surfaceFrameCounter = 0
     /// Save-stall tracking (living-room capture saved nothing for 99.4 s). ARFrame callback thread.
@@ -124,7 +131,14 @@ final class CaptureSessionController {
         keyframeDecisions = []
         rejectedKeyframeDecisionCount = 0
         trackingFailureEventCount = 0
-        surfaceQueue.sync { surfaceCoverage.reset() }
+        surfaceQueue.sync {
+            surfaceCoverage.reset()
+            gapModel = CaptureGapModel()
+        }
+        currentGapPrompt = nil
+        motionGateShadowEvaluated = 0
+        motionGateShadowWouldRejectTranslation = 0
+        motionGateShadowWouldRejectAngular = 0
         surfaceFrameCounter = 0
         latestFrameTimestamp = 0
         lastCandidateEvaluationTimestamp = nil
@@ -200,6 +214,7 @@ final class CaptureSessionController {
             updatePhaseAndCompletion(trackingNormal: trackingNormal, transform: transform)
             let trackingLimited = !trackingNormal
             updateSaveStall(transform: transform, timestamp: frame.timestamp, trackingNormal: trackingNormal)
+            updateGapGuide(timestamp: frame.timestamp, transform: transform)
             let decision = guidanceRules.evaluateDecision(
                 quality: qualityState(trackingLimited: trackingLimited),
                 trackingLimited: trackingLimited
@@ -307,8 +322,8 @@ final class CaptureSessionController {
                         lastKeyframeTransform: intervalTransform,
                         keyframeCount: keyframe3DGSCount,
                         sharpnessState: sharpSnap.state,
-                        motionSpeed: lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed,
-                        angularVelocity: lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity,
+                        motionSpeed: SpatialCaptureConfig.selectorMotionInput(lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed),
+                        angularVelocity: SpatialCaptureConfig.selectorMotionInput(lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity),
                         lowTextureScore: lowTexture,
                         exposureScore: exposureScore,
                         cellOverlapState: overlapAnalyzer.lastState,
@@ -380,8 +395,8 @@ final class CaptureSessionController {
                 lastKeyframeTransform: intervalTransform,
                 keyframeCount: keyframe3DGSCount,
                 sharpnessState: sharpSnap.state,
-                motionSpeed: lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed,
-                angularVelocity: lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity,
+                motionSpeed: SpatialCaptureConfig.selectorMotionInput(lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed),
+                angularVelocity: SpatialCaptureConfig.selectorMotionInput(lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity),
                 lowTextureScore: lowTexture,
                 exposureScore: exposureScore,
                 cellOverlapState: overlapAnalyzer.lastState,
@@ -502,6 +517,7 @@ final class CaptureSessionController {
 
         let trackingLimited = !trackingNormal
         updateSaveStall(transform: transform, timestamp: frame.timestamp, trackingNormal: trackingNormal)
+        updateGapGuide(timestamp: frame.timestamp, transform: transform)
         let decision = guidanceRules.evaluateDecision(
             quality: qualityState(trackingLimited: trackingLimited),
             trackingLimited: trackingLimited
@@ -682,9 +698,15 @@ final class CaptureSessionController {
                 width: Float(success.width), height: Float(success.height),
                 sharp: snap.sharpnessState != CaptureSharpnessState.blurry.rawValue
             )
+            let savedAt = snap.arTimestampSeconds
+            let savedPose = snap.cameraToWorld
             surfaceQueue.async { [weak self] in
                 self?.surfaceCoverage.observeKeyframe(surfaceKeyframe)
+                self?.gapModel.observeSaved(timestamp: savedAt, cameraToWorld: savedPose)
             }
+            motionGateShadowEvaluated += 1
+            if let v = snap.motionSpeed, v > SpatialCaptureConfig.maxMotionSpeedMps { motionGateShadowWouldRejectTranslation += 1 }
+            if let w = snap.angularVelocity, w > SpatialCaptureConfig.maxAngularVelocityRadPerSec { motionGateShadowWouldRejectAngular += 1 }
             keyframeDecisions.append(
                 SpatialCaptureKeyframeDecision(
                     arTimestampSeconds: snap.arTimestampSeconds,
@@ -1231,7 +1253,14 @@ final class CaptureSessionController {
         keyframeDecisions = []
         pendingDepthByFrameId = [:]
         spatialStateLock.unlock()
-        surfaceQueue.sync { surfaceCoverage.reset() }
+        surfaceQueue.sync {
+            surfaceCoverage.reset()
+            gapModel = CaptureGapModel()
+        }
+        currentGapPrompt = nil
+        motionGateShadowEvaluated = 0
+        motionGateShadowWouldRejectTranslation = 0
+        motionGateShadowWouldRejectAngular = 0
         packagePaths = nil
     }
 
@@ -1454,6 +1483,7 @@ final class CaptureSessionController {
                         reconstructionCompletion: completionRecord,
                         frameContinuityTelemetry: frameContinuityTelemetry.snapshotFile(),
                         surfaceCoverage: surfaceQueue.sync { surfaceCoverage.summary() },
+                        captureGaps: gapSummaryForPackage(),
                         saveContinuity: SpatialCaptureSaveContinuity(
                             keyframeTimestamps: finalizedKeyframes.map(\.arTimestampSeconds),
                             reanchorCount: bridgeSession.reanchorCount,
@@ -1595,7 +1625,32 @@ final class CaptureSessionController {
             spatialKeyframeEnqueueCount: keyframe3DGSCount
         )
         q.saveStalledSec = currentSaveStallSec
+        q.gapPrompt = currentGapPrompt
         return q
+    }
+
+    private func gapSummaryForPackage() -> SpatialCaptureGapSummary {
+        var g = surfaceQueue.sync { gapModel.summary() }
+        g.motionGateShadow = SpatialCaptureMotionGateShadow(
+            enforced: SpatialCaptureConfig.motionGatesEnforced,
+            savedPhotosEvaluated: motionGateShadowEvaluated,
+            wouldRejectTranslation: motionGateShadowWouldRejectTranslation,
+            wouldRejectAngular: motionGateShadowWouldRejectAngular,
+            maxMotionSpeedMps: SpatialCaptureConfig.maxMotionSpeedMps,
+            maxAngularVelocityRadPerSec: SpatialCaptureConfig.maxAngularVelocityRadPerSec
+        )
+        return g
+    }
+
+    /// Guide v3 tick: region exits judge gaps; a save stall pauses the prompt (continuity first).
+    private func updateGapGuide(timestamp: TimeInterval, transform: simd_float4x4) {
+        guard SpatialCaptureConfig.gapGuideEnabled else {
+            currentGapPrompt = nil
+            return
+        }
+        currentGapPrompt = surfaceQueue.sync {
+            gapModel.tick(timestamp: timestamp, cameraToWorld: transform) { self.surfaceCoverage.gapSurfaces() }
+        }
     }
 
     private func updatePhaseAndCompletion(trackingNormal: Bool, transform: simd_float4x4) {
@@ -2075,8 +2130,8 @@ final class CaptureSessionController {
             lastKeyframeTransform: lastKeyframeTransform ?? bridgeSession.continuityAnchorTransform,
             keyframeCount: keyframe3DGSCount,
             sharpnessState: sharpSnap.state,
-            motionSpeed: lastSample?.translationSpeedMps,
-            angularVelocity: lastSample?.angularVelocityRadPerSec,
+            motionSpeed: SpatialCaptureConfig.selectorMotionInput(lastSample?.translationSpeedMps),
+            angularVelocity: SpatialCaptureConfig.selectorMotionInput(lastSample?.angularVelocityRadPerSec),
             lowTextureScore: lowTexture,
             exposureScore: 0.85,
             cellOverlapState: overlapAnalyzer.lastState,

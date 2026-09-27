@@ -198,6 +198,16 @@ struct GuidanceRuleEngine {
             ))
         }
 
+        // 6b. Guide v3 gap in the saved photos — above the older sector coaching. While it asks for a turn,
+        //     coach the turn speed so photos keep saving (continuity first).
+        if let gap = quality.gapPrompt {
+            if quality.angularVelocity > CaptureGapModel.Config.promptTurnWarnRadPerSec {
+                candidates.append(GuidanceDecision(action: .slowDown, priority: .high, ruleId: "gap_turn_speed"))
+            } else {
+                candidates.append(GuidanceDecision(action: .captureGap, priority: .medium, ruleId: "gap_\(gap.kind.rawValue)"))
+            }
+        }
+
         // 7. Sector / ring coverage before soft percent
         if quality.completionState != .ready {
             switch quality.guidanceStage {

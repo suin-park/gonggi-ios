@@ -8,6 +8,8 @@ struct CaptureTelemetryCollector {
 
     private(set) var samples: [TelemetrySample] = []
     private var lastTransform: simd_float4x4?
+    /// Camera pose at the previous sample: sample speeds are measured over the whole sample window.
+    private var lastSampleTransform: simd_float4x4?
     private var lastSampleTime: TimeInterval = 0
     private var sessionStartTime: TimeInterval = 0
 
@@ -24,6 +26,7 @@ struct CaptureTelemetryCollector {
     mutating func reset(startTime: TimeInterval) {
         samples = []
         lastTransform = nil
+        lastSampleTransform = nil
         lastSampleTime = 0
         sessionStartTime = startTime
         lastFrameTime = startTime
@@ -37,44 +40,15 @@ struct CaptureTelemetryCollector {
 
     mutating func ingest(frame: ARFrame) {
         let t = frame.timestamp
-        let dt = t - lastFrameTime
-        if lastFrameTime > 0, dt > 0 {
-            if frame.camera.trackingState != .normal {
-                trackingLimitedSec += dt
-            }
+        let trackingNormal: Bool
+        if case .normal = frame.camera.trackingState { trackingNormal = true } else { trackingNormal = false }
+        guard let window = ingestMotion(timestamp: t, transform: frame.camera.transform, trackingNormal: trackingNormal) else {
+            return
         }
-        lastFrameTime = t
-
         let transform = frame.camera.transform
-        var transM: Float = 0
-        var rotRad: Float = 0
-        if let last = lastTransform, lastSampleTime > 0 {
-            let deltaT = Float(t - lastSampleTime)
-            transM = CaptureMath.translationMeters(from: last, to: transform)
-            rotRad = CaptureMath.rotationDeltaRadians(from: last, to: transform)
-            if deltaT > 0 {
-                let speeds = CaptureMath.speeds(
-                    translationM: transM,
-                    rotationRad: rotRad,
-                    deltaTimeSec: deltaT
-                )
-                let transMps = Double(speeds.translationMps)
-                let angRad = Double(speeds.angularRadPerSec)
-                translationSpeeds.append(transMps)
-                angularSpeeds.append(angRad)
-
-                let isFast = transMps > fastMotionThresholdMps
-                if isFast && !wasFastMotion { fastMotionSegments += 1 }
-                wasFastMotion = isFast
-            }
-        }
-        lastTransform = transform
-
-        guard t - lastSampleTime >= sampleIntervalSec || lastSampleTime == 0 else { return }
-        lastSampleTime = t
-
-        let deltaT = Float(max(0.001, t - (samples.last?.timestamp ?? sessionStartTime)))
-        let speeds = CaptureMath.speeds(translationM: transM, rotationRad: rotRad, deltaTimeSec: deltaT)
+        let transM = window.translationM
+        let rotRad = window.rotationRad
+        let speeds = (translationMps: window.translationMps, angularRadPerSec: window.angularRadPerSec)
         let blurProxy = blurProxy(translationMps: Double(speeds.translationMps), angular: Double(speeds.angularRadPerSec))
         blurProxies.append(blurProxy)
 
@@ -104,6 +78,55 @@ struct CaptureTelemetryCollector {
             cameraCellId: cellId
         )
         samples.append(sample)
+    }
+
+    struct MotionWindow: Equatable {
+        var translationM: Float
+        var rotationRad: Float
+        var translationMps: Float
+        var angularRadPerSec: Float
+    }
+
+    /// Motion part of `ingest(frame:)`, separated so it can be tested without ARFrame.
+    /// - Per-frame speeds (averages, fast-motion segments) use the time since the previous frame.
+    /// - Sample speeds use the pose change since the previous *sample* over the time since that sample.
+    /// Earlier builds divided a one-frame pose change by `t − samples.last.timestamp`, mixing the absolute
+    /// ARKit clock with the session-relative sample time (~6e5 s), so every recorded speed was ~1e-9.
+    /// Returns the window when a new sample is due, nil otherwise.
+    mutating func ingestMotion(timestamp t: TimeInterval, transform: simd_float4x4, trackingNormal: Bool) -> MotionWindow? {
+        let frameDt = lastFrameTime > 0 ? t - lastFrameTime : 0
+        if frameDt > 0, !trackingNormal {
+            trackingLimitedSec += frameDt
+        }
+        lastFrameTime = t
+
+        if let last = lastTransform, frameDt > 0 {
+            let speeds = CaptureMath.speeds(
+                translationM: CaptureMath.translationMeters(from: last, to: transform),
+                rotationRad: CaptureMath.rotationDeltaRadians(from: last, to: transform),
+                deltaTimeSec: Float(frameDt)
+            )
+            let transMps = Double(speeds.translationMps)
+            translationSpeeds.append(transMps)
+            angularSpeeds.append(Double(speeds.angularRadPerSec))
+            let isFast = transMps > fastMotionThresholdMps
+            if isFast && !wasFastMotion { fastMotionSegments += 1 }
+            wasFastMotion = isFast
+        }
+        lastTransform = transform
+
+        guard t - lastSampleTime >= sampleIntervalSec || lastSampleTime == 0 else { return nil }
+        var window = MotionWindow(translationM: 0, rotationRad: 0, translationMps: 0, angularRadPerSec: 0)
+        if let prev = lastSampleTransform, lastSampleTime > 0, t > lastSampleTime {
+            let transM = CaptureMath.translationMeters(from: prev, to: transform)
+            let rotRad = CaptureMath.rotationDeltaRadians(from: prev, to: transform)
+            let speeds = CaptureMath.speeds(translationM: transM, rotationRad: rotRad, deltaTimeSec: Float(t - lastSampleTime))
+            window = MotionWindow(translationM: transM, rotationRad: rotRad,
+                                  translationMps: speeds.translationMps, angularRadPerSec: speeds.angularRadPerSec)
+        }
+        lastSampleTime = t
+        lastSampleTransform = transform
+        return window
     }
 
     var motionQuality: Double {

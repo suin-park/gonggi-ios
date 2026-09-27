@@ -126,6 +126,8 @@ enum GuidanceAction: String, Codable, Equatable, Sendable {
     case reacquireView
     /// Photos stopped saving while the camera keeps moving (continuity blocked / frames not evaluated).
     case saveStalled
+    /// Guide v3: a gap in the saved photos (up / opposite / tops / far end). Copy comes from `quality.gapPrompt`.
+    case captureGap
     case finishBlockedWeakTerminal
     case captureNearlyComplete
     case captureComplete

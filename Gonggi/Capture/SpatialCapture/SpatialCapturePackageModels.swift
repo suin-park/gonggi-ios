@@ -128,6 +128,8 @@ struct SpatialCaptureQualityFile: Codable, Equatable, Sendable {
     var surfaceCoverage: SpatialCaptureSurfaceCoverage? = nil
     /// Photo-save continuity: gaps between saved photos, stale-anchor escapes, stall notices (nil on older packages).
     var saveContinuity: SpatialCaptureSaveContinuity? = nil
+    /// Guide v3: gap prompts shown / filled / paused, saved-photo up / down / sector distribution (nil on older packages).
+    var captureGaps: SpatialCaptureGapSummary? = nil
 }
 
 struct SpatialCaptureSaveContinuity: Codable, Equatable, Sendable {

@@ -120,6 +120,8 @@ struct CaptureQualityState: Equatable {
     var spatialKeyframeEnqueueCount: Int
     /// Seconds since the last saved photo while saving is blocked and the camera moves (0 = not stalled).
     var saveStalledSec: Double = 0
+    /// Guide v3 gap prompt to show (nil = none / paused for continuity). Guidance only, never blocks finishing.
+    var gapPrompt: CaptureGapModel.Prompt? = nil
 
     init(
         overallCoverage: Double,

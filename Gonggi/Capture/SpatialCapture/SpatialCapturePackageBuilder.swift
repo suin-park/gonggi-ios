@@ -58,6 +58,8 @@ enum SpatialCapturePackageBuilder {
         var frameContinuityTelemetry: FrameContinuityTelemetryFile? = nil
         /// Guide v2 stage 1 surface coverage summary (observe-only).
         var surfaceCoverage: SpatialCaptureSurfaceCoverage? = nil
+        /// Guide v3 gap prompts + saved-photo direction distribution + speed-gate shadow (guidance only).
+        var captureGaps: SpatialCaptureGapSummary? = nil
         var saveContinuity: SpatialCaptureSaveContinuity? = nil
     }
 
@@ -204,7 +206,8 @@ enum SpatialCapturePackageBuilder {
             ),
             frames: keyframes.map(\.quality),
             surfaceCoverage: input.surfaceCoverage,
-            saveContinuity: input.saveContinuity
+            saveContinuity: input.saveContinuity,
+            captureGaps: input.captureGaps
         )
 
         try encoder.encode(metadata).write(to: paths.metadataURL, options: [.atomic])

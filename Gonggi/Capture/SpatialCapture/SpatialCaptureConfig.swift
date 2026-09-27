@@ -49,6 +49,18 @@ enum SpatialCaptureConfig {
     /// Reject when motion is too fast (m/s / rad/s).
     static var maxMotionSpeedMps: Double = 0.55
     static var maxAngularVelocityRadPerSec: Double = 1.4
+    /// The speed gates above never fired before build 76: the recorded speeds were ~1e-9 (clock-unit bug in
+    /// CaptureTelemetryCollector). Now that speeds are real, the gates stay OFF for keyframe selection so
+    /// photo saving (and continuity) does not change; `SpatialCaptureMotionGateShadow` records which saved
+    /// photos they would have rejected. Turn on only after device evidence.
+    static var motionGatesEnforced = false
+    /// Guide v3 gap prompts (up / opposite / tops / far end). Guidance only.
+    static var gapGuideEnabled = true
+
+    /// Speed passed to KeyframeSelector3DGS: nil (no gate) unless the gates are enforced.
+    static func selectorMotionInput(_ value: Double?) -> Double? {
+        motionGatesEnforced ? value : nil
+    }
     /// Reject when low-texture heuristic is above this (0??).
     static var maxLowTextureScore: Double = 0.75
 

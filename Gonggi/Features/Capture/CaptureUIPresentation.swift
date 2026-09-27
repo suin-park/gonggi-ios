@@ -202,7 +202,7 @@ enum CaptureUIPresenter {
             return true
         case .continueCapture, .moveForward, .scanNewArea,
              .needMoreYaw, .needUpperCoverage, .needLowerCoverage,
-             .captureNearlyComplete, .captureComplete:
+             .captureNearlyComplete, .captureComplete, .captureGap:
             return false
         }
     }
@@ -287,6 +287,24 @@ enum CaptureUIPresenter {
                 isReadyToFinish: false,
                 ringProgress: ring,
                 ringSystemImage: ringSystemImage(for: .notReady, action: action),
+                source: .live
+            )
+        }
+
+        // Guide v3 gap prompt (guidance only): shown before "촬영이 충분합니다", finishing stays as the gate says.
+        if action == .captureGap, let gap = quality.gapPrompt {
+            let copy = gapCopy(gap)
+            return PrimaryGuidanceState(
+                action: action,
+                title: copy.title,
+                subtitle: copy.subtitle,
+                direction: .none,
+                severity: .normal,
+                statusLabel: status,
+                finishButtonTitle: finishButtonTitle(isReady: ready),
+                isReadyToFinish: ready,
+                ringProgress: ready ? 1 : ring,
+                ringSystemImage: ready ? "checkmark" : ringSystemImage(for: quality.completionState, action: action),
                 source: .live
             )
         }
@@ -432,8 +450,34 @@ enum CaptureUIPresenter {
             return ("가구나 모서리도 화면에 함께 담아주세요", nil)
         case .captureNearlyComplete:
             return ("거의 다 담았어요", "위·아래와 뒤쪽도 조금 더 둘러봐 주세요")
+        case .captureGap:
+            return ("부족한 방향을 조금 더 담아 주세요", "사진이 계속 저장되도록 천천히 움직여 주세요")
         case .captureComplete:
             return ("촬영이 충분합니다", "공간을 충분히 담았어요. 기록을 완료할 수 있어요")
+        }
+    }
+
+    /// Guide v3 copy. Turns are slow and continuous so photos keep saving on the way; the direction is only
+    /// where to end up facing.
+    static func gapCopy(_ gap: CaptureGapModel.Prompt) -> (title: String, subtitle: String?) {
+        let side: String = {
+            switch gap.turn {
+            case .ahead: return "앞쪽"
+            case .left: return "왼쪽"
+            case .right: return "오른쪽"
+            case .behind: return "뒤쪽"
+            }
+        }()
+        switch gap.kind {
+        case .up:
+            return ("천천히 위쪽도 비춰 주세요", "고개를 천천히 들어 2~3초 머물러 주세요. 사진이 저장되는 속도면 충분해요")
+        case .opposite:
+            return (gap.turn == .ahead ? "지금 보는 방향을 조금 더 담아 주세요" : "\(side)으로 천천히 돌며 반대쪽도 담아 주세요",
+                    "한 번에 돌지 말고 사진이 계속 저장되도록 천천히 몸을 돌려 주세요")
+        case .tops:
+            return ("\(side) 가구 윗면을 내려다보며 찍어 주세요", "한 걸음 다가가 위에서 비춰 주세요")
+        case .farEnd:
+            return ("\(side) 끝까지 천천히 걸어가 주세요", "가까이에서 찍어야 선명하게 만들어져요")
         }
     }
 
