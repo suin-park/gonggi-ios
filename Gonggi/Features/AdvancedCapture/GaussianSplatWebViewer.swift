@@ -81,6 +81,8 @@ struct GaussianSplatWebViewer: View {
             // WebView stays behind native chrome / loading overlay.
             GaussianSplatWebView(
                 url: viewerURL,
+                spaceId: spaceId,
+                cacheOwnerUserId: GaussianGenerationStore.shared.boundUserId,
                 reloadToken: reloadToken,
                 bridge: $webBridge,
                 onCollisionDetected: { hasCollision = $0 },
@@ -486,6 +488,11 @@ struct GaussianSplatWebViewer: View {
         case .processTerminated:
             GaussianViewerLoadLog.mark("webContentProcessDidTerminate", since: session.openedAt)
             recover(.webContentProcessTerminated)
+
+        case .plyCache(let detail):
+            // hit / hit_offline / miss / stored / not_stored / stale / failed / fallback — kept in telemetry events.
+            GaussianViewerLoadLog.mark("ply_cache \(detail)", since: session.openedAt)
+            session.log("ply_cache", detail)
         }
     }
 
@@ -562,6 +569,7 @@ private enum GaussianViewerBridgeEvent {
     case renderResumed(reason: String)
     case renderResumeFailed(reason: String)
     case processTerminated
+    case plyCache(String)
 }
 
 private extension Data {
@@ -642,6 +650,9 @@ private extension Notification.Name {
 
 private struct GaussianSplatWebView: UIViewRepresentable {
     let url: URL
+    let spaceId: String
+    /// Signed-in user; nil disables the on-device PLY cache (the page then downloads as before).
+    let cacheOwnerUserId: String?
     var reloadToken: Int = 0
     @Binding var bridge: GaussianSplatWebBridge?
     var onCollisionDetected: (Bool) -> Void
@@ -667,6 +678,17 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         }
         // Weak proxy: the content controller must not retain the coordinator (released on close).
         config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "gonggiViewer")
+        // On-device PLY cache: reopening a space streams the saved file instead of downloading it again.
+        let plyHandler = GaussianPLYSchemeHandler(ownerUserId: cacheOwnerUserId)
+        plyHandler.onEvent = { [weak coordinator = context.coordinator] _, detail in
+            coordinator?.onBridgeEvent(.plyCache(detail ?? ""))
+        }
+        config.setURLSchemeHandler(plyHandler, forURLScheme: GaussianPLYSchemeHandler.scheme)
+        config.userContentController.addUserScript(WKUserScript(
+            source: GaussianPLYCacheScript.source(spaceId: spaceId),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         context.coordinator.onTimeline("handler_registered")
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
@@ -820,6 +842,10 @@ private struct GaussianSplatWebView: UIViewRepresentable {
             case "viewer_shell_loaded":
                 onTimeline("JS_initialized viewer_shell_loaded")
                 onBridgeEvent(.shellLoaded)
+            case "ply_cache":
+                let kind = (body["kind"] as? String) ?? "unknown"
+                let detail = (body["detail"] as? String).map { " \($0)" } ?? ""
+                onBridgeEvent(.plyCache(String((kind + detail).prefix(120))))
             default:
                 break
             }

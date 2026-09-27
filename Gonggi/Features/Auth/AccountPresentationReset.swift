@@ -63,6 +63,10 @@ enum AccountPresentationReset {
         SpaceRepairStore.shared.clearPresentation()
         SpaceAudioManager.shared.stop()
         PublicSpacesAccountStore.bind(userId: userId)
+        // Saved space files of any other account are deleted (this account's stay for fast reopening).
+        DispatchQueue.global(qos: .utility).async {
+            GaussianPLYCache.shared.purgeOtherAccounts(keeping: userId)
+        }
         NotificationCenter.default.post(name: .gonggiAccountPresentationDidReset, object: nil)
     }
 }
