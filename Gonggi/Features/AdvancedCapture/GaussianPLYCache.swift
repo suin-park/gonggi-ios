@@ -8,7 +8,7 @@ import Foundation
 ///
 /// - Identity: owner user + space + the R2 object path of the content (the signed query is ignored).
 ///   Whether the object at that path changed is checked on every open (size + ETag, see
-///   `GaussianPLYSchemeHandler`).
+///   `GaussianPLYBridge`).
 /// - Access: the cache never grants access. A cached file is only served for a request carrying a
 ///   signed URL the server issued in this open, after it authorised the signed-in owner.
 /// - Account isolation: entries carry the owner user id and lookups require the signed-in user.

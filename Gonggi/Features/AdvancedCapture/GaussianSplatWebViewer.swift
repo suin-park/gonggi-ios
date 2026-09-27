@@ -678,12 +678,13 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         }
         // Weak proxy: the content controller must not retain the coordinator (released on close).
         config.userContentController.add(WeakScriptMessageHandler(context.coordinator), name: "gonggiViewer")
-        // On-device PLY cache: reopening a space streams the saved file instead of downloading it again.
-        let plyHandler = GaussianPLYSchemeHandler(ownerUserId: cacheOwnerUserId)
-        plyHandler.onEvent = { [weak coordinator = context.coordinator] _, detail in
-            coordinator?.onBridgeEvent(.plyCache(detail ?? ""))
+        // On-device PLY cache: the app hands the page its PLY (saved copy, or one download saved while shown).
+        let plyBridge = GaussianPLYBridge(ownerUserId: cacheOwnerUserId)
+        plyBridge.onEvent = { [weak coordinator = context.coordinator] detail in
+            coordinator?.onBridgeEvent(.plyCache(detail))
         }
-        config.setURLSchemeHandler(plyHandler, forURLScheme: GaussianPLYSchemeHandler.scheme)
+        context.coordinator.plyBridge = plyBridge
+        config.userContentController.addScriptMessageHandler(plyBridge, contentWorld: .page, name: GaussianPLYBridge.handlerName)
         if let owner = cacheOwnerUserId, !owner.isEmpty, GaussianPLYCacheCircuit.isEnabled {
             config.userContentController.addUserScript(WKUserScript(
                 source: GaussianPLYCacheScript.source(spaceId: spaceId),
@@ -737,6 +738,9 @@ private struct GaussianSplatWebView: UIViewRepresentable {
         uiView.stopLoading()
         uiView.navigationDelegate = nil
         uiView.configuration.userContentController.removeScriptMessageHandler(forName: "gonggiViewer")
+        coordinator.plyBridge?.closeAll()
+        uiView.configuration.userContentController.removeScriptMessageHandler(forName: GaussianPLYBridge.handlerName, contentWorld: .page)
+        coordinator.plyBridge = nil
         uiView.loadHTMLString("", baseURL: nil)
     }
 
@@ -753,6 +757,7 @@ private struct GaussianSplatWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var bridge: GaussianSplatWebBridge?
+        var plyBridge: GaussianPLYBridge?
         var onCollisionDetected: (Bool) -> Void
         var onTimeline: (String) -> Void
         var onBridgeEvent: (GaussianViewerBridgeEvent) -> Void
