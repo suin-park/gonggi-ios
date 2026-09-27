@@ -82,12 +82,13 @@ final class GaussianPLYBridgeWebKitTests: XCTestCase {
     }
 
     private func randomData(_ n: Int, seed: UInt8) -> Data {
-        var d = Data(count: n)
-        d.withUnsafeMutableBytes { p in
-            var x = UInt32(seed) &* 2_654_435_761 &+ 1
-            for i in 0..<n { x ^= x << 13; x ^= x >> 17; x ^= x << 5; p[i] = UInt8(truncatingIfNeeded: x) }
+        var bytes = [UInt8](repeating: 0, count: n)
+        var x = UInt32(seed) &* 2_654_435_761 &+ 1
+        for i in 0..<n {
+            x ^= x << 13; x ^= x >> 17; x ^= x << 5
+            bytes[i] = UInt8(truncatingIfNeeded: x)
         }
-        return d
+        return Data(bytes)
     }
 
     private func pageHash(_ d: Data) -> UInt32 {
