@@ -7,8 +7,10 @@ final class GonggiAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        Task { @MainActor in
+        // Synchronously: a tap that launched the app is delivered right after this returns.
+        MainActor.assumeIsolated {
             GonggiPushRegistrar.shared.configure()
+            GonggiPushRegistrar.shared.registerIfAuthorized()
         }
         return true
     }

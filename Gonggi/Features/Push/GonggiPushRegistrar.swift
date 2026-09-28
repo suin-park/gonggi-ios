@@ -22,6 +22,8 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
 
     private static let promptedKey = "gonggi.push.permissionPrompted.v1"
     private var pendingTokenData: Data?
+    /// Last APNs token, so a sign-in / sign-out can re-link it to the current account.
+    private var lastTokenData: Data?
 
     func configure() {
         UNUserNotificationCenter.current().delegate = self
@@ -50,8 +52,33 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Launch / sign-in: refresh the token without prompting (only when already allowed).
+    func registerIfAuthorized() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            Task { @MainActor in
+                switch settings.authorizationStatus {
+                case .authorized, .provisional, .ephemeral:
+                    UIApplication.shared.registerForRemoteNotifications()
+                default:
+                    break
+                }
+            }
+        }
+    }
+
+    /// Account changed: re-send the last token so the server links it to the signed-in owner
+    /// (or unlinks it after sign-out — the request then has no bearer).
+    func refreshRegistration() {
+        guard let token = lastTokenData else {
+            registerIfAuthorized()
+            return
+        }
+        Task { await uploadToken(token) }
+    }
+
     func didRegister(deviceToken: Data) {
         pendingTokenData = deviceToken
+        lastTokenData = deviceToken
         Task { await uploadToken(deviceToken) }
     }
 
@@ -74,6 +101,10 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Links this installation to the signed-in owner (3D space ready pushes go to the owner only).
+        if let access = MobileAuthTokenStore.shared.getAccessToken() {
+            request.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
+        }
 
         let info = Bundle.main.infoDictionary
         let appVersion = info?["CFBundleShortVersionString"] as? String ?? "0"
@@ -124,7 +155,15 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
         let sessionId = (userInfo["sessionId"] as? String)
             ?? (userInfo["session_id"] as? String)
         let type = userInfo["type"] as? String
+        let readySpaceId = type == "gaussian_space_ready" ? (userInfo["spaceId"] as? String) : nil
         Task { @MainActor in
+            if let readySpaceId, !readySpaceId.isEmpty {
+                // Cold launch: kept until the signed-in tab view appears (MainTabView consumes it).
+                GonggiPushDeepLink.pendingGaussianSpaceId = readySpaceId
+                NotificationCenter.default.post(name: .gonggiOpenGaussianSpace, object: readySpaceId)
+                completionHandler()
+                return
+            }
             Self.handleAdvancedCaptureUserInfo(userInfo)
             if type == "space_generation_completed" || sessionId != nil {
                 GonggiPushDeepLink.pendingSessionId = sessionId
@@ -147,8 +186,11 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
 
 enum GonggiPushDeepLink {
     static var pendingSessionId: String?
+    /// 3D space (GaussianSpace) from a "space ready" push tap, not yet opened.
+    @MainActor static var pendingGaussianSpaceId: String?
 }
 
 extension Notification.Name {
     static let gonggiOpenCompletedSpace = Notification.Name("gonggiOpenCompletedSpace")
+    static let gonggiOpenGaussianSpace = Notification.Name("gonggiOpenGaussianSpace")
 }

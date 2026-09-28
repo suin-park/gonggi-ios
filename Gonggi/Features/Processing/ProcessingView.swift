@@ -235,6 +235,8 @@ final class ProcessingViewModel: ObservableObject {
 
             createdSpaceId = created.spaceId
             GaussianGenerationStore.shared.beginActiveUpload(spaceId: created.spaceId)
+            // Natural moment to ask: the space will be ready in the background later.
+            Task { @MainActor in GonggiPushRegistrar.shared.requestPermissionIfAppropriate() }
             guard created.uploadURL != nil else {
                 throw SpaceGenerationError.uploadFailed
             }

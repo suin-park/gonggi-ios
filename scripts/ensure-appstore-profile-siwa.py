@@ -139,6 +139,29 @@ def find_distribution_cert(token: str) -> str:
     die("No DISTRIBUTION certificate found via ASC API")
 
 
+def ensure_push_capability(token: str, bundle_res_id: str) -> None:
+    """Push Notifications on the App ID so new App Store profiles carry aps-environment (build 78+)."""
+    caps = api("GET", f"/v1/bundleIds/{bundle_res_id}/bundleIdCapabilities", token)
+    for cap in caps.get("data") or []:
+        if (cap.get("attributes") or {}).get("capabilityType") == "PUSH_NOTIFICATIONS":
+            print("Push Notifications capability already on Bundle ID")
+            return
+    print("Enabling Push Notifications on Bundle ID…")
+    body = {
+        "data": {
+            "type": "bundleIdCapabilities",
+            "attributes": {"capabilityType": "PUSH_NOTIFICATIONS"},
+            "relationships": {
+                "bundleId": {"data": {"type": "bundleIds", "id": bundle_res_id}}
+            },
+        }
+    }
+    result = api("POST", "/v1/bundleIdCapabilities", token, body, soft=True)
+    if result.get("errors"):
+        die(f"PUSH_NOTIFICATIONS enable failed: {json.dumps(result.get('errors'))[:400]}")
+    print("Push Notifications capability enabled")
+
+
 def find_existing_app_store_siwa_profile(token: str, bundle_res_id: str) -> dict | None:
     """Reuse a recent App Store profile that already includes Sign in with Apple."""
     q = urllib.parse.urlencode(
@@ -163,7 +186,7 @@ def find_existing_app_store_siwa_profile(token: str, bundle_res_id: str) -> dict
             continue
         except Exception:
             continue
-        if not profile_has_signin(raw):
+        if not profile_has_signin(raw) or not profile_has_push(raw):
             continue
         # Prefer Gonggi-named profiles when present.
         name = (item.get("attributes") or {}).get("name") or ""
@@ -212,12 +235,17 @@ def profile_has_signin(profile_bytes: bytes) -> bool:
     return b"com.apple.developer.applesignin" in profile_bytes
 
 
+def profile_has_push(profile_bytes: bytes) -> bool:
+    return b"aps-environment" in profile_bytes
+
+
 def main() -> None:
     token = make_token()
     bundle = find_bundle(token)
     bundle_res_id = bundle["id"]
     print(f"Bundle resource id={bundle_res_id} team={TEAM_ID}")
     ensure_apple_signin_capability(token, bundle_res_id)
+    ensure_push_capability(token, bundle_res_id)
     cert_id = find_distribution_cert(token)
 
     created = create_profile(token, bundle_res_id, cert_id)
@@ -243,6 +271,8 @@ def main() -> None:
     assert raw is not None
     if not profile_has_signin(raw):
         die("Profile still missing com.apple.developer.applesignin")
+    if not profile_has_push(raw):
+        die("Profile missing aps-environment (Push Notifications)")
     OUT_PROFILE.parent.mkdir(parents=True, exist_ok=True)
     OUT_PROFILE.write_bytes(raw)
     meta = {
@@ -250,6 +280,7 @@ def main() -> None:
         "profile_name": profile_name,
         "bundle_id": BUNDLE_ID,
         "has_applesignin": True,
+        "has_push": True,
         "bytes": len(raw),
     }
     OUT_META.write_text(json.dumps(meta, indent=2), encoding="utf-8")

@@ -11,7 +11,7 @@ settings:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: ""
     MARKETING_VERSION: "2.0"
-    CURRENT_PROJECT_VERSION: "77"
+    CURRENT_PROJECT_VERSION: "78"
     GONGGI_BUILD_SHA: "local"
 
 configs:
@@ -74,6 +74,7 @@ targets:
     entitlements:
       path: Gonggi/Resources/Gonggi.entitlements
       properties:
+        aps-environment: production
         com.apple.developer.applesignin:
           - Default
     info:

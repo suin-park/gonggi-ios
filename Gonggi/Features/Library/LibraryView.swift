@@ -123,9 +123,13 @@ struct LibraryView: View {
                     selectedSpace = nil
                 }
             }
+            .onChange(of: appState.pendingGaussianSpaceIdFromPush) { _, spaceId in
+                openPushedGaussianSpace(spaceId)
+            }
             .onAppear {
                 appState.ensureSpaceGenerationPolling()
                 applyPreferredLibraryCategory(appState.preferredLibraryCategory ?? appState.pendingLibraryTab)
+                openPushedGaussianSpace(appState.pendingGaussianSpaceIdFromPush)
                 // Pick up server-side 3DGS spaces (other device / restored) for this account.
                 Task { await GaussianLibraryReconciler.shared.reconcileIfStale() }
             }
@@ -210,6 +214,18 @@ struct LibraryView: View {
         }
         appState.preferredLibraryCategory = nil
         appState.pendingLibraryTab = nil
+    }
+
+    /// "3D space ready" push tap: show the space in the viewer (server-backed, works before the
+    /// local library has synced) and refresh the library so the card shows ready too.
+    private func openPushedGaussianSpace(_ spaceId: String?) {
+        guard let spaceId, !spaceId.isEmpty else { return }
+        appState.pendingGaussianSpaceIdFromPush = nil
+        category = .spaces
+        selectedSpace = nil
+        viewerLaunch = nil
+        gaussianViewer = GaussianViewerPresentation(spaceId: spaceId)
+        Task { await GaussianLibraryReconciler.shared.reconcileIfStale(minInterval: 0) }
     }
 
     private func openViewer(jobId: String) async {

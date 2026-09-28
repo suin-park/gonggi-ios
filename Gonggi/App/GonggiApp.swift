@@ -22,6 +22,22 @@ struct GonggiApp: App {
                 .onAppear {
                     appState.handleScenePhase(.active)
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .gonggiOpenGaussianSpace)) { note in
+                    // Before sign-in is restored the id stays pending; MainTabView opens it on appear.
+                    guard case .signedIn = authSession.phase,
+                          let spaceId = (note.object as? String) ?? GonggiPushDeepLink.pendingGaussianSpaceId
+                    else { return }
+                    appState.openGaussianSpaceFromPush(spaceId: spaceId)
+                }
+                .onChange(of: authSession.phase) { _, phase in
+                    switch phase {
+                    case .signedIn, .signedOut:
+                        // Re-link (or unlink) this device's push token to the current account.
+                        GonggiPushRegistrar.shared.refreshRegistration()
+                    case .restoring:
+                        break
+                    }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: .gonggiOpenCompletedSpace)) { note in
                     let sid = (note.object as? String) ?? GonggiPushDeepLink.pendingSessionId
                     if let sid {

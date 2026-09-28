@@ -11,6 +11,8 @@ final class AppState: ObservableObject {
     /// Set when a completion push / deep link should open VR for this session/job.
     @Published var pendingViewerJobId: String?
     @Published var pendingViewerError: String?
+    /// 3D space (GaussianSpace id) to open in the Library viewer — set by a "space ready" push tap.
+    @Published var pendingGaussianSpaceIdFromPush: String?
     /// Build 72 — open VR with optional source→target stack after Space Link finalize.
     @Published var pendingViewerLaunch: SpaceViewerLaunch?
     /// Phase 2 — consume-once Asset Detail / Space Detail → VR Edit placement draft.
@@ -359,6 +361,13 @@ final class AppState: ObservableObject {
             print("[spaceLink72] finalize failed: \(error)")
             #endif
         }
+    }
+
+    /// "3D space ready" push tap → Library tab → that space's viewer.
+    func openGaussianSpaceFromPush(spaceId: String) {
+        GonggiPushDeepLink.pendingGaussianSpaceId = nil
+        selectedTab = .library
+        pendingGaussianSpaceIdFromPush = spaceId
     }
 
     /// Notification tap → sync status → download if needed → open VR (never black).

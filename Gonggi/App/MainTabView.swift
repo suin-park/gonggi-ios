@@ -24,6 +24,10 @@ struct MainTabView: View {
         .tint(GonggiColors.brandCyan)
         .onAppear {
             appState.ensureSpaceGenerationPolling()
+            // A push tap that launched the app (or arrived before sign-in finished).
+            if let spaceId = GonggiPushDeepLink.pendingGaussianSpaceId {
+                appState.openGaussianSpaceFromPush(spaceId: spaceId)
+            }
         }
         .onChange(of: appState.selectedTab) { _, _ in
             GonggiHaptics.selection()
