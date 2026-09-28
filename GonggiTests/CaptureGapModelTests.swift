@@ -58,6 +58,11 @@ final class CaptureGapModelTests: XCTestCase {
         }
     }
 
+    /// Saves `perSector` photos in region (0,0) in each of the 8 azimuth sectors (no opposite gap left).
+    private func saveAllAround(_ m: inout CaptureGapModel, from t: inout TimeInterval, perSector: Int = 2) {
+        for s in 0..<8 { save(&m, from: &t, n: perSector, azimuth: Float(s) * 45 + 10) }
+    }
+
     /// Walk to region (2,0) (x 4.5 m) and stay 2.5 s there, ticking without saves.
     private func leave(_ m: inout CaptureGapModel, from t: inout TimeInterval, azimuth: Float = 90,
                        surfaces: [CaptureGapModel.SurfaceInfo] = []) -> CaptureGapModel.Prompt? {
@@ -85,7 +90,7 @@ final class CaptureGapModelTests: XCTestCase {
     func testUpGapIsJudgedOnlyWhenLeavingTheRegion() {
         var m = CaptureGapModel()
         var t: TimeInterval = 100
-        save(&m, from: &t, n: 16, azimuth: 0)
+        saveAllAround(&m, from: &t)
         XCTAssertNil(m.active, "no prompt while still in the region")
         let p = leave(&m, from: &t)
         XCTAssertEqual(p?.kind, .up)
@@ -95,7 +100,7 @@ final class CaptureGapModelTests: XCTestCase {
     func testUpPromptClosesOnlyWithSavedUpwardPhotos() {
         var m = CaptureGapModel()
         var t: TimeInterval = 100
-        save(&m, from: &t, n: 16, azimuth: 0)
+        saveAllAround(&m, from: &t)
         XCTAssertEqual(leave(&m, from: &t)?.kind, .up)
         // Looking up without saving: still open.
         _ = m.tick(timestamp: t, cameraToWorld: pose(x: 1.0, z: 0.5, azimuth: 0, pitch: 30)) { [] }
@@ -117,6 +122,24 @@ final class CaptureGapModelTests: XCTestCase {
         XCTAssertEqual(p?.turn, .right, "facing east, the south-west target is to the right (never 'turn 45° now')")
         save(&m, from: &t, n: 2, azimuth: 200, x: 1.0)
         XCTAssertNil(m.active, "filled by saved photos facing the target")
+    }
+
+    /// 458-photo capture (build 76): regions missing both up and the opposite direction only ever asked for "up".
+    func testOppositeIsAskedBeforeUpWhenARegionMissesBoth() {
+        var m = CaptureGapModel()
+        var t: TimeInterval = 100
+        save(&m, from: &t, n: 16, azimuth: 10)  // one-sided, level: both gaps open
+        XCTAssertEqual(CaptureGapModel.gaps(of: m.regions[.init(x: 0, z: 0)]!), [.opposite, .up])
+        let p = leave(&m, from: &t, azimuth: 90)
+        XCTAssertEqual(p?.kind, .opposite)
+        XCTAssertEqual(p?.targetAzimuthDeg ?? -1, 202.5, accuracy: 0.1)
+        // Filled by saved photos facing the target; "up" stays pending for the next exit of that region.
+        save(&m, from: &t, n: 2, azimuth: 200, x: 1.0)
+        XCTAssertNil(m.active)
+        t += CaptureGapModel.Config.restBetweenPromptsSec
+        save(&m, from: &t, n: 8, azimuth: 10)
+        XCTAssertEqual(leave(&m, from: &t, azimuth: 90)?.kind, .up)
+        XCTAssertEqual(m.summary().promptsShown, 2)
     }
 
     func testSaveStallPausesThePromptForContinuity() {

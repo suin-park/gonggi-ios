@@ -264,12 +264,18 @@ struct CaptureGapModel {
     }
 
     /// Photo-based gaps of one region, in prompt order.
+    ///
+    /// Opposite before up: a region is judged once per exit and only its first open gap is shown, so with "up"
+    /// first a region missing both only ever asked for "up". The 458-photo capture (build 76) showed four "up"
+    /// prompts and ended with four regions still missing the opposite direction — the one-sided centre that the
+    /// training filled with floaters. Replaying the 458/286/304/352 packages with this order keeps the same number
+    /// of prompts per capture (4/3/4/3); only which gap is asked first changes.
     static func gaps(of r: RegionStats) -> [Kind] {
         var out: [Kind] = []
-        if r.up < Config.minUpPhotos || r.upSectorMask.nonzeroBitCount < Config.minUpSectors { out.append(.up) }
         if r.sectorsCovered < Config.minSectors || r.sectorCounts[(r.dominantSector + 4) % Config.sectors] == 0 {
             out.append(.opposite)
         }
+        if r.up < Config.minUpPhotos || r.upSectorMask.nonzeroBitCount < Config.minUpSectors { out.append(.up) }
         return out
     }
 
