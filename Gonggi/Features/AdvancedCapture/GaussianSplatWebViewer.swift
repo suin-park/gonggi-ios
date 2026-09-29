@@ -13,10 +13,10 @@ import WebKit
 ///   and a render loop that does not resume after foregrounding recreate the viewer at the last
 ///   camera. Automatic recovery is bounded (`GaussianViewerSession.maxAutoRecoveries`).
 /// - One viewer per load token; retry is disabled while a load is running.
+/// - One version per space (build 83): the viewer opens the space's published result only. The TF62 Original / Cleaned
+///   switch is gone and no `cleanupMode` is sent; keeping originals and reverting versions is not a viewer concern.
 struct GaussianSplatWebViewer: View {
     let spaceId: String
-    /// When true, shows Original / Cleaned PLY A/B (cleanupMode query). Default on for TF62 compare.
-    var enableCleanupCompare: Bool = true
     /// When the user asked to open the space (for presentation-latency telemetry).
     var presentedAt: Date? = nil
     var onClose: () -> Void
@@ -26,7 +26,6 @@ struct GaussianSplatWebViewer: View {
     @State private var showHint = true
     @State private var hasCollision = false
     @State private var navigationMode: GaussianNavMode = .fly
-    @State private var cleanupMode: GaussianCleanupMode = .original
     @State private var webBridge: GaussianSplatWebBridge?
     @State private var reloadToken = 0
     /// Stable cache-bust — set once at State init (never `Date()` inside a computed URL).
@@ -47,26 +46,10 @@ struct GaussianSplatWebViewer: View {
     @State private var pendingContextCheck: (wasReady: Bool, restoredBefore: Int)?
 
     private var viewerURL: URL {
-        let root = AppConfiguration.production.apiBaseURL.absoluteString
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        var components = URLComponents(string: "\(root)/api/gaussian-spaces/\(spaceId)/viewer-html")!
-        var items: [URLQueryItem] = [
-            URLQueryItem(name: "navigationMode", value: "fly"),
-            URLQueryItem(name: "gamingControls", value: "1"),
-            URLQueryItem(name: "mobileChrome", value: "1"),
-            URLQueryItem(name: "assetRev", value: "\(assetRev)-\(reloadToken)"),
-        ]
-        if enableCleanupCompare, cleanupMode != .original {
-            items.append(URLQueryItem(name: "cleanupMode", value: cleanupMode.rawValue))
-        }
-        // Resume at the last camera after a recovery (one-shot, never persisted server-side).
-        if reloadToken > 0, let cam = resumeCameraJSON,
-           let tcam = cam.data(using: .utf8)?.base64URLEncoded(), tcam.count <= 2048 {
-            items.append(URLQueryItem(name: "tcam", value: tcam))
-            items.append(URLQueryItem(name: "treq", value: "resume\(reloadToken)"))
-        }
-        components.queryItems = items
-        return components.url!
+        GaussianViewerURL.make(
+            apiBase: AppConfiguration.production.apiBaseURL, spaceId: spaceId, assetRev: assetRev,
+            reloadToken: reloadToken, resumeCameraJSON: resumeCameraJSON
+        )
     }
 
     private var isLoading: Bool {
@@ -96,7 +79,7 @@ struct GaussianSplatWebViewer: View {
                     handleBridgeEvent(event)
                 }
             )
-            .id("\(spaceId)-\(cleanupMode.rawValue)-\(reloadToken)")
+            .id("\(spaceId)-\(reloadToken)")
             .ignoresSafeArea()
 
             if isLoading {
@@ -118,19 +101,6 @@ struct GaussianSplatWebViewer: View {
                         .padding(.top, 8)
                 }
                 .accessibilityLabel("닫기")
-
-                if enableCleanupCompare {
-                    Picker("클린업", selection: $cleanupMode) {
-                        Text("원본").tag(GaussianCleanupMode.original)
-                        Text("Cleaned").tag(GaussianCleanupMode.cleaned)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 180)
-                    .padding(.trailing, 12)
-                    .onChange(of: cleanupMode) { _, _ in
-                        reload(manual: true, reason: "cleanup_mode_changed")
-                    }
-                }
 
                 if hasCollision, !isLoading {
                     Picker("이동 모드", selection: $navigationMode) {
@@ -157,11 +127,7 @@ struct GaussianSplatWebViewer: View {
                 VStack {
                     Spacer()
                     Text(
-                        hasCollision
-                            ? "걷기/자유이동 전환 · 왼쪽 조이스틱 이동 · 드래그로 시점"
-                            : enableCleanupCompare
-                            ? "원본/Cleaned 전환 · 왼쪽 조이스틱 이동 · 드래그로 시점"
-                            : "왼쪽 조이스틱으로 이동 · 화면을 드래그해 시점 변경"
+                        GaussianViewerURL.hint(hasCollision: hasCollision)
                     )
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
@@ -543,9 +509,32 @@ private enum GaussianViewerLoadLog {
     }
 }
 
-private enum GaussianCleanupMode: String, Hashable {
-    case original
-    case cleaned
+/// Viewer URL + hint for one published version per space (testable without a WebView).
+enum GaussianViewerURL {
+    static func make(apiBase: URL, spaceId: String, assetRev: String, reloadToken: Int, resumeCameraJSON: String?) -> URL {
+        let root = apiBase.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        var components = URLComponents(string: "\(root)/api/gaussian-spaces/\(spaceId)/viewer-html")!
+        var items: [URLQueryItem] = [
+            URLQueryItem(name: "navigationMode", value: "fly"),
+            URLQueryItem(name: "gamingControls", value: "1"),
+            URLQueryItem(name: "mobileChrome", value: "1"),
+            URLQueryItem(name: "assetRev", value: "\(assetRev)-\(reloadToken)"),
+        ]
+        // Resume at the last camera after a recovery (one-shot, never persisted server-side).
+        if reloadToken > 0, let cam = resumeCameraJSON,
+           let tcam = cam.data(using: .utf8)?.base64URLEncoded(), tcam.count <= 2048 {
+            items.append(URLQueryItem(name: "tcam", value: tcam))
+            items.append(URLQueryItem(name: "treq", value: "resume\(reloadToken)"))
+        }
+        components.queryItems = items
+        return components.url!
+    }
+
+    static func hint(hasCollision: Bool) -> String {
+        hasCollision
+            ? "걷기/자유이동 전환 · 왼쪽 조이스틱 이동 · 드래그로 시점"
+            : "왼쪽 조이스틱으로 이동 · 화면을 드래그해 시점 변경"
+    }
 }
 
 private enum GaussianNavMode: String, Hashable {
