@@ -56,6 +56,8 @@ enum SpatialCaptureConfig {
     static var motionGatesEnforced = false
     /// Guide v3 gap prompts (up / opposite / tops / far end). Guidance only.
     static var gapGuideEnabled = true
+    /// Guide v4 motion coach (side step / ceiling / floor prompts). Guidance only; off = build 79 behaviour.
+    static var motionCoachEnabled = true
 
     /// Speed passed to KeyframeSelector3DGS: nil (no gate) unless the gates are enforced.
     static func selectorMotionInput(_ value: Double?) -> Double? {

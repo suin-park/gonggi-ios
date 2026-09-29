@@ -36,6 +36,11 @@ final class CaptureSessionController {
     /// Guide v3 (surfaceQueue): gaps in the saved photos. Guidance only.
     private var gapModel = CaptureGapModel()
     private var currentGapPrompt: CaptureGapModel.Prompt?
+    /// Guide v4 (surfaceQueue): recent-window motion coach (side step / ceiling / floor). Guidance only.
+    private var motionCoach = CaptureMotionCoach()
+    private var currentCoachPrompt: CaptureMotionCoach.Prompt?
+    /// Completion recommendations (never a finish gate), refreshed with the guide tick.
+    private var currentRecommendations: [String] = []
     /// Saved photos the (disabled) selector speed gates would have rejected — device evidence before enabling them.
     private var motionGateShadowEvaluated = 0
     private var motionGateShadowWouldRejectTranslation = 0
@@ -134,8 +139,11 @@ final class CaptureSessionController {
         surfaceQueue.sync {
             surfaceCoverage.reset()
             gapModel = CaptureGapModel()
+            motionCoach = CaptureMotionCoach()
         }
         currentGapPrompt = nil
+        currentCoachPrompt = nil
+        currentRecommendations = []
         motionGateShadowEvaluated = 0
         motionGateShadowWouldRejectTranslation = 0
         motionGateShadowWouldRejectAngular = 0
@@ -214,7 +222,7 @@ final class CaptureSessionController {
             updatePhaseAndCompletion(trackingNormal: trackingNormal, transform: transform)
             let trackingLimited = !trackingNormal
             updateSaveStall(transform: transform, timestamp: frame.timestamp, trackingNormal: trackingNormal)
-            updateGapGuide(timestamp: frame.timestamp, transform: transform)
+            updateGapGuide(timestamp: frame.timestamp, transform: transform, rawFeatureCount: frame.rawFeaturePoints?.points.count)
             let decision = guidanceRules.evaluateDecision(
                 quality: qualityState(trackingLimited: trackingLimited),
                 trackingLimited: trackingLimited
@@ -517,7 +525,7 @@ final class CaptureSessionController {
 
         let trackingLimited = !trackingNormal
         updateSaveStall(transform: transform, timestamp: frame.timestamp, trackingNormal: trackingNormal)
-        updateGapGuide(timestamp: frame.timestamp, transform: transform)
+        updateGapGuide(timestamp: frame.timestamp, transform: transform, rawFeatureCount: frame.rawFeaturePoints?.points.count)
         let decision = guidanceRules.evaluateDecision(
             quality: qualityState(trackingLimited: trackingLimited),
             trackingLimited: trackingLimited
@@ -703,6 +711,7 @@ final class CaptureSessionController {
             surfaceQueue.async { [weak self] in
                 self?.surfaceCoverage.observeKeyframe(surfaceKeyframe)
                 self?.gapModel.observeSaved(timestamp: savedAt, cameraToWorld: savedPose)
+                self?.motionCoach.observeSaved(timestamp: savedAt)
             }
             motionGateShadowEvaluated += 1
             if let v = snap.motionSpeed, v > SpatialCaptureConfig.maxMotionSpeedMps { motionGateShadowWouldRejectTranslation += 1 }
@@ -1256,8 +1265,11 @@ final class CaptureSessionController {
         surfaceQueue.sync {
             surfaceCoverage.reset()
             gapModel = CaptureGapModel()
+            motionCoach = CaptureMotionCoach()
         }
         currentGapPrompt = nil
+        currentCoachPrompt = nil
+        currentRecommendations = []
         motionGateShadowEvaluated = 0
         motionGateShadowWouldRejectTranslation = 0
         motionGateShadowWouldRejectAngular = 0
@@ -1626,6 +1638,8 @@ final class CaptureSessionController {
         )
         q.saveStalledSec = currentSaveStallSec
         q.gapPrompt = currentGapPrompt
+        q.coachPrompt = currentCoachPrompt
+        q.captureRecommendations = currentRecommendations
         return q
     }
 
@@ -1639,18 +1653,35 @@ final class CaptureSessionController {
             maxMotionSpeedMps: SpatialCaptureConfig.maxMotionSpeedMps,
             maxAngularVelocityRadPerSec: SpatialCaptureConfig.maxAngularVelocityRadPerSec
         )
+        g.motionCoach = surfaceQueue.sync { motionCoach.summary() }
         return g
     }
 
-    /// Guide v3 tick: region exits judge gaps; a save stall pauses the prompt (continuity first).
-    private func updateGapGuide(timestamp: TimeInterval, transform: simd_float4x4) {
+    /// Guide v3 gap tick + guide v4 motion coach tick (one prompt on screen, chosen by `GuidanceRuleEngine`):
+    /// region exits judge gaps; a save stall pauses the gap prompt (continuity first); the coach reads the recent pose
+    /// window and this frame's ARKit raw feature count. No new gap prompt starts while a coach prompt is up.
+    private func updateGapGuide(timestamp: TimeInterval, transform: simd_float4x4, rawFeatureCount: Int?) {
         guard SpatialCaptureConfig.gapGuideEnabled else {
             currentGapPrompt = nil
+            currentCoachPrompt = nil
+            currentRecommendations = []
             return
         }
-        currentGapPrompt = surfaceQueue.sync {
-            gapModel.tick(timestamp: timestamp, cameraToWorld: transform) { self.surfaceCoverage.gapSurfaces() }
+        let coachOn = SpatialCaptureConfig.motionCoachEnabled
+        let out = surfaceQueue.sync { () -> (CaptureGapModel.Prompt?, CaptureMotionCoach.Prompt?, [String]) in
+            let coach = coachOn
+                ? motionCoach.tick(timestamp: timestamp, cameraToWorld: transform, rawFeatureCount: rawFeatureCount,
+                                   gapPromptActive: gapModel.active != nil)
+                : nil
+            let gap = gapModel.tick(timestamp: timestamp, cameraToWorld: transform, canStart: motionCoach.active == nil) {
+                self.surfaceCoverage.gapSurfaces()
+            }
+            return (gap, coach, CaptureCompletionRecommendation.items(
+                openGaps: gapModel.openGaps(), savedUpPhotos: gapModel.savedUpPhotos, savedDownPhotos: gapModel.savedDownPhotos))
         }
+        currentGapPrompt = out.0
+        currentCoachPrompt = out.1
+        currentRecommendations = out.2
     }
 
     private func updatePhaseAndCompletion(trackingNormal: Bool, transform: simd_float4x4) {

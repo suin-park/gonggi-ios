@@ -122,6 +122,11 @@ struct CaptureQualityState: Equatable {
     var saveStalledSec: Double = 0
     /// Guide v3 gap prompt to show (nil = none / paused for continuity). Guidance only, never blocks finishing.
     var gapPrompt: CaptureGapModel.Prompt? = nil
+    /// Guide v4 motion-coach prompt (side step / ceiling / floor). Guidance only, never blocks finishing.
+    var coachPrompt: CaptureMotionCoach.Prompt? = nil
+    /// Short "더 좋게" items shown with the completion copy (open opposite directions, ceiling / floor edges).
+    /// Recommendations only — never a finish gate.
+    var captureRecommendations: [String] = []
 
     init(
         overallCoverage: Double,

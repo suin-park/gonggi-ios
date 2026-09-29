@@ -11,6 +11,20 @@ import simd
 /// - "Opposite": the 45° sector is only the direction to end up facing; the prompt asks for a slow continuous turn
 ///   so that photos keep saving on the way (never "turn 45° now").
 struct CaptureGapModel {
+    /// `.v3` = build 76–79 behaviour (kept for replay comparisons). `.v4` (guide v4 first release): prompts up to
+    /// 16 s instead of 20 s, 10 s rest after an unanswered prompt, at most two "up" prompts per capture ≥ 60 s apart
+    /// (the 458 capture asked "up" four times), and no new prompt while a motion-coach prompt is up (`canStart`).
+    enum Policy: String, Codable, Sendable {
+        case v3
+        case v4
+
+        var maxPromptSec: TimeInterval { self == .v3 ? 20 : 16 }
+        var restAfterUnfilledSec: TimeInterval { self == .v3 ? Config.restBetweenPromptsSec : 10 }
+        var maxUpPrompts: Int { self == .v3 ? .max : 2 }
+        var upSpacingSec: TimeInterval { self == .v3 ? 0 : 60 }
+        var version: String { self == .v3 ? "gap_guide_v3_20260928" : "gap_guide_v4_20260929" }
+    }
+
     enum Config {
         static let regionSizeM: Float = 2.0
         static let minPhotosToJudge = 12
@@ -32,7 +46,7 @@ struct CaptureGapModel {
         static let restBetweenPromptsSec: TimeInterval = 8
         static let pauseAfterSaveGapSec: TimeInterval = 1.5
         static let resumeAfterSavesSec: TimeInterval = 3
-        /// A prompt that is not filled goes away after this long (recorded as not filled).
+        /// A prompt that is not filled goes away after this long (recorded as not filled). v3 value; see `Policy`.
         static let maxPromptSec: TimeInterval = 20
         /// Saved photos count for a prompt within this distance of the judged region's centre.
         static let fillRadiusM: Float = 3.0
@@ -105,6 +119,12 @@ struct CaptureGapModel {
         var saveGapsOver1_5sWhileShown = 0
     }
 
+    let policy: Policy
+
+    init(policy: Policy = .v4) {
+        self.policy = policy
+    }
+
     private(set) var regions: [RegionKey: RegionStats] = [:]
     private(set) var records: [PromptRecord] = []
     private(set) var active: Prompt?
@@ -112,6 +132,9 @@ struct CaptureGapModel {
     private var pausedAt: TimeInterval?
     private var prompted: Set<String> = []
     private var lastPromptEndedAt: TimeInterval = -.infinity
+    private var lastPromptFilled = true
+    private var upPromptsShown = 0
+    private var lastUpPromptAt: TimeInterval = -.infinity
     private var currentRegion: RegionKey?
     private var regionEnteredAt: TimeInterval = 0
     private var lastSavedAt: TimeInterval?
@@ -195,9 +218,11 @@ struct CaptureGapModel {
     }
 
     /// Every guidance tick. Returns the prompt to show (nil while paused / resting / nothing due).
+    /// `canStart` false (a motion-coach prompt is up): no new prompt is started on this tick.
     mutating func tick(
         timestamp t: TimeInterval,
         cameraToWorld m: simd_float4x4,
+        canStart: Bool = true,
         surfaces: () -> [SurfaceInfo]
     ) -> Prompt? {
         if startTime == nil { startTime = t }
@@ -212,7 +237,7 @@ struct CaptureGapModel {
                 paused = false
                 pausedAt = nil
             }
-            if let a = active, t - a.shownAt >= Config.maxPromptSec {
+            if let a = active, t - a.shownAt >= policy.maxPromptSec {
                 endActive(at: t)
                 return nil
             }
@@ -226,7 +251,7 @@ struct CaptureGapModel {
         let key = Self.region(of: simd_make_float3(m.columns.3))
         lastCameraPosition = simd_make_float3(m.columns.3)
         if key != currentRegion {
-            if let left = currentRegion, t - regionEnteredAt >= Config.exitDwellSec {
+            if let left = currentRegion, t - regionEnteredAt >= Config.exitDwellSec, canStart {
                 judge(left, at: t, heading: Self.azimuthDeg(m), cameraPosition: simd_make_float3(m.columns.3), surfaces: surfaces)
             }
             currentRegion = key
@@ -244,10 +269,12 @@ struct CaptureGapModel {
         cameraPosition: simd_float3,
         surfaces: () -> [SurfaceInfo]
     ) {
-        guard active == nil, t - lastPromptEndedAt >= Config.restBetweenPromptsSec,
+        let rest = lastPromptFilled ? Config.restBetweenPromptsSec : policy.restAfterUnfilledSec
+        guard active == nil, t - lastPromptEndedAt >= rest,
               let r = regions[key], r.photos >= Config.minPhotosToJudge
         else { return }
         for kind in Self.gaps(of: r) where !prompted.contains(Self.promptKey(kind, key)) {
+            if kind == .up, upPromptsShown >= policy.maxUpPrompts || t - lastUpPromptAt < policy.upSpacingSec { continue }
             show(kind, region: key, stats: r, at: t, heading: heading)
             return
         }
@@ -330,6 +357,8 @@ struct CaptureGapModel {
     private mutating func show(_ kind: Kind, region key: RegionKey, stats r: RegionStats, at t: TimeInterval, heading: Float) {
         switch kind {
         case .up:
+            upPromptsShown += 1
+            lastUpPromptAt = t
             start(Prompt(kind: .up, region: key, targetAzimuthDeg: nil, targetPitchDeg: 25, turn: .ahead, shownAt: t, id: nextId))
         case .opposite:
             showDirected(.opposite, region: key, azimuth: Self.oppositeTarget(r), pitch: 0, at: t, heading: heading)
@@ -386,6 +415,7 @@ struct CaptureGapModel {
         active = nil
         paused = false
         lastPromptEndedAt = t
+        lastPromptFilled = true
     }
 
     private var filledSinceShown = 0
@@ -397,7 +427,20 @@ struct CaptureGapModel {
         active = nil
         paused = false
         lastPromptEndedAt = t
+        lastPromptFilled = false
     }
+
+    /// Photo gaps still open in the judged regions (for the completion recommendation; never a finish gate).
+    func openGaps() -> [Kind: Int] {
+        var open: [Kind: Int] = [:]
+        for (_, r) in regions where r.photos >= Config.minPhotosToJudge {
+            for g in Self.gaps(of: r) { open[g, default: 0] += 1 }
+        }
+        return open
+    }
+
+    var savedUpPhotos: Int { savedUp }
+    var savedDownPhotos: Int { savedDown }
 
     var isPaused: Bool { paused }
 
@@ -408,7 +451,7 @@ struct CaptureGapModel {
         var open: [String: Int] = [:]
         for (_, r) in judged { for g in Self.gaps(of: r) { open[g.rawValue, default: 0] += 1 } }
         return SpatialCaptureGapSummary(
-            policyVersion: "gap_guide_v3_20260928",
+            policyVersion: policy.version,
             savedPhotos: totalSaved,
             savedPitchUp20Pct: totalSaved > 0 ? 100 * Double(savedUp) / Double(totalSaved) : 0,
             savedPitchDown40Pct: totalSaved > 0 ? 100 * Double(savedDown) / Double(totalSaved) : 0,
@@ -441,6 +484,8 @@ struct SpatialCaptureGapSummary: Codable, Equatable, Sendable {
     var prompts: [CaptureGapModel.PromptRecord]
     /// Selector speed gates are off (build 76); how many saved photos they would have rejected.
     var motionGateShadow: SpatialCaptureMotionGateShadow? = nil
+    /// Guide v4 motion coach (side step / ceiling / floor prompts).
+    var motionCoach: SpatialCaptureCoachSummary? = nil
 
     static func == (a: Self, b: Self) -> Bool {
         a.policyVersion == b.policyVersion && a.savedPhotos == b.savedPhotos && a.promptsShown == b.promptsShown

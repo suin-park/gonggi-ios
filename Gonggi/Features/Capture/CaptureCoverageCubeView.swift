@@ -201,6 +201,8 @@ enum CaptureQuietUIPresenter {
             return "새 사진이 더 이상 저장되지 않습니다"
         }
         guard isSpatialRecognitionReady(quality: quality) else { return nil }
+        // Guide v3/v4 prompt on screen: one guidance line at a time (the cube hint must not contradict it).
+        if quality.coachPrompt != nil || quality.gapPrompt != nil { return nil }
         // Ready / latched: allow continue capture — no nag to finish, no overlap return.
         if quality.completionState == .ready || quality.reconstructionReady {
             return nil
@@ -218,12 +220,12 @@ enum CaptureQuietUIPresenter {
         if quality.guidanceAction == .needUpperCoverage
             || quality.guidanceStage == .upperSweep
         {
-            return "위쪽도 함께 보여주세요"
+            return "벽과 천장이 만나는 선도 함께 보여주세요"
         }
         if quality.guidanceAction == .needLowerCoverage
             || quality.guidanceStage == .lowerSweep
         {
-            return "바닥 쪽도 함께 보여주세요"
+            return "벽과 바닥이 만나는 곳도 함께 보여주세요"
         }
         if quality.guidanceAction == .reacquireView {
             return "이 장면이 다시 보이도록 천천히 움직여주세요"

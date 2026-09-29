@@ -202,7 +202,7 @@ enum CaptureUIPresenter {
             return true
         case .continueCapture, .moveForward, .scanNewArea,
              .needMoreYaw, .needUpperCoverage, .needLowerCoverage,
-             .captureNearlyComplete, .captureComplete, .captureGap:
+             .captureNearlyComplete, .captureComplete, .captureGap, .captureCoach:
             return false
         }
     }
@@ -291,6 +291,24 @@ enum CaptureUIPresenter {
             )
         }
 
+        // Guide v4 motion coach (guidance only): one short line, finishing stays as the gate says.
+        if action == .captureCoach, let coach = quality.coachPrompt {
+            let copy = coachCopy(coach)
+            return PrimaryGuidanceState(
+                action: action,
+                title: copy.title,
+                subtitle: copy.subtitle,
+                direction: .none,
+                severity: .normal,
+                statusLabel: status,
+                finishButtonTitle: finishButtonTitle(isReady: ready),
+                isReadyToFinish: ready,
+                ringProgress: ready ? 1 : ring,
+                ringSystemImage: ready ? "checkmark" : ringSystemImage(for: quality.completionState, action: action),
+                source: .live
+            )
+        }
+
         // Guide v3 gap prompt (guidance only): shown before "촬영이 충분합니다", finishing stays as the gate says.
         if action == .captureGap, let gap = quality.gapPrompt {
             let copy = gapCopy(gap)
@@ -314,7 +332,7 @@ enum CaptureUIPresenter {
             return PrimaryGuidanceState(
                 action: .captureComplete,
                 title: "촬영이 충분합니다",
-                subtitle: "공간을 충분히 담았어요. 기록을 완료할 수 있어요",
+                subtitle: completionSubtitle(recommendations: quality.captureRecommendations),
                 direction: .none,
                 severity: .normal,
                 statusLabel: status,
@@ -390,13 +408,13 @@ enum CaptureUIPresenter {
         switch action {
         case .continueCapture:
             return (
-                "정면 높이로 공간을 둘러봐 주세요",
-                "표시된 지점을 화면 중앙에 두고 천천히 몸을 돌려주세요. 조금씩 위치를 옮기면서 촬영하면 더 정확한 3D 공간을 만들 수 있어요"
+                "벽을 따라 천천히 걸으며 담아 주세요",
+                "앞 장면이 조금씩 겹치게 이어 가며, 같은 물건을 다른 위치에서도 비춰 주세요"
             )
         case .moveLaterally, .improveBaseline:
             return (
-                "조금씩 위치를 옮기면서 촬영해 주세요",
-                "제자리에서만 돌면 3D 공간이 부정확해질 수 있어요"
+                "한두 걸음 옆으로 옮겨 주세요",
+                "같은 곳을 다른 위치에서 보면 3D 공간이 더 정확해져요"
             )
         case .moveForward:
             return ("천천히 앞으로 이동해주세요", nil)
@@ -431,27 +449,29 @@ enum CaptureUIPresenter {
             return ("아직 덜 담긴 영역을 천천히 비춰주세요", "조금씩 위치를 옮기면 더 정확한 3D 공간을 만들 수 있어요")
         case .needMoreYaw:
             return (
-                "정면 높이로 공간을 둘러봐 주세요",
-                "표시된 지점을 화면 중앙에 두고 천천히 몸을 돌려주세요. 조금씩 위치를 옮기면서 촬영하면 더 정확한 3D 공간을 만들 수 있어요"
+                "벽을 따라 걸으며 다른 방향도 담아 주세요",
+                "표시된 지점을 화면 중앙에 두고, 제자리에서 돌기보다 옆으로 걸으며 방향을 바꿔 주세요"
             )
         case .needUpperCoverage:
             return (
-                "이제 위쪽을 촬영해 주세요",
-                "휴대폰을 조금 위로 들어 벽 상단과 천장을 함께 보여주세요"
+                "벽과 천장이 만나는 선을 함께 담아 주세요",
+                "휴대폰을 조금 들고 옆으로 걸어 주세요. 천장만 비추지는 말아 주세요"
             )
         case .needLowerCoverage:
             return (
-                "이제 아래쪽을 촬영해 주세요",
-                "휴대폰을 조금 아래로 내려 바닥과 가구 하단을 함께 보여주세요"
+                "벽과 바닥이 만나는 곳을 함께 담아 주세요",
+                "휴대폰을 조금 내려 가구 다리나 매트 끝이 보이게 옆으로 걸어 주세요"
             )
         case .trackingRecovery:
             return ("천천히 주변을 비춰주세요", "카메라 위치를 다시 확인하고 있어요")
         case .lowTextureWarning:
             return ("가구나 모서리도 화면에 함께 담아주세요", nil)
         case .captureNearlyComplete:
-            return ("거의 다 담았어요", "위·아래와 뒤쪽도 조금 더 둘러봐 주세요")
+            return ("거의 다 담았어요", "천장·바닥 경계와 반대쪽도 걸으며 조금 더 담아 주세요")
         case .captureGap:
             return ("부족한 방향을 조금 더 담아 주세요", "사진이 계속 저장되도록 천천히 움직여 주세요")
+        case .captureCoach:
+            return ("한두 걸음 옆으로 옮겨 주세요", nil)
         case .captureComplete:
             return ("촬영이 충분합니다", "공간을 충분히 담았어요. 기록을 완료할 수 있어요")
         }
@@ -470,15 +490,35 @@ enum CaptureUIPresenter {
         }()
         switch gap.kind {
         case .up:
-            return ("천천히 위쪽도 비춰 주세요", "고개를 천천히 들어 2~3초 머물러 주세요. 사진이 저장되는 속도면 충분해요")
+            return ("천장 경계도 담아 주세요", "벽과 천장이 만나는 선이나 조명이 보이게 휴대폰을 들고 옆으로 걸어 주세요")
         case .opposite:
-            return (gap.turn == .ahead ? "지금 보는 방향을 조금 더 담아 주세요" : "\(side)으로 천천히 돌며 반대쪽도 담아 주세요",
-                    "한 번에 돌지 말고 사진이 계속 저장되도록 천천히 몸을 돌려 주세요")
+            return (gap.turn == .ahead ? "지금 보는 방향을 조금 더 담아 주세요" : "\(side)으로 천천히 방향을 바꿔 반대쪽도 담아 주세요",
+                    "몇 걸음 옮기며 천천히 바꾸면 사진이 끊기지 않고 이어져요")
         case .tops:
             return ("\(side) 가구 윗면을 내려다보며 찍어 주세요", "한 걸음 다가가 위에서 비춰 주세요")
         case .farEnd:
             return ("\(side) 끝까지 천천히 걸어가 주세요", "가까이에서 찍어야 선명하게 만들어져요")
         }
+    }
+
+    /// Guide v4 motion-coach copy. The feet prompt is based on pitch only, so it says feet *may* be in the photo.
+    static func coachCopy(_ c: CaptureMotionCoach.Prompt) -> (title: String, subtitle: String?) {
+        switch c.kind {
+        case .sideStep:
+            return ("한두 걸음 옆으로 옮겨 주세요", "같은 곳을 다른 위치에서 보면 3D 공간이 더 정확해져요")
+        case .ceilingContext:
+            return ("조금 내려 경계를 함께 담아 주세요", "천장만 보이면 위치를 잡기 어려워요. 벽과 천장이 만나는 선이나 조명을 함께 담아 주세요")
+        case .floorFeet:
+            return ("조금 앞쪽 바닥을 비춰 주세요", "발밑을 오래 비추면 발이 사진에 찍힐 수 있어요")
+        case .floorContext:
+            return ("바닥은 경계와 함께 담아 주세요", "가구 다리, 매트 끝, 벽과 바닥이 만나는 곳이 보이게 해 주세요")
+        }
+    }
+
+    /// Completion copy with optional recommendations (never a finish gate).
+    static func completionSubtitle(recommendations: [String]) -> String {
+        guard !recommendations.isEmpty else { return "공간을 충분히 담았어요. 기록을 완료할 수 있어요" }
+        return "지금 완료해도 돼요. 더 좋게: " + recommendations.prefix(3).joined(separator: " · ")
     }
 
     private static func secondaryHint(for action: GuidanceAction) -> String? {

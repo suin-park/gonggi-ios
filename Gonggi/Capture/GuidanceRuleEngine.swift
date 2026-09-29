@@ -178,6 +178,21 @@ struct GuidanceRuleEngine {
             ))
         }
 
+        // 4b. Guide v4 motion coach. Data guards (a plain ceiling with nothing to track, looking down at the feet)
+        //     rank with the other high-priority fixes; the side-step prompt (turning on the spot in the *recent*
+        //     window) comes ahead of the session-level baseline hint and the gap prompt. The bare-floor prompt waits
+        //     below the gap prompt (6c). One prompt on screen at a time: the best candidate wins.
+        if let c = quality.coachPrompt {
+            switch c.kind {
+            case .ceilingContext, .floorFeet:
+                candidates.append(GuidanceDecision(action: .captureCoach, priority: .high, ruleId: "coach_\(c.kind.rawValue)"))
+            case .sideStep:
+                candidates.append(GuidanceDecision(action: .captureCoach, priority: .medium, ruleId: "coach_sideStep"))
+            case .floorContext:
+                break
+            }
+        }
+
         // 5. Insufficient translation baseline / in-place spin
         if quality.translationBaselineGrade == .insufficient,
            quality.observedCoverage > 0.08 || quality.overallCoverage > 0.08
@@ -206,6 +221,11 @@ struct GuidanceRuleEngine {
             } else {
                 candidates.append(GuidanceDecision(action: .captureGap, priority: .medium, ruleId: "gap_\(gap.kind.rawValue)"))
             }
+        }
+
+        // 6c. Guide v4 bare-floor prompt (below the gap prompt).
+        if let c = quality.coachPrompt, c.kind == .floorContext {
+            candidates.append(GuidanceDecision(action: .captureCoach, priority: .medium, ruleId: "coach_floorContext"))
         }
 
         // 7. Sector / ring coverage before soft percent

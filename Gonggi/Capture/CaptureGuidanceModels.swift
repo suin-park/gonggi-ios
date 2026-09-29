@@ -128,6 +128,8 @@ enum GuidanceAction: String, Codable, Equatable, Sendable {
     case saveStalled
     /// Guide v3: a gap in the saved photos (up / opposite / tops / far end). Copy comes from `quality.gapPrompt`.
     case captureGap
+    /// Guide v4 motion coach (side step / ceiling / floor). Copy comes from `quality.coachPrompt`.
+    case captureCoach
     case finishBlockedWeakTerminal
     case captureNearlyComplete
     case captureComplete
