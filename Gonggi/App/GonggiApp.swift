@@ -30,10 +30,12 @@ struct GonggiApp: App {
                     appState.openGaussianSpaceFromPush(spaceId: spaceId)
                 }
                 .onChange(of: authSession.phase) { _, phase in
+                    // Link this device's push token to the signed-in account, or unlink it on sign-out.
                     switch phase {
-                    case .signedIn, .signedOut:
-                        // Re-link (or unlink) this device's push token to the current account.
+                    case .signedIn:
                         GonggiPushRegistrar.shared.refreshRegistration()
+                    case .signedOut:
+                        GonggiPushRegistrar.shared.refreshRegistration(signedOut: true)
                     case .restoring:
                         break
                     }

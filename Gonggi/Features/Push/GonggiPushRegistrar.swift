@@ -66,14 +66,14 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// Account changed: re-send the last token so the server links it to the signed-in owner
-    /// (or unlinks it after sign-out — the request then has no bearer).
-    func refreshRegistration() {
+    /// Account changed: re-send the last token so the server links it to the signed-in owner, or
+    /// (signedOut) unlinks it — that request deliberately has no bearer.
+    func refreshRegistration(signedOut: Bool = false) {
         guard let token = lastTokenData else {
-            registerIfAuthorized()
+            if !signedOut { registerIfAuthorized() }
             return
         }
-        Task { await uploadToken(token) }
+        Task { await uploadToken(token, allowSignedOut: signedOut) }
     }
 
     func didRegister(deviceToken: Data) {
@@ -88,7 +88,12 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
         #endif
     }
 
-    private func uploadToken(_ tokenData: Data) async {
+    /// Without an access token (e.g. launch before the session is restored) nothing is sent unless
+    /// this is an explicit sign-out: an anonymous upload would unlink the owner and could race the
+    /// signed-in upload that follows. The `.signedIn` refresh sends the token with the bearer.
+    private func uploadToken(_ tokenData: Data, allowSignedOut: Bool = false) async {
+        let access = MobileAuthTokenStore.shared.getAccessToken()
+        if access == nil && !allowSignedOut { return }
         let hex = tokenData.map { String(format: "%02x", $0) }.joined()
         let truncated = hex.prefix(8) + "…"
         #if DEBUG
@@ -102,7 +107,7 @@ final class GonggiPushRegistrar: NSObject, UNUserNotificationCenterDelegate {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         // Links this installation to the signed-in owner (3D space ready pushes go to the owner only).
-        if let access = MobileAuthTokenStore.shared.getAccessToken() {
+        if let access, !allowSignedOut {
             request.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
         }
 
