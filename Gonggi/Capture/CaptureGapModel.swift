@@ -439,6 +439,16 @@ struct CaptureGapModel {
         return open
     }
 
+    /// Open photo gaps with whether each (kind, region) was ever prompted, so the completion list can tell
+    /// "not asked yet" from "asked, still missing". A prompt that closed filled but left the gap open counts as asked.
+    func openGapDetails() -> [(kind: Kind, region: RegionKey, prompted: Bool)] {
+        var out: [(kind: Kind, region: RegionKey, prompted: Bool)] = []
+        for (key, r) in regions where r.photos >= Config.minPhotosToJudge {
+            for g in Self.gaps(of: r) { out.append((g, key, prompted.contains(Self.promptKey(g, key)))) }
+        }
+        return out
+    }
+
     var savedUpPhotos: Int { savedUp }
     var savedDownPhotos: Int { savedDown }
 
@@ -486,6 +496,8 @@ struct SpatialCaptureGapSummary: Codable, Equatable, Sendable {
     var motionGateShadow: SpatialCaptureMotionGateShadow? = nil
     /// Guide v4 motion coach (side step / ceiling / floor prompts).
     var motionCoach: SpatialCaptureCoachSummary? = nil
+    /// Completion list at the end with each item's status (not asked yet / asked, still missing / photo limit).
+    var completionRemaining: [CaptureRemainingItem]? = nil
 
     static func == (a: Self, b: Self) -> Bool {
         a.policyVersion == b.policyVersion && a.savedPhotos == b.savedPhotos && a.promptsShown == b.promptsShown

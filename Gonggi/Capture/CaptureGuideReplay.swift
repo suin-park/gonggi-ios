@@ -11,7 +11,10 @@ import simd
 /// - Between two saved photos more than 3 s apart there is no pose: those ticks are skipped (prompts end, the recent
 ///   window resets) and reported as `noPoseSec`, excluded from the on-screen share.
 /// - On-screen prompt = what `GuidanceRuleEngine` would pick among the guide prompts: coach ceiling / feet / side step,
-///   then the gap prompt (unless paused), then the coach floor prompt.
+///   then the gap prompt (unless paused), then the coach floor / optional target prompt.
+/// - The optional target prompt needs surface observations that the packages do not keep (ARKit feature point
+///   positions), so it never fires here; its timing was replayed separately with COLMAP points as a stand-in.
+/// - End of capture: the completion list in the build-81 wording and with the build-82 status of each item.
 enum CaptureGuideReplay {
     struct Fixture: Decodable {
         var label: String
@@ -55,6 +58,10 @@ enum CaptureGuideReplay {
         var prompts: [PromptLog]
         var segments: [Segment]
         var openGapsAtEnd: [String: Int]
+        /// Build 81 completion list ("더 좋게: …").
+        var legacyRecommendationsAtEnd: [String] = []
+        /// Build 82 completion list with status (남음 / 미해결 / 사진 한도).
+        var remainingAtEnd: [CaptureRemainingItem] = []
     }
 
     static let hz: Double = 30
@@ -143,14 +150,24 @@ enum CaptureGuideReplay {
         for p in prompts { by["\(p.source):\(p.kind)", default: 0] += 1 }
         var open: [String: Int] = [:]
         for (g, c) in gap.openGaps() { open[g.rawValue] = c }
+        var legacy: [String] = []
+        if let n = open[CaptureGapModel.Kind.opposite.rawValue], n > 0 { legacy.append("반대 방향 \(n)곳") }
+        if (open[CaptureGapModel.Kind.up.rawValue] ?? 0) > 0 || gap.savedUpPhotos < CaptureGapModel.Config.minUpPhotos {
+            legacy.append("천장 경계")
+        }
+        if gap.savedDownPhotos < CaptureGapModel.Config.minUpPhotos { legacy.append("바닥 경계") }
+        let remaining = CaptureCompletionRecommendation.remaining(
+            openGaps: gap.openGapDetails(), savedUpPhotos: gap.savedUpPhotos, savedDownPhotos: gap.savedDownPhotos,
+            photoLimitReached: frames.count >= SpatialCaptureConfig.candidateSafetyCap)
         return Result(label: fx.label, policy: policy, durationSec: duration, noPoseSec: noPose,
                       visibleShare: duration > 0 ? shown / duration : 0, visibleSegments: segments.count,
                       segmentsUnder2s: segments.filter { $0.toSec - $0.fromSec < 2 }.count,
-                      promptsByKind: by, prompts: prompts, segments: segments, openGapsAtEnd: open)
+                      promptsByKind: by, prompts: prompts, segments: segments, openGapsAtEnd: open,
+                      legacyRecommendationsAtEnd: legacy, remainingAtEnd: remaining)
     }
 
     static func visible(gap: CaptureGapModel.Prompt?, coach: CaptureMotionCoach.Prompt?) -> String? {
-        if let c = coach, c.kind != .floorContext { return "coach:\(c.kind.rawValue)" }
+        if let c = coach, !c.kind.ranksBelowGap { return "coach:\(c.kind.rawValue)" }
         if let g = gap { return "gap:\(g.kind.rawValue)" }
         if let c = coach { return "coach:\(c.kind.rawValue)" }
         return nil

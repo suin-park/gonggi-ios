@@ -39,6 +39,10 @@ struct CaptureSummaryView: View {
 
                     metricsGrid
 
+                    if !summary.quality.captureRemaining.isEmpty {
+                        remainingSection(summary.quality.captureRemaining)
+                    }
+
                     if let report = summary.texturedMeshReport {
                         texturedMeshReportSection(report)
                     }
@@ -181,6 +185,39 @@ struct CaptureSummaryView: View {
                 originalShareError = "원본 패키지를 내보낼 수 없어요. 패키지가 완전한지 확인해 주세요."
             }
         }
+    }
+
+    /// Open items with their status (남음 / 미해결 / 사진 한도). Informational: finishing and creating are not blocked.
+    private func remainingSection(_ items: [CaptureRemainingItem]) -> some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+            Text(CaptureSummaryPresentation.remainingHeader)
+                .font(GonggiTypography.caption(13))
+                .foregroundStyle(GonggiColors.textTertiary)
+            ForEach(Array(CaptureSummaryPresentation.remainingRows(items).enumerated()), id: \.offset) { _, row in
+                HStack(alignment: .firstTextBaseline, spacing: GonggiSpacing.sm) {
+                    Text(row.status)
+                        .font(GonggiTypography.caption(12))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().stroke(GonggiColors.border, lineWidth: 1))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.name)
+                            .font(GonggiTypography.caption(14))
+                            .foregroundStyle(GonggiColors.textPrimary)
+                        Text(row.detail)
+                            .font(GonggiTypography.caption(12))
+                            .foregroundStyle(GonggiColors.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            Text(CaptureSummaryPresentation.remainingFootnote)
+                .font(GonggiTypography.caption(12))
+                .foregroundStyle(GonggiColors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private var metricsGrid: some View {

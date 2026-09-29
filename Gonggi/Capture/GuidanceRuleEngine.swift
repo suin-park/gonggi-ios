@@ -188,7 +188,7 @@ struct GuidanceRuleEngine {
                 candidates.append(GuidanceDecision(action: .captureCoach, priority: .high, ruleId: "coach_\(c.kind.rawValue)"))
             case .sideStep:
                 candidates.append(GuidanceDecision(action: .captureCoach, priority: .medium, ruleId: "coach_sideStep"))
-            case .floorContext:
+            case .floorContext, .targetStep:
                 break
             }
         }
@@ -223,9 +223,9 @@ struct GuidanceRuleEngine {
             }
         }
 
-        // 6c. Guide v4 bare-floor prompt (below the gap prompt).
-        if let c = quality.coachPrompt, c.kind == .floorContext {
-            candidates.append(GuidanceDecision(action: .captureCoach, priority: .medium, ruleId: "coach_floorContext"))
+        // 6c. Guide v4 bare-floor prompt and the optional target prompt (build 82) — both below the gap prompt.
+        if let c = quality.coachPrompt, c.kind.ranksBelowGap {
+            candidates.append(GuidanceDecision(action: .captureCoach, priority: .medium, ruleId: "coach_\(c.kind.rawValue)"))
         }
 
         // 7. Sector / ring coverage before soft percent

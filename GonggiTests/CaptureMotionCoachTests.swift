@@ -181,7 +181,7 @@ final class CaptureGuideV4GuidanceTests: XCTestCase {
         q.completionState = .ready
         q.reconstructionReady = true
         let g = CaptureUIPresenter.primaryGuidance(quality: q)
-        XCTAssertEqual(g.title, "한두 걸음 옆으로 옮겨 주세요")
+        XCTAssertEqual(g.title, "걸을 수 있는 쪽으로 한두 걸음 옮겨 주세요")
         XCTAssertTrue(g.isReadyToFinish)
     }
 
@@ -190,15 +190,18 @@ final class CaptureGuideV4GuidanceTests: XCTestCase {
         q.completionState = .ready
         q.reconstructionReady = true
         q.guidanceAction = .captureComplete
-        q.captureRecommendations = CaptureCompletionRecommendation.items(openGaps: [.opposite: 2, .up: 1],
-                                                                           savedUpPhotos: 0, savedDownPhotos: 30)
+        let r = CaptureGapModel.RegionKey(x: 0, z: 0), r2 = CaptureGapModel.RegionKey(x: 1, z: 0)
+        q.captureRemaining = CaptureCompletionRecommendation.remaining(
+            openGaps: [(.opposite, r, false), (.opposite, r2, false), (.up, r, false)],
+            savedUpPhotos: 0, savedDownPhotos: 30, photoLimitReached: false)
         let g = CaptureUIPresenter.primaryGuidance(quality: q)
         XCTAssertTrue(g.isReadyToFinish)
-        XCTAssertEqual(g.title, "촬영이 충분합니다")
-        XCTAssertTrue((g.subtitle ?? "").contains("반대 방향 2곳"))
-        XCTAssertTrue((g.subtitle ?? "").contains("천장 경계"))
+        XCTAssertEqual(g.title, "촬영을 마칠 수 있어요", "open items never read as enough")
+        XCTAssertTrue((g.subtitle ?? "").contains("반대 방향 2곳(남음)"))
+        XCTAssertTrue((g.subtitle ?? "").contains("천장 경계(남음)"))
         XCTAssertFalse((g.subtitle ?? "").contains("바닥 경계"))
-        q.captureRecommendations = []
+        q.captureRemaining = []
+        XCTAssertEqual(CaptureUIPresenter.primaryGuidance(quality: q).title, "촬영이 충분합니다")
         XCTAssertEqual(CaptureUIPresenter.primaryGuidance(quality: q).subtitle, "공간을 충분히 담았어요. 기록을 완료할 수 있어요")
     }
 

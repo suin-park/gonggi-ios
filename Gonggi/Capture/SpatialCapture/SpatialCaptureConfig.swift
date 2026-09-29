@@ -58,6 +58,9 @@ enum SpatialCaptureConfig {
     static var gapGuideEnabled = true
     /// Guide v4 motion coach (side step / ceiling / floor prompts). Guidance only; off = build 79 behaviour.
     static var motionCoachEnabled = true
+    /// Optional target prompt ("지금 보이는 곳을 화면에 둔 채 걸을 수 있는 쪽으로 두세 걸음", build 82). Guidance only;
+    /// off = build 81 behaviour. Needs `motionCoachEnabled`.
+    static var targetStepGuideEnabled = true
 
     /// Speed passed to KeyframeSelector3DGS: nil (no gate) unless the gates are enforced.
     static func selectorMotionInput(_ value: Double?) -> Double? {

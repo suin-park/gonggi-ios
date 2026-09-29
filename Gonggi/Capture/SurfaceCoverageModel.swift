@@ -28,6 +28,32 @@ enum SurfaceCoverageConfig {
     static let minNearViews = 6
     static let minAzimuthBuckets = 2
     static let calibrationId = "livingroom286_sofa_p20_20260927"
+
+    /// Optional target prompt (`CaptureMotionCoach.Kind.targetStep`). Starting values, not quality rules: in the 414
+    /// capture the one element seen from 1–2 spots (the sofa) rendered thickest; 30° direction buckets and the 2.5 m
+    /// distance did not separate the elements (`CAPTURE_GUIDE_SPACE_SIZE_20260929.md` §3).
+    static let targetSpotSeparationM: Float = 0.5
+    static let targetSpotsNeeded = 3
+    static let targetMinViews = 8
+    static let targetMinDistanceM: Float = 0.7
+    static let targetMaxDistanceM: Float = 3.5
+    /// Middle of the image (fraction kept on each axis).
+    static let targetCentralFraction: Float = 0.6
+    /// Surfaces above camera height + this are ceiling (the ceiling prompts handle them).
+    static let targetMaxAboveCameraM: Float = 0.5
+    /// Up-facing plane tiles this far below the camera are floor (the floor prompts handle them).
+    static let targetFloorBelowCameraM: Float = 0.9
+}
+
+/// What the camera looks at right now, for the optional target prompt. Keys identify surfaces across ticks.
+struct CaptureTargetSignal: Equatable, Sendable {
+    /// Surfaces in the middle of the view that were seen by enough saved photos to judge.
+    var candidates: Int
+    /// Of those, the ones seen from fewer than 3 spots ≥ 0.5 m apart.
+    var narrowKeys: Set<String>
+    var narrowAreaShare: Float
+    /// Share of the active prompt's surfaces that now have 3 spots (nil when no prompt is up).
+    var activeProgress: Float?
 }
 
 enum SurfaceCoverageState: String, Codable, CaseIterable, Sendable {
@@ -73,6 +99,8 @@ struct SurfaceCoverageModel {
         var processedKeyframes = 0
         /// Guide v3: saved views looking down onto an up-facing surface (≤ 50° from its normal, ≤ 1.5 m).
         var topViews = 0
+        /// Camera spots (x, z) of the saved views, kept only when ≥ 0.5 m from the ones already kept (at most 3).
+        var viewSpots: [simd_float2] = []
 
         var azimuthBuckets: Int { azimuthMask.nonzeroBitCount }
 
@@ -168,6 +196,61 @@ struct SurfaceCoverageModel {
             CaptureGapModel.SurfaceInfo(center: $0.center, normal: $0.normal, areaM2: $0.areaM2,
                                         farOnly: $0.views > 0 && $0.state == .farOnly, topViews: $0.topViews)
         }
+    }
+
+    /// Surfaces in the middle of the current view (0.7–3.5 m, not ceiling / floor, not behind a plane) that enough
+    /// saved photos saw to judge, and which of them were seen from fewer than 3 spots. nil when there is nothing to
+    /// judge yet (no keyframe). Uses the last keyframe's intrinsics for the current frame.
+    func targetStepSignal(cameraToWorld m: simd_float4x4, activeKeys: Set<String>) -> CaptureTargetSignal? {
+        guard let kf = keyframes.last else { return nil }
+        let cfg = SurfaceCoverageConfig.self
+        let cam = simd_make_float3(m.columns.3)
+        let right = simd_make_float3(m.columns.0), up = simd_make_float3(m.columns.1), back = simd_make_float3(m.columns.2)
+        let marginX = kf.width * (1 - cfg.targetCentralFraction) / 2
+        let marginY = kf.height * (1 - cfg.targetCentralFraction) / 2
+        let planeList = Array(planes.values)
+        var candidates = 0
+        var narrow: Set<String> = []
+        var area: Float = 0, narrowArea: Float = 0
+        func consider(_ key: String, _ s: Surface) {
+            guard s.views >= cfg.targetMinViews else { return }
+            guard s.center.y <= cam.y + cfg.targetMaxAboveCameraM else { return }
+            if s.kind == .planeTile, let n = s.normal, n.y > 0.9, s.center.y < cam.y - cfg.targetFloorBelowCameraM { return }
+            let d = s.center - cam
+            let dist = simd_length(d)
+            guard dist >= cfg.targetMinDistanceM, dist <= cfg.targetMaxDistanceM else { return }
+            let zc = -simd_dot(d, back)
+            guard zc > 0.15 else { return }
+            let u = kf.fx * simd_dot(d, right) / zc + kf.cx
+            let v = kf.fy * (-simd_dot(d, up)) / zc + kf.cy
+            guard u >= marginX, u <= kf.width - marginX, v >= marginY, v <= kf.height - marginY else { return }
+            if Self.occluded(from: cam, to: s.center, dist: dist, ignoring: s.ownerPlane, planes: planeList) { return }
+            candidates += 1
+            area += s.areaM2
+            if s.viewSpots.count < cfg.targetSpotsNeeded {
+                narrow.insert(key)
+                narrowArea += s.areaM2
+            }
+        }
+        for (k, s) in tiles { consider("t:" + k, s) }
+        for (k, s) in voxels { consider("v:\(k.x),\(k.y),\(k.z)", s) }
+        var progress: Float?
+        if !activeKeys.isEmpty {
+            var done = 0
+            for key in activeKeys {
+                let s: Surface?
+                if key.hasPrefix("t:") {
+                    s = tiles[String(key.dropFirst(2))]
+                } else {
+                    let p = key.dropFirst(2).split(separator: ",").compactMap { Int32($0) }
+                    s = p.count == 3 ? voxels[SIMD3<Int32>(p[0], p[1], p[2])] : nil
+                }
+                if let s, s.viewSpots.count >= cfg.targetSpotsNeeded { done += 1 }
+            }
+            progress = Float(done) / Float(activeKeys.count)
+        }
+        return CaptureTargetSignal(candidates: candidates, narrowKeys: narrow,
+                                   narrowAreaShare: area > 0 ? narrowArea / area : 0, activeProgress: progress)
     }
 
     func summary() -> SpatialCaptureSurfaceCoverage {
@@ -390,6 +473,11 @@ struct SurfaceCoverageModel {
             s.topViews += 1
         }
         s.minDistanceM = min(s.minDistanceM, dist)
+        let spot = simd_float2(cam.x, cam.z)
+        if s.viewSpots.count < SurfaceCoverageConfig.targetSpotsNeeded,
+           s.viewSpots.allSatisfy({ simd_length($0 - spot) >= SurfaceCoverageConfig.targetSpotSeparationM }) {
+            s.viewSpots.append(spot)
+        }
         let az = (atan2(d.x, d.z) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
         guard az.isFinite else { return }
         let bucket = min(11, Int(az / SurfaceCoverageConfig.azimuthBucketDeg))

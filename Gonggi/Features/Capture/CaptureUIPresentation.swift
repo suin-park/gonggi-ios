@@ -224,11 +224,11 @@ enum CaptureUIPresenter {
         isReady ? "기록 완료" : "촬영 종료"
     }
 
+    /// Only the way back to an area already filmed gets a glyph (the user walked there). No arrow ever picks a new
+    /// walking path: without LiDAR the app cannot tell whether that way is walkable (build 82).
     static func direction(for action: GuidanceAction) -> PrimaryGuidanceDirection {
         switch action {
-        case .moveForward: return .forward
         case .returnToPreviousArea, .reacquireView, .finishBlockedWeakTerminal: return .returnBack
-        case .bridgeContinuity: return .forward
         default: return .none
         }
     }
@@ -331,8 +331,8 @@ enum CaptureUIPresenter {
         if ready {
             return PrimaryGuidanceState(
                 action: .captureComplete,
-                title: "촬영이 충분합니다",
-                subtitle: completionSubtitle(recommendations: quality.captureRecommendations),
+                title: completionTitle(quality: quality),
+                subtitle: completionSubtitle(quality: quality),
                 direction: .none,
                 severity: .normal,
                 statusLabel: status,
@@ -413,11 +413,11 @@ enum CaptureUIPresenter {
             )
         case .moveLaterally, .improveBaseline:
             return (
-                "한두 걸음 옆으로 옮겨 주세요",
+                "걸을 수 있는 쪽으로 한두 걸음 옮겨 주세요",
                 "같은 곳을 다른 위치에서 보면 3D 공간이 더 정확해져요"
             )
         case .moveForward:
-            return ("천천히 앞으로 이동해주세요", nil)
+            return ("걸을 수 있는 쪽으로 천천히 옮겨 주세요", nil)
         case .slowDown:
             return ("조금 천천히 움직여주세요", nil)
         case .holdSteady:
@@ -449,18 +449,18 @@ enum CaptureUIPresenter {
             return ("아직 덜 담긴 영역을 천천히 비춰주세요", "조금씩 위치를 옮기면 더 정확한 3D 공간을 만들 수 있어요")
         case .needMoreYaw:
             return (
-                "벽을 따라 걸으며 다른 방향도 담아 주세요",
-                "표시된 지점을 화면 중앙에 두고, 제자리에서 돌기보다 옆으로 걸으며 방향을 바꿔 주세요"
+                "걸으며 다른 방향도 담아 주세요",
+                "지금 보이는 곳을 화면에 둔 채, 걸을 수 있는 쪽으로 옮기며 천천히 방향을 바꿔 주세요"
             )
         case .needUpperCoverage:
             return (
                 "벽과 천장이 만나는 선을 함께 담아 주세요",
-                "휴대폰을 조금 들고 옆으로 걸어 주세요. 천장만 비추지는 말아 주세요"
+                "휴대폰을 조금 들고 걸을 수 있는 쪽으로 천천히 옮겨 주세요. 천장만 비추지는 말아 주세요"
             )
         case .needLowerCoverage:
             return (
                 "벽과 바닥이 만나는 곳을 함께 담아 주세요",
-                "휴대폰을 조금 내려 가구 다리나 매트 끝이 보이게 옆으로 걸어 주세요"
+                "휴대폰을 조금 내려 가구 다리나 매트 끝이 보이게 해 주세요"
             )
         case .trackingRecovery:
             return ("천천히 주변을 비춰주세요", "카메라 위치를 다시 확인하고 있어요")
@@ -471,7 +471,7 @@ enum CaptureUIPresenter {
         case .captureGap:
             return ("부족한 방향을 조금 더 담아 주세요", "사진이 계속 저장되도록 천천히 움직여 주세요")
         case .captureCoach:
-            return ("한두 걸음 옆으로 옮겨 주세요", nil)
+            return ("걸을 수 있는 쪽으로 한두 걸음 옮겨 주세요", nil)
         case .captureComplete:
             return ("촬영이 충분합니다", "공간을 충분히 담았어요. 기록을 완료할 수 있어요")
         }
@@ -490,14 +490,15 @@ enum CaptureUIPresenter {
         }()
         switch gap.kind {
         case .up:
-            return ("천장 경계도 담아 주세요", "벽과 천장이 만나는 선이나 조명이 보이게 휴대폰을 들고 옆으로 걸어 주세요")
+            return ("천장 경계도 담아 주세요", "벽과 천장이 만나는 선이나 조명이 보이게 휴대폰을 조금 들어 주세요")
         case .opposite:
-            return (gap.turn == .ahead ? "지금 보는 방향을 조금 더 담아 주세요" : "\(side)으로 천천히 방향을 바꿔 반대쪽도 담아 주세요",
-                    "몇 걸음 옮기며 천천히 바꾸면 사진이 끊기지 않고 이어져요")
+            // The side is where to end up *facing* (the missing view), not a walking path.
+            return (gap.turn == .ahead ? "지금 보는 방향을 조금 더 담아 주세요" : "\(side) 방향도 담아 주세요",
+                    "걸을 수 있는 쪽으로 몇 걸음 옮기며 천천히 방향을 바꾸면 사진이 끊기지 않고 이어져요")
         case .tops:
-            return ("\(side) 가구 윗면을 내려다보며 찍어 주세요", "한 걸음 다가가 위에서 비춰 주세요")
+            return ("\(side) 가구 윗면도 담아 주세요", "다가갈 수 있으면 한 걸음 가까이 가서 위에서 비춰 주세요")
         case .farEnd:
-            return ("\(side) 끝까지 천천히 걸어가 주세요", "가까이에서 찍어야 선명하게 만들어져요")
+            return ("\(side) 쪽은 멀리서만 담겼어요", "걸어갈 수 있으면 몇 걸음 가까이 가서 담아 주세요. 어려우면 그대로 계속해도 돼요")
         }
     }
 
@@ -505,20 +506,33 @@ enum CaptureUIPresenter {
     static func coachCopy(_ c: CaptureMotionCoach.Prompt) -> (title: String, subtitle: String?) {
         switch c.kind {
         case .sideStep:
-            return ("한두 걸음 옆으로 옮겨 주세요", "같은 곳을 다른 위치에서 보면 3D 공간이 더 정확해져요")
+            return ("걸을 수 있는 쪽으로 한두 걸음 옮겨 주세요", "같은 곳을 다른 위치에서 보면 3D 공간이 더 정확해져요")
         case .ceilingContext:
             return ("조금 내려 경계를 함께 담아 주세요", "천장만 보이면 위치를 잡기 어려워요. 벽과 천장이 만나는 선이나 조명을 함께 담아 주세요")
         case .floorFeet:
             return ("조금 앞쪽 바닥을 비춰 주세요", "발밑을 오래 비추면 발이 사진에 찍힐 수 있어요")
         case .floorContext:
             return ("바닥은 경계와 함께 담아 주세요", "가구 다리, 매트 끝, 벽과 바닥이 만나는 곳이 보이게 해 주세요")
+        case .targetStep:
+            return ("지금 보이는 곳을 화면에 둔 채 걸을 수 있는 쪽으로 두세 걸음 옮겨 주세요", "어려우면 그대로 계속 찍어도 돼요")
         }
     }
 
-    /// Completion copy with optional recommendations (never a finish gate).
-    static func completionSubtitle(recommendations: [String]) -> String {
-        guard !recommendations.isEmpty else { return "공간을 충분히 담았어요. 기록을 완료할 수 있어요" }
-        return "지금 완료해도 돼요. 더 좋게: " + recommendations.prefix(3).joined(separator: " · ")
+    /// "충분" only when nothing is open. Open items (not asked yet, asked and still missing, photo limit) keep the
+    /// finish button as it is but never read as enough.
+    static func completionTitle(quality: CaptureQualityState) -> String {
+        completionLines(quality).isEmpty ? "촬영이 충분합니다" : "촬영을 마칠 수 있어요"
+    }
+
+    /// Completion copy with the open items and their status (never a finish gate).
+    static func completionSubtitle(quality: CaptureQualityState) -> String {
+        let lines = completionLines(quality)
+        guard !lines.isEmpty else { return "공간을 충분히 담았어요. 기록을 완료할 수 있어요" }
+        return "지금 완료해도 돼요. 남은 곳: " + lines.prefix(3).joined(separator: " · ")
+    }
+
+    private static func completionLines(_ quality: CaptureQualityState) -> [String] {
+        quality.captureRemaining.isEmpty ? quality.captureRecommendations : quality.captureRemaining.map(\.shortLine)
     }
 
     private static func secondaryHint(for action: GuidanceAction) -> String? {

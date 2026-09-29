@@ -39,8 +39,11 @@ final class CaptureSessionController {
     /// Guide v4 (surfaceQueue): recent-window motion coach (side step / ceiling / floor). Guidance only.
     private var motionCoach = CaptureMotionCoach()
     private var currentCoachPrompt: CaptureMotionCoach.Prompt?
-    /// Completion recommendations (never a finish gate), refreshed with the guide tick.
-    private var currentRecommendations: [String] = []
+    /// Completion list with each item's status (never a finish gate), refreshed with the guide tick.
+    private var currentRemaining: [CaptureRemainingItem] = []
+    /// Optional target prompt signal (surfaceQueue): recomputed at most every 0.5 s.
+    private var targetSignalCache: CaptureTargetSignal?
+    private var targetSignalAt: TimeInterval = -.infinity
     /// Saved photos the (disabled) selector speed gates would have rejected — device evidence before enabling them.
     private var motionGateShadowEvaluated = 0
     private var motionGateShadowWouldRejectTranslation = 0
@@ -140,10 +143,12 @@ final class CaptureSessionController {
             surfaceCoverage.reset()
             gapModel = CaptureGapModel()
             motionCoach = CaptureMotionCoach()
+            targetSignalCache = nil
+            targetSignalAt = -.infinity
         }
         currentGapPrompt = nil
         currentCoachPrompt = nil
-        currentRecommendations = []
+        currentRemaining = []
         motionGateShadowEvaluated = 0
         motionGateShadowWouldRejectTranslation = 0
         motionGateShadowWouldRejectAngular = 0
@@ -1266,10 +1271,12 @@ final class CaptureSessionController {
             surfaceCoverage.reset()
             gapModel = CaptureGapModel()
             motionCoach = CaptureMotionCoach()
+            targetSignalCache = nil
+            targetSignalAt = -.infinity
         }
         currentGapPrompt = nil
         currentCoachPrompt = nil
-        currentRecommendations = []
+        currentRemaining = []
         motionGateShadowEvaluated = 0
         motionGateShadowWouldRejectTranslation = 0
         motionGateShadowWouldRejectAngular = 0
@@ -1639,7 +1646,8 @@ final class CaptureSessionController {
         q.saveStalledSec = currentSaveStallSec
         q.gapPrompt = currentGapPrompt
         q.coachPrompt = currentCoachPrompt
-        q.captureRecommendations = currentRecommendations
+        q.captureRemaining = currentRemaining
+        q.captureRecommendations = currentRemaining.map(\.shortLine)
         return q
     }
 
@@ -1654,6 +1662,7 @@ final class CaptureSessionController {
             maxAngularVelocityRadPerSec: SpatialCaptureConfig.maxAngularVelocityRadPerSec
         )
         g.motionCoach = surfaceQueue.sync { motionCoach.summary() }
+        g.completionRemaining = currentRemaining
         return g
     }
 
@@ -1664,24 +1673,38 @@ final class CaptureSessionController {
         guard SpatialCaptureConfig.gapGuideEnabled else {
             currentGapPrompt = nil
             currentCoachPrompt = nil
-            currentRecommendations = []
+            currentRemaining = []
             return
         }
         let coachOn = SpatialCaptureConfig.motionCoachEnabled
-        let out = surfaceQueue.sync { () -> (CaptureGapModel.Prompt?, CaptureMotionCoach.Prompt?, [String]) in
+        let targetOn = coachOn && SpatialCaptureConfig.targetStepGuideEnabled
+        let photoLimitReached = keyframe3DGSCount >= SpatialCaptureConfig.candidateSafetyCap
+        let out = surfaceQueue.sync { () -> (CaptureGapModel.Prompt?, CaptureMotionCoach.Prompt?, [CaptureRemainingItem]) in
+            var target: CaptureTargetSignal?
+            if targetOn {
+                if timestamp - targetSignalAt >= 0.5 || timestamp < targetSignalAt {
+                    targetSignalCache = surfaceCoverage.targetStepSignal(cameraToWorld: transform,
+                                                                          activeKeys: motionCoach.activeTargetKeys)
+                    targetSignalAt = timestamp
+                }
+                target = targetSignalCache
+            }
             let coach = coachOn
                 ? motionCoach.tick(timestamp: timestamp, cameraToWorld: transform, rawFeatureCount: rawFeatureCount,
-                                   gapPromptActive: gapModel.active != nil)
+                                   gapPromptActive: gapModel.active != nil, target: target)
                 : nil
-            let gap = gapModel.tick(timestamp: timestamp, cameraToWorld: transform, canStart: motionCoach.active == nil) {
+            // The optional target prompt never holds back a gap prompt (it yields on the next tick).
+            let gapMayStart = motionCoach.active == nil || motionCoach.active?.kind == .targetStep
+            let gap = gapModel.tick(timestamp: timestamp, cameraToWorld: transform, canStart: gapMayStart) {
                 self.surfaceCoverage.gapSurfaces()
             }
-            return (gap, coach, CaptureCompletionRecommendation.items(
-                openGaps: gapModel.openGaps(), savedUpPhotos: gapModel.savedUpPhotos, savedDownPhotos: gapModel.savedDownPhotos))
+            return (gap, coach, CaptureCompletionRecommendation.remaining(
+                openGaps: gapModel.openGapDetails(), savedUpPhotos: gapModel.savedUpPhotos,
+                savedDownPhotos: gapModel.savedDownPhotos, photoLimitReached: photoLimitReached))
         }
         currentGapPrompt = out.0
         currentCoachPrompt = out.1
-        currentRecommendations = out.2
+        currentRemaining = out.2
     }
 
     private func updatePhaseAndCompletion(trackingNormal: Bool, transform: simd_float4x4) {

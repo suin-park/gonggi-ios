@@ -124,9 +124,11 @@ struct CaptureQualityState: Equatable {
     var gapPrompt: CaptureGapModel.Prompt? = nil
     /// Guide v4 motion-coach prompt (side step / ceiling / floor). Guidance only, never blocks finishing.
     var coachPrompt: CaptureMotionCoach.Prompt? = nil
-    /// Short "더 좋게" items shown with the completion copy (open opposite directions, ceiling / floor edges).
-    /// Recommendations only — never a finish gate.
+    /// Short "남은 곳" lines shown with the completion copy (open opposite directions, ceiling / floor edges, each with
+    /// its status). Recommendations only — never a finish gate.
     var captureRecommendations: [String] = []
+    /// The same list with each item's status: 남음 (not asked yet) / 미해결 (asked, still missing) / 사진 한도.
+    var captureRemaining: [CaptureRemainingItem] = []
 
     init(
         overallCoverage: Double,

@@ -241,7 +241,7 @@ struct CaptureFinishPillButton: View {
             )
         }
         .buttonStyle(GonggiPressableStyle(scale: 0.97))
-        .accessibilityLabel(isReady ? "\(resolvedTitle). 충분히 기록되었습니다" : resolvedTitle)
+        .accessibilityLabel(isReady ? "\(resolvedTitle). 기록을 완료할 수 있어요" : resolvedTitle)
     }
 }
 

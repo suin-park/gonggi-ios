@@ -180,8 +180,10 @@ enum CaptureQuietUIPresenter {
         case .nearlyReady:
             return "조금만 더 둘러봐 주세요"
         case .ready:
-            // reconstructionReady ≠ session end (multi-room may continue).
-            return "공간이 충분히 기록됐어요"
+            // reconstructionReady ≠ session end (multi-room may continue). Open items (not asked yet / asked and still
+            // missing / photo limit) never read as enough.
+            let open = !quality.captureRemaining.isEmpty || !quality.captureRecommendations.isEmpty
+            return open ? "기록을 마칠 수 있어요" : "공간이 충분히 기록됐어요"
         case .storageCapReached:
             // Enqueue cap — do not claim a durable on-disk JPEG count.
             return "새 사진이 더 이상 저장되지 않습니다"
