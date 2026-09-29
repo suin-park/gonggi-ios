@@ -43,6 +43,9 @@ final class AuthSessionController: ObservableObject {
     private(set) var refreshToken: String?
     private(set) var mobileSessionId: String?
     private(set) var profile: MobileAuthUserDTO?
+    /// When the current access token stops working (server issues 15 min tokens).
+    private(set) var accessExpiresAt: Date?
+    private var silentRefreshTask: Task<String?, Never>?
 
     var isSignedIn: Bool {
         if case .signedIn = phase { return true }
@@ -234,14 +237,7 @@ final class AuthSessionController: ObservableObject {
     }
 
     private func applyTokens(_ tokens: MobileAuthTokens) async throws {
-        accessToken = tokens.accessToken
-        refreshToken = tokens.refreshToken
-        mobileSessionId = tokens.sessionId
-        MobileAuthTokenStore.shared.setAccessToken(tokens.accessToken)
-        try GonggiKeychain.set(tokens.refreshToken, service: Self.keychainService, account: Self.refreshAccount)
-        if let sessionId = tokens.sessionId {
-            try GonggiKeychain.set(sessionId, service: Self.keychainService, account: Self.sessionAccount)
-        }
+        try storeTokens(tokens)
 
         var user = tokens.user
         if user == nil {
@@ -324,7 +320,79 @@ final class AuthSessionController: ObservableObject {
         }
     }
 
+    /// Token fields + keychain only (no phase / profile change — safe for a silent refresh mid-flow).
+    private func storeTokens(_ tokens: MobileAuthTokens) throws {
+        accessToken = tokens.accessToken
+        refreshToken = tokens.refreshToken
+        if let sessionId = tokens.sessionId { mobileSessionId = sessionId }
+        accessExpiresAt = Self.accessExpiry(tokens.accessExpiresAt, now: Date())
+        MobileAuthTokenStore.shared.setAccessToken(tokens.accessToken)
+        try GonggiKeychain.set(tokens.refreshToken, service: Self.keychainService, account: Self.refreshAccount)
+        if let sessionId = tokens.sessionId {
+            try GonggiKeychain.set(sessionId, service: Self.keychainService, account: Self.sessionAccount)
+        }
+    }
+
+    /// Server `accessExpiresAt` (ISO 8601), or a conservative 14 min from now when missing / unparsable.
+    nonisolated static func accessExpiry(_ iso: String?, now: Date) -> Date {
+        if let iso {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let d = f.date(from: iso) { return d }
+            f.formatOptions = [.withInternetDateTime]
+            if let d = f.date(from: iso) { return d }
+        }
+        return now.addingTimeInterval(14 * 60)
+    }
+
+    /// True when the access token must be refreshed before use (expired, or less than `margin` left).
+    nonisolated static func needsRefresh(expiresAt: Date?, now: Date, margin: TimeInterval) -> Bool {
+        guard let expiresAt else { return true }
+        return expiresAt.timeIntervalSince(now) <= margin
+    }
+
+    /// Access token that is still valid for at least `margin` seconds. Refreshes silently (one request at a
+    /// time, rotating the refresh token) without touching the signed-in UI, so a long capture or a screen left
+    /// open does not send an expired token (capture GONGGI_CAPTURE_V1_051: the app refreshed only at launch
+    /// while access tokens live 15 min). `force` refreshes even if the local clock says the token is fine
+    /// (the server answered 401). Returns the current token when not signed in or when the refresh fails.
+    func freshAccessToken(margin: TimeInterval = 120, force: Bool = false) async -> String? {
+        guard isSignedIn, let current = accessToken, !current.isEmpty else {
+            return MobileAuthTokenStore.shared.getAccessToken()
+        }
+        if !force, !Self.needsRefresh(expiresAt: accessExpiresAt, now: Date(), margin: margin) {
+            return current
+        }
+        if let running = silentRefreshTask {
+            return await running.value
+        }
+        let task = Task { @MainActor [weak self] () -> String? in
+            guard let self else { return nil }
+            return await self.performSilentRefresh(fallback: current)
+        }
+        silentRefreshTask = task
+        let token = await task.value
+        silentRefreshTask = nil
+        return token
+    }
+
+    private func performSilentRefresh(fallback: String) async -> String? {
+        let stored = refreshToken ?? (try? GonggiKeychain.get(service: Self.keychainService, account: Self.refreshAccount))
+        guard let refresh = stored, !refresh.isEmpty else { return fallback }
+        let generation = AuthSessionGeneration.current
+        do {
+            let tokens = try await api.refresh(refreshToken: refresh)
+            // Signed out / switched account while the request was in flight: do not resurrect the old session.
+            guard generation == AuthSessionGeneration.current, isSignedIn else { return nil }
+            try storeTokens(tokens)
+            return tokens.accessToken
+        } catch {
+            return fallback
+        }
+    }
+
     private func clearLocalCredentials() {
+        accessExpiresAt = nil
         accessToken = nil
         refreshToken = nil
         mobileSessionId = nil

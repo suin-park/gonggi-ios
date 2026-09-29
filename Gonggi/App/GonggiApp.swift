@@ -15,6 +15,10 @@ struct GonggiApp: App {
                 .preferredColorScheme(.dark)
                 .onChange(of: scenePhase) { _, phase in
                     appState.handleScenePhase(phase)
+                    if phase == .active {
+                        // Access tokens live 15 min; refresh on return instead of only at launch.
+                        Task { _ = await authSession.freshAccessToken() }
+                    }
                     if phase == .background {
                         CaptureSessionStore.pruneStaleSessions()
                     }

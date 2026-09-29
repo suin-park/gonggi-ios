@@ -193,6 +193,9 @@ struct CaptureGenerationDiagnostics: Codable, Equatable, Sendable {
     var jobId: String?
     /// prepare_package | upload | request_generation | cancelled
     var failedStage: String?
+    /// Account that submitted this capture (captures live device-wide in Caches). A later "다시 업로드" only
+    /// offers it to the same account; nil = submitted by build ≤ 80 (asked to confirm before uploading).
+    var ownerUserId: String? = nil
 
     static let empty = CaptureGenerationDiagnostics(
         createRequestProfile: nil,

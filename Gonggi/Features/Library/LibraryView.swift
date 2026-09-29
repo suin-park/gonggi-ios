@@ -138,6 +138,7 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var spacesContent: some View {
+        UnsentCapturesSection()
         if appState.spaces.isEmpty {
             Text("아직 만든 공간이 없어요.")
                 .font(GonggiTypography.body(15))

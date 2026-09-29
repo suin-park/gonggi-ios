@@ -221,6 +221,9 @@ final class ProcessingViewModel: ObservableObject {
                 sessionId: summary.sessionId
             )
             generation.idempotencyKey = idempotencyKey
+            if generation.ownerUserId == nil {
+                generation.ownerUserId = GaussianGenerationStore.shared.boundUserId
+            }
             persistGeneration()
 
             var request = createRequest

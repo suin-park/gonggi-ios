@@ -118,7 +118,7 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await sendAuthorized(req)
         guard let http = response as? HTTPURLResponse else {
             throw SpaceGenerationError.networkUnavailable
         }
@@ -224,7 +224,7 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await sendAuthorized(req)
         guard let http = response as? HTTPURLResponse else {
             throw SpaceGenerationError.networkUnavailable
         }
@@ -256,7 +256,7 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         try attachAuth(&req)
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await sendAuthorized(req)
         guard let http = response as? HTTPURLResponse else {
             throw SpaceGenerationError.networkUnavailable
         }
@@ -307,7 +307,7 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         try attachAuth(&req)
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await sendAuthorized(req)
         guard let http = response as? HTTPURLResponse else {
             throw SpaceGenerationError.networkUnavailable
         }
@@ -335,7 +335,7 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         try attachAuth(&req)
         req.httpBody = try JSONSerialization.data(withJSONObject: ["retry": true])
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await sendAuthorized(req)
         guard let http = response as? HTTPURLResponse else {
             throw SpaceGenerationError.networkUnavailable
         }
@@ -394,7 +394,7 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         req.httpMethod = "GET"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         try attachAuth(&req)
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await sendAuthorized(req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw SpaceGenerationError.networkUnavailable
         }
@@ -402,6 +402,30 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         return decoded.spaces.map {
             GaussianSpaceListItem(id: $0.id, name: $0.name, status: $0.status ?? "processing")
         }
+    }
+
+    /// Fresh sign-in token source (tests replace it). `force` = refresh even if the local expiry looks fine.
+    static var accessTokenProvider: (_ force: Bool) async -> String? = { force in
+        await AuthSessionController.shared.freshAccessToken(force: force)
+    }
+
+    /// Sends an API request with a sign-in token that is still valid, and on 401 refreshes once and resends
+    /// once. Access tokens live 15 min and the app used to refresh only at launch, so a capture uploaded more than
+    /// 15 min after launch failed its create request (GONGGI_CAPTURE_V1_051). Requests here are safe to resend:
+    /// create is idempotent by its Idempotency-Key, the others are reads or server-side idempotent.
+    private func sendAuthorized(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        var req = request
+        let used = await Self.accessTokenProvider(false)
+        if let used, !used.isEmpty {
+            req.setValue("Bearer \(used)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: req)
+        guard (response as? HTTPURLResponse)?.statusCode == 401 else { return (data, response) }
+        guard let fresh = await Self.accessTokenProvider(true), !fresh.isEmpty, fresh != used else {
+            return (data, response)
+        }
+        req.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+        return try await session.data(for: req)
     }
 
     private func attachAuth(_ request: inout URLRequest) throws {
