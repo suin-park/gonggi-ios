@@ -513,11 +513,15 @@ struct SpaceDetailView: View {
                 }
             }
 
-            SecondaryButton(title: "공유", icon: "square.and.arrow.up") {
-                showShareSheet = true
+            // Link sharing exists for 360 spaces only: a walkable (3D) space card would call the 360 share API with a
+            // `gaussian:` id, which the server cannot find (SPACE_NOT_FOUND). No button until that is wired.
+            if SpaceSharePolicy.offersLinkShare(liveSpace) {
+                SecondaryButton(title: "공유", icon: "square.and.arrow.up") {
+                    showShareSheet = true
+                }
+                .accessibilityLabel("공유")
+                .disabled(liveSpace.status != .ready)
             }
-            .accessibilityLabel("공유")
-            .disabled(liveSpace.status != .ready)
         }
         .padding(.top, GonggiSpacing.xs)
     }

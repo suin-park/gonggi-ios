@@ -126,10 +126,14 @@ struct LibraryView: View {
             .onChange(of: appState.pendingGaussianSpaceIdFromPush) { _, spaceId in
                 openPushedGaussianSpace(spaceId)
             }
+            .onChange(of: appState.pendingLibrarySpaceDetailId) { _, id in
+                openSpaceDetailFromRecord(id)
+            }
             .onAppear {
                 appState.ensureSpaceGenerationPolling()
                 applyPreferredLibraryCategory(appState.preferredLibraryCategory ?? appState.pendingLibraryTab)
                 openPushedGaussianSpace(appState.pendingGaussianSpaceIdFromPush)
+                openSpaceDetailFromRecord(appState.pendingLibrarySpaceDetailId)
                 // Pick up server-side 3DGS spaces (other device / restored) for this account.
                 Task { await GaussianLibraryReconciler.shared.reconcileIfStale() }
             }
@@ -227,6 +231,16 @@ struct LibraryView: View {
         viewerLaunch = nil
         gaussianViewer = GaussianViewerPresentation(spaceId: spaceId)
         Task { await GaussianLibraryReconciler.shared.reconcileIfStale(minInterval: 0) }
+    }
+
+    /// 기록 tab "이어서 할 일": open that card's detail (its retry / progress live there). Navigation only.
+    private func openSpaceDetailFromRecord(_ libraryId: String?) {
+        guard let libraryId, !libraryId.isEmpty else { return }
+        appState.pendingLibrarySpaceDetailId = nil
+        category = .spaces
+        if let space = appState.spaces.first(where: { $0.id == libraryId }) {
+            selectedSpace = space
+        }
     }
 
     private func openViewer(jobId: String) async {

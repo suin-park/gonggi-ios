@@ -83,6 +83,12 @@ struct CaptureContainerView: View {
     @State private var activeFlow: ActiveFlow = .none
     #if DEBUG
     @State private var showDebugModes = false
+    @State private var showPhotoTo3D = false
+    @State private var toast: String?
+    @State private var walkableAlert: String?
+    @ObservedObject private var gaussianStore = GaussianGenerationStore.shared
+    @ObservedObject private var assetGenerationStore = AssetGenerationStore.shared
+    @State private var unsentCount = 0
     #endif
 
     var body: some View {
@@ -115,21 +121,11 @@ struct CaptureContainerView: View {
         .fullScreenCover(isPresented: Binding(
             get: { activeFlow == .directionCapture },
             set: { presented in
-                if !presented {
-                    activeFlow = .none
-                    if spatialRecordHidden {
-                        appState.selectedTab = .home
-                    }
-                }
+                if !presented { activeFlow = .none }
             }
         )) {
-            DirectionCaptureView(onClose: {
-                activeFlow = .none
-                if spatialRecordHidden {
-                    appState.selectedTab = .home
-                }
-            })
-            .environmentObject(appState)
+            DirectionCaptureView(onClose: { activeFlow = .none })
+                .environmentObject(appState)
         }
         .fullScreenCover(isPresented: Binding(
             get: {
@@ -155,33 +151,94 @@ struct CaptureContainerView: View {
             Quick360FlowView(onClose: { activeFlow = .none })
                 .environmentObject(appState)
         }
+        .sheet(isPresented: $showPhotoTo3D) {
+            // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기".
+            CreateAssetFlowView(
+                onClose: { showPhotoTo3D = false },
+                onAccepted: {
+                    toast = RecordHomeCopy.photoAccepted
+                    AssetLibraryStore.shared.refresh(force: true)
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .alert("걸어보는 공간", isPresented: Binding(
+            get: { walkableAlert != nil },
+            set: { if !$0 { walkableAlert = nil } }
+        )) {
+            Button("확인", role: .cancel) { walkableAlert = nil }
+        } message: {
+            Text(walkableAlert ?? "")
+        }
+        .overlay(alignment: .bottom) {
+            if let toast {
+                Text(toast)
+                    .font(GonggiTypography.caption(14))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, GonggiSpacing.lg)
+                    .padding(.vertical, GonggiSpacing.sm)
+                    .background(GonggiColors.accentTeal.opacity(0.95))
+                    .clipShape(Capsule())
+                    .padding(.bottom, GonggiSpacing.lg)
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { withAnimation { self.toast = nil } }
+                    }
+            }
+        }
+        // Every account sees the 기록 chooser: 360° starts from its card (build ≤ 83 auto-started it outside the rollout).
         .onAppear {
-            autoStart360CaptureIfNeeded()
+            refreshResumeSources()
             Task { await appState.refreshSpatialRecordAvailability() }
         }
         .onChange(of: appState.selectedTab) { _, tab in
             if tab == .record {
-                autoStart360CaptureIfNeeded()
+                refreshResumeSources()
                 Task { await appState.refreshSpatialRecordAvailability() }
             }
         }
-        .onChange(of: appState.spatialRecordAvailable) { _, _ in
-            autoStart360CaptureIfNeeded()
+    }
+
+    private var walkableCardVisible: Bool {
+        RecordHomePolicy.walkableCardVisible(
+            flagOn: GonggiFeatureFlags.show3DGSCaptureFlows,
+            mockMode: appState.isMockMode,
+            available: appState.spatialRecordAvailable
+        )
+    }
+
+    /// Opens the walkable flow when the account is in scope; an unknown scope is re-checked first (never a dead end).
+    private func openWalkableSpace() {
+        GonggiHaptics.medium()
+        if appState.showsSpatialRecord {
+            activeFlow = .threeDSpaceRecord
+            return
+        }
+        Task {
+            await appState.refreshSpatialRecordAvailability()
+            if appState.showsSpatialRecord {
+                activeFlow = .threeDSpaceRecord
+            } else {
+                walkableAlert = appState.spatialRecordAvailable == false
+                    ? RecordHomeCopy.walkableUnavailable : RecordHomeCopy.walkableUnknown
+            }
         }
     }
 
-    /// Accounts outside the 3D 공간 기록 rollout keep the previous Record tab (360° starts directly).
-    /// While the scope is unknown (nil) the chooser stays, so a tester is never pushed into 360°.
-    private var spatialRecordHidden: Bool {
-        !GonggiFeatureFlags.show3DGSCaptureFlows
-            || (!appState.isMockMode && appState.spatialRecordAvailable == false)
+    private func refreshResumeSources() {
+        unsentCount = UnsentCaptureResumer.pending(currentUserId: GaussianGenerationStore.shared.boundUserId).count
     }
 
-    private func autoStart360CaptureIfNeeded() {
-        guard spatialRecordHidden else { return }
-        guard appState.selectedTab == .record else { return }
-        guard activeFlow == .none else { return }
-        activeFlow = .directionCapture
+    private var resume: (items: [RecordResumeItem], more: Int) {
+        RecordResumeBuilder.items(
+            spaceJobs: gaussianStore.jobs.map {
+                .init(spaceId: $0.spaceId, name: $0.name, status: $0.spaceStatus, failureLabel: $0.failureLabel)
+            },
+            unsentCount: unsentCount,
+            assetActive: assetGenerationStore.activeJobs.count,
+            assetFailed: assetGenerationStore.failedJobs.count
+        )
     }
 
     // MARK: - Selection
@@ -190,37 +247,39 @@ struct CaptureContainerView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
                 VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-                    Text("공간 기록")
+                    Text(RecordHomeCopy.title)
                         .font(GonggiTypography.title(28))
                         .foregroundStyle(GonggiColors.textPrimary)
-                    Text("어떤 방식으로 기록할까요?")
+                    Text(RecordHomeCopy.subtitle)
                         .font(GonggiTypography.body(16))
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
                 .padding(.top, GonggiSpacing.xl)
 
-                productionChoiceCard(
-                    icon: "arrow.triangle.2.circlepath.circle",
-                    title: "360° 공간 기록",
-                    subtitle: "한 자리에서 공간을 촬영해\n빠르게 둘러볼 수 있어요.",
-                    badge: "빠른 기록",
-                    action: {
-                        GonggiHaptics.medium()
-                        activeFlow = .directionCapture
+                let r = resume
+                if !r.items.isEmpty {
+                    RecordResumeStrip(items: r.items, more: r.more) { route in
+                        GonggiHaptics.selection()
+                        appState.openLibraryFromRecord(route)
                     }
-                )
+                }
 
-                if appState.showsSpatialRecord {
-                    productionChoiceCard(
-                        icon: "figure.walk.motion",
-                        title: "3D 공간 기록",
-                        subtitle: "공간을 걸으며 촬영해\n자유롭게 이동할 수 있어요.",
-                        badge: "자유 이동",
-                        action: {
-                            GonggiHaptics.medium()
-                            activeFlow = .threeDSpaceRecord
-                        }
-                    )
+                RecordSectionHeader(title: RecordHomeCopy.productSection, caption: RecordHomeCopy.productSectionCaption)
+                RecordChoiceCard(icon: "photo.on.rectangle.angled", card: RecordHomeCopy.photoTo3D) {
+                    GonggiHaptics.medium()
+                    showPhotoTo3D = true
+                }
+                // 제품 3D 촬영 is not built: no card until RecordHomePolicy.productCaptureAvailable.
+
+                RecordSectionHeader(title: RecordHomeCopy.spaceSection, caption: RecordHomeCopy.spaceSectionCaption)
+                if walkableCardVisible {
+                    RecordChoiceCard(icon: "figure.walk.motion", card: RecordHomeCopy.walkableSpace) {
+                        openWalkableSpace()
+                    }
+                }
+                RecordChoiceCard(icon: "arrow.triangle.2.circlepath.circle", card: RecordHomeCopy.space360) {
+                    GonggiHaptics.medium()
+                    activeFlow = .directionCapture
                 }
 
                 #if DEBUG
@@ -237,67 +296,6 @@ struct CaptureContainerView: View {
             .padding(.horizontal, GonggiSpacing.lg)
             .padding(.bottom, GonggiSpacing.xxl)
         }
-    }
-
-    private func productionChoiceCard(
-        icon: String,
-        title: String,
-        subtitle: String,
-        badge: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-                HStack(alignment: .top) {
-                    ZStack {
-                        Circle()
-                            .fill(GonggiColors.accentTeal.opacity(0.12))
-                            .frame(width: 52, height: 52)
-                        Image(systemName: icon)
-                            .font(.system(size: 22, weight: .light))
-                            .foregroundStyle(GonggiColors.accentTeal)
-                    }
-                    Spacer(minLength: 0)
-                    Text(badge)
-                        .font(GonggiTypography.caption(11))
-                        .fontWeight(.semibold)
-                        .foregroundStyle(GonggiColors.accentCyan)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(GonggiColors.accentCyan.opacity(0.14))
-                        .clipShape(Capsule())
-                }
-
-                Text(title)
-                    .font(GonggiTypography.headline(20))
-                    .foregroundStyle(GonggiColors.textPrimary)
-
-                Text(subtitle)
-                    .font(GonggiTypography.body(15))
-                    .foregroundStyle(GonggiColors.textSecondary)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack {
-                    Text("시작")
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.accentCyan)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(GonggiColors.accentCyan)
-                }
-            }
-            .padding(GonggiSpacing.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(GonggiColors.surfaceElevated)
-            .overlay(
-                RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous)
-                    .stroke(GonggiColors.borderSubtle, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
     }
 
     #if DEBUG
