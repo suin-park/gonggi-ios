@@ -13,6 +13,9 @@ settings:
     MARKETING_VERSION: "2.0"
     CURRENT_PROJECT_VERSION: "83"
     GONGGI_BUILD_SHA: "local"
+    # API server for this build. Production unless the TestFlight workflow passes a staging URL
+    # (product 3DGS pre-release builds must not talk to the production server).
+    GONGGI_API_BASE_URL: "https://www.3d-locker.com"
 
 configs:
   Debug: debug
@@ -83,6 +86,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         GonggiBuildSHA: $(GONGGI_BUILD_SHA)
+        GonggiAPIBaseURL: $(GONGGI_API_BASE_URL)
         # Internal TestFlight ONLY: bake pending-angular-rescue ON into this IPA.
         # Product default in Swift remains OFF when this key is removed/false.
         GonggiPendingAngularRescueDefault: true

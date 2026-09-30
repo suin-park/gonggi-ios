@@ -16,6 +16,23 @@ struct AppConfiguration: Sendable {
         return trimmed.split(separator: ".").reversed().joined(separator: ".")
     }
 
+    static let productionAPIBaseURL = URL(string: "https://www.3d-locker.com")!
+
+    /// Build-time server (`GonggiAPIBaseURL` ← `GONGGI_API_BASE_URL`). Only https URLs on the production host,
+    /// `*.3d-locker.com` or `*.vercel.app` (staging deployments) are accepted; anything else (missing, unexpanded
+    /// `$(…)`, http) falls back to production.
+    static func resolveAPIBaseURL(_ raw: String?) -> URL {
+        guard let s = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty, !s.contains("$("),
+              let url = URL(string: s), url.scheme == "https", let host = url.host?.lowercased(),
+              host == "3d-locker.com" || host.hasSuffix(".3d-locker.com") || host.hasSuffix(".vercel.app")
+        else { return productionAPIBaseURL }
+        let trimmed = s.hasSuffix("/") ? String(s.dropLast()) : s
+        return URL(string: trimmed) ?? productionAPIBaseURL
+    }
+
+    /// True when this build talks to the production server.
+    var isProductionServer: Bool { apiBaseURL.host?.lowercased() == Self.productionAPIBaseURL.host }
+
     static func loadProduction() -> AppConfiguration {
         let clientID = (Bundle.main.object(forInfoDictionaryKey: "GoogleClientID") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -23,7 +40,7 @@ struct AppConfiguration: Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let reversed = reversedFromPlist.isEmpty ? reversedGoogleClientID(from: clientID) : reversedFromPlist
         return AppConfiguration(
-            apiBaseURL: URL(string: "https://www.3d-locker.com")!,
+            apiBaseURL: resolveAPIBaseURL(Bundle.main.object(forInfoDictionaryKey: "GonggiAPIBaseURL") as? String),
             sessionCookieName: "whik_session",
             googleClientID: clientID,
             googleReversedClientID: reversed
@@ -140,6 +157,10 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         }
 
         let decoded = try JSONDecoder().decode(CreateDTO.self, from: data)
+        if request.captureKind == ObjectCaptureConfig.serverCaptureKind,
+           decoded.limits?.qualityProfile != Self.objectCaptureServerProfile {
+            throw SpaceGenerationError.server(code: "OBJECT_CAPTURE_UNSUPPORTED_SERVER", httpStatus: 409)
+        }
         // Prefer job.spaceId so idempotent replay does not bind to a mismatched draft.
         let spaceId = decoded.job.spaceId ?? decoded.space.id
         let jobId = decoded.job.id
@@ -487,7 +508,16 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         var space: IdDTO
         var job: JobDTO
         var uploadUrl: String?
+        var limits: LimitsDTO?
     }
+
+    private struct LimitsDTO: Decodable {
+        var qualityProfile: String?
+    }
+
+    /// Server profile a product (object) job must come back with. A server without product support ignores
+    /// `captureKind` and answers with a space profile — the capture must then not be uploaded as a space.
+    static let objectCaptureServerProfile = "object_capture_fastergs_v1"
 
     private struct StatusDTO: Decodable {
         var job: JobDTO

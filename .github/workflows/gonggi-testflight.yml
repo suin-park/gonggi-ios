@@ -19,6 +19,11 @@ on:
         required: false
         default: false
         type: boolean
+      api_base_url:
+        description: 'API server baked into this build (GONGGI_API_BASE_URL). Product 3DGS pre-release builds: the staging URL, never production.'
+        required: false
+        default: 'https://www.3d-locker.com'
+        type: string
 
 concurrency:
   group: gonggi-testflight
@@ -294,10 +299,22 @@ jobs:
           BUILD_NUMBER: ${{ inputs.build_number }}
           MARKETING_VERSION: ${{ inputs.marketing_version }}
           ARCHIVE_PATH: ${{ steps.paths.outputs.archive_path }}
+          API_BASE_URL: ${{ inputs.api_base_url }}
         run: |
           set -euo pipefail
           BUILD_SHA="$(git rev-parse --short=12 HEAD)"
-          echo "Building archive - marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}, sha ${BUILD_SHA}"
+          case "${API_BASE_URL}" in
+            https://*) ;;
+            *) echo "::error::api_base_url must be https (got ${API_BASE_URL})"; exit 1 ;;
+          esac
+          # This code shows 제품 3D 촬영 on the Record tab: a production-server build would send product captures to a
+          # server without the product pipeline. Refuse unless the build points at staging.
+          if grep -q "productCaptureAvailable = true" Gonggi/Features/Capture/RecordHomeView.swift \
+             && [[ "${API_BASE_URL%/}" == "https://www.3d-locker.com" ]]; then
+            echo "::error::This build shows 제품 3D 촬영; set api_base_url to the staging server"
+            exit 1
+          fi
+          echo "Building archive - marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}, sha ${BUILD_SHA}, api ${API_BASE_URL}"
           xcodebuild archive \
             -project "${{ env.PROJECT }}" \
             -scheme "${{ env.SCHEME }}" \
@@ -310,7 +327,8 @@ jobs:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             MARKETING_VERSION="${MARKETING_VERSION}" \
             CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
-            GONGGI_BUILD_SHA="${BUILD_SHA}"
+            GONGGI_BUILD_SHA="${BUILD_SHA}" \
+            GONGGI_API_BASE_URL="${API_BASE_URL%/}"
 
           if [[ ! -d "${ARCHIVE_PATH}" ]]; then
             echo "::error::Archive not found at ${ARCHIVE_PATH}"

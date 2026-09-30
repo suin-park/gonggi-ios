@@ -212,3 +212,56 @@ final class ObjectCaptureTests: XCTestCase {
         XCTAssertFalse(SpaceSharePolicy.offersProductShareLink(walkable))
     }
 }
+
+/// Which server a build talks to (product 3DGS pre-release builds must use staging).
+final class AppServerConfigTests: XCTestCase {
+    func testAPIBaseURLResolution() {
+        let prod = AppConfiguration.productionAPIBaseURL
+        XCTAssertEqual(AppConfiguration.resolveAPIBaseURL(nil), prod)
+        XCTAssertEqual(AppConfiguration.resolveAPIBaseURL("$(GONGGI_API_BASE_URL)"), prod, "unexpanded build setting")
+        XCTAssertEqual(AppConfiguration.resolveAPIBaseURL("http://staging.3d-locker.com"), prod, "https only")
+        XCTAssertEqual(AppConfiguration.resolveAPIBaseURL("https://evil.example.com"), prod, "unknown host")
+        XCTAssertEqual(
+            AppConfiguration.resolveAPIBaseURL("https://staging.3d-locker.com/").absoluteString,
+            "https://staging.3d-locker.com"
+        )
+        XCTAssertEqual(
+            AppConfiguration.resolveAPIBaseURL("https://3d-locker-git-feat-product-3dgs.vercel.app").host,
+            "3d-locker-git-feat-product-3dgs.vercel.app"
+        )
+        let staging = AppConfiguration(
+            apiBaseURL: AppConfiguration.resolveAPIBaseURL("https://staging.3d-locker.com"),
+            sessionCookieName: "whik_session", googleClientID: "", googleReversedClientID: ""
+        )
+        XCTAssertFalse(staging.isProductionServer)
+        XCTAssertTrue(AppConfiguration(apiBaseURL: prod, sessionCookieName: "", googleClientID: "", googleReversedClientID: "").isProductionServer)
+    }
+}
+
+/// Which server a build talks to (product 3DGS pre-release builds must use staging).
+final class AppServerConfigTests: XCTestCase {
+    func testAPIBaseURLResolution() {
+        let prod = AppConfiguration.productionAPIBaseURL
+        XCTAssertEqual(AppConfiguration.resolveAPIBaseURL(nil), prod)
+        XCTAssertEqual(AppConfiguration.resolveAPIBaseURL("$(GONGGI_API_BASE_URL)"), prod, "unexpanded build setting")
+        XCTAssertEqual(AppConfiguration.resolveAPIBaseURL("http://staging.3d-locker.com"), prod, "https only")
+        XCTAssertEqual(AppConfiguration.resolveAPIBaseURL("https://evil.example.com"), prod, "unknown host")
+        XCTAssertEqual(
+            AppConfiguration.resolveAPIBaseURL("https://staging.3d-locker.com/").absoluteString,
+            "https://staging.3d-locker.com"
+        )
+        XCTAssertEqual(
+            AppConfiguration.resolveAPIBaseURL("https://3d-locker-git-feat-product-3dgs.vercel.app").host,
+            "3d-locker-git-feat-product-3dgs.vercel.app"
+        )
+        let staging = AppConfiguration(
+            apiBaseURL: AppConfiguration.resolveAPIBaseURL("https://staging.3d-locker.com"),
+            sessionCookieName: "whik_session", googleClientID: "", googleReversedClientID: ""
+        )
+        XCTAssertFalse(staging.isProductionServer)
+        XCTAssertTrue(
+            AppConfiguration(apiBaseURL: prod, sessionCookieName: "", googleClientID: "", googleReversedClientID: "")
+                .isProductionServer
+        )
+    }
+}
