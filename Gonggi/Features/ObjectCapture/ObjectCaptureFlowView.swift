@@ -11,7 +11,9 @@ enum ObjectCaptureCopy {
         "바닥과 주변이 함께 찍혀도 괜찮아요. 결과에서는 제품만 남겨요",
     ]
     static let start = "시작"
-    static let sizingHint = "상자가 제품을 모두 감싸도록 크기를 맞춰 주세요"
+    static let sizingHint = "상자를 끌어 제품 아래로 옮기고, 가로·깊이·높이를 넉넉하게 맞춰 주세요"
+    /// The worker keeps only what is inside the box, so a tight box cuts the product's top off (GONGGI_OBJECT_V1_002).
+    static let sizingTips = "한 손가락으로 끌어 옮기고, 두 손가락으로 돌려요. 높이는 제품 맨 위보다 조금 높게 잡아 주세요"
     static let width = "가로"
     static let height = "높이"
     static let depth = "깊이"
@@ -144,6 +146,11 @@ struct ObjectCaptureFlowView: View {
 
     private var sizingPanel: some View {
         VStack(spacing: 10) {
+            Text(ObjectCaptureCopy.sizingTips)
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             sizeSlider(ObjectCaptureCopy.width, value: session.box.size.x) { session.setSize(width: $0) }
             sizeSlider(ObjectCaptureCopy.height, value: session.box.size.y) { session.setSize(height: $0) }
             sizeSlider(ObjectCaptureCopy.depth, value: session.box.size.z) { session.setSize(depth: $0) }
@@ -267,6 +274,12 @@ struct ObjectCaptureARView: UIViewRepresentable {
         ])
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
         view.addGestureRecognizer(tap)
+        // Placed box: one finger drags it along the floor, two fingers turn it.
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.panned(_:)))
+        pan.maximumNumberOfTouches = 1
+        view.addGestureRecognizer(pan)
+        let turn = UIRotationGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.turned(_:)))
+        view.addGestureRecognizer(turn)
         session.arView = view
         context.coordinator.session = session
         return view
@@ -283,6 +296,24 @@ struct ObjectCaptureARView: UIViewRepresentable {
         @objc func tapped(_ g: UITapGestureRecognizer) {
             guard let session, session.stage == .placing, let view = g.view else { return }
             session.place(at: g.location(in: view))
+        }
+
+        @objc func panned(_ g: UIPanGestureRecognizer) {
+            guard let session, session.stage == .sizing, let view = g.view else { return }
+            let phase: ObjectCaptureSession.DragPhase
+            switch g.state {
+            case .began: phase = .began
+            case .changed: phase = .changed
+            default: phase = .ended
+            }
+            session.dragBox(at: g.location(in: view), phase: phase)
+        }
+
+        @objc func turned(_ g: UIRotationGestureRecognizer) {
+            guard let session, session.stage == .sizing, g.state == .changed else { return }
+            // Screen clockwise twist = box turns clockwise seen from above (yaw is counter-clockwise positive).
+            session.rotate(byRadians: -Float(g.rotation))
+            g.rotation = 0
         }
     }
 }

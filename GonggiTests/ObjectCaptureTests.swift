@@ -212,6 +212,20 @@ final class ObjectCaptureTests: XCTestCase {
         XCTAssertFalse(SpaceSharePolicy.offersProductShareLink(walkable))
     }
 
+    /// Dragging the box: the touch ray meets the support plane in front of the camera, never above the horizon.
+    func testSupportPlaneHitForBoxDrag() {
+        let eye = SIMD3<Float>(0, 1.2, 0)
+        let down = simd_normalize(SIMD3<Float>(0, -1, -1))
+        let hit = ObjectCaptureSession.supportPlaneHit(origin: eye, direction: down, planeY: 0)
+        XCTAssertNotNil(hit)
+        XCTAssertEqual(hit!.y, 0, accuracy: 1e-5)
+        XCTAssertEqual(hit!.z, -1.2, accuracy: 1e-4)
+        XCTAssertNil(ObjectCaptureSession.supportPlaneHit(origin: eye, direction: SIMD3(0, 0.2, -1), planeY: 0), "above the horizon")
+        XCTAssertNil(ObjectCaptureSession.supportPlaneHit(origin: eye, direction: SIMD3(0, 0, -1), planeY: 0), "parallel")
+        XCTAssertTrue(ObjectCaptureCopy.sizingHint.contains("끌어"))
+        XCTAssertTrue(ObjectCaptureCopy.sizingTips.contains("맨 위보다"))
+    }
+
     /// Product results are filed under 보관함 › 3D 자산 and never named or labelled as a space.
     @MainActor
     func testProductResultsAreFiledAndNamedAsProducts() {

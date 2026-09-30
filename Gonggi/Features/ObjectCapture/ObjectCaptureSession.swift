@@ -99,6 +99,43 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         GonggiHaptics.medium()
     }
 
+    enum DragPhase { case began, changed, ended }
+
+    /// Where a screen ray meets the support plane (horizontal, at the box base height). nil when the ray points away
+    /// from it or runs nearly parallel (a touch above the horizon).
+    nonisolated static func supportPlaneHit(
+        origin: SIMD3<Float>, direction: SIMD3<Float>, planeY: Float
+    ) -> SIMD3<Float>? {
+        guard abs(direction.y) > 1e-4 else { return nil }
+        let t = (planeY - origin.y) / direction.y
+        guard t > 0, t < 20 else { return nil }
+        return origin + t * direction
+    }
+
+    private var dragOffset: SIMD3<Float>?
+
+    /// Drag the placed box along the support surface. The box keeps its offset from the touch point, so it does not
+    /// jump under the finger; height, size and turn stay as they are.
+    func dragBox(at point: CGPoint, phase: DragPhase) {
+        guard hasBox, stage == .sizing else { return }
+        if phase == .ended {
+            dragOffset = nil
+            return
+        }
+        guard let arView, let ray = arView.ray(through: point),
+              let hit = Self.supportPlaneHit(origin: ray.origin, direction: ray.direction, planeY: box.baseCenter.y)
+        else { return }
+        guard phase == .changed, let offset = dragOffset else {
+            dragOffset = box.baseCenter - hit
+            GonggiHaptics.light()
+            return
+        }
+        var b = box
+        b.baseCenter = SIMD3<Float>(hit.x + offset.x, box.baseCenter.y, hit.z + offset.z)
+        box = b
+        sizeAdjusted = true
+    }
+
     func setSize(width: Float? = nil, height: Float? = nil, depth: Float? = nil) {
         var b = box
         if let width { b.size.x = width }
