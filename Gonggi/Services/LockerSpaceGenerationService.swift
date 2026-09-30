@@ -73,8 +73,13 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         var idempotencyKey: String?
     }
 
+    /// Package PUT runs on the background session (keeps going when the app leaves the screen). Tests inject
+    /// `session` and keep the in-process PUT.
+    private let usesBackgroundUpload: Bool
+
     init(config: AppConfiguration = .production, session: URLSession? = nil) {
         self.config = config
+        usesBackgroundUpload = session == nil
         if let session {
             self.session = session
         } else {
@@ -197,6 +202,23 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
 
         // Stream from file — never load full MOV/ZIP into memory.
         let isZip = fileURL.pathExtension.lowercased() == "zip"
+        if usesBackgroundUpload {
+            try await BackgroundCaptureUploader.shared.upload(
+                jobId: request.jobId,
+                spaceId: context.spaceId,
+                qualityProfile: context.qualityProfile,
+                uploadURL: uploadURL,
+                fileURL: fileURL,
+                contentType: isZip ? "application/zip" : "video/quicktime"
+            )
+            context.videoByteSize = byteSize
+            context.serverStatus = "uploaded"
+            context.overallProgress = 0.2
+            lock.lock()
+            jobContext[request.jobId] = context
+            lock.unlock()
+            return
+        }
         var put = URLRequest(url: uploadURL)
         put.httpMethod = "PUT"
         put.setValue(isZip ? "application/zip" : "video/quicktime", forHTTPHeaderField: "Content-Type")

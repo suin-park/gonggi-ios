@@ -193,6 +193,8 @@ jobs:
               -only-testing:GonggiTests/AppServerConfigTests
               -only-testing:GonggiTests/ProductCardServerGateTests
               -only-testing:GonggiTests/RecordHomeTests
+              -only-testing:GonggiTests/BackgroundCaptureUploaderTests
+              -only-testing:GonggiTests/MobileAuthFreshTokenTests
             )
           fi
           set +e

@@ -489,6 +489,10 @@ enum SpaceGenerationErrorPresenter {
     static let packageMissingUnrecoverable =
         "기기에서 원본 촬영 패키지를 찾을 수 없어요.\n같은 촬영으로 다시 시도할 수 없습니다. 새로 촬영해 주세요."
 
+    static let uploadContinuesInBackground =
+        "업로드는 백그라운드에서 계속되고 있어요.
+끝나면 3D 생성이 자동으로 시작돼요. 진행 상황은 보관함에서 볼 수 있어요."
+
     static let uploadCancelled =
         "업로드가 중단됐어요.\n원본 촬영 데이터는 기기에 남아 있어요. 보관함에서 같은 촬영으로 다시 시도할 수 있어요."
 

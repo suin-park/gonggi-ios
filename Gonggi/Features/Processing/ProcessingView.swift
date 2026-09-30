@@ -325,6 +325,19 @@ final class ProcessingViewModel: ObservableObject {
             isRunning = false
             canRetrySameCapture = false
         } catch is CancellationError {
+            // iOS ended this screen's background time mid-upload, but the package transfer keeps going on the
+            // background session and starts generation itself when it finishes. Do not mark it interrupted.
+            if generation.uploadStarted, !generation.uploadFinished, let jobId = generation.jobId,
+               await BackgroundCaptureUploader.shared.isTransferring(jobId: jobId) {
+                generation.backendErrorCode = "upload_continues_in_background"
+                persistGeneration()
+                failActiveStep(currentStage, message: "백그라운드에서 업로드 중")
+                errorMessage = SpaceGenerationErrorPresenter.uploadContinuesInBackground
+                canRetrySameCapture = false
+                isRunning = false
+                log.info("pipeline detached; upload continues captureId=\(summary.captureId, privacy: .public)")
+                return
+            }
             generation.failedStage = "cancelled"
             generation.backendErrorCode = "cancelled"
             persistGeneration()
@@ -351,6 +364,11 @@ final class ProcessingViewModel: ObservableObject {
                 generation.backendErrorCode = gen.backendErrorCode
             } else {
                 generation.backendErrorCode = error.localizedDescription
+            }
+            // Record what R2 / the network actually answered (http_403, urlerror_-1001, …) for upload failures.
+            if case .uploadFailed = error as? SpaceGenerationError, let jobId = generation.jobId,
+               let detail = BackgroundCaptureUploader.shared.failureDetail(jobId: jobId) {
+                generation.backendErrorCode = "upload_\(detail)"
             }
             generation.failedStage = currentStage.diagnosticsStageName
             persistGeneration()

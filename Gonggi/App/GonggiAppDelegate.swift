@@ -12,7 +12,17 @@ final class GonggiAppDelegate: NSObject, UIApplicationDelegate {
             GonggiPushRegistrar.shared.configure()
             GonggiPushRegistrar.shared.registerIfAuthorized()
         }
+        // Receive results of capture uploads that kept running while the app was not.
+        BackgroundCaptureUploader.shared.reconnect()
         return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        BackgroundCaptureUploader.shared.handleBackgroundEvents(identifier: identifier, completion: completionHandler)
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
