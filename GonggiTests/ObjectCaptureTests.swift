@@ -223,7 +223,24 @@ final class ObjectCaptureTests: XCTestCase {
         XCTAssertNil(ObjectCaptureSession.supportPlaneHit(origin: eye, direction: SIMD3(0, 0.2, -1), planeY: 0), "above the horizon")
         XCTAssertNil(ObjectCaptureSession.supportPlaneHit(origin: eye, direction: SIMD3(0, 0, -1), planeY: 0), "parallel")
         XCTAssertTrue(ObjectCaptureCopy.sizingHint.contains("끌어"))
+        XCTAssertLessThanOrEqual(ObjectCaptureSession.maxDragStepM, 0.3, "a pose jump must not fling the box")
         XCTAssertTrue(ObjectCaptureCopy.sizingTips.contains("맨 위보다"))
+    }
+
+    /// A drag starts only on the drawn box (or within the touch slop of its outline), never on empty screen.
+    func testBoxDragStartsOnlyOnTheBox() {
+        // Projected corners of a box seen at an angle: bottom square + top square shifted up.
+        let corners: [CGPoint] = [
+            CGPoint(x: 100, y: 400), CGPoint(x: 260, y: 420), CGPoint(x: 300, y: 360), CGPoint(x: 140, y: 345),
+            CGPoint(x: 100, y: 250), CGPoint(x: 260, y: 270), CGPoint(x: 300, y: 210), CGPoint(x: 140, y: 195),
+        ]
+        let m = ObjectCaptureSession.grabMarginPt
+        XCTAssertTrue(ObjectCaptureSession.boxOutlineContains(corners: corners, point: CGPoint(x: 200, y: 300), margin: m))
+        XCTAssertTrue(ObjectCaptureSession.boxOutlineContains(corners: corners, point: CGPoint(x: 95, y: 320), margin: m), "edge slop")
+        XCTAssertFalse(ObjectCaptureSession.boxOutlineContains(corners: corners, point: CGPoint(x: 40, y: 320), margin: m))
+        XCTAssertFalse(ObjectCaptureSession.boxOutlineContains(corners: corners, point: CGPoint(x: 200, y: 600), margin: m))
+        XCTAssertFalse(ObjectCaptureSession.boxOutlineContains(corners: Array(corners.prefix(2)), point: CGPoint(x: 100, y: 400), margin: m))
+        XCTAssertEqual(ObjectCaptureSession.convexHull(corners).count, 6, "silhouette of a box seen from above-side")
     }
 
     /// Product results are filed under 보관함 › 3D 자산 and never named or labelled as a space.

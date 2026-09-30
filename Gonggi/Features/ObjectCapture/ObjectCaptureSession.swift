@@ -101,6 +101,12 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     enum DragPhase { case began, changed, ended }
 
+    /// Largest move of the box from one drag event to the next. A bigger jump means the camera pose jumped
+    /// (tracking relocalised), not the finger — that event is ignored.
+    nonisolated static let maxDragStepM: Float = 0.3
+    /// Touch slop around the drawn box that still grabs it.
+    nonisolated static let grabMarginPt: CGFloat = 16
+
     /// Where a screen ray meets the support plane (horizontal, at the box base height). nil when the ray points away
     /// from it or runs nearly parallel (a touch above the horizon).
     nonisolated static func supportPlaneHit(
@@ -112,16 +118,62 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         return origin + t * direction
     }
 
+    /// Convex hull (counter-clockwise, monotone chain) of the projected box corners.
+    nonisolated static func convexHull(_ points: [CGPoint]) -> [CGPoint] {
+        let pts = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+        guard pts.count > 2 else { return pts }
+        func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+        var lower: [CGPoint] = []
+        for p in pts {
+            while lower.count >= 2, cross(lower[lower.count - 2], lower[lower.count - 1], p) <= 0 { lower.removeLast() }
+            lower.append(p)
+        }
+        var upper: [CGPoint] = []
+        for p in pts.reversed() {
+            while upper.count >= 2, cross(upper[upper.count - 2], upper[upper.count - 1], p) <= 0 { upper.removeLast() }
+            upper.append(p)
+        }
+        return Array(lower.dropLast() + upper.dropLast())
+    }
+
+    /// True when `point` lies inside the drawn box outline, or within `margin` of it.
+    nonisolated static func boxOutlineContains(corners: [CGPoint], point: CGPoint, margin: CGFloat) -> Bool {
+        let hull = convexHull(corners)
+        guard hull.count >= 3 else { return false }
+        var inside = true
+        var nearest = CGFloat.greatestFiniteMagnitude
+        for i in hull.indices {
+            let a = hull[i], b = hull[(i + 1) % hull.count]
+            let ex = b.x - a.x, ey = b.y - a.y
+            if ex * (point.y - a.y) - ey * (point.x - a.x) < 0 { inside = false }
+            let len2 = max(ex * ex + ey * ey, 1e-6)
+            let t = min(1, max(0, ((point.x - a.x) * ex + (point.y - a.y) * ey) / len2))
+            let dx = point.x - (a.x + t * ex), dy = point.y - (a.y + t * ey)
+            nearest = min(nearest, (dx * dx + dy * dy).squareRoot())
+        }
+        return inside || nearest <= margin
+    }
+
+    /// A drag moves the box only when it starts on the drawn box — dragging empty screen does nothing.
+    func canStartDrag(at point: CGPoint) -> Bool {
+        guard hasBox, stage == .sizing, let corners = cornersOnScreen, corners.count == 8 else { return false }
+        return Self.boxOutlineContains(corners: corners, point: point, margin: Self.grabMarginPt)
+    }
+
     private var dragOffset: SIMD3<Float>?
 
-    /// Drag the placed box along the support surface. The box keeps its offset from the touch point, so it does not
-    /// jump under the finger; height, size and turn stay as they are.
+    /// Drag the placed box along the support surface (the plane at the box base height — it does not follow plane
+    /// re-estimates). The box keeps its offset from the touch point, so it does not jump under the finger; height,
+    /// size and turn stay as they are. While tracking is limited, or when the pose jumps, the box stays put.
     func dragBox(at point: CGPoint, phase: DragPhase) {
         guard hasBox, stage == .sizing else { return }
         if phase == .ended {
             dragOffset = nil
             return
         }
+        guard let tracking = arSession.currentFrame?.camera.trackingState, case .normal = tracking else { return }
         guard let arView, let ray = arView.ray(through: point),
               let hit = Self.supportPlaneHit(origin: ray.origin, direction: ray.direction, planeY: box.baseCenter.y)
         else { return }
@@ -130,8 +182,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             GonggiHaptics.light()
             return
         }
+        let next = SIMD3<Float>(hit.x + offset.x, box.baseCenter.y, hit.z + offset.z)
+        guard simd_distance(next, box.baseCenter) <= Self.maxDragStepM else { return }
         var b = box
-        b.baseCenter = SIMD3<Float>(hit.x + offset.x, box.baseCenter.y, hit.z + offset.z)
+        b.baseCenter = next
         box = b
         sizeAdjusted = true
     }

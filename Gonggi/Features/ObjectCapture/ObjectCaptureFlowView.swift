@@ -11,9 +11,9 @@ enum ObjectCaptureCopy {
         "바닥과 주변이 함께 찍혀도 괜찮아요. 결과에서는 제품만 남겨요",
     ]
     static let start = "시작"
-    static let sizingHint = "상자를 끌어 제품 아래로 옮기고, 가로·깊이·높이를 넉넉하게 맞춰 주세요"
+    static let sizingHint = "상자를 눌러 제품 아래로 끌어 옮기고, 가로·깊이·높이를 넉넉하게 맞춰 주세요"
     /// The worker keeps only what is inside the box, so a tight box cuts the product's top off (GONGGI_OBJECT_V1_002).
-    static let sizingTips = "한 손가락으로 끌어 옮기고, 두 손가락으로 돌려요. 높이는 제품 맨 위보다 조금 높게 잡아 주세요"
+    static let sizingTips = "상자 안을 한 손가락으로 끌어 옮기고, 두 손가락으로 돌려요. 높이는 제품 맨 위보다 조금 높게 잡아 주세요"
     static let width = "가로"
     static let height = "높이"
     static let depth = "깊이"
@@ -274,11 +274,13 @@ struct ObjectCaptureARView: UIViewRepresentable {
         ])
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
         view.addGestureRecognizer(tap)
-        // Placed box: one finger drags it along the floor, two fingers turn it.
+        // Placed box: one finger on the box drags it along the floor (empty screen does nothing), two fingers turn it.
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.panned(_:)))
         pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
         view.addGestureRecognizer(pan)
         let turn = UIRotationGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.turned(_:)))
+        turn.delegate = context.coordinator
         view.addGestureRecognizer(turn)
         session.arView = view
         context.coordinator.session = session
@@ -290,8 +292,27 @@ struct ObjectCaptureARView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     @MainActor
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         weak var session: ObjectCaptureSession?
+
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let session, let view = g.view else { return false }
+            if g is UIPanGestureRecognizer {
+                return session.canStartDrag(at: g.location(in: view))
+            }
+            if g is UIRotationGestureRecognizer {
+                return session.stage == .sizing
+            }
+            return true
+        }
+
+        /// A second finger landing during a drag starts the turn; the drag then stops (see `panned`).
+        func gestureRecognizer(
+            _ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool {
+            (g is UIPanGestureRecognizer && other is UIRotationGestureRecognizer)
+                || (g is UIRotationGestureRecognizer && other is UIPanGestureRecognizer)
+        }
 
         @objc func tapped(_ g: UITapGestureRecognizer) {
             guard let session, session.stage == .placing, let view = g.view else { return }
@@ -300,6 +321,11 @@ struct ObjectCaptureARView: UIViewRepresentable {
 
         @objc func panned(_ g: UIPanGestureRecognizer) {
             guard let session, session.stage == .sizing, let view = g.view else { return }
+            // Two fingers down = turning: the box must not slide at the same time.
+            if g.numberOfTouches > 1 {
+                session.dragBox(at: .zero, phase: .ended)
+                return
+            }
             let phase: ObjectCaptureSession.DragPhase
             switch g.state {
             case .began: phase = .began
