@@ -41,6 +41,15 @@ struct ScreenshotRootView: View {
                     }
             case .recordMode:
                 CaptureContainerView()
+            case .recordHome, .recordProduct, .recordSpace:
+                MainTabView()
+                    .onAppear { appState.selectTab(.record) }
+            case .recordHomeDynamicType, .recordProductDynamicType, .recordSpaceDynamicType:
+                MainTabView()
+                    .environment(\.sizeCategory, .accessibilityExtraExtraLarge)
+                    .onAppear { appState.selectTab(.record) }
+            case .recordPhotoSource:
+                CreateAssetFlowView(onClose: {}, notice: RecordHomeCopy.photoNotice)
             case .librarySpaces:
                 MainTabView()
                     .onAppear { appState.selectTab(.library) }

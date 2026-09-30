@@ -32,8 +32,6 @@ final class AppState: ObservableObject {
     @Published var preferredLibraryCategory: LibraryCategory?
     /// Alias consumed by LibraryView when opening 배치 결과 after async curtain accept.
     @Published var pendingLibraryTab: LibraryCategory?
-    /// 기록 tab "이어서 할 일": Library space card whose detail should open (navigation only, no request).
-    @Published var pendingLibrarySpaceDetailId: String?
     /// Highlight a placement result card after navigation from VR accept.
     @Published var pendingPlacementResultHighlightId: String?
     /// Soft Library refresh signal — does not block tab transition.
@@ -120,6 +118,8 @@ final class AppState: ObservableObject {
             case .home: selectedTab = .home
             case .librarySpaces: selectedTab = .library
             case .profile: selectedTab = .profile
+            case .recordHome, .recordHomeDynamicType, .recordProduct, .recordProductDynamicType,
+                 .recordSpace, .recordSpaceDynamicType: selectedTab = .record
             default: break
             }
         }
@@ -140,7 +140,6 @@ final class AppState: ObservableObject {
         spaceLinkUserMessage = nil
         preferredLibraryCategory = nil
         pendingLibraryTab = nil
-        pendingLibrarySpaceDetailId = nil
         pendingPlacementResultHighlightId = nil
         notificationUnreadCount = 0
         isExitingVRToLibrary = false
@@ -367,21 +366,6 @@ final class AppState: ObservableObject {
     }
 
     /// "3D space ready" push tap → Library tab → that space's viewer.
-    /// 기록 tab "이어서 할 일": go to the existing Library place for the item. Never uploads or starts a generation —
-    /// resend / retry stay behind their own buttons (and confirmations) in the Library.
-    func openLibraryFromRecord(_ route: RecordResumeRoute) {
-        switch route {
-        case .spaces:
-            preferredLibraryCategory = .spaces
-        case .assets:
-            preferredLibraryCategory = .assets
-        case .spaceDetail(let libraryId):
-            preferredLibraryCategory = .spaces
-            pendingLibrarySpaceDetailId = libraryId
-        }
-        selectedTab = .library
-    }
-
     func openGaussianSpaceFromPush(spaceId: String) {
         GonggiPushDeepLink.pendingGaussianSpaceId = nil
         selectedTab = .library

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Capture mode selection.
-/// Production Record tab shows equal choices: 360° vs 3D space record.
+/// Production 기록 tab: 제품 / 공간 chooser (RecordHomeView.swift).
 /// Other modes remain for DEBUG / internal access only.
 enum CaptureMode: String, Identifiable {
     case directionCapture
@@ -69,7 +69,8 @@ enum CaptureMode: String, Identifiable {
     }
 }
 
-/// Entry for Record tab — choose 360° or 3D space recording first.
+/// 기록 tab: 기록 → 제품 / 공간 (pushed) → method. Capture flows are full-screen covers; closing one returns to the
+/// screen it was opened from.
 struct CaptureContainerView: View {
     @EnvironmentObject private var appState: AppState
 
@@ -81,33 +82,42 @@ struct CaptureContainerView: View {
     }
 
     @State private var activeFlow: ActiveFlow = .none
+    @State private var path: [RecordDestination] = CaptureContainerView.initialPath
     #if DEBUG
     @State private var showDebugModes = false
     #endif
     @State private var showPhotoTo3D = false
     @State private var toast: String?
     @State private var walkableAlert: String?
-    @ObservedObject private var gaussianStore = GaussianGenerationStore.shared
-    @ObservedObject private var assetGenerationStore = AssetGenerationStore.shared
-    @State private var unsentCount = 0
+
+    private static var initialPath: [RecordDestination] {
+        #if DEBUG
+        return ScreenshotLaunchConfig.recordInitialPath
+        #else
+        return []
+        #endif
+    }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                GonggiAmbientBackground()
-                switch activeFlow {
-                case .none:
-                    recordModeSelection
-                case .threeDSpaceRecord:
-                    // Presented via fullScreenCover below (hides global TabView).
-                    Color.clear
-                case .debug(.spaceScan3DGS):
-                    CaptureFlowView(onClose: { activeFlow = .none })
-                case .directionCapture, .debug(.panoramaCapture), .debug(.quick360Experimental), .debug(.directionCapture):
-                    Color.clear
+        Group {
+            if case .debug(.spaceScan3DGS) = activeFlow {
+                CaptureFlowView(onClose: { activeFlow = .none })
+            } else {
+                NavigationStack(path: $path) {
+                    RecordHomeScreen { destination in
+                        GonggiHaptics.selection()
+                        path.append(destination)
+                    }
+                    .background(GonggiAmbientBackground())
+                    .toolbar(.hidden, for: .navigationBar)
+                    .navigationDestination(for: RecordDestination.self) { destination in
+                        switch destination {
+                        case .product: productScreen
+                        case .space: spaceScreen
+                        }
+                    }
                 }
             }
-            .navigationBarHidden(true)
         }
         .fullScreenCover(isPresented: Binding(
             get: { activeFlow == .threeDSpaceRecord },
@@ -152,13 +162,15 @@ struct CaptureContainerView: View {
                 .environmentObject(appState)
         }
         .sheet(isPresented: $showPhotoTo3D) {
-            // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기".
+            // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기"; the AI disclosure is
+            // the first line of its photo source chooser.
             CreateAssetFlowView(
                 onClose: { showPhotoTo3D = false },
                 onAccepted: {
                     toast = RecordHomeCopy.photoAccepted
                     AssetLibraryStore.shared.refresh(force: true)
-                }
+                },
+                notice: RecordHomeCopy.photoNotice
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -174,13 +186,14 @@ struct CaptureContainerView: View {
         .overlay(alignment: .bottom) {
             if let toast {
                 Text(toast)
-                    .font(GonggiTypography.caption(14))
+                    .font(.subheadline)
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, GonggiSpacing.lg)
                     .padding(.vertical, GonggiSpacing.sm)
                     .background(GonggiColors.accentTeal.opacity(0.95))
-                    .clipShape(Capsule())
+                    .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                    .padding(.horizontal, GonggiSpacing.lg)
                     .padding(.bottom, GonggiSpacing.lg)
                     .onAppear {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { withAnimation { self.toast = nil } }
@@ -189,15 +202,42 @@ struct CaptureContainerView: View {
         }
         // Every account sees the 기록 chooser: 360° starts from its card (build ≤ 83 auto-started it outside the rollout).
         .onAppear {
-            refreshResumeSources()
             Task { await appState.refreshSpatialRecordAvailability() }
         }
         .onChange(of: appState.selectedTab) { _, tab in
             if tab == .record {
-                refreshResumeSources()
                 Task { await appState.refreshSpatialRecordAvailability() }
             }
         }
+    }
+
+    private var productScreen: some View {
+        RecordProductScreen(
+            productCaptureAvailable: RecordHomePolicy.productCaptureAvailable,
+            onPhotoTo3D: {
+                GonggiHaptics.medium()
+                showPhotoTo3D = true
+            }
+        )
+        .background(GonggiAmbientBackground())
+    }
+
+    private var spaceScreen: some View {
+        RecordSpaceScreen(
+            walkableVisible: walkableCardVisible,
+            onSpace360: {
+                GonggiHaptics.medium()
+                activeFlow = .directionCapture
+            },
+            onWalkable: { openWalkableSpace() }
+        ) {
+            #if DEBUG
+            if !ScreenshotLaunchConfig.isActive {
+                debugModesSection
+            }
+            #endif
+        }
+        .background(GonggiAmbientBackground())
     }
 
     private var walkableCardVisible: Bool {
@@ -226,78 +266,6 @@ struct CaptureContainerView: View {
         }
     }
 
-    private func refreshResumeSources() {
-        unsentCount = UnsentCaptureResumer.pending(currentUserId: GaussianGenerationStore.shared.boundUserId).count
-    }
-
-    private var resume: (items: [RecordResumeItem], more: Int) {
-        RecordResumeBuilder.items(
-            spaceJobs: gaussianStore.jobs.map {
-                .init(spaceId: $0.spaceId, name: $0.name, status: $0.spaceStatus, failureLabel: $0.failureLabel)
-            },
-            unsentCount: unsentCount,
-            assetActive: assetGenerationStore.activeJobs.count,
-            assetFailed: assetGenerationStore.failedJobs.count
-        )
-    }
-
-    // MARK: - Selection
-
-    private var recordModeSelection: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-                    Text(RecordHomeCopy.title)
-                        .font(GonggiTypography.title(28))
-                        .foregroundStyle(GonggiColors.textPrimary)
-                    Text(RecordHomeCopy.subtitle)
-                        .font(GonggiTypography.body(16))
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
-                .padding(.top, GonggiSpacing.xl)
-
-                let r = resume
-                if !r.items.isEmpty {
-                    RecordResumeStrip(items: r.items, more: r.more) { route in
-                        GonggiHaptics.selection()
-                        appState.openLibraryFromRecord(route)
-                    }
-                }
-
-                RecordSectionHeader(title: RecordHomeCopy.productSection, caption: RecordHomeCopy.productSectionCaption)
-                RecordChoiceCard(icon: "photo.on.rectangle.angled", card: RecordHomeCopy.photoTo3D) {
-                    GonggiHaptics.medium()
-                    showPhotoTo3D = true
-                }
-                // 제품 3D 촬영 is not built: no card until RecordHomePolicy.productCaptureAvailable.
-
-                RecordSectionHeader(title: RecordHomeCopy.spaceSection, caption: RecordHomeCopy.spaceSectionCaption)
-                if walkableCardVisible {
-                    RecordChoiceCard(icon: "figure.walk.motion", card: RecordHomeCopy.walkableSpace) {
-                        openWalkableSpace()
-                    }
-                }
-                RecordChoiceCard(icon: "arrow.triangle.2.circlepath.circle", card: RecordHomeCopy.space360) {
-                    GonggiHaptics.medium()
-                    activeFlow = .directionCapture
-                }
-
-                #if DEBUG
-                debugModesSection
-                #endif
-
-                if appState.isMockMode {
-                    Text("Mock 모드 · 미리보기용")
-                        .font(GonggiTypography.caption(11))
-                        .foregroundStyle(GonggiColors.textTertiary)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(.horizontal, GonggiSpacing.lg)
-            .padding(.bottom, GonggiSpacing.xxl)
-        }
-    }
-
     #if DEBUG
     private var debugModesSection: some View {
         VStack(spacing: GonggiSpacing.sm) {
@@ -316,7 +284,6 @@ struct CaptureContainerView: View {
         }
         .padding(.top, GonggiSpacing.md)
     }
-    #endif
 
     private func modeCard(_ mode: CaptureMode) -> some View {
         Button {
@@ -371,6 +338,7 @@ struct CaptureContainerView: View {
         }
         .buttonStyle(.plain)
     }
+    #endif
 }
 
 struct CaptureFlowView: View {

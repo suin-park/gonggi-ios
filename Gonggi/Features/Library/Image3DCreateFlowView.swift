@@ -186,6 +186,8 @@ struct CreateAssetFlowView: View {
     /// Explicit generation retry: new clientRequestId; optional reused JPEG.
     var retrySourceImage: UIImage? = nil
     var retryJPEG: Data? = nil
+    /// One line above the source choices (기록 › 제품 passes the AI disclosure). Nil keeps the Library layout.
+    var notice: String? = nil
 
     @StateObject private var model = Image3DCreateViewModel()
     @State private var showCamera = false
@@ -276,6 +278,12 @@ struct CreateAssetFlowView: View {
 
     private var sourceChooser: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+            if let notice {
+                Label(notice, systemImage: "sparkles")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Text("물체가 화면 중앙에 잘 보이는 사진을 사용하면\n더 좋은 3D 결과를 얻을 수 있어요.")
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)

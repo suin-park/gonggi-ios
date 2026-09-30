@@ -17,6 +17,13 @@ enum ScreenshotScreen: String, CaseIterable {
     case loginEmailKeyboard
     case home
     case recordMode
+    case recordHome
+    case recordHomeDynamicType
+    case recordProduct
+    case recordProductDynamicType
+    case recordPhotoSource
+    case recordSpace
+    case recordSpaceDynamicType
     case capture30
     case capture68
     case capture90
@@ -63,6 +70,13 @@ enum ScreenshotScreen: String, CaseIterable {
         case .loginEmailKeyboard: return "login_email_keyboard.png"
         case .home: return "01_home_after.png"
         case .recordMode: return "01_record_mode_after.png"
+        case .recordHome: return "record_01_home.png"
+        case .recordHomeDynamicType: return "record_01_home_dynamic_type.png"
+        case .recordProduct: return "record_02_product.png"
+        case .recordProductDynamicType: return "record_02_product_dynamic_type.png"
+        case .recordPhotoSource: return "record_03_photo_source.png"
+        case .recordSpace: return "record_04_space.png"
+        case .recordSpaceDynamicType: return "record_04_space_dynamic_type.png"
         case .capture30: return "02_capture_30.png"
         case .capture68: return "03_capture_68.png"
         case .capture90: return "04_capture_90.png"
@@ -121,6 +135,15 @@ enum ScreenshotLaunchConfig {
         ProcessInfo.processInfo.arguments.contains("-screenshot-reduce-motion")
             || screen == .welcomeReduceMotion
             || screen == .welcomeSpaceLightReduceMotion
+    }
+
+    /// 기록 tab screens rendered inside MainTabView, pushed to the given screen.
+    static var recordInitialPath: [RecordDestination] {
+        switch screen {
+        case .recordProduct, .recordProductDynamicType: return [.product]
+        case .recordSpace, .recordSpaceDynamicType: return [.space]
+        default: return []
+        }
     }
 
     static var authDecoration: AuthWelcomeDecoration {
