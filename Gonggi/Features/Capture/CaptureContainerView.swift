@@ -8,7 +8,7 @@ enum CaptureMode: String, Identifiable {
     case panoramaCapture
     case spaceScan3DGS
     case quick360Experimental
-    /// Physical product (object) capture — DEBUG entry until the real flow is verified on device.
+    /// Physical product (object) capture — 기록 탭 제품 섹션 (DEBUG 개발자 목록에도 백업 진입).
     case productObjectCapture
 
     var id: String { rawValue }
@@ -32,7 +32,7 @@ enum CaptureMode: String, Identifiable {
         case .panoramaCapture: return "파노라마 기록"
         case .spaceScan3DGS: return "3D 공간 스캔 (DEBUG)"
         case .quick360Experimental: return "실험 · 360 공간 기록"
-        case .productObjectCapture: return "제품 3D 촬영 (DEBUG)"
+        case .productObjectCapture: return "제품 3D 촬영"
         }
     }
 
@@ -47,13 +47,13 @@ enum CaptureMode: String, Identifiable {
         case .quick360Experimental:
             return "실험용 full-sphere / OpenCV A/B (기본 경로 아님)"
         case .productObjectCapture:
-            return "DEBUG: 고정된 무광 제품 주위를 걸으며 촬영 (서버 object 경로, 내부 계정만)"
+            return "고정된 무광 제품 주위를 걸으며 촬영해요"
         }
     }
 
     var secondaryCaption: String? {
         switch self {
-        case .spaceScan3DGS, .productObjectCapture: return "내부 전용"
+        case .spaceScan3DGS: return "내부 전용"
         default: return nil
         }
     }
@@ -83,6 +83,8 @@ struct CaptureContainerView: View {
         case none
         case directionCapture
         case threeDSpaceRecord
+        /// Physical product capture from the 기록 row (also reachable from the DEBUG list).
+        case productObjectCapture
         case debug(CaptureMode)
     }
 
@@ -157,6 +159,7 @@ struct CaptureContainerView: View {
         }
         .fullScreenCover(isPresented: Binding(
             get: {
+                if activeFlow == .productObjectCapture { return true }
                 if case .debug(.productObjectCapture) = activeFlow { return true }
                 return false
             },
@@ -231,9 +234,8 @@ struct CaptureContainerView: View {
                     GonggiHaptics.medium()
                     showPhotoTo3D = true
                 case .productCapture:
-                    // Listed only once RecordHomePolicy.productCaptureAvailable is on (after device verification).
                     GonggiHaptics.medium()
-                    activeFlow = .debug(.productObjectCapture)
+                    activeFlow = .productObjectCapture
                 }
             },
             onSpace: { option in

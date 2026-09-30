@@ -27,9 +27,9 @@ final class RecordHomeTests: XCTestCase {
     }
 
     func testOrderPhotoAnd360FirstThe3DGSKindsSecond() {
-        XCTAssertFalse(RecordHomePolicy.productCaptureAvailable)
-        XCTAssertEqual(RecordProductOption.visible(productCaptureAvailable: false), [.photoTo3D])
+        XCTAssertTrue(RecordHomePolicy.productCaptureAvailable)
         XCTAssertEqual(RecordProductOption.visible(productCaptureAvailable: true), [.photoTo3D, .productCapture])
+        XCTAssertEqual(RecordProductOption.visible(productCaptureAvailable: false), [.photoTo3D])
         XCTAssertEqual(RecordSpaceOption.visible(walkableVisible: true), [.space360, .walkable])
         XCTAssertEqual(RecordSpaceOption.visible(walkableVisible: false), [.space360])
     }

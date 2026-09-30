@@ -19,7 +19,6 @@ enum RecordHomeCopy {
 
     static let photoTo3D = Choice(title: "사진으로 3D 만들기", line: "사진 한 장으로 입체 모습을 만들어요",
                                   icon: "photo.on.rectangle.angled")
-    /// Not built yet (future 3DGS product capture) — never shown while `RecordHomePolicy.productCaptureAvailable` is off.
     static let productCapture = Choice(title: "제품 3D 촬영", line: "제품을 돌려 보고 확대할 수 있어요", icon: "rotate.3d")
 
     static let space360 = Choice(title: "360 공간", line: "한 자리에서 주변을 둘러봐요",
@@ -66,8 +65,9 @@ enum RecordSpaceOption: Equatable {
 }
 
 enum RecordHomePolicy {
-    /// Product multi-view (3DGS) capture is not built: no row, no entry, nothing to tap.
-    static let productCaptureAvailable = false
+    /// Product multi-view (3DGS) capture on the 기록 screen — always listed (사진으로 3D 만들기 다음).
+    /// Pre-release: no DEBUG / internal-tools unlock gate. Success is still judged from a real product capture.
+    static let productCaptureAvailable = true
 
     /// Walkable space row: hidden only when the server said "not available" for this account. Unknown (first launch,
     /// offline) keeps it visible; a tap then re-checks before opening.

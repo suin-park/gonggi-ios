@@ -176,14 +176,18 @@ final class ObjectCaptureTests: XCTestCase {
         XCTAssertFalse(ObjectCapturePackage.isObjectPackage(root: nil))
     }
 
-    func testProductCaptureStaysHiddenOnTheRecordTab() throws {
-        XCTAssertFalse(RecordHomePolicy.productCaptureAvailable)
-        XCTAssertEqual(RecordProductOption.visible(productCaptureAvailable: false), [.photoTo3D])
-        XCTAssertTrue(CaptureMode.debugModes.contains(.productObjectCapture), "reachable only from the DEBUG developer list")
+    func testProductCaptureIsAlwaysOnTheRecordTab() throws {
+        XCTAssertTrue(RecordHomePolicy.productCaptureAvailable)
+        XCTAssertEqual(RecordProductOption.visible(productCaptureAvailable: true), [.photoTo3D, .productCapture])
+        XCTAssertEqual(RecordProductOption.visible(productCaptureAvailable: RecordHomePolicy.productCaptureAvailable),
+                       [.photoTo3D, .productCapture])
+        XCTAssertTrue(CaptureMode.debugModes.contains(.productObjectCapture), "DEBUG list keeps a backup entry")
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let home = try String(contentsOf: root.appendingPathComponent("Gonggi/Features/Capture/RecordHomeView.swift"), encoding: .utf8)
+        XCTAssertFalse(home.contains("isInternalToolsUnlocked"), "product row must not depend on internal tools")
         let src = try String(contentsOf: root.appendingPathComponent("Gonggi/Features/Capture/CaptureContainerView.swift"), encoding: .utf8)
-        // The developer list itself only exists in DEBUG builds.
-        XCTAssertTrue(src.contains("#if DEBUG\n    private var debugModesSection") || src.contains("#if DEBUG\r\n    private var debugModesSection"))
+        XCTAssertTrue(src.contains("case productObjectCapture"), "기록 entry uses a first-class ActiveFlow")
+        XCTAssertTrue(src.contains("activeFlow = .productObjectCapture"))
     }
 
     @MainActor
