@@ -737,6 +737,26 @@ final class SpatialCapturePackageTests: XCTestCase {
         XCTAssertGreaterThan(zipped.byteSize, 100)
         XCTAssertEqual(zipped.frameCount, 2)
         XCTAssertTrue(FileManager.default.fileExists(atPath: zipped.zipURL.path))
+        XCTAssertFalse(zipped.includesObjectContract, "space package has no object.json")
+
+        // Product capture: object.json must travel in the archive (GONGGI_OBJECT_V1_003 failed without it).
+        let file = ObjectCaptureFile.make(
+            box: ObjectCaptureBox(baseCenter: [0, 0, -1], size: [0.3, 0.4, 0.2], yawRadians: 0),
+            centerSource: "raycast_estimated_plane",
+            sizeSource: "user_adjusted",
+            coverage: ObjectOrbitCoverage(),
+            frames: [],
+            hasLiDAR: false
+        )
+        try file.write(to: paths.root)
+        let productZip = try SpatialCapturePackageZipper.buildArchive(
+            packageRoot: paths.root,
+            destinationDirectory: zipDir.appendingPathComponent("product", isDirectory: true)
+        )
+        XCTAssertTrue(productZip.includesObjectContract)
+        let bytes = try Data(contentsOf: productZip.zipURL)
+        XCTAssertNotNil(bytes.range(of: Data("object.json".utf8)), "object.json entry in the zip")
+        XCTAssertNotNil(bytes.range(of: Data("\"captureKind\"".utf8)), "object.json body in the zip")
     }
 
     private func makeTinyJPEG() throws -> Data {

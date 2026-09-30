@@ -22,7 +22,11 @@ struct LibraryView: View {
                     case .spaces:
                         spacesContent
                     case .assets:
-                        AssetLibraryView(store: assetStore)
+                        AssetLibraryView(
+                            store: assetStore,
+                            productSection: AnyView(productContent),
+                            hasProductEntries: !productRecords.isEmpty || hasUnsentProducts
+                        )
                     case .placementResults:
                         PlacementResultsView(
                             isMockMode: appState.isMockMode,
@@ -136,10 +140,73 @@ struct LibraryView: View {
         }
     }
 
+    /// Spaces only; product 3D results live under 3D 자산.
+    private var spaceRecords: [SpaceRecord] { appState.spaces.filter { !$0.isProductResult } }
+    private var productRecords: [SpaceRecord] { appState.spaces.filter(\.isProductResult) }
+    private var hasUnsentProducts: Bool {
+        UnsentCaptureResumer.pending(currentUserId: GaussianGenerationStore.shared.boundUserId).contains(where: \.isProduct)
+    }
+
+    @ViewBuilder
+    private var productContent: some View {
+        UnsentCapturesSection(products: true)
+        LazyVStack(spacing: GonggiSpacing.md) {
+            if let banner = appState.gaussianLibraryBanner {
+                libraryBanner(banner)
+            }
+            ForEach(productRecords) { space in
+                archiveCard(space)
+            }
+        }
+    }
+
+    private func libraryBanner(_ banner: String) -> some View {
+        Text(banner)
+            .font(GonggiTypography.body(14))
+            .foregroundStyle(GonggiColors.textPrimary)
+            .padding(GonggiSpacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(GonggiColors.surfaceElevated.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .onAppear {
+                Task {
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    if appState.gaussianLibraryBanner == banner {
+                        appState.gaussianLibraryBanner = nil
+                    }
+                }
+            }
+    }
+
+    private func archiveCard(_ space: SpaceRecord) -> some View {
+        MemoryArchiveCard(
+            space: space,
+            onOpenDetail: {
+                if let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: space.id) {
+                    if space.status == .ready {
+                        gaussianViewer = GaussianViewerPresentation(spaceId: gid)
+                    } else {
+                        selectedSpace = space
+                    }
+                } else {
+                    selectedSpace = space
+                }
+            },
+            onViewSpace: {
+                if let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: space.id) {
+                    guard space.status == .ready else { return }
+                    gaussianViewer = GaussianViewerPresentation(spaceId: gid)
+                } else {
+                    Task { await openViewer(jobId: space.id) }
+                }
+            }
+        )
+    }
+
     @ViewBuilder
     private var spacesContent: some View {
-        UnsentCapturesSection()
-        if appState.spaces.isEmpty {
+        UnsentCapturesSection(products: false)
+        if spaceRecords.isEmpty {
             Text("아직 만든 공간이 없어요.")
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
@@ -153,45 +220,10 @@ struct LibraryView: View {
         } else {
             LazyVStack(spacing: GonggiSpacing.md) {
                 if let banner = appState.gaussianLibraryBanner {
-                    Text(banner)
-                        .font(GonggiTypography.body(14))
-                        .foregroundStyle(GonggiColors.textPrimary)
-                        .padding(GonggiSpacing.md)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(GonggiColors.surfaceElevated.opacity(0.6))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .onAppear {
-                            Task {
-                                try? await Task.sleep(nanoseconds: 4_000_000_000)
-                                if appState.gaussianLibraryBanner == banner {
-                                    appState.gaussianLibraryBanner = nil
-                                }
-                            }
-                        }
+                    libraryBanner(banner)
                 }
-                ForEach(appState.spaces) { space in
-                    MemoryArchiveCard(
-                        space: space,
-                        onOpenDetail: {
-                            if let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: space.id) {
-                                if space.status == .ready {
-                                    gaussianViewer = GaussianViewerPresentation(spaceId: gid)
-                                } else {
-                                    selectedSpace = space
-                                }
-                            } else {
-                                selectedSpace = space
-                            }
-                        },
-                        onViewSpace: {
-                            if let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: space.id) {
-                                guard space.status == .ready else { return }
-                                gaussianViewer = GaussianViewerPresentation(spaceId: gid)
-                            } else {
-                                Task { await openViewer(jobId: space.id) }
-                            }
-                        }
-                    )
+                ForEach(spaceRecords) { space in
+                    archiveCard(space)
                 }
             }
         }
@@ -222,7 +254,7 @@ struct LibraryView: View {
     private func openPushedGaussianSpace(_ spaceId: String?) {
         guard let spaceId, !spaceId.isEmpty else { return }
         appState.pendingGaussianSpaceIdFromPush = nil
-        category = .spaces
+        category = GaussianGenerationStore.shared.record(spaceId: spaceId)?.isProductResult == true ? .assets : .spaces
         selectedSpace = nil
         viewerLaunch = nil
         gaussianViewer = GaussianViewerPresentation(spaceId: spaceId)

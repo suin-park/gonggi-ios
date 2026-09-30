@@ -3,6 +3,8 @@ import SwiftUI
 /// Library section for captures whose upload never reached the server (see `UnsentCaptureResumer`).
 /// Resending is always an explicit tap; nothing is retried automatically.
 struct UnsentCapturesSection: View {
+    /// true = product captures (3D 자산 tab), false = space captures (공간 tab).
+    var products: Bool = false
     @EnvironmentObject private var appState: AppState
     @State private var items: [UnsentCaptureResumer.Item] = []
     @State private var busySessionId: String?
@@ -15,7 +17,7 @@ struct UnsentCapturesSection: View {
                 Text("업로드하지 못한 촬영")
                     .font(GonggiTypography.body(15).weight(.semibold))
                     .foregroundStyle(GonggiColors.textPrimary)
-                Text("원본은 이 기기에 남아 있어요. 다시 업로드하면 같은 촬영으로 3D 공간 생성을 이어서 요청해요.")
+                Text("원본은 이 기기에 남아 있어요. 다시 업로드하면 같은 촬영으로 3D 생성을 이어서 요청해요.")
                     .font(GonggiTypography.body(13))
                     .foregroundStyle(GonggiColors.textSecondary)
                 ForEach(items) { item in
@@ -77,6 +79,7 @@ struct UnsentCapturesSection: View {
 
     private func reload() {
         items = UnsentCaptureResumer.pending(currentUserId: GaussianGenerationStore.shared.boundUserId)
+            .filter { $0.isProduct == products }
     }
 
     private func resend(_ item: UnsentCaptureResumer.Item) {
@@ -86,7 +89,7 @@ struct UnsentCapturesSection: View {
         Task { @MainActor in
             let error = await UnsentCaptureResumer.resend(item, service: appState.spaceService)
             busySessionId = nil
-            message = error ?? "업로드했어요. 3D 공간 생성을 요청했어요."
+            message = error ?? (item.isProduct ? "업로드했어요. 제품 3D 생성을 요청했어요." : "업로드했어요. 3D 공간 생성을 요청했어요.")
             reload()
             appState.rebuildSpaces()
             appState.ensureSpaceGenerationPolling()

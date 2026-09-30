@@ -597,7 +597,7 @@ struct MemoryArchiveCard: View {
                 onViewSpace()
             } label: {
                 HStack(spacing: 6) {
-                    Text("360° 보기")
+                    Text(viewTitle)
                         .font(GonggiTypography.caption(14))
                         .foregroundStyle(GonggiColors.brandCyan)
                     Image(systemName: "arrow.right")
@@ -609,7 +609,7 @@ struct MemoryArchiveCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("360° 보기")
+            .accessibilityLabel(viewTitle)
         } else if space.status == .failed {
             Button {
                 GonggiHaptics.light()
@@ -654,9 +654,12 @@ struct MemoryArchiveCard: View {
         case .failed: return "다시 시도"
         case .processing, .uploading: return "진행 상태"
         case .draft: return "이어서 보기"
-        case .ready: return "360° 보기"
+        case .ready: return viewTitle
         }
     }
+
+    /// Product results turn around an object; spaces are looked around from inside.
+    private var viewTitle: String { space.isProductResult ? "3D로 보기" : "360° 보기" }
 
     private var thumbnailHero: some View {
         SpaceThumbnailView(

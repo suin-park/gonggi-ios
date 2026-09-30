@@ -166,7 +166,8 @@ final class ProcessingViewModel: ObservableObject {
                     qualityProfile: resolvedProfile,
                     idempotencyKey: nil,
                     frameCount: zipped.frameCount,
-                    captureKind: ObjectCapturePackage.isObjectPackage(root: packageRoot)
+                    // Product only when object.json actually went into the archive (the worker needs it).
+                    captureKind: zipped.includesObjectContract
                         ? ObjectCaptureConfig.serverCaptureKind : nil
                 )
                 log.info(
@@ -258,7 +259,8 @@ final class ProcessingViewModel: ObservableObject {
                 sessionId: summary.sessionId,
                 stage: useSpatialPackage ? "uploading_package" : "uploading",
                 progress: 0.05,
-                thumbnailSourceJPEG: thumb
+                thumbnailSourceJPEG: thumb,
+                captureKind: request.captureKind
             )
 
             let meta = CaptureUploadMetadata(

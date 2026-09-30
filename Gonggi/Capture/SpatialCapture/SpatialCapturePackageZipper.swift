@@ -18,6 +18,9 @@ enum SpatialCapturePackageZipper {
         var byteSize: Int
         var frameCount: Int
         var createDurationSec: Double
+        /// `object.json` (product capture box) is in the archive. The worker fails a product job without it
+        /// (OBJECT_PACKAGE_INVALID, GONGGI_OBJECT_V1_003).
+        var includesObjectContract: Bool = false
     }
 
     static func buildArchive(packageRoot: URL, destinationDirectory: URL) throws -> Result {
@@ -123,6 +126,11 @@ enum SpatialCapturePackageZipper {
         if fm.fileExists(atPath: continuityURL.path) {
             try appendEntry(name: continuityName, fileURL: continuityURL)
         }
+        let objectURL = packageRoot.appendingPathComponent(ObjectCaptureConfig.objectFileName)
+        let includesObjectContract = fm.fileExists(atPath: objectURL.path)
+        if includesObjectContract {
+            try appendEntry(name: ObjectCaptureConfig.objectFileName, fileURL: objectURL)
+        }
         for frame in frameURLs {
             let name = "\(SpatialCaptureConfig.framesDirectoryName)/\(frame.lastPathComponent)"
             try appendEntry(name: name, fileURL: frame)
@@ -147,7 +155,8 @@ enum SpatialCapturePackageZipper {
             zipURL: zipURL,
             byteSize: byteSize,
             frameCount: frameURLs.count,
-            createDurationSec: Date().timeIntervalSince(started)
+            createDurationSec: Date().timeIntervalSince(started),
+            includesObjectContract: includesObjectContract
         )
     }
 

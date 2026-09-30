@@ -26,10 +26,13 @@ enum UnsentCaptureResumer {
         let durationSec: Double
         /// nil = submitted by build ≤ 80, before the owner was recorded — ask before uploading to this account.
         let ownerUserId: String?
+        /// Product capture (object.json in the package): named and filed as a product, never as a space.
+        var isProduct: Bool = false
         var id: String { sessionId }
 
         var suggestedName: String {
-            "새 공간 \(unsentCaptureNameFormatter.string(from: capturedAt ?? Date()))"
+            if isProduct { return ObjectCaptureCopy.defaultName(date: capturedAt ?? Date()) }
+            return "새 공간 \(unsentCaptureNameFormatter.string(from: capturedAt ?? Date()))"
         }
     }
 
@@ -71,7 +74,8 @@ enum UnsentCaptureResumer {
                 capturedAt: meta.createdAt,
                 photoCount: meta.photoCount ?? 0,
                 durationSec: meta.durationSec ?? 0,
-                ownerUserId: g.ownerUserId
+                ownerUserId: g.ownerUserId,
+                isProduct: ObjectCapturePackage.isObjectPackage(root: packageRoot)
             ))
         }
         return out.sorted { ($0.capturedAt ?? .distantPast) > ($1.capturedAt ?? .distantPast) }
@@ -136,7 +140,7 @@ enum UnsentCaptureResumer {
                 idempotencyKey: key,
                 frameCount: zipped.frameCount,
                 // An unsent product capture is resent as a product, never as a space.
-                captureKind: ObjectCapturePackage.isObjectPackage(root: packageRoot)
+                captureKind: zipped.includesObjectContract
                     ? ObjectCaptureConfig.serverCaptureKind : nil
             ))
             generation.createStatus = 200
@@ -157,7 +161,8 @@ enum UnsentCaptureResumer {
                 sessionId: sessionId,
                 stage: "uploading_package",
                 progress: 0.05,
-                thumbnailSourceJPEG: SpatialCaptureConfig.firstKeyframeJPEG(packageRoot: packageRoot)
+                thumbnailSourceJPEG: SpatialCaptureConfig.firstKeyframeJPEG(packageRoot: packageRoot),
+                captureKind: zipped.includesObjectContract ? ObjectCaptureConfig.serverCaptureKind : nil
             )
             guard created.uploadURL != nil else { throw SpaceGenerationError.uploadFailed }
 

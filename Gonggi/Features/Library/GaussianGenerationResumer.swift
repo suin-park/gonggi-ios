@@ -128,7 +128,7 @@ enum GaussianGenerationResumer {
                 qualityProfile: ServerGenerationProfileMapper.spatialPackageProfile,
                 idempotencyKey: idempotencyKey,
                 frameCount: zipped.frameCount,
-                captureKind: ObjectCapturePackage.isObjectPackage(root: packageRoot)
+                captureKind: zipped.includesObjectContract
                     ? ObjectCaptureConfig.serverCaptureKind : nil
             )
         )

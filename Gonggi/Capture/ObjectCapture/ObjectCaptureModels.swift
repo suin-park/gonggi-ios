@@ -173,6 +173,11 @@ struct ObjectCaptureFile: Codable, Equatable {
     }
 }
 
+extension SpaceRecord {
+    /// Product 3D capture result: filed under 보관함 › 3D 자산, not 공간.
+    var isProductResult: Bool { sourceKind == ObjectCapturePackage.librarySourceKind }
+}
+
 enum ObjectCapturePackage {
     /// Library `SpaceRecord.sourceKind` of a physical product result (walkable spaces stay "gaussian_spatial").
     static let librarySourceKind = "gaussian_object"

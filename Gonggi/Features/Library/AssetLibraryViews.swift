@@ -5,6 +5,9 @@ import UIKit
 /// Library tab: canonical 3D Locker assets + GenerationJob cards (Phase 1 + 3B).
 struct AssetLibraryView: View {
     @ObservedObject var store: AssetLibraryStore
+    /// Product 3D capture results (Gaussian, from 기록 › 제품 3D 촬영), shown above the photo-made assets.
+    var productSection: AnyView? = nil
+    var hasProductEntries: Bool = false
     @ObservedObject private var generationStore = AssetGenerationStore.shared
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedAsset: MobileAssetDTO?
@@ -17,6 +20,11 @@ struct AssetLibraryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
             header
+            if hasProductEntries, let productSection {
+                sectionTitle("제품 3D 촬영")
+                productSection
+                sectionTitle("사진으로 만든 3D")
+            }
             content
         }
         .navigationDestination(item: $selectedAsset) { asset in
@@ -124,7 +132,13 @@ struct AssetLibraryView: View {
             errorState
         case .loaded:
             if store.isTrueEmpty {
-                emptyState
+                if hasProductEntries {
+                    Text("아직 없어요. 오른쪽 위 +로 사진에서 3D 자산을 만들 수 있어요.")
+                        .font(GonggiTypography.caption(14))
+                        .foregroundStyle(GonggiColors.textSecondary)
+                } else {
+                    emptyState
+                }
             } else {
                 entryList
             }
@@ -141,6 +155,13 @@ struct AssetLibraryView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, GonggiSpacing.xxl)
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(GonggiTypography.body(15).weight(.semibold))
+            .foregroundStyle(GonggiColors.textPrimary)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var emptyState: some View {

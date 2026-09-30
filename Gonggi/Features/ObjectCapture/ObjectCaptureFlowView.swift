@@ -73,6 +73,8 @@ struct ObjectCaptureFlowView: View {
                 onComplete: { _, _ in
                     summary = nil
                     onClose()
+                    appState.preferredLibraryCategory = .assets
+                    appState.pendingLibraryTab = .assets
                     appState.selectTab(.library)
                 },
                 onHandedOff: { _, _ in
@@ -81,6 +83,9 @@ struct ObjectCaptureFlowView: View {
                     appState.rebuildSpaces()
                     appState.ensureGaussianGenerationPolling()
                     onClose()
+                    // Product results are filed under 보관함 › 3D 자산.
+                    appState.preferredLibraryCategory = .assets
+                    appState.pendingLibraryTab = .assets
                     appState.selectTab(.library)
                 },
                 onDismiss: { summary = nil }

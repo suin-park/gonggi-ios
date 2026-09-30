@@ -100,7 +100,7 @@ final class GaussianGenerationStore: ObservableObject {
         var userFacingStatusLabel: String {
             switch spaceStatus {
             case .uploading: return "업로드 중"
-            case .processing: return "3D 공간 생성 중"
+            case .processing: return isProductResult ? "제품 3D 생성 중" : "3D 공간 생성 중"
             case .ready: return "생성 완료"
             case .failed: return failureLabel
             case .draft: return "준비 중"
@@ -118,6 +118,8 @@ final class GaussianGenerationStore: ObservableObject {
                 return "생성 서버 준비 안 됨 · 다시 시도할 수 있어요"
             case "JOB_EXPIRED":
                 return "시간 초과 · 다시 시도할 수 있어요"
+            case "OBJECT_PACKAGE_INVALID":
+                return "제품 촬영 정보를 읽지 못했어요"
             case "RUNPOD_CANCELLED", "cancelled":
                 return "생성 취소됨"
             default:
@@ -146,7 +148,8 @@ final class GaussianGenerationStore: ObservableObject {
         sessionId: String? = nil,
         stage: String? = nil,
         progress: Double = 0.05,
-        thumbnailSourceJPEG: URL? = nil
+        thumbnailSourceJPEG: URL? = nil,
+        captureKind: String? = nil
     ) {
         guard boundUserId != nil else { return }
         var thumbRel: String?
@@ -165,6 +168,7 @@ final class GaussianGenerationStore: ObservableObject {
             if jobs[idx].thumbnailRelativePath == nil { jobs[idx].thumbnailRelativePath = thumbRel }
             if let captureId { jobs[idx].captureId = captureId }
             if let sessionId { jobs[idx].sessionId = sessionId }
+            if let captureKind { jobs[idx].captureKind = captureKind }
         } else {
             jobs.insert(
                 GaussianGenerationRecord(
@@ -182,7 +186,9 @@ final class GaussianGenerationStore: ObservableObject {
                     createdAt: now,
                     updatedAt: now,
                     handedOffToLibraryAt: nil,
-                    completedAt: nil
+                    completedAt: nil,
+                    // Product results go to 3D 자산 from the first moment, not after the server sync.
+                    captureKind: captureKind
                 ),
                 at: 0
             )
@@ -294,7 +300,7 @@ final class GaussianGenerationStore: ObservableObject {
                 GaussianGenerationRecord(
                     spaceId: r.spaceId,
                     jobId: "",
-                    name: r.name.isEmpty ? "3D 공간" : r.name,
+                    name: r.name.isEmpty ? (r.captureKind == "object" ? "제품 3D" : "3D 공간") : r.name,
                     captureId: nil,
                     sessionId: nil,
                     qualityProfile: "",

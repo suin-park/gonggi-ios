@@ -211,6 +211,40 @@ final class ObjectCaptureTests: XCTestCase {
                                    sourceKind: "gaussian_spatial", mediaKind: "gaussian")
         XCTAssertFalse(SpaceSharePolicy.offersProductShareLink(walkable))
     }
+
+    /// Product results are filed under 보관함 › 3D 자산 and never named or labelled as a space.
+    @MainActor
+    func testProductResultsAreFiledAndNamedAsProducts() {
+        let product = SpaceRecord(id: "gaussian:s1", name: "제품", capturedAt: Date(), status: .ready,
+                                  thumbnailSystemImage: "cube", note: nil, viewerURL: nil,
+                                  sourceKind: ObjectCapturePackage.librarySourceKind, mediaKind: "gaussian")
+        let walkable = SpaceRecord(id: "gaussian:s2", name: "방", capturedAt: Date(), status: .ready,
+                                   thumbnailSystemImage: "cube.transparent", note: nil, viewerURL: nil,
+                                   sourceKind: "gaussian_spatial", mediaKind: "gaussian")
+        XCTAssertTrue(product.isProductResult)
+        XCTAssertFalse(walkable.isProductResult)
+
+        let date = Date(timeIntervalSince1970: 1_790_775_840)
+        let unsentProduct = UnsentCaptureResumer.Item(
+            sessionId: "s", captureId: "GONGGI_OBJECT_V1_003", capturedAt: date, photoCount: 234, durationSec: 88,
+            ownerUserId: "u", isProduct: true
+        )
+        XCTAssertTrue(unsentProduct.suggestedName.hasPrefix("제품 3D "), unsentProduct.suggestedName)
+        XCTAssertFalse(unsentProduct.suggestedName.contains("공간"))
+        let unsentSpace = UnsentCaptureResumer.Item(
+            sessionId: "t", captureId: "GONGGI_CAPTURE_V1_060", capturedAt: date, photoCount: 300, durationSec: 120,
+            ownerUserId: "u"
+        )
+        XCTAssertTrue(unsentSpace.suggestedName.hasPrefix("새 공간 "))
+
+        let job = GaussianGenerationStore.GaussianGenerationRecord(
+            spaceId: "s1", jobId: "j", name: "제품 3D", captureId: nil, sessionId: nil, qualityProfile: "",
+            status: "processing", stage: nil, progress: 0.3, failureCode: nil, thumbnailRelativePath: nil,
+            createdAt: Date(), updatedAt: Date(), handedOffToLibraryAt: nil, completedAt: nil,
+            captureKind: "object"
+        )
+        XCTAssertEqual(job.userFacingStatusLabel, "제품 3D 생성 중")
+    }
 }
 
 /// Which server a build talks to (product 3DGS pre-release builds must use staging).
