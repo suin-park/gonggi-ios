@@ -72,3 +72,12 @@
 유료 CI / 이미지 빌드 / Pod / TestFlight / 운영 배포는 아직 하지 않음.
 
 실제 제품 촬영 결과로 성공 여부를 판단한다. TestFlight 빌드만으로 검증 완료로 보고하지 않는다.
+
+## 인수 검토 (2026-09-30 오후, Claude)
+
+- 추가 커밋: iOS 01166c0, 494beb4 / cloud e7e9c448, 176e2bf4 (로컬, 미푸시).
+- **SAM 2 프롬프트 회귀 수정**: fab5e361의 상단·측면 점 우선 방식이 합성 장면 3/36장에서 배경 조각을 제품으로 골랐다(IoU 최소 0.001, 사진별 QA 통과). 중심점+상자 우선, 추가 점은 대안으로 되돌려 최소 0.971 / 중앙값 0.986. 사진별 QA는 "상자 안의 다른 물체"를 잡지 못한다(한계).
+- **torch 2.5.1 제품 이미지**: 공간 이미지와 같은 레시피에서 torch만 바꾸는 방식. Faster-GS 백엔드는 `--no-build-isolation`으로 설치된 torch에 맞춰 컴파일, gsplat도 같은 빌드에서 프리컴파일 → 구성상 호환(미빌드). NeRFICG 상류는 torch 2.7.1 기준, 운영은 2.4.1로 동작 중이라 2.5.1은 그 사이. mps 심은 2.5에서 무동작. VGGT 설치 단계는 2.4.1을 요구해 INSTALL_FAILED로 기록만 됨(제품 경로 미사용). SAM 2 설치를 `--no-build-isolation`으로 바꿔 두 번째 torch 다운로드 방지.
+- **빌드 경로**: 기존 이미지 워크플로에 제품 빌드 인자가 없었다 → `image_variant: object` 입력 추가(별도 이미지 이름 `…-object`, 별도 캐시, 200분 제한).
+- **앱 서버 주소**: 모든 API가 `https://www.3d-locker.com`에 고정돼 있었다 → 빌드 설정 `GONGGI_API_BASE_URL`(기본 운영), TestFlight 워크플로 `api_base_url` 입력, 제품 3D 촬영이 켜진 코드는 운영 주소로 아카이브 거부. 운영 서버가 captureKind를 무시하면 앱이 업로드 전에 중단(OBJECT_CAPTURE_UNSUPPORTED_SERVER).
+- **제품 엔드포인트**: 서버는 `VIDEO_GAUSSIAN_OBJECT_RUNPOD_ENDPOINT_ID` 없으면 이제 업로드 전에 503. 제출 시 엔드포인트 이미지 digest가 `VIDEO_GAUSSIAN_OBJECT_EXPECTED_IMAGE_DIGEST`와 달라도 차단.
