@@ -261,13 +261,14 @@ jobs:
         if: ${{ github.event.inputs.profile == 'record-tab' }}
         env:
           UDID: ${{ steps.sim.outputs.udid }}
+          DEVICE_NAME: ${{ steps.sim.outputs.device_name }}
+          RUNTIME: ${{ steps.sim.outputs.runtime }}
           SCREENSHOT_DIR: docs/gonggi-record-tab
         run: |
           set -euo pipefail
           mkdir -p "${SCREENSHOT_DIR}"
           chmod +x scripts/capture-gonggi-record-tab.sh
           scripts/capture-gonggi-record-tab.sh
-          echo "DEVICE=${{ steps.sim.outputs.device_name }} (${{ steps.sim.outputs.runtime }})" >> "${SCREENSHOT_DIR}/CAPTURE_META.txt"
 
       - name: Upload screenshot artifact
         if: always()

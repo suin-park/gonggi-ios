@@ -118,8 +118,7 @@ final class AppState: ObservableObject {
             case .home: selectedTab = .home
             case .librarySpaces: selectedTab = .library
             case .profile: selectedTab = .profile
-            case .recordHome, .recordHomeDynamicType, .recordProduct, .recordProductDynamicType,
-                 .recordSpace, .recordSpaceDynamicType: selectedTab = .record
+            case _ where ScreenshotLaunchConfig.isRecordTab: selectedTab = .record
             default: break
             }
         }

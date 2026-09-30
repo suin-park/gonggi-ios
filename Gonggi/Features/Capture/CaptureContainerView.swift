@@ -69,8 +69,7 @@ enum CaptureMode: String, Identifiable {
     }
 }
 
-/// 기록 tab: 기록 → 제품 / 공간 (pushed) → method. Capture flows are full-screen covers; closing one returns to the
-/// screen it was opened from.
+/// 기록 tab: one screen with 제품 and 공간 sections (RecordHomeView.swift).
 struct CaptureContainerView: View {
     @EnvironmentObject private var appState: AppState
 
@@ -82,7 +81,6 @@ struct CaptureContainerView: View {
     }
 
     @State private var activeFlow: ActiveFlow = .none
-    @State private var path: [RecordDestination] = CaptureContainerView.initialPath
     #if DEBUG
     @State private var showDebugModes = false
     #endif
@@ -90,34 +88,24 @@ struct CaptureContainerView: View {
     @State private var toast: String?
     @State private var walkableAlert: String?
 
-    private static var initialPath: [RecordDestination] {
+    private var scrollToLastRow: Bool {
         #if DEBUG
-        return ScreenshotLaunchConfig.recordInitialPath
+        return ScreenshotLaunchConfig.recordScrollToLastRow
         #else
-        return []
+        return false
         #endif
     }
 
     var body: some View {
-        Group {
-            if case .debug(.spaceScan3DGS) = activeFlow {
-                CaptureFlowView(onClose: { activeFlow = .none })
-            } else {
-                NavigationStack(path: $path) {
-                    RecordHomeScreen { destination in
-                        GonggiHaptics.selection()
-                        path.append(destination)
-                    }
-                    .background(GonggiAmbientBackground())
-                    .toolbar(.hidden, for: .navigationBar)
-                    .navigationDestination(for: RecordDestination.self) { destination in
-                        switch destination {
-                        case .product: productScreen
-                        case .space: spaceScreen
-                        }
-                    }
+        NavigationStack {
+            Group {
+                if case .debug(.spaceScan3DGS) = activeFlow {
+                    CaptureFlowView(onClose: { activeFlow = .none })
+                } else {
+                    recordHome
                 }
             }
+            .toolbar(.hidden, for: .navigationBar)
         }
         .fullScreenCover(isPresented: Binding(
             get: { activeFlow == .threeDSpaceRecord },
@@ -162,15 +150,13 @@ struct CaptureContainerView: View {
                 .environmentObject(appState)
         }
         .sheet(isPresented: $showPhotoTo3D) {
-            // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기"; the AI disclosure is
-            // the first line of its photo source chooser.
+            // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기".
             CreateAssetFlowView(
                 onClose: { showPhotoTo3D = false },
                 onAccepted: {
                     toast = RecordHomeCopy.photoAccepted
                     AssetLibraryStore.shared.refresh(force: true)
-                },
-                notice: RecordHomeCopy.photoNotice
+                }
             )
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -203,6 +189,11 @@ struct CaptureContainerView: View {
         // Every account sees the 기록 chooser: 360° starts from its card (build ≤ 83 auto-started it outside the rollout).
         .onAppear {
             Task { await appState.refreshSpatialRecordAvailability() }
+            #if DEBUG
+            if ScreenshotLaunchConfig.recordOpensPhotoSource {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showPhotoTo3D = true }
+            }
+            #endif
         }
         .onChange(of: appState.selectedTab) { _, tab in
             if tab == .record {
@@ -211,25 +202,30 @@ struct CaptureContainerView: View {
         }
     }
 
-    private var productScreen: some View {
-        RecordProductScreen(
-            productCaptureAvailable: RecordHomePolicy.productCaptureAvailable,
-            onPhotoTo3D: {
-                GonggiHaptics.medium()
-                showPhotoTo3D = true
-            }
-        )
-        .background(GonggiAmbientBackground())
-    }
-
-    private var spaceScreen: some View {
-        RecordSpaceScreen(
-            walkableVisible: walkableCardVisible,
-            onSpace360: {
-                GonggiHaptics.medium()
-                activeFlow = .directionCapture
+    /// Capture flows are full-screen covers over this screen, so closing one lands back here.
+    private var recordHome: some View {
+        RecordHomeScreen(
+            productOptions: RecordProductOption.visible(productCaptureAvailable: RecordHomePolicy.productCaptureAvailable),
+            spaceOptions: RecordSpaceOption.visible(walkableVisible: walkableCardVisible),
+            onProduct: { option in
+                switch option {
+                case .photoTo3D:
+                    GonggiHaptics.medium()
+                    showPhotoTo3D = true
+                case .productCapture:
+                    break // not built; never listed while productCaptureAvailable is false
+                }
             },
-            onWalkable: { openWalkableSpace() }
+            onSpace: { option in
+                switch option {
+                case .space360:
+                    GonggiHaptics.medium()
+                    activeFlow = .directionCapture
+                case .walkable:
+                    openWalkableSpace()
+                }
+            },
+            scrollToLastRow: scrollToLastRow
         ) {
             #if DEBUG
             if !ScreenshotLaunchConfig.isActive {

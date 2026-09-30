@@ -19,11 +19,9 @@ enum ScreenshotScreen: String, CaseIterable {
     case recordMode
     case recordHome
     case recordHomeDynamicType
-    case recordProduct
-    case recordProductDynamicType
+    case recordHomeDynamicTypeBottom
     case recordPhotoSource
-    case recordSpace
-    case recordSpaceDynamicType
+    case recordPhotoSourceDynamicType
     case capture30
     case capture68
     case capture90
@@ -70,13 +68,11 @@ enum ScreenshotScreen: String, CaseIterable {
         case .loginEmailKeyboard: return "login_email_keyboard.png"
         case .home: return "01_home_after.png"
         case .recordMode: return "01_record_mode_after.png"
-        case .recordHome: return "record_01_home.png"
-        case .recordHomeDynamicType: return "record_01_home_dynamic_type.png"
-        case .recordProduct: return "record_02_product.png"
-        case .recordProductDynamicType: return "record_02_product_dynamic_type.png"
-        case .recordPhotoSource: return "record_03_photo_source.png"
-        case .recordSpace: return "record_04_space.png"
-        case .recordSpaceDynamicType: return "record_04_space_dynamic_type.png"
+        case .recordHome: return "record_home_regular.png"
+        case .recordHomeDynamicType: return "record_home_xxl_top.png"
+        case .recordHomeDynamicTypeBottom: return "record_home_xxl_bottom.png"
+        case .recordPhotoSource: return "photo_source_regular.png"
+        case .recordPhotoSourceDynamicType: return "photo_source_xxl.png"
         case .capture30: return "02_capture_30.png"
         case .capture68: return "03_capture_68.png"
         case .capture90: return "04_capture_90.png"
@@ -137,13 +133,22 @@ enum ScreenshotLaunchConfig {
             || screen == .welcomeSpaceLightReduceMotion
     }
 
-    /// 기록 tab screens rendered inside MainTabView, pushed to the given screen.
-    static var recordInitialPath: [RecordDestination] {
+    /// 기록 tab captures: rendered inside MainTabView on the record tab.
+    static var isRecordTab: Bool {
         switch screen {
-        case .recordProduct, .recordProductDynamicType: return [.product]
-        case .recordSpace, .recordSpaceDynamicType: return [.space]
-        default: return []
+        case .recordHome, .recordHomeDynamicType, .recordHomeDynamicTypeBottom, .recordPhotoSource,
+             .recordPhotoSourceDynamicType:
+            return true
+        default:
+            return false
         }
+    }
+
+    static var recordScrollToLastRow: Bool { screen == .recordHomeDynamicTypeBottom }
+
+    /// Opens the photo source sheet from the 기록 row, as a tap would.
+    static var recordOpensPhotoSource: Bool {
+        screen == .recordPhotoSource || screen == .recordPhotoSourceDynamicType
     }
 
     static var authDecoration: AuthWelcomeDecoration {

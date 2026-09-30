@@ -180,14 +180,18 @@ final class Image3DCreateViewModel: ObservableObject {
 
 // MARK: - Flow UI
 
+enum Image3DCreateCopy {
+    /// Same wording as the 기록 › 제품 row that opens this flow.
+    static let title = "사진으로 3D 만들기"
+    static let sourceNotice = "물체가 가운데에 잘 보이는 사진을 골라 주세요. 사진에 없는 부분은 AI가 추정해 만들어요."
+}
+
 struct CreateAssetFlowView: View {
     var onClose: () -> Void
     var onAccepted: (() -> Void)? = nil
     /// Explicit generation retry: new clientRequestId; optional reused JPEG.
     var retrySourceImage: UIImage? = nil
     var retryJPEG: Data? = nil
-    /// One line above the source choices (기록 › 제품 passes the AI disclosure). Nil keeps the Library layout.
-    var notice: String? = nil
 
     @StateObject private var model = Image3DCreateViewModel()
     @State private var showCamera = false
@@ -215,7 +219,7 @@ struct CreateAssetFlowView: View {
                 }
             }
             .background(GonggiAmbientBackground(showGlow: false))
-            .navigationTitle("새 3D 어셋 만들기")
+            .navigationTitle(Image3DCreateCopy.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -277,29 +281,26 @@ struct CreateAssetFlowView: View {
     }
 
     private var sourceChooser: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-            if let notice {
-                Label(notice, systemImage: "sparkles")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(GonggiColors.textPrimary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                // One short notice before a photo is picked: what to pick, and that AI fills what the photo lacks.
+                Text(Image3DCreateCopy.sourceNotice)
+                    .font(.subheadline)
+                    .foregroundStyle(GonggiColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("물체가 화면 중앙에 잘 보이는 사진을 사용하면\n더 좋은 3D 결과를 얻을 수 있어요.")
-                .font(GonggiTypography.caption(14))
-                .foregroundStyle(GonggiColors.textSecondary)
-                .lineSpacing(3)
+                    .padding(.bottom, GonggiSpacing.sm)
 
-            sourceRow(title: "사진 촬영", subtitle: "카메라로 한 장 찍기", icon: "camera") {
-                requestCamera()
+                sourceRow(title: "사진 촬영", subtitle: "카메라로 한 장 찍기", icon: "camera") {
+                    requestCamera()
+                }
+                PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                    sourceRowLabel(title: "사진 보관함", subtitle: "앨범에서 한 장 선택", icon: "photo.on.rectangle")
+                }
+                .buttonStyle(GonggiPressableStyle())
             }
-            PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                sourceRowLabel(title: "사진 보관함", subtitle: "앨범에서 한 장 선택", icon: "photo.on.rectangle")
-            }
-            .buttonStyle(GonggiPressableStyle())
-
-            Spacer()
+            .padding(GonggiSpacing.lg)
         }
-        .padding(GonggiSpacing.lg)
+        .scrollBounceBehavior(.basedOnSize)
     }
 
     private var previewPane: some View {
@@ -393,18 +394,20 @@ struct CreateAssetFlowView: View {
     private func sourceRowLabel(title: String, subtitle: String, icon: String) -> some View {
         HStack(spacing: GonggiSpacing.md) {
             Image(systemName: icon)
-                .font(.system(size: 22, weight: .light))
+                .font(.title2.weight(.light))
                 .foregroundStyle(GonggiColors.accentTeal)
-                .frame(width: 40)
+                .frame(minWidth: 40)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(GonggiTypography.body(16))
+                    .font(.body)
                     .foregroundStyle(GonggiColors.textPrimary)
                 Text(subtitle)
-                    .font(GonggiTypography.caption(13))
+                    .font(.subheadline)
                     .foregroundStyle(GonggiColors.textSecondary)
             }
-            Spacer()
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
             Image(systemName: "chevron.right")
                 .foregroundStyle(GonggiColors.textTertiary)
         }

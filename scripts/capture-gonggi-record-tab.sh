@@ -20,6 +20,19 @@ fi
 
 mkdir -p "${SCREENSHOT_DIR}"
 
+# Prefer an iPhone 14 Plus simulator (the review device); create one on the booted device's runtime if the
+# device type exists. Falls back to the resolved simulator.
+DEVICE_LABEL="${DEVICE_NAME:-resolved simulator} (${RUNTIME:-unknown runtime})"
+if [[ -n "${RUNTIME:-}" ]] && xcrun simctl list devicetypes | grep -q "com.apple.CoreSimulator.SimDeviceType.iPhone-14-Plus"; then
+  if NEW_UDID="$(xcrun simctl create "Record iPhone 14 Plus" com.apple.CoreSimulator.SimDeviceType.iPhone-14-Plus "${RUNTIME}" 2>/dev/null)"; then
+    xcrun simctl boot "${NEW_UDID}" 2>/dev/null || true
+    xcrun simctl bootstatus "${NEW_UDID}" -b
+    UDID="${NEW_UDID}"
+    DEVICE_LABEL="iPhone 14 Plus (${RUNTIME})"
+  fi
+fi
+echo "Capturing on ${DEVICE_LABEL}"
+
 xcrun simctl install "${UDID}" "${APP_PATH}"
 xcrun simctl status_bar "${UDID}" override \
   --time "9:41" --batteryState charged --batteryLevel 100 \
@@ -39,14 +52,14 @@ capture_one() {
   echo "OK ${out}"
 }
 
-capture_one "recordHome" "record_01_home.png"
-capture_one "recordProduct" "record_02_product.png"
-capture_one "recordPhotoSource" "record_03_photo_source.png"
-capture_one "recordSpace" "record_04_space.png"
-capture_one "recordHomeDynamicType" "record_01_home_dynamic_type.png"
-capture_one "recordProductDynamicType" "record_02_product_dynamic_type.png"
-capture_one "recordSpaceDynamicType" "record_04_space_dynamic_type.png"
+capture_one "recordHome" "record_home_regular.png"
+capture_one "recordHomeDynamicType" "record_home_xxl_top.png"
+capture_one "recordHomeDynamicTypeBottom" "record_home_xxl_bottom.png"
+capture_one "recordPhotoSource" "photo_source_regular.png"
+capture_one "recordPhotoSourceDynamicType" "photo_source_xxl.png"
 
 echo "CAPTURE_SHA=$(git rev-parse HEAD)" > "${SCREENSHOT_DIR}/CAPTURE_META.txt"
-echo "DEBUG_FIXTURE=yes (-mock -screenshot-screen, Debug simulator build)" >> "${SCREENSHOT_DIR}/CAPTURE_META.txt"
+echo "SIMULATOR=yes (not a real iPhone)" >> "${SCREENSHOT_DIR}/CAPTURE_META.txt"
+echo "DEVICE=${DEVICE_LABEL}" >> "${SCREENSHOT_DIR}/CAPTURE_META.txt"
+echo "MOCK_DATA=yes (-mock -screenshot-screen, Debug build)" >> "${SCREENSHOT_DIR}/CAPTURE_META.txt"
 echo "REAL_DEVICE=NOT RUN" >> "${SCREENSHOT_DIR}/CAPTURE_META.txt"
