@@ -14,6 +14,8 @@ final class RecordHomeTests: XCTestCase {
         }
         XCTAssertTrue(RecordHomeCopy.photoTo3D.howTo.contains("AI"), "AI-filled parts are disclosed")
         XCTAssertTrue(RecordHomeCopy.space360.result.contains("걸어 다닐 수는 없어요"))
+        XCTAssertFalse(RecordHomeCopy.photoAccepted.contains("·"), "toast reads as a sentence")
+        XCTAssertTrue(RecordHomeCopy.photoAccepted.contains("3D 자산"))
     }
 
     func testProductCaptureIsNotOfferedAndItsCopyKeepsViewerAndCaptureApart() {

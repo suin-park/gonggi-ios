@@ -52,7 +52,7 @@ enum RecordHomeCopy {
 
     static let resumeTitle = "이어서 할 일"
     static let resumeSeeAll = "보관함에서 모두 보기"
-    static let photoAccepted = "3D 생성을 시작했어요 · 보관함 ‘3D 자산’에서 볼 수 있어요"
+    static let photoAccepted = "3D 생성을 시작했어요. 보관함의 3D 자산에서 결과를 볼 수 있어요."
     static let walkableUnavailable = "이 계정에서는 아직 걸어보는 공간을 사용할 수 없어요."
     static let walkableUnknown = "지금은 걸어보는 공간을 확인할 수 없어요. 잠시 후 다시 시도해 주세요."
 }
