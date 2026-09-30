@@ -77,6 +77,14 @@ final class GaussianGenerationStore: ObservableObject {
         var completedAt: Date?
         /// "local" (started on this device) or "remote" (server catalog only). nil = local (pre-69).
         var origin: String?
+        /// Server `captureKind`: "object" = physical product result (orbit viewer), nil / "space" otherwise.
+        var captureKind: String? = nil
+        /// Server-decided origin label, e.g. "실물 촬영 · 사진 132장 · 2026-09-30".
+        var provenanceLabel: String? = nil
+        /// Product quality verdict from the server: passed | failed | pending.
+        var objectQualityResult: String? = nil
+
+        var isProductResult: Bool { captureKind == "object" }
 
         var isRemoteOnly: Bool { origin == "remote" }
 
@@ -239,6 +247,9 @@ final class GaussianGenerationStore: ObservableObject {
         /// Server GaussianSpace.status (uploading | processing | ready | failed | …).
         var status: String
         var createdAt: Date
+        var captureKind: String? = nil
+        var provenanceLabel: String? = nil
+        var objectQualityResult: String? = nil
     }
 
     /// Server catalog (owner-filtered by the API) is authoritative for this account:
@@ -253,6 +264,9 @@ final class GaussianGenerationStore: ObservableObject {
         for var local in jobs {
             if let r = byId[local.spaceId] {
                 local.name = r.name.isEmpty ? local.name : r.name
+                local.captureKind = r.captureKind ?? local.captureKind
+                local.provenanceLabel = r.provenanceLabel ?? local.provenanceLabel
+                local.objectQualityResult = r.objectQualityResult ?? local.objectQualityResult
                 let serverStatus = Self.presentationStatus(r.status)
                 // A local failure / interruption with a known job is fresher than the space row
                 // (space status can lag the job, e.g. expired or never-started uploads).
@@ -293,7 +307,10 @@ final class GaussianGenerationStore: ObservableObject {
                     updatedAt: Date(),
                     handedOffToLibraryAt: nil,
                     completedAt: status == "ready" ? r.createdAt : nil,
-                    origin: "remote"
+                    origin: "remote",
+                    captureKind: r.captureKind,
+                    provenanceLabel: r.provenanceLabel,
+                    objectQualityResult: r.objectQualityResult
                 )
             )
         }
@@ -318,15 +335,22 @@ final class GaussianGenerationStore: ObservableObject {
                 name: job.name,
                 capturedAt: job.createdAt,
                 status: job.spaceStatus,
-                thumbnailSystemImage: "cube.transparent",
-                note: job.userFacingStatusLabel,
+                thumbnailSystemImage: job.isProductResult ? "cube" : "cube.transparent",
+                note: Self.cardNote(job),
                 viewerURL: nil,
-                sourceKind: "gaussian_spatial",
+                sourceKind: job.isProductResult ? ObjectCapturePackage.librarySourceKind : "gaussian_spatial",
                 mediaKind: "gaussian"
             )
             record.remoteImageURL = absoluteThumbnailURL(for: job)?.absoluteString
             return record
         }
+    }
+
+    /// Product results say where they came from once ready ("실물 촬영 · …"), or that the quality check failed.
+    static func cardNote(_ job: GaussianGenerationRecord) -> String {
+        guard job.isProductResult, job.spaceStatus == .ready else { return job.userFacingStatusLabel }
+        if job.objectQualityResult == "failed" { return "품질 확인 필요" }
+        return job.provenanceLabel ?? job.userFacingStatusLabel
     }
 
     func spaceId(fromLibraryId id: String) -> String? {

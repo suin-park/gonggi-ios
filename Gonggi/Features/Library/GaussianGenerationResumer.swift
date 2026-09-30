@@ -127,7 +127,9 @@ enum GaussianGenerationResumer {
                 durationSec: nil,
                 qualityProfile: ServerGenerationProfileMapper.spatialPackageProfile,
                 idempotencyKey: idempotencyKey,
-                frameCount: zipped.frameCount
+                frameCount: zipped.frameCount,
+                captureKind: ObjectCapturePackage.isObjectPackage(root: packageRoot)
+                    ? ObjectCaptureConfig.serverCaptureKind : nil
             )
         )
         guard created.jobId == record.jobId, created.uploadURL != nil else {

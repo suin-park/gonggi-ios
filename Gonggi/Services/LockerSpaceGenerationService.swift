@@ -116,6 +116,9 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         if isSpatialPackage, let frames = request.frameCount {
             body["frameCount"] = frames
         }
+        if isSpatialPackage, request.captureKind == ObjectCaptureConfig.serverCaptureKind {
+            body["captureKind"] = ObjectCaptureConfig.serverCaptureKind
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await sendAuthorized(req)

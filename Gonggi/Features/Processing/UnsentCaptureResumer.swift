@@ -134,7 +134,10 @@ enum UnsentCaptureResumer {
                 durationSec: item.durationSec > 0 ? item.durationSec : nil,
                 qualityProfile: profile,
                 idempotencyKey: key,
-                frameCount: zipped.frameCount
+                frameCount: zipped.frameCount,
+                // An unsent product capture is resent as a product, never as a space.
+                captureKind: ObjectCapturePackage.isObjectPackage(root: packageRoot)
+                    ? ObjectCaptureConfig.serverCaptureKind : nil
             ))
             generation.createStatus = 200
             generation.spaceId = created.spaceId

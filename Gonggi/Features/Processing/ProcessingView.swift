@@ -165,7 +165,9 @@ final class ProcessingViewModel: ObservableObject {
                     durationSec: summary.duration,
                     qualityProfile: resolvedProfile,
                     idempotencyKey: nil,
-                    frameCount: zipped.frameCount
+                    frameCount: zipped.frameCount,
+                    captureKind: ObjectCapturePackage.isObjectPackage(root: packageRoot)
+                        ? ObjectCaptureConfig.serverCaptureKind : nil
                 )
                 log.info(
                     "spatial zip ready bytes=\(byteSize) frames=\(zipped.frameCount) createSec=\(zipped.createDurationSec)"

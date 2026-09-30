@@ -232,6 +232,40 @@ actor MobileAuthAPIClient {
         return spaces
     }
 
+    /// POST /api/gaussian-spaces/:id/share-link — product (object) results only: makes the result a link-only page and
+    /// returns its web URL (`/spaces/share/<shareId>`).
+    func createProductShareLink(accessToken: String, spaceId: String) async throws -> URL {
+        var request = URLRequest(
+            url: config.apiBaseURL
+                .appendingPathComponent("api/gaussian-spaces")
+                .appendingPathComponent(spaceId)
+                .appendingPathComponent("share-link")
+        )
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 30
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw MobileAuthAPIError.network
+        }
+        guard let http = response as? HTTPURLResponse else { throw MobileAuthAPIError.network }
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard (200..<300).contains(http.statusCode) else {
+            throw MobileAuthAPIError.server(
+                code: (json?["error"] as? String) ?? "ERROR",
+                message: "링크를 만들지 못했어요.",
+                status: http.statusCode
+            )
+        }
+        guard let raw = json?["shareUrl"] as? String, let url = URL(string: raw) else {
+            throw MobileAuthAPIError.invalidResponse
+        }
+        return url
+    }
+
     /// GET /api/gaussian-spaces — owner-filtered 3DGS catalog for the bearer's user.
     func listGaussianSpaces(accessToken: String) async throws -> [[String: Any]] {
         var request = URLRequest(url: config.apiBaseURL.appendingPathComponent("api/gaussian-spaces"))

@@ -522,6 +522,11 @@ struct SpaceDetailView: View {
                 .accessibilityLabel("공유")
                 .disabled(liveSpace.status != .ready)
             }
+            // Physical product result: web link (orbit viewer with its "실물 촬영" badge on the page).
+            if SpaceSharePolicy.offersProductShareLink(liveSpace), liveSpace.status == .ready,
+               let productSpaceId = GaussianGenerationStore.shared.spaceId(fromLibraryId: liveSpace.id) {
+                ProductShareLinkButton(spaceId: productSpaceId)
+            }
         }
         .padding(.top, GonggiSpacing.xs)
     }

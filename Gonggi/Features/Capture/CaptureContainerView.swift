@@ -8,6 +8,8 @@ enum CaptureMode: String, Identifiable {
     case panoramaCapture
     case spaceScan3DGS
     case quick360Experimental
+    /// Physical product (object) capture — DEBUG entry until the real flow is verified on device.
+    case productObjectCapture
 
     var id: String { rawValue }
 
@@ -16,7 +18,7 @@ enum CaptureMode: String, Identifiable {
 
     /// DEBUG / internal modes listed under developer section.
     static var debugModes: [CaptureMode] {
-        [.spaceScan3DGS, .panoramaCapture, .quick360Experimental]
+        [.spaceScan3DGS, .panoramaCapture, .quick360Experimental, .productObjectCapture]
     }
 
     /// Legacy alias.
@@ -30,6 +32,7 @@ enum CaptureMode: String, Identifiable {
         case .panoramaCapture: return "파노라마 기록"
         case .spaceScan3DGS: return "3D 공간 스캔 (DEBUG)"
         case .quick360Experimental: return "실험 · 360 공간 기록"
+        case .productObjectCapture: return "제품 3D 촬영 (DEBUG)"
         }
     }
 
@@ -43,12 +46,14 @@ enum CaptureMode: String, Identifiable {
             return "DEBUG: spaceScan3DGS 직접 진입 (P0.5 파이프라인)"
         case .quick360Experimental:
             return "실험용 full-sphere / OpenCV A/B (기본 경로 아님)"
+        case .productObjectCapture:
+            return "DEBUG: 고정된 무광 제품 주위를 걸으며 촬영 (서버 object 경로, 내부 계정만)"
         }
     }
 
     var secondaryCaption: String? {
         switch self {
-        case .spaceScan3DGS: return "내부 전용"
+        case .spaceScan3DGS, .productObjectCapture: return "내부 전용"
         default: return nil
         }
     }
@@ -59,6 +64,7 @@ enum CaptureMode: String, Identifiable {
         case .panoramaCapture: return "pano"
         case .spaceScan3DGS: return "cube.transparent"
         case .quick360Experimental: return "globe.americas.fill"
+        case .productObjectCapture: return "cube"
         }
     }
 
@@ -149,6 +155,18 @@ struct CaptureContainerView: View {
             Quick360FlowView(onClose: { activeFlow = .none })
                 .environmentObject(appState)
         }
+        .fullScreenCover(isPresented: Binding(
+            get: {
+                if case .debug(.productObjectCapture) = activeFlow { return true }
+                return false
+            },
+            set: { presented in
+                if !presented { activeFlow = .none }
+            }
+        )) {
+            ObjectCaptureFlowView(onClose: { activeFlow = .none })
+                .environmentObject(appState)
+        }
         .sheet(isPresented: $showPhotoTo3D) {
             // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기".
             CreateAssetFlowView(
@@ -213,7 +231,9 @@ struct CaptureContainerView: View {
                     GonggiHaptics.medium()
                     showPhotoTo3D = true
                 case .productCapture:
-                    break // not built; never listed while productCaptureAvailable is false
+                    // Listed only once RecordHomePolicy.productCaptureAvailable is on (after device verification).
+                    GonggiHaptics.medium()
+                    activeFlow = .debug(.productObjectCapture)
                 }
             },
             onSpace: { option in

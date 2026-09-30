@@ -15,6 +15,8 @@ struct CreateSpaceRequest: Equatable {
     var idempotencyKey: String? = nil
     /// Spatial package only — JPEG keyframe count hint.
     var frameCount: Int? = nil
+    /// "object" when the package carries object.json (product capture); nil = space. The server picks the profile.
+    var captureKind: String? = nil
 }
 
 struct CreateSpaceResponse: Equatable {

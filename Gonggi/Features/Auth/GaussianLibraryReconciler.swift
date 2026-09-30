@@ -51,7 +51,10 @@ final class GaussianLibraryReconciler {
                     spaceId: id,
                     name: (row["name"] as? String) ?? "",
                     status: (row["status"] as? String) ?? "processing",
-                    createdAt: created
+                    createdAt: created,
+                    captureKind: row["captureKind"] as? String,
+                    provenanceLabel: row["provenanceLabel"] as? String,
+                    objectQualityResult: (row["objectQuality"] as? [String: Any])?["result"] as? String
                 )
             }
             GaussianGenerationStore.shared.applyRemoteCatalog(remote, forUserId: userId)
