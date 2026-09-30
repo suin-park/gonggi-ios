@@ -17,10 +17,10 @@
 | 저장소 / 브랜치 | 커밋 | 내용 |
 |---|---|---|
 | gonggi-ios `feat/product-3dgs-capture` | d273ba9 | 촬영 모드·object.json·업로드 captureKind·보관함 출처·링크 공유 |
-| 〃 | *(후속 로컬 커밋)* | 기록 탭에 제품 3D 촬영 상시 노출, ActiveFlow 분리 |
+| 〃 | **a4b92da** | 기록 탭에 제품 3D 촬영 상시 노출, ActiveFlow 분리, 구현 문서 |
 | whik cloud `feat/product-3dgs` | 5f49cbfc | 워커 object 경로 |
 | 〃 | 9dd86710, 488c2b26 | 서버 object 작업·뷰어·공유 |
-| 〃 | *(후속 로컬 커밋)* | 로그인 게이트, 제품 이미지 torch 2.5.1 레시피, 마스크/품질 보완 |
+| 〃 | **fab5e361** | 로그인 게이트, 제품 이미지 torch 2.5.1 레시피, 마스크/품질 보완 |
 
 ## 연결된 흐름
 
