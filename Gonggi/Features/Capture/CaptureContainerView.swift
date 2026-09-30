@@ -83,13 +83,13 @@ struct CaptureContainerView: View {
     @State private var activeFlow: ActiveFlow = .none
     #if DEBUG
     @State private var showDebugModes = false
+    #endif
     @State private var showPhotoTo3D = false
     @State private var toast: String?
     @State private var walkableAlert: String?
     @ObservedObject private var gaussianStore = GaussianGenerationStore.shared
     @ObservedObject private var assetGenerationStore = AssetGenerationStore.shared
     @State private var unsentCount = 0
-    #endif
 
     var body: some View {
         NavigationStack {

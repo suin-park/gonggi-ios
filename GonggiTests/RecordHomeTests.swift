@@ -83,5 +83,19 @@ final class RecordHomeTests: XCTestCase {
         XCTAssertTrue(src.contains("RecordHomeCopy.space360"))
         XCTAssertTrue(src.contains("RecordHomeCopy.walkableSpace"))
         XCTAssertTrue(src.contains("CreateAssetFlowView("), "same photo-to-3D flow as the Library")
+        // Feature CI builds Debug only: record-tab state inside `#if DEBUG` compiles there but breaks the Release
+        // archive (build 83 attempt 1, TestFlight run 36651549130).
+        var inDebug = false
+        for line in src.components(separatedBy: .newlines) {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("#if DEBUG") { inDebug = true; continue }
+            if t.hasPrefix("#endif") || t.hasPrefix("#else") { inDebug = false; continue }
+            if inDebug {
+                for name in ["showPhotoTo3D", "walkableAlert", "unsentCount", "gaussianStore", "assetGenerationStore", "var toast"] {
+                    XCTAssertFalse(t.contains("private var \(name)") || (name == "var toast" && t.contains(name)),
+                                   "\(name) must exist in Release builds")
+                }
+            }
+        }
     }
 }
