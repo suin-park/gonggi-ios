@@ -226,7 +226,13 @@ struct CaptureContainerView: View {
     /// Capture flows are full-screen covers over this screen, so closing one lands back here.
     private var recordHome: some View {
         RecordHomeScreen(
-            productOptions: RecordProductOption.visible(productCaptureAvailable: RecordHomePolicy.productCaptureAvailable),
+            productOptions: RecordProductOption.visible(
+                productCaptureAvailable: RecordHomePolicy.productCardVisible(
+                    featureOn: RecordHomePolicy.productCaptureAvailable,
+                    mockMode: appState.isMockMode,
+                    serverAvailable: appState.objectCaptureAvailable
+                )
+            ),
             spaceOptions: RecordSpaceOption.visible(walkableVisible: walkableCardVisible),
             onProduct: { option in
                 switch option {

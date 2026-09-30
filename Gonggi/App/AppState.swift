@@ -40,6 +40,9 @@ final class AppState: ObservableObject {
     @Published var gaussianLibraryBanner: String?
     /// Server rollout scope for 3D 공간 기록 (nil = not known yet for this account).
     @Published private(set) var spatialRecordAvailable: Bool?
+    /// Server runs product (object) capture with its endpoint configured (nil = not known yet). Not cached across
+    /// launches: the product row appears only after this server answered true.
+    @Published private(set) var objectCaptureAvailable: Bool?
     /// Unread Gonggi notification badge (likes, comments, admin announcements).
     @Published var notificationUnreadCount: Int = 0
     /// Debounce repeated 「보관함」/「홈」 taps while covers tear down.
@@ -148,6 +151,7 @@ final class AppState: ObservableObject {
         // Stop polling the previous account's Gaussian jobs with the next account's token.
         gaussianPollTask?.cancel()
         spatialRecordAvailable = nil
+        objectCaptureAvailable = nil
         gaussianPollTask = nil
         AdvancedCaptureAnalysisStore.shared.clearAll()
         AdvancedCaptureAnalysisRuntime.shared.stopPolling()
@@ -425,10 +429,12 @@ final class AppState: ObservableObject {
            UserDefaults.standard.object(forKey: Self.spatialAvailabilityKey(userId)) != nil {
             spatialRecordAvailable = UserDefaults.standard.bool(forKey: Self.spatialAvailabilityKey(userId))
         }
-        guard let fresh = await locker.fetchSpatialRecordAvailability(),
+        guard let availability = await locker.fetchCaptureAvailability(),
               GaussianGenerationStore.shared.boundUserId == userId
         else { return }
+        let fresh = availability.spatial
         spatialRecordAvailable = fresh
+        objectCaptureAvailable = availability.object
         if let userId {
             UserDefaults.standard.set(fresh, forKey: Self.spatialAvailabilityKey(userId))
         }

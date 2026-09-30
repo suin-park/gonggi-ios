@@ -373,7 +373,19 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
 
     /// Server rollout scope for the signed-in user (`available` on the capability GET).
     /// false when the feature is off (404) or out of scope; nil when unknown (network / auth).
+    struct CaptureAvailability: Equatable {
+        /// 3D 공간 기록 rollout for this account.
+        var spatial: Bool
+        /// Product (object) capture: true only when the server runs the product path with its endpoint configured.
+        /// Servers without product support do not send the key → false.
+        var object: Bool
+    }
+
     func fetchSpatialRecordAvailability() async -> Bool? {
+        await fetchCaptureAvailability()?.spatial
+    }
+
+    func fetchCaptureAvailability() async -> CaptureAvailability? {
         guard let url = try? Self.apiURL(base: config.apiBaseURL, path: "/api/gaussian-spaces/spatial-package") else {
             return nil
         }
@@ -386,13 +398,16 @@ final class LockerSpaceGenerationService: SpaceGenerationService, @unchecked Sen
         else {
             return nil
         }
-        if http.statusCode == 404 || http.statusCode == 403 { return false }
+        if http.statusCode == 404 || http.statusCode == 403 { return CaptureAvailability(spatial: false, object: false) }
         guard (200..<300).contains(http.statusCode),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return nil
         }
-        return (json["available"] as? Bool) ?? false
+        return CaptureAvailability(
+            spatial: (json["available"] as? Bool) ?? false,
+            object: (json["objectCaptureAvailable"] as? Bool) ?? false
+        )
     }
 
     func seedJobContext(jobId: String, spaceId: String, qualityProfile: String) {

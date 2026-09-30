@@ -237,3 +237,15 @@ final class AppServerConfigTests: XCTestCase {
         XCTAssertTrue(AppConfiguration(apiBaseURL: prod, sessionCookieName: "", googleClientID: "", googleReversedClientID: "").isProductionServer)
     }
 }
+
+/// The product row follows the server: hidden until the server says it runs the product path.
+final class ProductCardServerGateTests: XCTestCase {
+    func testProductRowNeedsServerSupport() {
+        XCTAssertFalse(RecordHomePolicy.productCardVisible(featureOn: true, mockMode: false, serverAvailable: nil),
+                       "unknown (first launch / old server) → hidden")
+        XCTAssertFalse(RecordHomePolicy.productCardVisible(featureOn: true, mockMode: false, serverAvailable: false))
+        XCTAssertTrue(RecordHomePolicy.productCardVisible(featureOn: true, mockMode: false, serverAvailable: true))
+        XCTAssertTrue(RecordHomePolicy.productCardVisible(featureOn: true, mockMode: true, serverAvailable: nil))
+        XCTAssertFalse(RecordHomePolicy.productCardVisible(featureOn: false, mockMode: true, serverAvailable: true))
+    }
+}

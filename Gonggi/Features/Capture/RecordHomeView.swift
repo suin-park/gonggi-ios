@@ -69,6 +69,14 @@ enum RecordHomePolicy {
     /// Pre-release: no DEBUG / internal-tools unlock gate. Success is still judged from a real product capture.
     static let productCaptureAvailable = true
 
+    /// Product row: the feature is in this build AND the server said it runs the product path (endpoint configured).
+    /// Unknown / a server without product support → hidden, so a production-address build is safe before the server
+    /// is deployed. Mock mode shows it for screenshots.
+    static func productCardVisible(featureOn: Bool, mockMode: Bool, serverAvailable: Bool?) -> Bool {
+        guard featureOn else { return false }
+        return mockMode || serverAvailable == true
+    }
+
     /// Walkable space row: hidden only when the server said "not available" for this account. Unknown (first launch,
     /// offline) keeps it visible; a tap then re-checks before opening.
     static func walkableCardVisible(flagOn: Bool, mockMode: Bool, available: Bool?) -> Bool {

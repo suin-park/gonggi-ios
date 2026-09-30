@@ -19,8 +19,14 @@ on:
         required: false
         default: false
         type: boolean
+      pre_archive_tests:
+        description: 'Run unit tests in this same job before signing/archive (one macOS run instead of Feature CI + TestFlight). none | targeted (product/record suites) | full (whole suite, known-failure gate). No retries.'
+        required: false
+        default: 'none'
+        type: choice
+        options: [none, targeted, full]
       api_base_url:
-        description: 'API server baked into this build (GONGGI_API_BASE_URL). Product 3DGS pre-release builds: the staging URL, never production.'
+        description: 'API server baked into this build (GONGGI_API_BASE_URL). Archive is refused unless its /api/gaussian-spaces/object-capture/status is ready.'
         required: false
         default: 'https://www.3d-locker.com'
         type: string
@@ -163,6 +169,51 @@ jobs:
           xcodegen generate
           test -d "${{ env.PROJECT }}"
           xcodebuild -list -project "${{ env.PROJECT }}"
+
+      - name: Pre-archive unit tests (same job, no retry)
+        if: ${{ inputs.pre_archive_tests != 'none' }}
+        env:
+          MODE: ${{ inputs.pre_archive_tests }}
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)['devices']
+          for rt in sorted([k for k in data if 'iOS' in k], reverse=True):
+              phones = sorted([d for d in data[rt] if d.get('isAvailable') and 'iPhone' in d.get('name', '')], key=lambda d: d['name'])
+              pick = [d for d in phones if any(x in d['name'] for x in ('iPhone 16', 'iPhone 15', 'iPhone 14'))] or phones
+              if pick:
+                  print(pick[0]['udid']); sys.exit(0)
+          sys.exit(1)")"
+          xcrun simctl boot "${UDID}" 2>/dev/null || true
+          ONLY=(-only-testing:GonggiTests)
+          if [[ "${MODE}" == "targeted" ]]; then
+            ONLY=(
+              -only-testing:GonggiTests/ObjectCaptureTests
+              -only-testing:GonggiTests/AppServerConfigTests
+              -only-testing:GonggiTests/ProductCardServerGateTests
+              -only-testing:GonggiTests/RecordHomeTests
+            )
+          fi
+          set +e
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${UDID}" \
+            "${ONLY[@]}" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee xcodebuild-pre-archive-test.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          if [[ "${MODE}" == "full" ]]; then
+            # Same gate as Feature CI: no new failures vs the known baseline, no crashes, every declared test runs.
+            python3 scripts/ci/check_test_log.py --log xcodebuild-pre-archive-test.log --known ci/known_test_failures.txt --tests-dir GonggiTests --exclude-class CatalogModelsTests
+          elif [[ "${STATUS}" -ne 0 ]]; then
+            grep -E "error:|failed \(|XCTAssert" xcodebuild-pre-archive-test.log | tail -n 60 || true
+            echo "::error::targeted tests failed — not archiving"
+            exit 1
+          fi
 
       - name: Pre-archive auth config check
         run: |
@@ -307,12 +358,16 @@ jobs:
             https://*) ;;
             *) echo "::error::api_base_url must be https (got ${API_BASE_URL})"; exit 1 ;;
           esac
-          # This code shows 제품 3D 촬영 on the Record tab: a production-server build would send product captures to a
-          # server without the product pipeline. Refuse unless the build points at staging.
-          if grep -q "productCaptureAvailable = true" Gonggi/Features/Capture/RecordHomeView.swift \
-             && [[ "${API_BASE_URL%/}" == "https://www.3d-locker.com" ]]; then
-            echo "::error::This build shows 제품 3D 촬영; set api_base_url to the staging server"
-            exit 1
+          # Product capture is compiled in: archive only when the target server runs the product path with its
+          # dedicated endpoint + image digest configured (public, secret-free status route). The app also hides the
+          # row until the server says so, and aborts a product upload if the server answers with a space profile.
+          if grep -q "productCaptureAvailable = true" Gonggi/Features/Capture/RecordHomeView.swift; then
+            STATUS_JSON="$(curl -fsS --max-time 20 "${API_BASE_URL%/}/api/gaussian-spaces/object-capture/status" || true)"
+            echo "object-capture status: ${STATUS_JSON:-<none>}"
+            if ! printf '%s' "${STATUS_JSON}" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('ready') is True else 1)"; then
+              echo "::error::${API_BASE_URL} is not ready for product capture (deploy the server + set the object endpoint/digest first)"
+              exit 1
+            fi
           fi
           echo "Building archive - marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}, sha ${BUILD_SHA}, api ${API_BASE_URL}"
           xcodebuild archive \
