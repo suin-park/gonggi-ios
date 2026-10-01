@@ -145,7 +145,7 @@ final class ObjectPlacementGeometryTests: XCTestCase {
         XCTAssertNotNil(ok)
         XCTAssertLessThan(simd_length(ok!.point - c), 1e-6)
         // a second tap on something else: the lines of sight miss each other
-        let elsewhere = ObjectRay(origin: good.origin, direction: SIMD3(c.x + 1.2, 0.25, c.y + 0.2) - good.origin)
+        let elsewhere = ObjectRay(origin: good.origin, direction: SIMD3(c.x + 0.9, -0.4, c.y - 0.2) - good.origin)
         guard case .failure(.inconsistent) = ObjectTwoTap.estimate(first: a, second: elsewhere) else { return XCTFail("taps on different things must be rejected") }
     }
 
