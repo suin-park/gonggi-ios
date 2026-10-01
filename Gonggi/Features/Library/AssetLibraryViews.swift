@@ -21,7 +21,7 @@ struct AssetLibraryView: View {
         VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
             header
             if hasProductEntries, let productSection {
-                sectionTitle("제품 3D 촬영")
+                sectionTitle("촬영으로 만든 3D 자산")
                 productSection
                 sectionTitle("사진으로 만든 3D")
             }

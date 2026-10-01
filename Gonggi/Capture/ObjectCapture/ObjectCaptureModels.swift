@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// Physical product (object) capture: the product stays still, the user walks around it.
+/// Static 3D asset (physical object) capture: the object stays still, the user walks around it.
 /// Worker contract: `object.json` next to the Spatial Capture Package files (schema 1, see
 /// workers/video-gaussian/docs/PRODUCT_3DGS_OBJECT_CAPTURE.md in the cloud repo).
 enum ObjectCaptureConfig {
@@ -36,6 +36,17 @@ enum ObjectCaptureConfig {
     /// Photos per cell after which a cell counts as covered for guidance.
     static let coveredPhotosPerCell = 2
 
+    /// Box policy written to object.json. `loose_v1`: the box is only a rough selection of the object — the worker
+    /// widens it for the final crop and prompts the mask model from its core, and capture judges "in frame" on the box
+    /// core. A package without the field (older apps) or with `legacy` keeps the previous exact-box behaviour.
+    static let boxPolicyLoose = "loose_v1"
+    static let boxPolicyLegacy = "legacy"
+    /// Core of the box (share of its size about the base centre) that the capture screen judges for "in frame". The
+    /// core being in frame is a statement about the box core only — it does not prove the whole object is visible.
+    static let coreFramingRatio: Float = 0.8
+    /// Capture with the previous exact-box rules (returns to build 88 behaviour). Set from the sizing panel.
+    static let legacyBoxDefaultsKey = "com.whik.gonggi.objectCapture.legacyExactBox"
+
     /// Product-extent evidence (Vision foreground mask): lets a photo be saved when the generous box sticks out of the
     /// photo but the whole product is inside it. Off until the offline validation has passed against the criteria that
     /// were fixed before it ran (docs/OBJECT_VISION_VALIDATION_CRITERIA.md). When off, nothing in capture changes.
@@ -68,6 +79,11 @@ struct ObjectCaptureBox: Equatable, Codable {
     }
 
     var radius: Float { simd_length(size / 2) }
+
+    /// Same base point and turn, every side x `ratio` (the box stays on the support surface).
+    func scaled(_ ratio: Float) -> ObjectCaptureBox {
+        ObjectCaptureBox(baseCenter: baseCenter, size: size * ratio, yawRadians: yawRadians)
+    }
 
     var corners: [SIMD3<Float>] {
         var out: [SIMD3<Float>] = []
@@ -107,6 +123,8 @@ struct ObjectCaptureFile: Codable, Equatable {
         var centerSource: String
         /// user_adjusted | default
         var sizeSource: String
+        /// loose_v1 | legacy (nil in files written by older apps = legacy)
+        var boxPolicy: String?
     }
 
     struct Coverage: Codable, Equatable {
@@ -124,6 +142,31 @@ struct ObjectCaptureFile: Codable, Equatable {
         var elevationDeg: Double
         var distanceM: Double
         var framing: String
+        /// What `framing` was judged on: "box" or "core0.80" (nil in older files = box).
+        var framingBasis: String?
+        /// Projected box centre in sensor pixels at the moment of saving (AR-drift review).
+        var boxCenterPx: [Float]?
+        /// ARKit tracking reason when not normal, else "normal".
+        var trackingReason: String?
+        /// ARFrame.worldMappingStatus name.
+        var mapping: String?
+        /// Raycast support-plane height under the box minus the recorded box base height, metres (nil = no plane hit).
+        var baseHeightDeltaM: Float?
+    }
+
+    /// Records to tell AR drift from depth ambiguity after the fact (see ObjectARDiagnostics). Not read by the worker.
+    struct Diagnostics: Codable, Equatable {
+        struct Event: Codable, Equatable {
+            var tSec: Double
+            var tracking: String
+            var mapping: String
+        }
+        var schema: Int
+        var events: [Event]
+        var relocalizationCount: Int
+        var planeAnchorUpdates: Int
+        var limitedFrameShare: Double
+        var framesSeen: Int
     }
 
     struct Device: Codable, Equatable {
@@ -139,6 +182,7 @@ struct ObjectCaptureFile: Codable, Equatable {
     var coverage: Coverage
     var frames: [Frame]
     var device: Device
+    var diagnostics: Diagnostics?
 
     static func make(
         box: ObjectCaptureBox,
@@ -146,7 +190,9 @@ struct ObjectCaptureFile: Codable, Equatable {
         sizeSource: String,
         coverage: ObjectOrbitCoverage,
         frames: [Frame],
-        hasLiDAR: Bool
+        hasLiDAR: Bool,
+        boxPolicy: String? = nil,
+        diagnostics: Diagnostics? = nil
     ) -> ObjectCaptureFile {
         ObjectCaptureFile(
             schemaVersion: ObjectCaptureConfig.schemaVersion,
@@ -157,7 +203,8 @@ struct ObjectCaptureFile: Codable, Equatable {
                 size: [box.size.x, box.size.y, box.size.z],
                 yawRadians: box.yawRadians,
                 centerSource: centerSource,
-                sizeSource: sizeSource
+                sizeSource: sizeSource,
+                boxPolicy: boxPolicy
             ),
             material: "matte_rigid",
             coverage: Coverage(
@@ -168,7 +215,8 @@ struct ObjectCaptureFile: Codable, Equatable {
                 totalCells: coverage.totalCellCount
             ),
             frames: frames,
-            device: Device(hasLiDAR: hasLiDAR)
+            device: Device(hasLiDAR: hasLiDAR),
+            diagnostics: diagnostics
         )
     }
 
@@ -179,6 +227,23 @@ struct ObjectCaptureFile: Codable, Equatable {
             to: packageRoot.appendingPathComponent(ObjectCaptureConfig.objectFileName),
             options: [.atomic]
         )
+    }
+}
+
+/// What can be captured as a 3D asset. Only still objects are supported in this version; people and pets are listed
+/// so the entry screen and the stored data can grow without a rename, but nothing starts a capture for them.
+enum ObjectCaptureSubject: String, CaseIterable {
+    case stillObject = "still_object"
+    case person
+    case pet
+
+    var isSupported: Bool { self == .stillObject }
+    /// The subject's own line on the start screen; unsupported subjects say so plainly.
+    var startLine: String {
+        switch self {
+        case .stillObject: return "움직이지 않는 물체만 만들 수 있어요"
+        case .person, .pet: return "사람과 반려동물은 아직 지원하지 않아요"
+        }
     }
 }
 

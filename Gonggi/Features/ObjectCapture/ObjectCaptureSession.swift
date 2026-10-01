@@ -3,7 +3,7 @@ import Combine
 import RealityKit
 import SwiftUI
 
-/// Product (object) capture session: place the product box, size it, walk around the product.
+/// 3D asset (still object) capture session: place the box, size it roughly, walk around the object.
 /// Works without LiDAR: the box base comes from an ARKit raycast on a horizontal plane (existing or estimated),
 /// the size from the user. Photos go through the same JPEG queue and package format as space capture, plus
 /// `object.json` (box, orbit coverage, per-photo angles).
@@ -26,6 +26,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     @Published private(set) var coverageCounts: [[Int]] = ObjectOrbitCoverage().counts
     @Published private(set) var currentAzimuthDeg: Double?
     @Published private(set) var savedPhotos = 0
+    /// Set by `requestFinish()` when the saved photos leave real gaps: the screen offers "더 찍기" or "그대로 만들기".
+    @Published private(set) var review: ObjectCoverageReview?
+    /// Capture with the previous exact-box rules (build 88 behaviour). Persisted; changed from the sizing panel.
+    @Published private(set) var legacyExactBox = UserDefaults.standard.bool(forKey: ObjectCaptureConfig.legacyBoxDefaultsKey)
     /// Box corners in view points (nil = not drawable this frame).
     @Published private(set) var cornersOnScreen: [CGPoint]?
     /// Placing-stage line. nil while the automatic search is young (the AR coaching overlay speaks then); the manual
@@ -61,7 +65,12 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         var blurry: Bool
         var position: ObjectOrbitPosition
     }
+    /// Accepted by the photo policy (decides whether another photo is useful) — may include a photo still being encoded.
     private var coverage = ObjectOrbitCoverage()
+    /// Photos that are really saved (JPEG written). Progress, guidance, the finish review and object.json use this one.
+    private var savedCoverage = ObjectOrbitCoverage()
+    private var pendingCells: [String: ObjectOrbitCell] = [:]
+    private var diagnostics = ObjectARDiagnostics()
     private var policy = ObjectKeyframePolicy()
     private let sharpness = FrameSharpnessAnalyzer()
     private let jpegQueue = SpatialJPEGEncodeQueue()
@@ -81,6 +90,16 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     private static let publishInterval: TimeInterval = 1.0 / 15.0
 
     static var hasLiDAR: Bool { ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) }
+
+    /// New builds treat the box as a rough selection (loose_v1); "legacy" is the way back to the exact box.
+    var usesLooseBox: Bool { !legacyExactBox }
+    /// The part of the box that "in frame" is judged on: its core when the box is only a rough selection.
+    var framingBox: ObjectCaptureBox { usesLooseBox ? box.scaled(ObjectCaptureConfig.coreFramingRatio) : box }
+
+    func setLegacyExactBox(_ on: Bool) {
+        legacyExactBox = on
+        UserDefaults.standard.set(on, forKey: ObjectCaptureConfig.legacyBoxDefaultsKey)
+    }
 
     // MARK: - Lifecycle
 
@@ -301,6 +320,17 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         sizeAdjusted = true
     }
 
+    /// One-slider sizing: the whole box scales about its base centre and keeps its proportions.
+    var uniformScale: Float { box.size.x / ObjectCaptureConfig.defaultSize.x }
+
+    func setUniformScale(_ scale: Float) {
+        let current = max(uniformScale, 0.01)
+        var b = box
+        b.size = b.size * (scale / current)
+        box = b.clamped()
+        sizeAdjusted = true
+    }
+
     func rotate(byRadians delta: Float) {
         box.yawRadians += delta
         sizeAdjusted = true
@@ -334,6 +364,13 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         captureId = ObjectCaptureIdRegistry.nextCaptureId()
         startedAt = Date()
         coverage = ObjectOrbitCoverage()
+        savedCoverage = ObjectOrbitCoverage()
+        pendingCells = [:]
+        diagnostics = ObjectARDiagnostics()
+        review = nil
+        coverageCounts = savedCoverage.counts
+        bandFill = savedCoverage.bandFill
+        savedPhotos = 0
         policy = ObjectKeyframePolicy()
         keyframes = []
         objectFrames = []
@@ -352,6 +389,12 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         MainActor.assumeIsolated { self.handle(frame) }
+    }
+
+    nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        let planes = anchors.filter { $0 is ARPlaneAnchor }.count
+        guard planes > 0 else { return }
+        MainActor.assumeIsolated { self.diagnostics.planeAnchorUpdated(count: planes) }
     }
 
     private func handle(_ frame: ARFrame) {
@@ -373,7 +416,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             fx: k.columns.0.x, fy: k.columns.1.y, cx: k.columns.2.x, cy: k.columns.2.y,
             width: Float(res.width), height: Float(res.height)
         )
-        let fr = ObjectFraming.evaluate(box: box, cameraToWorld: camT, intrinsics: intr)
+        let fr = ObjectFraming.evaluate(box: framingBox, cameraToWorld: camT, intrinsics: intr)
         let pos = ObjectOrbitCoverage.position(camera: camPos, box: box)
         // The ONE framing answer for colour and guidance. With product analysis off it is the box rule, unchanged.
         // With it on, a fresh confirmed analysis can show "capturable" while the box sticks out; photos from such
@@ -393,6 +436,11 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         if case .normal = frame.camera.trackingState { trackingNormal = true } else { trackingNormal = false }
 
         guard stage == .capturing else { return }
+        diagnostics.ingest(
+            timestamp: frame.timestamp,
+            tracking: ObjectARDiagnostics.trackingName(frame.camera.trackingState),
+            mapping: ObjectARDiagnostics.mappingName(frame.worldMappingStatus)
+        )
         if let last = lastCameraPosition { pathLengthM += Double(simd_distance(last, camPos)) }
         lastCameraPosition = camPos
         if !trackingNormal { trackingFailureCount += 1 }
@@ -411,12 +459,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             cellCount: cell.map { coverage.count($0) } ?? 0,
             direction: dir
         ))
-        if case .accept(let reason) = decision, let cell, savePhoto(frame, reason: reason, position: pos, framingLabel: fr.state.rawValue, sharpness: sharp) {
+        if case .accept(let reason) = decision, let cell,
+           savePhoto(frame, reason: reason, position: pos, cell: cell, framingLabel: fr.state.rawValue, sharpness: sharp) {
             policy.didSave(timestamp: frame.timestamp, direction: dir)
             coverage.record(cell)
-            coverageCounts = coverage.counts
-            bandFill = coverage.bandFill
-            savedPhotos = policy.savedCount
         } else if case .reject = decision {
             rejectedCount += 1
         }
@@ -436,7 +482,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 }
             }
             guidance = ObjectCaptureGuidance.next(
-                trackingNormal: trackingNormal, framing: display.framing, position: pos, coverage: coverage,
+                trackingNormal: trackingNormal, framing: display.framing, position: pos, coverage: savedCoverage,
                 productEvidence: guidanceEvidence
             )
         }
@@ -504,12 +550,9 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             direction: dir
         ))
         if case .accept(let reason) = decision, let cell,
-           savePhoto(frame, reason: reason, position: pending.position, framingLabel: readiness.label, sharpness: sharpness.snapshot()) {
+           savePhoto(frame, reason: reason, position: pending.position, cell: cell, framingLabel: readiness.label, sharpness: sharpness.snapshot()) {
             policy.didSave(timestamp: stamp, direction: dir)
             coverage.record(cell)
-            coverageCounts = coverage.counts
-            bandFill = coverage.bandFill
-            savedPhotos = policy.savedCount
         } else if case .reject = decision {
             rejectedCount += 1
         }
@@ -519,6 +562,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         _ frame: ARFrame,
         reason: String,
         position: ObjectOrbitPosition,
+        cell: ObjectOrbitCell,
         framingLabel: String,
         sharpness: FrameSharpnessAnalyzer.Snapshot
     ) -> Bool {
@@ -550,18 +594,46 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             debugPrincipalPointJPEGURL: nil,
             optionalDepthRelativePath: nil
         )
+        let res = frame.camera.imageResolution
+        let intr = ObjectFraming.Intrinsics(
+            fx: k.columns.0.x, fy: k.columns.1.y, cx: k.columns.2.x, cy: k.columns.2.y,
+            width: Float(res.width), height: Float(res.height)
+        )
+        var centrePx: [Float]?
+        if let c = ObjectFraming.project(box.center, cameraToWorld: frame.camera.transform, intrinsics: intr) {
+            centrePx = [(c.x * 10).rounded() / 10, (c.y * 10).rounded() / 10]
+        }
         pendingFrames[frameId] = ObjectCaptureFile.Frame(
             frameId: frameId,
             azimuthDeg: (position.azimuthDeg * 10).rounded() / 10,
             elevationDeg: (position.elevationDeg * 10).rounded() / 10,
             distanceM: (position.distanceM * 1000).rounded() / 1000,
-            framing: framingLabel
+            framing: framingLabel,
+            framingBasis: usesLooseBox ? String(format: "core%.2f", ObjectCaptureConfig.coreFramingRatio) : "box",
+            boxCenterPx: centrePx,
+            trackingReason: "normal",
+            mapping: ObjectARDiagnostics.mappingName(frame.worldMappingStatus),
+            baseHeightDeltaM: supportHeightDelta()
         )
+        pendingCells[frameId] = cell
         let enqueued = jpegQueue.tryEnqueue(SpatialJPEGEncodeQueue.Job(snapshot: snapshot)) { [weak self] result in
             Task { @MainActor in self?.jpegFinished(result) }
         }
-        if enqueued { enqueuedCount += 1 } else { pendingFrames.removeValue(forKey: frameId) }
+        if enqueued {
+            enqueuedCount += 1
+        } else {
+            pendingFrames.removeValue(forKey: frameId)
+            pendingCells.removeValue(forKey: frameId)
+        }
         return enqueued
+    }
+
+    /// Height of the detected support plane under the box minus the box base height (metres); nil without a plane hit.
+    /// A value that grows during a capture means the box slid relative to the real floor (AR drift), not depth ambiguity.
+    private func supportHeightDelta() -> Float? {
+        guard let arView, let p = arView.project(box.baseCenter) else { return nil }
+        guard let hit = arView.raycast(from: p, allowing: .existingPlaneGeometry, alignment: .horizontal).first else { return nil }
+        return ((hit.worldTransform.columns.3.y - box.baseCenter.y) * 1000).rounded() / 1000
     }
 
     private func jpegFinished(_ result: Result<SpatialJPEGEncodeQueue.Success, SpatialJPEGEncodeQueue.Failure>) {
@@ -593,8 +665,13 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 optionalDepthRelativePath: nil
             ))
             if let f = pendingFrames.removeValue(forKey: s.frameId) { objectFrames.append(f) }
+            if let cell = pendingCells.removeValue(forKey: s.frameId) { savedCoverage.record(cell) }
+            coverageCounts = savedCoverage.counts
+            bandFill = savedCoverage.bandFill
+            savedPhotos = keyframes.count
         case .failure(let f):
             pendingFrames.removeValue(forKey: f.snapshot.frameId)
+            if let cell = pendingCells.removeValue(forKey: f.snapshot.frameId) { coverage.unrecord(cell) }
             rejectedCount += 1
         }
     }
@@ -617,6 +694,19 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     // MARK: - Finish
 
+    /// "마침": when the saved photos leave real gaps, publish a review (the sheet offers more photos in THIS session or
+    /// finishing as is); otherwise returns true and the caller finishes. The AR session keeps running meanwhile.
+    func requestFinish() -> Bool {
+        let r = ObjectCoverageReview.make(coverage: savedCoverage, savedPhotos: savedPhotos)
+        if r.hasGaps {
+            review = r
+            return false
+        }
+        return true
+    }
+
+    func continueCapturing() { review = nil }
+
     /// Flushes the photo queue, writes the package + object.json. Returns nil when there is nothing usable.
     func finish() async -> CaptureSessionSummary? {
         stage = .finishing
@@ -629,7 +719,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         }
         arSession.pause()
         guard let paths, keyframes.count >= 2 else {
-            stage = .failed("저장된 사진이 너무 적어요. 제품 주위를 더 돌며 찍어 주세요")
+            stage = .failed("저장된 사진이 너무 적어요. 물체 주위를 더 돌며 찍어 주세요")
             return nil
         }
         let endedAt = Date()
@@ -643,8 +733,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 rejectedDecisionCount: rejectedCount,
                 trackingFailureCount: trackingFailureCount,
                 totalTranslationDistanceM: pathLengthM,
-                observedCoverage: Double(coverage.coveredCellCount) / Double(coverage.totalCellCount),
-                qualityCoverage: Double(coverage.coveredCellCount) / Double(coverage.totalCellCount),
+                observedCoverage: Double(savedCoverage.coveredCellCount) / Double(savedCoverage.totalCellCount),
+                qualityCoverage: Double(savedCoverage.coveredCellCount) / Double(savedCoverage.totalCellCount),
                 viewAngleDiversity: bandFill.reduce(0, +) / Double(max(1, bandFill.count)),
                 translationBaselineGrade: CaptureTranslationBaselineGrade.good.rawValue,
                 averageSharpness: nil,
@@ -663,12 +753,14 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 box: box,
                 centerSource: centerSource,
                 sizeSource: sizeAdjusted ? "user_adjusted" : "default",
-                coverage: coverage,
+                coverage: savedCoverage,
                 frames: objectFrames.filter { saved.contains($0.frameId) }.sorted { $0.frameId < $1.frameId },
-                hasLiDAR: Self.hasLiDAR
+                hasLiDAR: Self.hasLiDAR,
+                boxPolicy: usesLooseBox ? ObjectCaptureConfig.boxPolicyLoose : ObjectCaptureConfig.boxPolicyLegacy,
+                diagnostics: diagnostics.snapshot()
             ).write(to: built.root)
             let quality = CaptureQualityState(
-                overallCoverage: Double(coverage.coveredCellCount) / Double(coverage.totalCellCount),
+                overallCoverage: Double(savedCoverage.coveredCellCount) / Double(savedCoverage.totalCellCount),
                 motionSpeed: 0, angularVelocity: 0, blurScore: 1, exposureScore: 1, trackingQuality: 1,
                 lowTextureScore: 0, overlapScore: 0, parallaxScore: 0, areas: []
             )

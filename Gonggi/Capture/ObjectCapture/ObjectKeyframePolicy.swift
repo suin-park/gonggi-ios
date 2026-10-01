@@ -74,13 +74,13 @@ enum ObjectCaptureGuidance: Equatable {
     var text: String {
         switch self {
         case .trackingLimited: return "천천히 움직여 주세요"
-        case .productCutOff: return "제품이 화면 밖으로 나갔어요"
+        case .productCutOff: return "물체가 화면 밖으로 나갔어요"
         case .stepBack: return "한 걸음 물러나 주세요"
         case .stepCloser: return "조금 더 가까이 가 주세요"
-        case .centerProduct: return "제품을 화면 가운데에 두세요"
+        case .centerProduct: return "물체를 화면 가운데에 두세요"
         case .raisePhone: return "조금 높은 곳에서 내려다보며 찍어 주세요"
         case .lowerPhone: return "휴대폰을 낮춰 옆모습을 찍어 주세요"
-        case .walkAround(let towardLeft): return towardLeft ? "제품 주위를 왼쪽으로 천천히 돌아 주세요" : "제품 주위를 오른쪽으로 천천히 돌아 주세요"
+        case .walkAround(let towardLeft): return towardLeft ? "물체 주위를 왼쪽으로 천천히 돌아 주세요" : "물체 주위를 오른쪽으로 천천히 돌아 주세요"
         case .enough: return "충분히 찍었어요. 마침을 눌러도 돼요"
         }
     }

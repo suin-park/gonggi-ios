@@ -3,20 +3,32 @@ import RealityKit
 import SwiftUI
 
 enum ObjectCaptureCopy {
-    static let title = "제품 3D 촬영"
+    static let title = "3D 자산 만들기"
     static let introLines = [
-        "움직이지 않는 무광 제품 하나를 찍어요",
-        "제품은 그대로 두고, 휴대폰을 들고 주위를 걸어요",
-        "벽에 붙은 제품은 조금 떼어 놓아 주세요",
-        "바닥과 주변이 함께 찍혀도 괜찮아요. 결과에서는 제품만 남겨요",
+        ObjectCaptureSubject.stillObject.startLine,
+        "물체는 그대로 두고, 휴대폰을 들고 천천히 주위를 걸어요",
+        "벽에 붙은 물체는 조금 떼어 놓아 주세요",
+        "바닥과 주변이 함께 찍혀도 괜찮아요. 결과에서는 물체만 남겨요",
     ]
+    /// Shown under the lines above, in a different style: what is NOT supported in this version.
+    static let unsupportedLine = ObjectCaptureSubject.person.startLine
     static let start = "시작"
     /// After the box is placed (automatically or by tap). The box is a guide the user fits; it does not know the product.
-    static let sizingHint = "상자가 제품을 넉넉하게 감싸도록 위치와 크기를 맞춰 주세요."
+    static let sizingHint = "상자가 물체를 대략 감싸면 돼요. 정확히 맞추지 않아도 괜찮아요."
     /// While no box exists and automatic placement could not find a steady surface.
-    static let manualPlacementHint = "제품 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요."
+    static let manualPlacementHint = "물체 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요."
     /// The worker keeps only what is inside the box, so a tight box cuts the product's top off (GONGGI_OBJECT_V1_002).
-    static let sizingTips = "상자 안을 한 손가락으로 끌어 옮기고, 두 손가락으로 돌려요. 높이는 제품 맨 위보다 조금 높게 잡아 주세요"
+    static let sizingTips = "물체가 상자 안에 들어오면 돼요. 너무 크게 잡을 필요는 없어요. 크기 슬라이더 하나로 맞추고, 위치는 상자 안을 한 손가락으로 끌어 옮길 수 있어요"
+    /// Capture-screen footnote: green means a good place to take photos, not that the whole object is verified in frame.
+    static let captureNote = "초록 상자는 촬영하기 좋은 위치예요. 물체가 화면 밖으로 잘리지 않는지 직접 확인해 주세요"
+    static let uniformSize = "크기"
+    static let advanced = "자세히 조절"
+    static let advancedTips = "길쭉한 물체는 가로·높이·깊이를 따로 맞추세요. 높이는 물체 맨 위보다 조금 높게 잡아 주세요"
+    static let legacyToggle = "기존 정밀 박스 방식으로 촬영"
+    static let legacyToggleNote = "상자를 물체에 꼭 맞게 맞춘 경우에만 사용하세요"
+    static let reviewTitle = "아직 부족한 방향이 있어요"
+    static let reviewMore = "더 찍기"
+    static let reviewAsIs = "그대로 3D 자산 만들기"
     static let width = "가로"
     static let height = "높이"
     static let depth = "깊이"
@@ -33,7 +45,7 @@ enum ObjectCaptureCopy {
         let f = DateFormatter()
         f.locale = Locale(identifier: "ko_KR")
         f.dateFormat = "M월 d일 HH:mm"
-        return "제품 3D \(f.string(from: date))"
+        return "3D 자산 \(f.string(from: date))"
     }
 }
 
@@ -84,7 +96,7 @@ struct ObjectCaptureFlowView: View {
                 },
                 onHandedOff: { _, _ in
                     summary = nil
-                    appState.gaussianLibraryBanner = "제품 3D 생성을 시작했어요."
+                    appState.gaussianLibraryBanner = "3D 자산 생성을 시작했어요."
                     appState.rebuildSpaces()
                     appState.ensureGaussianGenerationPolling()
                     onClose()
@@ -156,19 +168,54 @@ struct ObjectCaptureFlowView: View {
                 .foregroundStyle(.white.opacity(0.85))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
-            sizeSlider(ObjectCaptureCopy.width, value: session.box.size.x) { session.setSize(width: $0) }
-            sizeSlider(ObjectCaptureCopy.height, value: session.box.size.y) { session.setSize(height: $0) }
-            sizeSlider(ObjectCaptureCopy.depth, value: session.box.size.z) { session.setSize(depth: $0) }
-            HStack(spacing: 12) {
-                Button { session.rotate(byRadians: -.pi / 36) } label: { Image(systemName: "rotate.left") }
-                    .accessibilityLabel("상자 왼쪽으로 돌리기")
-                Button { session.rotate(byRadians: .pi / 36) } label: { Image(systemName: "rotate.right") }
-                    .accessibilityLabel("상자 오른쪽으로 돌리기")
-                Spacer()
-                Button(ObjectCaptureCopy.placeAgain) { session.placeAgain() }
+            HStack(spacing: 10) {
+                Text(ObjectCaptureCopy.uniformSize)
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minWidth: 36, alignment: .leading)
+                Slider(
+                    value: Binding(get: { Double(session.uniformScale) }, set: { session.setUniformScale(Float($0)) }),
+                    in: 0.15...7.0
+                )
+                Text("\(Int((session.box.size.max() * 100).rounded()))cm")
+                    .font(.subheadline.monospacedDigit())
+                    .frame(minWidth: 52, alignment: .trailing)
+            }
+            .foregroundStyle(.white)
+            DisclosureGroup(ObjectCaptureCopy.advanced) {
+                VStack(spacing: 10) {
+                    Text(ObjectCaptureCopy.advancedTips)
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    sizeSlider(ObjectCaptureCopy.width, value: session.box.size.x) { session.setSize(width: $0) }
+                    sizeSlider(ObjectCaptureCopy.height, value: session.box.size.y) { session.setSize(height: $0) }
+                    sizeSlider(ObjectCaptureCopy.depth, value: session.box.size.z) { session.setSize(depth: $0) }
+                    HStack(spacing: 12) {
+                        Button { session.rotate(byRadians: -.pi / 36) } label: { Image(systemName: "rotate.left") }
+                            .accessibilityLabel("상자 왼쪽으로 돌리기")
+                        Button { session.rotate(byRadians: .pi / 36) } label: { Image(systemName: "rotate.right") }
+                            .accessibilityLabel("상자 오른쪽으로 돌리기")
+                        Spacer()
+                    }
+                    Toggle(isOn: Binding(get: { session.legacyExactBox }, set: { session.setLegacyExactBox($0) })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(ObjectCaptureCopy.legacyToggle).font(.subheadline.weight(.semibold))
+                            Text(ObjectCaptureCopy.legacyToggleNote).font(.caption).foregroundStyle(.white.opacity(0.7))
+                        }
+                    }
+                }
+                .padding(.top, 6)
             }
             .font(.body.weight(.semibold))
+            .tint(.white)
             .foregroundStyle(.white)
+            HStack(spacing: 12) {
+                Spacer()
+                Button(ObjectCaptureCopy.placeAgain) { session.placeAgain() }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.white)
+            }
             PrimaryButton(title: ObjectCaptureCopy.beginCapture, icon: "camera") { session.beginCapture() }
         }
         .padding(14)
@@ -192,6 +239,30 @@ struct ObjectCaptureFlowView: View {
     }
 
     private var capturingPanel: some View {
+        VStack(spacing: 8) {
+            Text(ObjectCaptureCopy.captureNote)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            capturingControls
+        }
+        .confirmationDialog(
+            ObjectCaptureCopy.reviewTitle,
+            isPresented: Binding(get: { session.review != nil }, set: { if !$0 { session.continueCapturing() } }),
+            titleVisibility: .visible
+        ) {
+            Button(ObjectCaptureCopy.reviewMore) { session.continueCapturing() }
+            Button(ObjectCaptureCopy.reviewAsIs) {
+                session.continueCapturing()
+                Task { if let s = await session.finish() { summary = s } }
+            }
+        } message: {
+            Text(session.review?.message ?? "")
+        }
+    }
+
+    private var capturingControls: some View {
         HStack(alignment: .center, spacing: 16) {
             ObjectOrbitRingsView(counts: session.coverageCounts, currentAzimuthDeg: session.currentAzimuthDeg)
                 .frame(width: 96, height: 96)
@@ -207,6 +278,7 @@ struct ObjectCaptureFlowView: View {
             .foregroundStyle(.white)
             Spacer(minLength: 0)
             Button {
+                guard session.requestFinish() else { return }
                 Task {
                     if let s = await session.finish() { summary = s }
                 }
@@ -239,6 +311,10 @@ struct ObjectCaptureFlowView: View {
                     .font(.body)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Label(ObjectCaptureCopy.unsupportedLine, systemImage: "xmark.circle")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             PrimaryButton(title: ObjectCaptureCopy.start, icon: "arrow.right") { showIntro = false }
             Button(ObjectCaptureCopy.close) {

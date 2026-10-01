@@ -193,8 +193,8 @@ final class ObjectProductEvidenceTests: XCTestCase {
         XCTAssertEqual(((json["frames"] as! [[String: Any]]).first?["framing"]) as? String, "product_in_frame_box_clipped")
     }
 
-    func testAutoPlacementCopyIsTheAgreedTwoSentences() {
-        XCTAssertEqual(ObjectCaptureCopy.sizingHint, "상자가 제품을 넉넉하게 감싸도록 위치와 크기를 맞춰 주세요.")
-        XCTAssertEqual(ObjectCaptureCopy.manualPlacementHint, "제품 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요.")
+    func testAutoPlacementCopyIsTheCurrentTwoSentences() {
+        XCTAssertEqual(ObjectCaptureCopy.sizingHint, "상자가 물체를 대략 감싸면 돼요. 정확히 맞추지 않아도 괜찮아요.")
+        XCTAssertEqual(ObjectCaptureCopy.manualPlacementHint, "물체 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요.")
     }
 }

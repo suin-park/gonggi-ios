@@ -100,7 +100,7 @@ final class GaussianGenerationStore: ObservableObject {
         var userFacingStatusLabel: String {
             switch spaceStatus {
             case .uploading: return "업로드 중"
-            case .processing: return isProductResult ? "제품 3D 생성 중" : "3D 공간 생성 중"
+            case .processing: return isProductResult ? "3D 자산 생성 중" : "3D 공간 생성 중"
             case .ready: return "생성 완료"
             case .failed: return failureLabel
             case .draft: return "준비 중"
@@ -119,7 +119,7 @@ final class GaussianGenerationStore: ObservableObject {
             case "JOB_EXPIRED":
                 return "시간 초과 · 다시 시도할 수 있어요"
             case "OBJECT_PACKAGE_INVALID":
-                return "제품 촬영 정보를 읽지 못했어요"
+                return "3D 자산 촬영 정보를 읽지 못했어요"
             case "RUNPOD_CANCELLED", "cancelled":
                 return "생성 취소됨"
             default:
@@ -300,7 +300,7 @@ final class GaussianGenerationStore: ObservableObject {
                 GaussianGenerationRecord(
                     spaceId: r.spaceId,
                     jobId: "",
-                    name: r.name.isEmpty ? (r.captureKind == "object" ? "제품 3D" : "3D 공간") : r.name,
+                    name: r.name.isEmpty ? (r.captureKind == "object" ? "3D 자산" : "3D 공간") : r.name,
                     captureId: nil,
                     sessionId: nil,
                     qualityProfile: "",

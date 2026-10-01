@@ -14,12 +14,12 @@ enum RecordHomeCopy {
     }
 
     static let title = "기록"
-    static let productSection = "제품"
+    static let productSection = "3D 자산"
     static let spaceSection = "공간"
 
     static let photoTo3D = Choice(title: "사진으로 3D 만들기", line: "사진 한 장으로 입체 모습을 만들어요",
                                   icon: "photo.on.rectangle.angled")
-    static let productCapture = Choice(title: "제품 3D 촬영", line: "제품을 돌려 보고 확대할 수 있어요", icon: "rotate.3d")
+    static let productCapture = Choice(title: "3D 자산 만들기", line: "움직이지 않는 물체를 돌려 보고 확대할 수 있어요", icon: "rotate.3d")
 
     static let space360 = Choice(title: "360 공간", line: "한 자리에서 주변을 둘러봐요",
                                  icon: "arrow.triangle.2.circlepath.circle")

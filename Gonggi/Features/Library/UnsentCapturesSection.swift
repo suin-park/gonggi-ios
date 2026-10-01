@@ -89,7 +89,7 @@ struct UnsentCapturesSection: View {
         Task { @MainActor in
             let error = await UnsentCaptureResumer.resend(item, service: appState.spaceService)
             busySessionId = nil
-            message = error ?? (item.isProduct ? "업로드했어요. 제품 3D 생성을 요청했어요." : "업로드했어요. 3D 공간 생성을 요청했어요.")
+            message = error ?? (item.isProduct ? "업로드했어요. 3D 자산 생성을 요청했어요." : "업로드했어요. 3D 공간 생성을 요청했어요.")
             reload()
             appState.rebuildSpaces()
             appState.ensureSpaceGenerationPolling()

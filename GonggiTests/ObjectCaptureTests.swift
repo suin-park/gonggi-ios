@@ -225,7 +225,7 @@ final class ObjectCaptureTests: XCTestCase {
         // The drag instruction lives in the sizing tips; the top line is the short "fit the box" sentence.
         XCTAssertTrue(ObjectCaptureCopy.sizingTips.contains("끌어"))
         XCTAssertLessThanOrEqual(ObjectCaptureSession.maxDragStepM, 0.3, "a pose jump must not fling the box")
-        XCTAssertTrue(ObjectCaptureCopy.sizingTips.contains("맨 위보다"))
+        XCTAssertTrue(ObjectCaptureCopy.advancedTips.contains("맨 위보다"))
     }
 
     /// A drag starts only on the drawn box (or within the touch slop of its outline), never on empty screen.
@@ -261,7 +261,7 @@ final class ObjectCaptureTests: XCTestCase {
             sessionId: "s", captureId: "GONGGI_OBJECT_V1_003", capturedAt: date, photoCount: 234, durationSec: 88,
             ownerUserId: "u", isProduct: true
         )
-        XCTAssertTrue(unsentProduct.suggestedName.hasPrefix("제품 3D "), unsentProduct.suggestedName)
+        XCTAssertTrue(unsentProduct.suggestedName.hasPrefix("3D 자산 "), unsentProduct.suggestedName)
         XCTAssertFalse(unsentProduct.suggestedName.contains("공간"))
         let unsentSpace = UnsentCaptureResumer.Item(
             sessionId: "t", captureId: "GONGGI_CAPTURE_V1_060", capturedAt: date, photoCount: 300, durationSec: 120,
@@ -270,12 +270,12 @@ final class ObjectCaptureTests: XCTestCase {
         XCTAssertTrue(unsentSpace.suggestedName.hasPrefix("새 공간 "))
 
         let job = GaussianGenerationStore.GaussianGenerationRecord(
-            spaceId: "s1", jobId: "j", name: "제품 3D", captureId: nil, sessionId: nil, qualityProfile: "",
+            spaceId: "s1", jobId: "j", name: "3D 자산", captureId: nil, sessionId: nil, qualityProfile: "",
             status: "processing", stage: nil, progress: 0.3, failureCode: nil, thumbnailRelativePath: nil,
             createdAt: Date(), updatedAt: Date(), handedOffToLibraryAt: nil, completedAt: nil,
             captureKind: "object"
         )
-        XCTAssertEqual(job.userFacingStatusLabel, "제품 3D 생성 중")
+        XCTAssertEqual(job.userFacingStatusLabel, "3D 자산 생성 중")
     }
 }
 

@@ -8,7 +8,7 @@ final class RecordHomeTests: XCTestCase {
 
     func testCopy() {
         XCTAssertEqual(RecordHomeCopy.title, "기록")
-        XCTAssertEqual(RecordHomeCopy.productSection, "제품")
+        XCTAssertEqual(RecordHomeCopy.productSection, "3D 자산")
         XCTAssertEqual(RecordHomeCopy.spaceSection, "공간")
         XCTAssertEqual(RecordHomeCopy.photoTo3D.title, "사진으로 3D 만들기")
         XCTAssertEqual(RecordHomeCopy.photoTo3D.line, "사진 한 장으로 입체 모습을 만들어요")

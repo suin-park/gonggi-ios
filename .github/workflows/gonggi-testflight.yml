@@ -193,6 +193,7 @@ jobs:
               -only-testing:GonggiTests/ObjectAutoPlacementTests
               -only-testing:GonggiTests/ObjectProductEvidenceTests
               -only-testing:GonggiTests/ObjectProductEvidenceRuleTests
+              -only-testing:GonggiTests/ObjectLooseBoxTests
               -only-testing:GonggiTests/AppServerConfigTests
               -only-testing:GonggiTests/ProductCardServerGateTests
               -only-testing:GonggiTests/RecordHomeTests

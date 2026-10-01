@@ -32,7 +32,7 @@ enum CaptureMode: String, Identifiable {
         case .panoramaCapture: return "파노라마 기록"
         case .spaceScan3DGS: return "3D 공간 스캔 (DEBUG)"
         case .quick360Experimental: return "실험 · 360 공간 기록"
-        case .productObjectCapture: return "제품 3D 촬영"
+        case .productObjectCapture: return "3D 자산 만들기"
         }
     }
 
@@ -47,7 +47,7 @@ enum CaptureMode: String, Identifiable {
         case .quick360Experimental:
             return "실험용 full-sphere / OpenCV A/B (기본 경로 아님)"
         case .productObjectCapture:
-            return "고정된 무광 제품 주위를 걸으며 촬영해요"
+            return "움직이지 않는 물체 주위를 걸으며 촬영해요"
         }
     }
 

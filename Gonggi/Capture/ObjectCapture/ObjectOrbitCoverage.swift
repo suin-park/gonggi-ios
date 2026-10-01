@@ -51,6 +51,11 @@ struct ObjectOrbitCoverage: Equatable {
         counts[cell.band][cell.azimuthBin] += 1
     }
 
+    /// Takes back one recorded photo (its JPEG failed to write).
+    mutating func unrecord(_ cell: ObjectOrbitCell) {
+        counts[cell.band][cell.azimuthBin] = max(0, counts[cell.band][cell.azimuthBin] - 1)
+    }
+
     var totalCellCount: Int { counts.count * ObjectCaptureConfig.azimuthBinCount }
 
     var coveredCellCount: Int {

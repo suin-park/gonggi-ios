@@ -17,7 +17,7 @@ struct ProductShareLinkButton: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                Text("링크가 있는 사람은 누구나 이 제품 3D를 볼 수 있어요")
+                Text("링크가 있는 사람은 누구나 이 3D 자산을 볼 수 있어요")
                     .font(.footnote)
                     .foregroundStyle(GonggiColors.textSecondary)
             } else {
