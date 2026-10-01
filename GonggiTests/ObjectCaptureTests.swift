@@ -222,7 +222,8 @@ final class ObjectCaptureTests: XCTestCase {
         XCTAssertEqual(hit!.z, -1.2, accuracy: 1e-4)
         XCTAssertNil(ObjectCaptureSession.supportPlaneHit(origin: eye, direction: SIMD3(0, 0.2, -1), planeY: 0), "above the horizon")
         XCTAssertNil(ObjectCaptureSession.supportPlaneHit(origin: eye, direction: SIMD3(0, 0, -1), planeY: 0), "parallel")
-        XCTAssertTrue(ObjectCaptureCopy.sizingHint.contains("끌어"))
+        // The drag instruction lives in the sizing tips; the top line is the short "fit the box" sentence.
+        XCTAssertTrue(ObjectCaptureCopy.sizingTips.contains("끌어"))
         XCTAssertLessThanOrEqual(ObjectCaptureSession.maxDragStepM, 0.3, "a pose jump must not fling the box")
         XCTAssertTrue(ObjectCaptureCopy.sizingTips.contains("맨 위보다"))
     }
