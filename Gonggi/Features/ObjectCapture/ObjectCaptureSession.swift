@@ -2,6 +2,7 @@ import ARKit
 import Combine
 import RealityKit
 import SwiftUI
+import UIKit
 
 /// 3D asset (still object) capture session: place the box, size it roughly, walk around the object.
 /// Works without LiDAR: the box base comes from an ARKit raycast on a horizontal plane (existing or estimated),
@@ -10,7 +11,10 @@ import SwiftUI
 @MainActor
 final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate {
     enum Stage: Equatable {
+        /// Tap 1 on the object itself (not the floor under it).
         case placing
+        /// Tap 2 on the object from another place; the two lines of sight meet at the object.
+        case secondTap
         case sizing
         case capturing
         case finishing
@@ -36,6 +40,18 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     /// Placing-stage line. nil while the automatic search is young (the AR coaching overlay speaks then); the manual
     /// placement sentence after the search ran too long, after "place again", or after a tap found no surface.
     @Published private(set) var placementHint: String?
+    /// Floor ring (footprint, loose selection) in view points; the default overlay. nil = not drawable this frame.
+    @Published private(set) var ringOnScreen: [CGPoint]?
+    /// Where tap 1 landed (view points), so the user sees it was taken while walking to the second place.
+    @Published private(set) var firstTapMarker: CGPoint?
+    /// 0...1: how far the user has walked around toward the second view (35 degrees = 1).
+    @Published private(set) var walkProgress: Double = 0
+    /// One line under the placing sentence: what to fix after a rejected tap.
+    @Published private(set) var locatingNote: String?
+    /// The old way for objects on a table: tap the support surface itself.
+    @Published private(set) var floorTapMode = false
+    /// Show the box wireframe too (advanced). The default shows the ring only: nothing to fit.
+    @Published var showsCube = false
 
     let arSession = ARSession()
     weak var arView: ARView?
@@ -48,6 +64,25 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     private var autoPlanner = ObjectAutoPlacementPlanner()
     private var placementGate = ObjectPlacementGate()
     private var lastAutoSampleAt: TimeInterval = 0
+    /// Locating (two taps) and the refinement that goes on while walking around.
+    private struct LocatingTap {
+        var ray: ObjectRay
+        var floorY: Float
+        var screen: CGPoint
+        var cameraPosition: SIMD3<Float>
+    }
+    private var firstTap: LocatingTap?
+    private var initialPointXZ: SIMD2<Double>?
+    private var refiner = ObjectCentreRefiner()
+    private var lastRaySampleAt: TimeInterval = 0
+    private var refineFrozen = false
+    private var userMovedBox = false
+    private var trace = ObjectPlacementTrace(appBuild: ObjectPlacementTrace.currentAppBuild(), device: UIDevice.current.model)
+    private var traceStart: TimeInterval?
+    private var lastTraceSampleAt: TimeInterval = -10
+    private var baseAnchorId: UUID?
+    private var baseAnchorOrigin: SIMD3<Float>?
+    private var baseAnchorLatest: SIMD3<Float>?
     /// Product-extent evidence (only used when `ObjectCaptureConfig.productEvidenceEnabled`).
     private let segmenter = ObjectProductSegmenter()
     private var evidenceTracker = ObjectEvidenceTracker()
@@ -94,8 +129,9 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     /// With the switch on the box is a rough selection (loose_v1); off, the exact box as before ("legacy").
     var usesLooseBox: Bool { looseBox }
-    /// The part of the box that "in frame" is judged on: its core when the box is only a rough selection.
-    var framingBox: ObjectCaptureBox { usesLooseBox ? box.scaled(ObjectCaptureConfig.coreFramingRatio) : box }
+    /// The part of the box that "in frame" is judged on: its core. The box is a rough selection (the user does not fit it),
+    /// so the judgement no longer depends on its edges, whatever the box policy written to object.json is.
+    var framingBox: ObjectCaptureBox { box.scaled(ObjectCaptureConfig.coreFramingRatio) }
 
     func setLooseBox(_ on: Bool) {
         looseBox = on
@@ -119,7 +155,238 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         jpegQueue.stopAccepting()
     }
 
-    // MARK: - Placement / size
+    // MARK: - Locating: two taps on the object (TF90)
+
+    /// Lowest horizontal surface along the ray of a screen point: the floor behind or under the object. The surface of
+    /// the object itself (a seat, a lid) is higher and is not taken.
+    private func lowestSurfaceY(at point: CGPoint, in view: ARView) -> Float? {
+        var ys: [Float] = []
+        for target in [ARRaycastQuery.Target.existingPlaneGeometry, .estimatedPlane] {
+            for hit in view.raycast(from: point, allowing: target, alignment: .horizontal) {
+                ys.append(hit.worldTransform.columns.3.y)
+            }
+        }
+        return ys.min()
+    }
+
+    func useFloorTap() {
+        floorTapMode = true
+        placementHint = ObjectCaptureCopy.manualPlacementHint
+        trace.add(traceTime(), "floor_tap_mode")
+    }
+
+    /// A tap on the OBJECT (its middle). First tap: remember the line of sight. Second tap, from another place: the two
+    /// lines of sight meet at the object, and the ring is put there. Nothing has to be dragged, sized or turned.
+    func tapObject(at point: CGPoint) {
+        guard stage == .placing || stage == .secondTap, let arView, let frame = arSession.currentFrame else { return }
+        if floorTapMode, stage == .placing { place(at: point); return }
+        placementGate.manualTouch()
+        guard case .normal = frame.camera.trackingState else {
+            locatingNote = "휴대폰을 천천히 움직여 주세요"
+            return
+        }
+        guard let ray = arView.ray(through: point) else { return }
+        let r = ObjectRay(origin: ray.origin, direction: ray.direction)
+        let floorY = lowestSurfaceY(at: point, in: arView)
+        let cam = frame.camera.transform.columns.3
+        let camPos = SIMD3<Float>(cam.x, cam.y, cam.z)
+        var v: [String: Double] = [
+            "sx": Double(point.x), "sy": Double(point.y),
+            "ox": Double(ray.origin.x), "oy": Double(ray.origin.y), "oz": Double(ray.origin.z),
+            "dx": Double(ray.direction.x), "dy": Double(ray.direction.y), "dz": Double(ray.direction.z),
+        ]
+        if let floorY { v["floorY"] = Double(floorY) }
+        if stage == .placing {
+            guard let floorY else {
+                locatingNote = "바닥이 보이게 휴대폰을 천천히 움직여 주세요"
+                trace.add(traceTime(), "tap1_no_floor", v)
+                return
+            }
+            trace.add(traceTime(), "tap1", v)
+            firstTap = LocatingTap(ray: r, floorY: floorY, screen: point, cameraPosition: camPos)
+            firstTapMarker = point
+            locatingNote = nil
+            walkProgress = 0
+            initialPointXZ = Self.heightRulePoint(ray: r, floorY: floorY, centreHeight: ObjectCaptureConfig.defaultSize.y / 2)
+                ?? {
+                    // looking (almost) level: put the starting guess 1.2 m ahead so the walk angle still means something
+                    let hn = max(1e-6, (r.direction.x * r.direction.x + r.direction.z * r.direction.z).squareRoot())
+                    return SIMD2(r.origin.x + 1.2 * r.direction.x / hn, r.origin.z + 1.2 * r.direction.z / hn)
+                }()
+            stage = .secondTap
+            GonggiHaptics.light()
+            return
+        }
+        // second tap
+        guard let first = firstTap else { return }
+        switch ObjectTwoTap.estimate(first: first.ray, second: r) {
+        case .success(let res):
+            v["convergenceDeg"] = res.convergenceDeg
+            v["skewM"] = res.skewM
+            v["baselineM"] = res.baselineM
+            v["px"] = res.point.x
+            v["pz"] = res.point.y
+            trace.add(traceTime(), "tap2_ok", v)
+            let y = min(first.floorY, floorY ?? first.floorY)
+            refiner = ObjectCentreRefiner()
+            refiner.addAnchor(first.ray)
+            refiner.addAnchor(r)
+            commitLocated(centre: res.point, floorY: y, source: "two_tap_triangulation")
+        case .failure(let why):
+            trace.add(traceTime(), "tap2_rejected", v, ["why": "\(why)"])
+            switch why {
+            case .tooClose:
+                locatingNote = "조금 더 옆으로 이동한 뒤 눌러 주세요 (지금 \(Int(walkAngleDeg().rounded()))° / \(Int(ObjectTwoTap.goodConvergenceDeg))° 이상)"
+            case .inconsistent, .behindCamera:
+                locatingNote = "두 번 누른 곳이 서로 달라요. 물체 가운데를 눌러 주세요"
+            }
+        }
+    }
+
+    /// Skip the second tap: the first tap's line of sight at a typical object height. The estimate is corrected while the
+    /// user walks around (see `refineWhileWalking`), but until then it can be off by 0.2–0.3 m.
+    func skipSecondTap() {
+        guard stage == .secondTap, let first = firstTap, let p = initialPointXZ else { return }
+        trace.add(traceTime(), "skip_second_tap")
+        refiner = ObjectCentreRefiner()
+        refiner.addAnchor(first.ray)
+        commitLocated(centre: p, floorY: first.floorY, source: "single_tap_height_rule")
+    }
+
+    /// Where the line of sight meets the horizontal plane at `centreHeight` above the floor (horizontal position).
+    nonisolated static func heightRulePoint(ray: ObjectRay, floorY: Float, centreHeight: Float) -> SIMD2<Double>? {
+        guard ray.direction.y < -1e-3 else { return nil }
+        let s = (Double(floorY + centreHeight) - ray.origin.y) / ray.direction.y
+        guard s > 0 else { return nil }
+        let p = ray.origin + s * ray.direction
+        return SIMD2(p.x, p.z)
+    }
+
+    private func walkAngleDeg() -> Double {
+        guard let first = firstTap, let p0 = initialPointXZ,
+              let cam = arSession.currentFrame?.camera.transform.columns.3 else { return 0 }
+        let a = SIMD2(first.cameraPosition.x, first.cameraPosition.z)
+        let b = SIMD2(cam.x, cam.z)
+        let c = SIMD2(Float(p0.x), Float(p0.y))
+        let u = a - c, w = b - c
+        let nu = simd_length(u), nw = simd_length(w)
+        guard nu > 1e-3, nw > 1e-3 else { return 0 }
+        return Double(acos(max(-1, min(1, simd_dot(u, w) / (nu * nw))))) * 180 / .pi
+    }
+
+    private func traceTime() -> Double {
+        let now = arSession.currentFrame?.timestamp ?? ProcessInfo.processInfo.systemUptime
+        if traceStart == nil { traceStart = now }
+        return now - (traceStart ?? now)
+    }
+
+    /// The one place the box is created by locating. Nothing else moves it except the user's own drag, size and turn, and the
+    /// refinement while walking around (which stops as soon as the user moves the box by hand).
+    private func commitLocated(centre: SIMD2<Double>, floorY: Float, source: String) {
+        centerSource = source
+        var b = box
+        b.baseCenter = SIMD3<Float>(Float(centre.x), floorY, Float(centre.y))
+        if let cam = arSession.currentFrame?.camera.transform.columns.3 {
+            b.yawRadians = atan2(cam.x - b.baseCenter.x, cam.z - b.baseCenter.z)
+        }
+        box = b
+        hasBox = true
+        placementHint = nil
+        locatingNote = nil
+        firstTapMarker = nil
+        evidenceTracker.reset()
+        latestEvidence = nil
+        userMovedBox = false
+        refineFrozen = false
+        let anchor = ARAnchor(name: "gonggi.objectBase", transform: Self.translationMatrix(b.baseCenter))
+        arSession.add(anchor: anchor)
+        baseAnchorId = anchor.identifier
+        baseAnchorOrigin = b.baseCenter
+        baseAnchorLatest = b.baseCenter
+        trace.add(traceTime(), "located", [
+            "bx": Double(b.baseCenter.x), "by": Double(b.baseCenter.y), "bz": Double(b.baseCenter.z),
+            "sizeX": Double(b.size.x), "sizeY": Double(b.size.y), "sizeZ": Double(b.size.z),
+        ], ["source": source])
+        stage = .sizing
+        GonggiHaptics.medium()
+    }
+
+    private static func translationMatrix(_ p: SIMD3<Float>) -> simd_float4x4 {
+        var m = matrix_identity_float4x4
+        m.columns.3 = SIMD4<Float>(p.x, p.y, p.z, 1)
+        return m
+    }
+
+    /// Every 0.3 s while a box exists: the camera's optical axis is one more line of sight at the object (the user keeps it
+    /// in the picture). Used once the user has walked >= 45 degrees around it; stops moving the box after 135 degrees, and
+    /// whenever the user has moved the box by hand. Study on real captures: docs/OBJECT_PLACEMENT_REDESIGN_20261002.md.
+    private func refineWhileWalking(_ frame: ARFrame) {
+        guard hasBox, stage == .sizing || stage == .capturing else { return }
+        guard frame.timestamp - lastRaySampleAt >= 0.3 else { return }
+        lastRaySampleAt = frame.timestamp
+        guard case .normal = frame.camera.trackingState else { return }
+        let t = frame.camera.transform
+        let camPos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+        let axis = -SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z)
+        // only when the object is roughly in the picture
+        let toCentre = simd_normalize(box.center - camPos)
+        guard Double(acos(max(-1, min(1, simd_dot(toCentre, simd_normalize(axis)))))) * 180 / .pi <= 25 else { return }
+        refiner.add(ObjectRay(origin: camPos, direction: axis))
+        guard !userMovedBox, !refineFrozen, let est = refiner.estimate(),
+              est.arcDeg >= ObjectCentreRefiner.minArcDeg else { return }
+        let cur = SIMD2<Double>(Double(box.baseCenter.x), Double(box.baseCenter.z))
+        let delta = est.point - cur
+        let dist = simd_length(delta)
+        guard dist <= 0.5 else {
+            trace.add(traceTime(), "refine_rejected", ["dist": dist, "arcDeg": est.arcDeg])
+            return
+        }
+        if dist > 0.03 {
+            let next = cur + 0.5 * delta
+            var b = box
+            b.baseCenter = SIMD3<Float>(Float(next.x), b.baseCenter.y, Float(next.y))
+            box = b
+            trace.add(traceTime(), "refine", ["estX": est.point.x, "estZ": est.point.y, "arcDeg": est.arcDeg, "moved": dist * 0.5, "rays": Double(refiner.rayCount)])
+        }
+        if est.arcDeg >= ObjectCentreRefiner.freezeArcDeg {
+            refineFrozen = true
+            trace.add(traceTime(), "refine_frozen", ["arcDeg": est.arcDeg])
+        }
+    }
+
+    /// Once a second, whatever the stage: the numbers that tell placement geometry from AR drift.
+    private func sampleTrace(_ frame: ARFrame) {
+        guard frame.timestamp - lastTraceSampleAt >= 1.0 else { return }
+        lastTraceSampleAt = frame.timestamp
+        let t = frame.camera.transform
+        let cam = t.columns.3
+        let axis = -SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z)
+        var v: [String: Double] = [
+            "cx": Double(cam.x), "cy": Double(cam.y), "cz": Double(cam.z),
+            "pitchDown": Double(asin(max(-1, min(1, -axis.y)))) * 180 / .pi,
+        ]
+        if hasBox {
+            v["bx"] = Double(box.baseCenter.x); v["by"] = Double(box.baseCenter.y); v["bz"] = Double(box.baseCenter.z)
+            v["sizeX"] = Double(box.size.x); v["sizeY"] = Double(box.size.y); v["sizeZ"] = Double(box.size.z)
+            if let arView, let p = arView.project(box.center) { v["centrePxX"] = Double(p.x); v["centrePxY"] = Double(p.y) }
+            if let d = supportHeightDelta() { v["floorDelta"] = Double(d) }
+            if let o = baseAnchorOrigin, let l = baseAnchorLatest { v["anchorShift"] = Double(simd_distance(o, l)) }
+            v["refineRays"] = Double(refiner.rayCount)
+        }
+        trace.add(traceTime(), "sample", v, [
+            "stage": "\(stage)",
+            "tracking": ObjectARDiagnostics.trackingName(frame.camera.trackingState),
+            "mapping": ObjectARDiagnostics.mappingName(frame.worldMappingStatus),
+        ])
+    }
+
+    /// The trace as a file (for the share sheet). nil when nothing was recorded.
+    func writeTraceFile() -> URL? {
+        guard !trace.events.isEmpty else { return nil }
+        return try? trace.write()
+    }
+
+    // MARK: - Placement / size (the old way: tap the support surface itself)
 
     /// Tap on the support surface under the product's middle. A touch while placing puts the user in charge:
     /// the automatic planner never places after this, so the two cannot race into a second box.
@@ -280,8 +547,9 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     /// A drag moves the box only when it starts on the drawn box — dragging empty screen does nothing.
     func canStartDrag(at point: CGPoint) -> Bool {
-        guard hasBox, stage == .sizing, let corners = cornersOnScreen, corners.count == 8 else { return false }
-        return Self.boxOutlineContains(corners: corners, point: point, margin: Self.grabMarginPt)
+        guard hasBox, stage == .sizing else { return false }
+        guard let outline = ringOnScreen ?? cornersOnScreen, outline.count >= 3 else { return false }
+        return Self.boxOutlineContains(corners: outline, point: point, margin: Self.grabMarginPt)
     }
 
     private var dragOffset: SIMD3<Float>?
@@ -296,11 +564,14 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             return
         }
         guard let tracking = arSession.currentFrame?.camera.trackingState, case .normal = tracking else { return }
+        // The plane through the box CENTRE (where the object's body is), not the floor: a finger on the object then
+        // moves the box exactly as far as the object under it (the floor plane moved it 1.2–1.5x as far).
+        let planeY = box.baseCenter.y + box.size.y / 2
         guard let arView, let ray = arView.ray(through: point),
-              let hit = Self.supportPlaneHit(origin: ray.origin, direction: ray.direction, planeY: box.baseCenter.y)
+              let hit = Self.supportPlaneHit(origin: ray.origin, direction: ray.direction, planeY: planeY)
         else { return }
         guard phase == .changed, let offset = dragOffset else {
-            dragOffset = box.baseCenter - hit
+            dragOffset = SIMD3<Float>(box.baseCenter.x - hit.x, 0, box.baseCenter.z - hit.z)
             GonggiHaptics.light()
             return
         }
@@ -310,6 +581,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         b.baseCenter = next
         box = b
         sizeAdjusted = true
+        userMovedBox = true
+        trace.add(traceTime(), "drag", ["hitX": Double(hit.x), "hitZ": Double(hit.z), "bx": Double(next.x), "bz": Double(next.z)])
     }
 
     func setSize(width: Float? = nil, height: Float? = nil, depth: Float? = nil) {
@@ -342,13 +615,22 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     func placeAgain() {
         placementGate.placeAgain()
         autoPlanner.disable()
+        firstTap = nil
+        firstTapMarker = nil
+        initialPointXZ = nil
+        locatingNote = nil
+        walkProgress = 0
+        floorTapMode = false
+        ringOnScreen = nil
+        refiner = ObjectCentreRefiner()
+        trace.add(traceTime(), "place_again")
         evidenceTask?.cancel()
         pendingEvidence = nil
         evidenceTracker.reset()
         latestEvidence = nil
         cornersOnScreen = nil
         hasBox = false
-        placementHint = ObjectCaptureCopy.manualPlacementHint
+        placementHint = nil
         stage = .placing
     }
 
@@ -394,15 +676,32 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         let planes = anchors.filter { $0 is ARPlaneAnchor }.count
-        guard planes > 0 else { return }
-        MainActor.assumeIsolated { self.diagnostics.planeAnchorUpdated(count: planes) }
+        let mine = anchors.first(where: { $0.name == "gonggi.objectBase" })
+        let minePos = mine.map { SIMD3<Float>($0.transform.columns.3.x, $0.transform.columns.3.y, $0.transform.columns.3.z) }
+        let mineId = mine?.identifier
+        guard planes > 0 || minePos != nil else { return }
+        MainActor.assumeIsolated {
+            if planes > 0 { self.diagnostics.planeAnchorUpdated(count: planes) }
+            if let minePos, mineId == self.baseAnchorId {
+                self.baseAnchorLatest = minePos
+                if let o = self.baseAnchorOrigin {
+                    self.trace.add(self.traceTime(), "anchorUpdate", ["shiftM": Double(simd_distance(o, minePos))])
+                }
+            }
+        }
     }
 
     private func handle(_ frame: ARFrame) {
+        sampleTrace(frame)
         guard hasBox else {
-            attemptAutoPlacement(frame)
+            // TF90: no crosshair placement. While waiting for the second tap, show how far the user has walked.
+            if stage == .secondTap, frame.timestamp - lastPublishAt >= Self.publishInterval {
+                lastPublishAt = frame.timestamp
+                walkProgress = min(1, walkAngleDeg() / ObjectTwoTap.goodConvergenceDeg)
+            }
             return
         }
+        refineWhileWalking(frame)
         let camT = frame.camera.transform
         let camPos = SIMD3<Float>(camT.columns.3.x, camT.columns.3.y, camT.columns.3.z)
         let publish = frame.timestamp - lastPublishAt >= Self.publishInterval
@@ -610,7 +909,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             elevationDeg: (position.elevationDeg * 10).rounded() / 10,
             distanceM: (position.distanceM * 1000).rounded() / 1000,
             framing: framingLabel,
-            framingBasis: usesLooseBox ? String(format: "core%.2f", ObjectCaptureConfig.coreFramingRatio) : "box",
+            framingBasis: String(format: "core%.2f", ObjectCaptureConfig.coreFramingRatio),
             boxCenterPx: centrePx,
             trackingReason: "normal",
             mapping: ObjectARDiagnostics.mappingName(frame.worldMappingStatus),
@@ -680,8 +979,12 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     private func updateOverlay() {
         guard let arView, hasBox else {
             cornersOnScreen = nil
+            ringOnScreen = nil
             return
         }
+        let ring = ObjectFootprintRing.points(centre: box.baseCenter, radius: ObjectFootprintRing.radius(for: box))
+        let ringPts = ring.compactMap { arView.project($0) }
+        ringOnScreen = ringPts.count == ring.count ? ringPts : nil
         var pts: [CGPoint] = []
         for c in box.corners {
             guard let p = arView.project(c) else {
@@ -701,8 +1004,14 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         box: ObjectCaptureBox? = nil,
         filledAzimuthBins: [Int] = [],
         guidance: ObjectCaptureGuidance? = nil,
-        review: ObjectCoverageReview? = nil
+        review: ObjectCoverageReview? = nil,
+        walkProgress: Double = 0,
+        locatingNote: String? = nil,
+        marker: CGPoint? = nil
     ) {
+        self.walkProgress = walkProgress
+        self.locatingNote = locatingNote
+        self.firstTapMarker = marker
         if let box { self.box = box; hasBox = true }
         var c = ObjectOrbitCoverage()
         var photos = 0
@@ -788,7 +1097,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 frames: objectFrames.filter { saved.contains($0.frameId) }.sorted { $0.frameId < $1.frameId },
                 hasLiDAR: Self.hasLiDAR,
                 boxPolicy: usesLooseBox ? ObjectCaptureConfig.boxPolicyLoose : ObjectCaptureConfig.boxPolicyLegacy,
-                diagnostics: diagnostics.snapshot()
+                diagnostics: diagnostics.snapshot(),
+                placementTrace: trace
             ).write(to: built.root)
             let quality = CaptureQualityState(
                 overallCoverage: Double(savedCoverage.coveredCellCount) / Double(savedCoverage.totalCellCount),

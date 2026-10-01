@@ -186,6 +186,8 @@ struct ObjectCaptureFile: Codable, Equatable {
     var frames: [Frame]
     var device: Device
     var diagnostics: Diagnostics?
+    /// Where the taps went and how the box moved before and during the capture (see ObjectPlacementTrace). Not read by the worker.
+    var placementTrace: ObjectPlacementTrace?
 
     static func make(
         box: ObjectCaptureBox,
@@ -195,7 +197,8 @@ struct ObjectCaptureFile: Codable, Equatable {
         frames: [Frame],
         hasLiDAR: Bool,
         boxPolicy: String? = nil,
-        diagnostics: Diagnostics? = nil
+        diagnostics: Diagnostics? = nil,
+        placementTrace: ObjectPlacementTrace? = nil
     ) -> ObjectCaptureFile {
         ObjectCaptureFile(
             schemaVersion: ObjectCaptureConfig.schemaVersion,
@@ -219,7 +222,8 @@ struct ObjectCaptureFile: Codable, Equatable {
             ),
             frames: frames,
             device: Device(hasLiDAR: hasLiDAR),
-            diagnostics: diagnostics
+            diagnostics: diagnostics,
+            placementTrace: placementTrace
         )
     }
 

@@ -20,9 +20,18 @@ enum ObjectCaptureCopy {
     /// While no box exists and automatic placement could not find a steady surface.
     static let manualPlacementHint = "물체 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요."
     /// The worker keeps only what is inside the box, so a tight box cuts the product's top off (GONGGI_OBJECT_V1_002).
-    static let sizingTips = "물체가 상자 안에 들어오면 돼요. 너무 크게 잡을 필요는 없어요. 크기 슬라이더 하나로 맞추고, 위치는 상자 안을 한 손가락으로 끌어 옮길 수 있어요"
+    static let sizingTips = "원이 물체를 감싸기만 하면 돼요. 크기는 슬라이더 하나면 충분하고, 위치는 걸으면서 자동으로 맞춰져요"
     /// Capture-screen footnote: green means a good place to take photos, not that the whole object is verified in frame.
     static let captureNote = "초록 상자는 촬영하기 좋은 위치예요. 물체가 화면 밖으로 잘리지 않는지 직접 확인해 주세요"
+    /// TF90 locating: tap the object itself, from two places. Nothing to drag, size or turn first.
+    static let tapObjectHint = "물체의 가운데를 눌러 주세요"
+    static let secondTapHint = "옆으로 두세 걸음 이동한 뒤, 물체 가운데를 한 번 더 눌러 주세요"
+    static let readyHint = "원 안에 물체가 들어오면 돼요. 정확히 맞추지 않아도 걸으면서 자동으로 보정돼요"
+    static let walkProgress = "이동한 각도"
+    static let skipSecondTap = "건너뛰기"
+    static let floorTapInstead = "바닥을 눌러 직접 놓기 (테이블 위 물체)"
+    static let showCube = "상자 모양도 보기"
+    static let shareTrace = "위치 진단 기록 공유"
     static let uniformSize = "크기"
     static let advanced = "자세히 조절"
     static let advancedTips = "길쭉한 물체는 가로·높이·깊이를 따로 맞추세요. 높이는 물체 맨 위보다 조금 높게 잡아 주세요"
@@ -64,9 +73,16 @@ struct ObjectCaptureFlowView: View {
         ZStack {
             ObjectCaptureARView(session: session)
                 .ignoresSafeArea()
-            ObjectBoxOverlay(corners: session.cornersOnScreen, highlight: session.framing == .ok)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
+            ObjectFootprintOverlay(
+                ring: session.ringOnScreen, marker: session.firstTapMarker, highlight: session.framing == .ok
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            if session.showsCube {
+                ObjectBoxOverlay(corners: session.cornersOnScreen, highlight: session.framing == .ok)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
             VStack(spacing: 12) {
                 topBar
                 Spacer()
@@ -118,14 +134,21 @@ struct ObjectCaptureFlowView: View {
     private var topBar: some View {
         HStack(alignment: .top) {
             if !topText.isEmpty {
-                Text(topText)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(topText)
+                        .font(.headline)
+                    if let note = session.locatingNote {
+                        Text(note)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                }
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
             Button(ObjectCaptureCopy.close) {
@@ -142,8 +165,9 @@ struct ObjectCaptureFlowView: View {
 
     private var topText: String {
         switch session.stage {
-        case .placing: return session.placementHint ?? ""
-        case .sizing: return session.usesLooseBox ? ObjectCaptureCopy.sizingHintLoose : ObjectCaptureCopy.sizingHint
+        case .placing: return session.placementHint ?? ObjectCaptureCopy.tapObjectHint
+        case .secondTap: return ObjectCaptureCopy.secondTapHint
+        case .sizing: return ObjectCaptureCopy.readyHint
         case .capturing: return session.guidance?.text ?? ObjectCaptureGuidance.walkAround(towardLeft: true).text
         case .finishing: return ObjectCaptureCopy.finishing
         case .failed(let message): return message
@@ -153,8 +177,8 @@ struct ObjectCaptureFlowView: View {
     @ViewBuilder
     private var bottomPanel: some View {
         switch session.stage {
-        case .placing:
-            EmptyView()
+        case .placing, .secondTap:
+            ObjectLocatingPanel(session: session)
         case .sizing:
             ObjectSizingPanel(session: session)
         case .capturing:
@@ -219,6 +243,9 @@ struct ObjectSizingPanel: View {
                             .accessibilityLabel("상자 오른쪽으로 돌리기")
                         Spacer()
                     }
+                    Toggle(ObjectCaptureCopy.showCube, isOn: $session.showsCube)
+                        .font(.subheadline.weight(.semibold))
+                    ObjectTraceShareButton(session: session)
                     Toggle(isOn: Binding(get: { session.looseBox }, set: { session.setLooseBox($0) })) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(ObjectCaptureCopy.looseToggle).font(.subheadline.weight(.semibold))
@@ -360,6 +387,96 @@ struct ObjectCaptureIntroView: View {
     }
 }
 
+/// Locating step: tap the object, walk, tap it again. Skipping and the old floor tap are one line each.
+struct ObjectLocatingPanel: View {
+    @ObservedObject var session: ObjectCaptureSession
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if session.stage == .secondTap {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: session.walkProgress)
+                        .tint(GonggiColors.accentTeal)
+                    Text("\(ObjectCaptureCopy.walkProgress) \(Int((session.walkProgress * Double(ObjectTwoTap.goodConvergenceDeg)).rounded()))° / \(Int(ObjectTwoTap.goodConvergenceDeg))°")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                HStack {
+                    Button(ObjectCaptureCopy.skipSecondTap) { session.skipSecondTap() }
+                    Spacer()
+                    Button(ObjectCaptureCopy.placeAgain) { session.placeAgain() }
+                }
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.white)
+            } else if !session.floorTapMode {
+                Button(ObjectCaptureCopy.floorTapInstead) { session.useFloorTap() }
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+        .padding(14)
+        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+/// Shares the placement trace (a small JSON file) through the system share sheet.
+struct ObjectTraceShareButton: View {
+    @ObservedObject var session: ObjectCaptureSession
+    @State private var url: URL?
+    @State private var showSheet = false
+
+    var body: some View {
+        Button(ObjectCaptureCopy.shareTrace) {
+            url = session.writeTraceFile()
+            showSheet = url != nil
+        }
+        .font(.subheadline.weight(.semibold))
+        .sheet(isPresented: $showSheet) {
+            if let url { ObjectActivitySheet(items: [url]) }
+        }
+    }
+}
+
+struct ObjectActivitySheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// The floor ring (a loose selection: nothing to fit) and the place where the first tap landed.
+struct ObjectFootprintOverlay: View {
+    let ring: [CGPoint]?
+    let marker: CGPoint?
+    let highlight: Bool
+
+    var body: some View {
+        Canvas { ctx, _ in
+            let color: Color = highlight ? GonggiColors.accentTeal : .white.opacity(0.9)
+            if let pts = ring, pts.count >= 3 {
+                var path = Path()
+                path.move(to: pts[0])
+                for p in pts.dropFirst() { path.addLine(to: p) }
+                path.closeSubpath()
+                ctx.fill(path, with: .color(color.opacity(0.14)))
+                ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 3, dash: [10, 7]))
+                let cx = pts.map(\.x).reduce(0, +) / CGFloat(pts.count)
+                let cy = pts.map(\.y).reduce(0, +) / CGFloat(pts.count)
+                ctx.fill(Path(ellipseIn: CGRect(x: cx - 4, y: cy - 4, width: 8, height: 8)), with: .color(color))
+            }
+            if let m = marker {
+                var cross = Path()
+                cross.move(to: CGPoint(x: m.x - 14, y: m.y)); cross.addLine(to: CGPoint(x: m.x + 14, y: m.y))
+                cross.move(to: CGPoint(x: m.x, y: m.y - 14)); cross.addLine(to: CGPoint(x: m.x, y: m.y + 14))
+                ctx.stroke(cross, with: .color(.white), lineWidth: 3)
+                ctx.stroke(Path(ellipseIn: CGRect(x: m.x - 18, y: m.y - 18, width: 36, height: 36)), with: .color(.white.opacity(0.9)), lineWidth: 2)
+            }
+        }
+    }
+}
+
 private extension Array {
     /// Out-of-range → nil (orbit rows / band fill arrays are fixed-size, this only guards drawing).
     func objectCaptureElement(at i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
@@ -429,8 +546,8 @@ struct ObjectCaptureARView: UIViewRepresentable {
         }
 
         @objc func tapped(_ g: UITapGestureRecognizer) {
-            guard let session, session.stage == .placing, let view = g.view else { return }
-            session.place(at: g.location(in: view))
+            guard let session, session.stage == .placing || session.stage == .secondTap, let view = g.view else { return }
+            session.tapObject(at: g.location(in: view))
         }
 
         @objc func panned(_ g: UIPanGestureRecognizer) {

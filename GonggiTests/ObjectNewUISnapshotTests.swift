@@ -28,12 +28,14 @@ final class ObjectNewUISnapshotTests: XCTestCase {
         let top: String
         let caption: String
         let highlight: Bool
+        var ring: [CGPoint]? = nil
+        var marker: CGPoint? = nil
         let panel: Content
 
         var body: some View {
             ZStack {
                 LinearGradient(colors: [Color(white: 0.28), Color(white: 0.52)], startPoint: .top, endPoint: .bottom)
-                ObjectBoxOverlay(corners: nil, highlight: highlight)
+                ObjectFootprintOverlay(ring: ring, marker: marker, highlight: highlight)
                 VStack(spacing: 10) {
                     if !top.isEmpty {
                         Text(top)
@@ -119,6 +121,27 @@ final class ObjectNewUISnapshotTests: XCTestCase {
             top: ObjectCaptureGuidance.walkAround(towardLeft: true).text,
             caption: "촬영 중: 저장된 사진 기준 진행 표시와 한 문장 안내, 초록 상자 설명 — " + note,
             highlight: true, panel: ObjectCapturingPanel(session: cap, onFinish: {})))
+
+        let ellipse: [CGPoint] = (0..<48).map { i in
+            let a = Double(i) / 48 * 2 * .pi
+            return CGPoint(x: 195 + 120 * cos(a), y: 430 + 48 * sin(a))
+        }
+        let first = session(loose: false)
+        first.debugPresent(stage: .placing)
+        try save("20_위치잡기_1_물체_가운데를_누르기", Backdrop(
+            top: ObjectCaptureCopy.tapObjectHint, caption: "위치 잡기 1단계: 물체 자체를 누른다(바닥이 아님) — " + note,
+            highlight: false, panel: ObjectLocatingPanel(session: first)))
+        let second = session(loose: false)
+        second.debugPresent(stage: .secondTap, walkProgress: 0.6, locatingNote: "조금 더 옆으로 이동한 뒤 눌러 주세요 (지금 21° / 35° 이상)",
+                            marker: CGPoint(x: 195, y: 360))
+        try save("21_위치잡기_2_옆으로_이동_후_다시_누르기", Backdrop(
+            top: ObjectCaptureCopy.secondTapHint, caption: "위치 잡기 2단계: 이동 각도 표시와 거절 안내, 첫 번째 탭 위치 — " + note,
+            highlight: false, marker: CGPoint(x: 195, y: 360), panel: ObjectLocatingPanel(session: second)))
+        let ready = session(loose: false)
+        ready.debugPresent(stage: .sizing, box: box)
+        try save("22_준비됨_원_하나만_보임", Backdrop(
+            top: ObjectCaptureCopy.readyHint, caption: "위치가 잡힌 뒤: 바닥 원(상자 아님)과 크기 슬라이더 — " + note,
+            highlight: false, ring: ellipse, panel: ObjectSizingPanel(session: ready)))
 
         // The finish review is a system confirmation dialog (not drawable here); show its real text.
         var coverage = ObjectOrbitCoverage()
