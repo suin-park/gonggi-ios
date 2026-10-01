@@ -110,7 +110,7 @@ enum ObjectTwoTap {
     /// The two lines of sight may miss each other by this much (taps on different things, or tracking jumped).
     static let maxSkewM = 0.30
 
-    enum Rejection: Equatable {
+    enum Rejection: Error, Equatable {
         case tooClose        // not moved enough / views too similar
         case inconsistent    // lines of sight do not meet
         case behindCamera
