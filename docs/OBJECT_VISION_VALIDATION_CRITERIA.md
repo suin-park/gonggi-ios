@@ -1,0 +1,88 @@
+# 제품 범위 판정(Vision) 사전 검증 기준 — 결과를 보기 전에 고정 (rule v1)
+
+이 문서는 검증 데이터 생성, macOS 검증 실행, 점수 계산 **이전에** 확정하고 커밋한다.
+검증 결과를 본 뒤 기준을 느슨하게 바꾸지 않는다. 기준에 못 미치면 판정은 "실패"이고, 이 기능은 앱에 연결하지 않는다
+(`ObjectCaptureConfig.productEvidenceEnabled = false` 유지). 기준을 바꾸려면 새 규칙 버전(v2)과 새 검증이 필요하다.
+
+## 1. 무엇을 검증하는가
+
+촬영 중 "상자 일부가 화면 밖이어도 **실제 제품 전체가 화면 안**이면 사진을 저장해도 되는가"를 제품 자신의 픽셀로 판정하는 규칙이다.
+- 입력: Vision 전경 인스턴스 마스크(`VNGenerateForegroundInstanceMaskRequest`)의 인스턴스 라벨 맵, 같은 크기의 밝기(luma), 상자를 투영한
+  볼록 껍질, 상자 바닥면 투영.
+- 규칙: `ObjectProductEvidenceRule.evaluate` (`Gonggi/Capture/ObjectCapture/ObjectProductEvidence.swift`), 설정 `ObjectEvidenceRuleConfig.v1`.
+  검증 도구와 앱은 **같은 소스 파일**을 컴파일한다. 임계값은 `GonggiTests/ObjectProductEvidenceRuleTests`가 고정값으로 확인한다.
+- 이 규칙은 3프레임 일관성(`ObjectEvidenceTracker`)과 별개다. 이번 검증은 **한 장 단위 판정**의 오판 비율을 잰다. 가장자리에서 떨어져
+  있고 3프레임 유지된다는 조건만으로 "전체가 보인다"고 판단하지 않는다: 규칙은 (a) 단일 후보 지배, (b) 상자 밖으로 새지 않음, (c) 상자 투영 범위
+  안, (d) 크기 범위, (e) 상자 바닥면(발자국) 위에 서 있음, (f) 잘린 가장자리 띠가 배경처럼 보임 — 을 **모두** 요구한다.
+
+## 2. 규칙 v1 임계값 (코드와 동일)
+
+| 이름 | 값 | 의미 |
+|---|---|---|
+| edgeBandFraction | 0.01 | 가장자리 닿음 띠 (짧은 변 대비) |
+| safeMarginFraction | 0.03 | 제품은 모든 가장자리에서 이만큼 떨어져야 함 |
+| hullScale | 1.08 | 상자 껍질 확대 배율 |
+| minCandidateAreaFraction | 0.01 | 상자 안 후보의 최소 면적 (사진 면적 대비) |
+| dominantAreaRatio | 0.25 | 두 번째 후보가 이 비율 이상이면 모호 |
+| maxMaskOutsideHull | 0.35 | 후보가 상자 밖으로 새는 최대 비율 |
+| minLongSide / maxLongSide | 0.25 / 0.85 | 제품 긴 변 / 사진 짧은 변 |
+| boxBoundsSlack | 0.10 | 제품이 상자 투영 범위 안(여유 10%)이어야 함 |
+| baseMinVisible / baseScale / baseMinCoverage | 0.80 / 1.15 / 0.10 | 바닥면이 보이는 비율, 확대, 제품이 덮어야 하는 비율 |
+| stripFraction / continuityRatio / continuityMinContrast / continuityMinSamples | 0.03 / 0.6 / 3.0 / 50 | 잘린 가장자리 띠 검사 |
+
+## 3. 검증 데이터 (V1_006 235장에서 만든다, 원본과 가공 사례를 구분)
+
+모든 사례는 센서 방향(가로) 그대로 4:3 창으로 잘라 640×480 JPEG(품질 90)로 만든다. 앱이 Vision에 넣는 입력과 같은 형태다.
+정답(GT)은 워커가 쓴 SAM 2 제품 마스크다. **SAM 2 마스크를 무조건 신뢰하지 않는다**: 12장의 대표 원본 사진에서 마스크 윤곽을
+눈으로 확인하고 결과를 보고한다(대표 선택: 마스크 면적 비율 4분위별 3장). 확인 12장 중 윤곽이 제품 범위를 놓친 사진이 **2장 이상**이면 GT를
+신뢰할 수 없다고 보고 검증을 **판정 불가(INCONCLUSIVE)**로 처리한다.
+
+원본 프레임 선택: 정렬된 235장에서 4번째마다(59장). 상자 8개 모서리가 모두 카메라 앞에 있는 프레임만.
+상자 껍질이 창 안에 **완전히** 들어오는 가공 사례는 만들지 않는다(그 경우는 앱이 상자 규칙만 쓴다) — 해당 사례는 건너뛴다.
+
+| 그룹 | 종류 | 만드는 법 | 정답 라벨 |
+|---|---|---|---|
+| ORIG | 원본 | 자르지 않은 원본 (상자는 전부 사진 안) | GT 제품이 가장자리에서 3% 이상 떨어지면 FULL, 아니면 EXCLUDED |
+| CLIP_FULL | 가공 | 제품 GT 외접 사각형 중심으로 4:3 창, 제품 여유 m ∈ {0.04, 0.07, 0.10}(창 짧은 변 대비). 상자 껍질은 창을 벗어난다 | GT 마스크가 모든 가장자리에서 3% 이상 떨어지고 1.5% 팽창해도 안 닿으면 FULL_CLIPPED, 아니면 EXCLUDED |
+| CUT | 가공 | 한 변이 제품을 가르는 창: 변 s ∈ {왼쪽, 오른쪽, 위, 아래} × 자른 비율 c ∈ {0.05, 0.15, 0.30}(그 축 제품 길이 대비). 나머지는 여유 0.10, 4:3 유지. 귀(위), 팔걸이(옆), 몸통(옆·아래)이 잘린다 | GT 마스크가 창 가장자리 띠(1%)에 닿으면 CUT, 아니면 EXCLUDED |
+| FRAGMENT | 가공 | CLIP_FULL(m=0.07) 창에서 제품의 비율 f ∈ {0.40, 0.65}를 반평면으로 지우고(주변 배경으로 채움) 조각만 남긴다 | MUST_NOT_CAPTURE |
+| ABSENT | 가공 | CLIP_FULL(m=0.07) 창에서 제품 전체를 지움 (상자 안에 바닥·벽·다른 물체만 남음) | MUST_NOT_CAPTURE |
+| MULTI | 가공 | CLIP_FULL(m=0.07) 창에 제품 자신의 좌우 반전 축소(0.6배) 사본을 상자 안 빈 곳에 붙임 | MUST_NOT_CAPTURE |
+| FAILURE | 가공 | 단색 회색, 큰 흐림(σ=30), 랜덤 잡음. 각 20장 | MUST_NOT_CAPTURE |
+
+"MUST_NOT_CAPTURE"는 이 장면에서 `productInFrame`을 내면 안 된다는 뜻이다(제품 일부 누락, 잘못된 대상 선택, 판단 불가는 모두 촬영 가능으로
+표시하면 안 된다). 라벨은 정답 파일에만 있고 macOS 실행에는 전달하지 않는다(도구는 라벨을 모른다).
+
+## 4. 집계 (실패의 종류를 따로 센다)
+
+| 집계 | 정의 |
+|---|---|
+| 제품 누락 (가장 중요한 실패) | CUT 또는 FRAGMENT를 `productInFrame`으로 판정 |
+| 잘못된 대상 선택 | ABSENT 또는 MULTI를 `productInFrame`으로 판정, 또는 FULL_CLIPPED를 `productInFrame`으로 판정했지만 판정 외접 사각형과 GT 외접 사각형의 IoU < 0.5 |
+| 판단 불가 (안전한 실패, 효용 손실) | FULL_CLIPPED를 `unknown`/`failed`로 판정 |
+| 요청 실패 | Vision 요청이 오류를 낸 사례(`unknown(failed)`) — FAILURE 그룹은 제외 |
+
+## 5. 통과 기준 (모두 만족해야 통과)
+
+- **P1 (제품 누락, CUT)**: `productInFrame` 비율의 점추정 ≤ 1.0% 이고 Wilson 95% 상한 ≤ 2.5%. 그 중 자른 비율 c ≥ 0.15 사례는 점추정 ≤ 0.5%.
+- **P2 (MUST_NOT_CAPTURE 전체 = FRAGMENT + ABSENT + MULTI + FAILURE)**: 점추정 ≤ 1.0% 이고 Wilson 95% 상한 ≤ 2.5%. 또한 네 그룹 각각의 점추정 ≤ 2.0%.
+- **P3 (효용)**: FULL_CLIPPED 중 `productInFrame` 비율 ≥ 50%. (그렇지 않으면 기능이 거의 쓸모없다.)
+- **P4 (범위 정확도)**: FULL_CLIPPED 중 `productInFrame`을 낸 사례에서 GT 외접 사각형과의 IoU 중앙값 ≥ 0.85, IoU ≥ 0.70 비율 ≥ 90%.
+- **P5 (실행 성공)**: 만든 사례의 95% 이상이 결과를 냈고, FAILURE 그룹을 뺀 사례의 Vision 요청 오류율 ≤ 2%.
+- 보고만 하는 값: ORIG의 `productInFrame` 비율, 판단 불가 사유 분포, 그룹별·변별 오판, macOS 가상 머신 처리 시간(**iPhone 성능이 아니다**).
+
+Wilson 구간은 같은 원본 사진에서 나온 사례가 서로 독립이 아니므로 낙관적이다. 그래서 점추정 기준을 함께 둔다.
+사례 수가 적은 그룹(FRAGMENT, ABSENT, MULTI)은 개별 결론을 내리지 않고 P2의 합산으로만 판정한다.
+
+## 5-1. 판정
+
+- 모든 P가 만족 → **통과**: Vision 판정을 촬영 흐름에 연결한다(별도 커밋으로 `productEvidenceEnabled`를 켠다).
+- 하나라도 불만족 → **실패**: 연결하지 않는다. 실패 사례와 이유를 보고한다.
+- GT 확인 실패 또는 실행 불완전(P5) → **판정 불가**: 통과로 치지 않고 연결하지 않는다.
+
+## 6. 한계 (결과와 상관없이 적는다)
+
+- 이 데이터는 한 개의 의자(V1_006)와 한 번의 촬영에서 나왔다. 다른 제품·조명·배경으로 일반화하지 않는다.
+- 가공 사례는 실제로 사용자가 만들 수 있는 장면의 일부를 흉내 낸 것이다. 실제 촬영 중 프레임에서의 오판 비율과 같지 않다.
+- macOS GitHub 러너는 iPhone 14 Plus가 아니다. Vision의 처리 시간, 발열, 촬영 중 끊김은 새 TestFlight 실기기에서 확인할 항목으로 남긴다.
+- 통과하더라도 3프레임 일관성, 신선도, 상자 변경 시 초기화(`ObjectEvidenceTracker`)와 실기기 확인이 추가로 필요하다.
