@@ -63,6 +63,8 @@ final class ObjectPlacementGeometryTests: XCTestCase {
             let result = ObjectTwoTap.estimate(first: a, second: b)
             if p.baselineM < ObjectTwoTap.minBaselineM || p.angleDeg < ObjectTwoTap.minConvergenceDeg {
                 guard case .failure(.tooClose) = result else { XCTFail("expected tooClose for \(p.baselineM) m / \(p.angleDeg)°"); continue }
+            } else if p.angleDeg > ObjectTwoTap.maxConvergenceDeg {
+                guard case .failure(.tooOpposite) = result else { XCTFail("expected tooOpposite for \(p.angleDeg)°"); continue }
             } else {
                 let r = try XCTUnwrap(try? result.get(), "expected a result for \(p.baselineM) m / \(p.angleDeg)°")
                 XCTAssertEqual(r.point.x, p.expectedXZ[0], accuracy: 1e-4)

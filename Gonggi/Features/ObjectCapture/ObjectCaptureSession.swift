@@ -237,6 +237,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             switch why {
             case .tooClose:
                 locatingNote = "조금 더 옆으로 이동한 뒤 눌러 주세요 (지금 \(Int(walkAngleDeg().rounded()))° / \(Int(ObjectTwoTap.goodConvergenceDeg))° 이상)"
+            case .tooOpposite:
+                locatingNote = "물체 반대편이에요. 처음 자리에서 옆으로 90° 정도만 이동해 눌러 주세요"
             case .inconsistent, .behindCamera:
                 locatingNote = "두 번 누른 곳이 서로 달라요. 물체 가운데를 눌러 주세요"
             }

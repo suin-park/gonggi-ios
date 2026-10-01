@@ -107,11 +107,15 @@ enum ObjectTwoTap {
     /// for 35 and accepts 25 (`minConvergenceDeg`) with a note.
     static let goodConvergenceDeg = 35.0
     static let minConvergenceDeg = 25.0
+    /// Views on (almost) opposite sides see the object along the same line: the crossing is not defined. The study only
+    /// used 25...100 degrees; the app accepts up to 110.
+    static let maxConvergenceDeg = 110.0
     /// The two lines of sight may miss each other by this much (taps on different things, or tracking jumped).
     static let maxSkewM = 0.30
 
     enum Rejection: Error, Equatable {
         case tooClose        // not moved enough / views too similar
+        case tooOpposite     // views on opposite sides of the object
         case inconsistent    // lines of sight do not meet
         case behindCamera
     }
@@ -120,6 +124,7 @@ enum ObjectTwoTap {
         let baseline = simd_length(SIMD2(first.origin.x - second.origin.x, first.origin.z - second.origin.z))
         let angle = ObjectRayTriangulation.horizontalAngleDeg(first, second)
         guard baseline >= minBaselineM, angle >= minConvergenceDeg else { return .failure(.tooClose) }
+        guard angle <= maxConvergenceDeg else { return .failure(.tooOpposite) }
         guard let p = ObjectRayTriangulation.leastSquares([first, second]),
               let skew = ObjectRayTriangulation.skewDistance(first, second) else { return .failure(.tooClose) }
         guard skew <= maxSkewM else { return .failure(.inconsistent) }
