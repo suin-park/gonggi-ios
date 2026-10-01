@@ -94,12 +94,18 @@ final class ObjectPlacementGeometryTests: XCTestCase {
     // MARK: synthetic geometry
 
     private func orbit(around c: SIMD2<Double>, radius: Double, fromDeg: Double, toDeg: Double, steps: Int, height: Double = 1.3) -> [ObjectRay] {
-        (0...steps).map { i in
-            let a = (fromDeg + (toDeg - fromDeg) * Double(i) / Double(steps)) * .pi / 180
-            let o = SIMD3(c.x + radius * cos(a), height, c.y + radius * sin(a))
-            let target = SIMD3(c.x, 0.25, c.y)
-            return ObjectRay(origin: o, direction: target - o)
+        var out: [ObjectRay] = []
+        for i in 0...steps {
+            let fraction: Double = steps == 0 ? 0 : Double(i) / Double(steps)
+            let deg: Double = fromDeg + (toDeg - fromDeg) * fraction
+            let a: Double = deg * Double.pi / 180
+            let ox: Double = c.x + radius * cos(a)
+            let oz: Double = c.y + radius * sin(a)
+            let origin = SIMD3<Double>(ox, height, oz)
+            let target = SIMD3<Double>(c.x, 0.25, c.y)
+            out.append(ObjectRay(origin: origin, direction: target - origin))
         }
+        return out
     }
 
     func testRefinerFindsTheCentreAndCountsTheArc() {
