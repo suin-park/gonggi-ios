@@ -693,6 +693,36 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         cornersOnScreen = pts
     }
 
+    #if DEBUG
+    /// Test / preview only: puts the session in a state so the REAL panels can be rendered without ARKit.
+    /// `filledAzimuthBins[band]` = azimuth bins of that band that hold two saved photos.
+    func debugPresent(
+        stage: Stage,
+        box: ObjectCaptureBox? = nil,
+        filledAzimuthBins: [Int] = [],
+        guidance: ObjectCaptureGuidance? = nil,
+        review: ObjectCoverageReview? = nil
+    ) {
+        if let box { self.box = box; hasBox = true }
+        var c = ObjectOrbitCoverage()
+        var photos = 0
+        for (band, n) in filledAzimuthBins.enumerated() {
+            for bin in 0..<min(n, ObjectCaptureConfig.azimuthBinCount) {
+                c.record(.init(band: band, azimuthBin: bin))
+                c.record(.init(band: band, azimuthBin: bin))
+                photos += 2
+            }
+        }
+        savedCoverage = c
+        coverageCounts = c.counts
+        bandFill = c.bandFill
+        savedPhotos = photos
+        self.guidance = guidance
+        self.review = review
+        self.stage = stage
+    }
+    #endif
+
     // MARK: - Finish
 
     /// "마침": when the saved photos leave real gaps, publish a review (the sheet offers more photos in THIS session or

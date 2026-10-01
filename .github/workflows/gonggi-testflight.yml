@@ -25,6 +25,11 @@ on:
         default: 'none'
         type: choice
         options: [none, targeted, full]
+      stop_after_tests:
+        description: 'If true, stop after the pre-archive tests and the UI renders: no signing, archive or upload (screens / checks only).'
+        required: false
+        default: false
+        type: boolean
       api_base_url:
         description: 'API server baked into this build (GONGGI_API_BASE_URL). Archive is refused unless its /api/gaussian-spaces/object-capture/status is ready.'
         required: false
@@ -245,7 +250,7 @@ jobs:
                   print(pick[0]['udid']); sys.exit(0)
           sys.exit(1)")"
           mkdir -p "${RUNNER_TEMP}/ui-snapshots"
-          TEST_RUNNER_GONGGI_SNAPSHOT_DIR="${RUNNER_TEMP}/ui-snapshots" xcodebuild test             -project "${{ env.PROJECT }}"             -scheme "${{ env.SCHEME }}"             -configuration Debug             -destination "platform=iOS Simulator,id=${UDID}"             -only-testing:GonggiTests/ObjectUISnapshotTests             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""             2>&1 | tee xcodebuild-ui-renders.log
+          TEST_RUNNER_GONGGI_SNAPSHOT_DIR="${RUNNER_TEMP}/ui-snapshots" xcodebuild test             -project "${{ env.PROJECT }}"             -scheme "${{ env.SCHEME }}"             -configuration Debug             -destination "platform=iOS Simulator,id=${UDID}"             -only-testing:GonggiTests/ObjectUISnapshotTests -only-testing:GonggiTests/ObjectNewUISnapshotTests             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""             2>&1 | tee xcodebuild-ui-renders.log
           cp -R "${RUNNER_TEMP}/ui-snapshots" ui-snapshots
 
       - name: Upload UI renders and test log
@@ -260,6 +265,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Pre-archive auth config check
+        if: ${{ !inputs.stop_after_tests }}
         run: |
           set -euo pipefail
           chmod +x scripts/preflight-auth-config.sh
@@ -270,6 +276,7 @@ jobs:
           echo "Bundle target: ${{ env.BUNDLE_ID }}"
 
       - name: Prepare App Store Connect API key
+        if: ${{ !inputs.stop_after_tests }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
@@ -285,6 +292,7 @@ jobs:
           echo "App Store Connect API key file prepared (content not logged)."
 
       - name: Ensure App Store profile includes Sign in with Apple
+        if: ${{ !inputs.stop_after_tests }}
         id: siwa_profile
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -312,6 +320,7 @@ jobs:
           security cms -D -i "${PROFILE_PATH}" | grep -q 'com.apple.developer.applesignin'
 
       - name: Import signing certificate and provisioning profile
+        if: ${{ !inputs.stop_after_tests }}
         id: signing
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -388,6 +397,7 @@ jobs:
           }
 
       - name: Archive (Release, manual signing)
+        if: ${{ !inputs.stop_after_tests }}
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
@@ -436,6 +446,7 @@ jobs:
           echo "Archive created successfully."
 
       - name: Export IPA
+        if: ${{ !inputs.stop_after_tests }}
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PROFILE_NAME: ${{ steps.signing.outputs.profile_name }}
@@ -466,6 +477,7 @@ jobs:
           echo "IPA exported: $(du -h "${IPA_PATH}" | cut -f1)"
 
       - name: Preflight validate IPA
+        if: ${{ !inputs.stop_after_tests }}
         env:
           IPA_PATH: ${{ steps.paths.outputs.ipa_path }}
         run: |
@@ -473,6 +485,7 @@ jobs:
           python3 scripts/validate-ipa-preflight.py "${IPA_PATH}"
 
       - name: Upload to App Store Connect
+        if: ${{ !inputs.stop_after_tests }}
         id: upload
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -483,7 +496,7 @@ jobs:
           bash scripts/upload-to-asc.sh "${IPA_PATH}"
 
       - name: Package dSYM for symbolication
-        if: always() && steps.paths.outputs.archive_path != ''
+        if: ${{ !inputs.stop_after_tests && (always() && steps.paths.outputs.archive_path != '') }}
         id: dsym
         env:
           ARCHIVE_PATH: ${{ steps.paths.outputs.archive_path }}
@@ -514,7 +527,7 @@ jobs:
           echo "dsym_dir=${OUT_DIR}" >> "$GITHUB_OUTPUT"
 
       - name: Upload dSYM artifact
-        if: always() && steps.dsym.outputs.dsym_dir != ''
+        if: ${{ !inputs.stop_after_tests && (always() && steps.dsym.outputs.dsym_dir != '') }}
         uses: actions/upload-artifact@v4
         with:
           name: Gonggi-dSYM-${{ inputs.marketing_version }}-${{ inputs.build_number }}
@@ -523,7 +536,7 @@ jobs:
           retention-days: 90
 
       - name: Summary
-        if: success() && steps.upload.outcome == 'success'
+        if: ${{ !inputs.stop_after_tests && (success() && steps.upload.outcome == 'success') }}
         run: |
           {
             echo "## TestFlight upload succeeded"
@@ -538,7 +551,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup signing artifacts
-        if: always()
+        if: ${{ !inputs.stop_after_tests && (always()) }}
         env:
           KEYCHAIN_PATH: ${{ steps.signing.outputs.keychain_path }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}

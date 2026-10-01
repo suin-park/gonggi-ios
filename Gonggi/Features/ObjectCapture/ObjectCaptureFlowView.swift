@@ -78,7 +78,10 @@ struct ObjectCaptureFlowView: View {
         .onAppear { session.start() }
         .onDisappear { session.stop() }
         .sheet(isPresented: $showIntro) {
-            intro
+            ObjectCaptureIntroView(onStart: { showIntro = false }, onClose: {
+                showIntro = false
+                onClose()
+            })
                 .presentationDetents([.medium, .large])
                 .interactiveDismissDisabled()
         }
@@ -153,9 +156,13 @@ struct ObjectCaptureFlowView: View {
         case .placing:
             EmptyView()
         case .sizing:
-            sizingPanel
+            ObjectSizingPanel(session: session)
         case .capturing:
-            capturingPanel
+            ObjectCapturingPanel(session: session) {
+                Task {
+                    if let s = await session.finish() { summary = s }
+                }
+            }
         case .finishing:
             ProgressView().tint(.white)
         case .failed:
@@ -163,7 +170,19 @@ struct ObjectCaptureFlowView: View {
         }
     }
 
-    private var sizingPanel: some View {
+}
+
+/// Sizing step: one size slider, the rest under "자세히 조절". A struct of its own so the real panel can be rendered in tests.
+struct ObjectSizingPanel: View {
+    @ObservedObject var session: ObjectCaptureSession
+    @State private var advancedOpen: Bool
+
+    init(session: ObjectCaptureSession, startExpanded: Bool = false) {
+        self.session = session
+        _advancedOpen = State(initialValue: startExpanded)
+    }
+
+    var body: some View {
         VStack(spacing: 10) {
             Text(ObjectCaptureCopy.sizingTips)
                 .font(.footnote)
@@ -183,7 +202,7 @@ struct ObjectCaptureFlowView: View {
                     .frame(minWidth: 52, alignment: .trailing)
             }
             .foregroundStyle(.white)
-            DisclosureGroup(ObjectCaptureCopy.advanced) {
+            DisclosureGroup(ObjectCaptureCopy.advanced, isExpanded: $advancedOpen) {
                 VStack(spacing: 10) {
                     Text(ObjectCaptureCopy.advancedTips)
                         .font(.footnote)
@@ -240,7 +259,15 @@ struct ObjectCaptureFlowView: View {
         .foregroundStyle(.white)
     }
 
-    private var capturingPanel: some View {
+}
+
+/// Capturing step: the footnote, the orbit rings, saved-photo counts and the finish button.
+struct ObjectCapturingPanel: View {
+    @ObservedObject var session: ObjectCaptureSession
+    /// Called when the user finishes (directly, or after choosing "그대로 3D 자산 만들기" in the review).
+    let onFinish: () -> Void
+
+    var body: some View {
         VStack(spacing: 8) {
             Text(ObjectCaptureCopy.captureNote)
                 .font(.caption)
@@ -257,7 +284,7 @@ struct ObjectCaptureFlowView: View {
             Button(ObjectCaptureCopy.reviewMore) { session.continueCapturing() }
             Button(ObjectCaptureCopy.reviewAsIs) {
                 session.continueCapturing()
-                Task { if let s = await session.finish() { summary = s } }
+                onFinish()
             }
         } message: {
             Text(session.review?.message ?? "")
@@ -281,9 +308,7 @@ struct ObjectCaptureFlowView: View {
             Spacer(minLength: 0)
             Button {
                 guard session.requestFinish() else { return }
-                Task {
-                    if let s = await session.finish() { summary = s }
-                }
+                onFinish()
             } label: {
                 Text(ObjectCaptureCopy.finish)
                     .font(.headline)
@@ -304,7 +329,14 @@ struct ObjectCaptureFlowView: View {
             .joined(separator: ", ")
     }
 
-    private var intro: some View {
+}
+
+/// Start screen: what a 3D asset capture is, and what is not supported yet.
+struct ObjectCaptureIntroView: View {
+    let onStart: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(ObjectCaptureCopy.title)
                 .font(.title2.weight(.bold))
@@ -318,9 +350,8 @@ struct ObjectCaptureFlowView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            PrimaryButton(title: ObjectCaptureCopy.start, icon: "arrow.right") { showIntro = false }
+            PrimaryButton(title: ObjectCaptureCopy.start, icon: "arrow.right") { onStart() }
             Button(ObjectCaptureCopy.close) {
-                showIntro = false
                 onClose()
             }
             .frame(maxWidth: .infinity)
