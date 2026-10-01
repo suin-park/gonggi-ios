@@ -28,8 +28,9 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     @Published private(set) var savedPhotos = 0
     /// Set by `requestFinish()` when the saved photos leave real gaps: the screen offers "더 찍기" or "그대로 만들기".
     @Published private(set) var review: ObjectCoverageReview?
-    /// Capture with the previous exact-box rules (build 88 behaviour). Persisted; changed from the sizing panel.
-    @Published private(set) var legacyExactBox = UserDefaults.standard.bool(forKey: ObjectCaptureConfig.legacyBoxDefaultsKey)
+    /// Loose box (internal-test switch, persisted). Off = the exact-box rules of build 88.
+    @Published private(set) var looseBox: Bool =
+        (UserDefaults.standard.object(forKey: ObjectCaptureConfig.looseBoxDefaultsKey) as? Bool) ?? ObjectCaptureConfig.looseBoxDefaultOn
     /// Box corners in view points (nil = not drawable this frame).
     @Published private(set) var cornersOnScreen: [CGPoint]?
     /// Placing-stage line. nil while the automatic search is young (the AR coaching overlay speaks then); the manual
@@ -91,14 +92,14 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     static var hasLiDAR: Bool { ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) }
 
-    /// New builds treat the box as a rough selection (loose_v1); "legacy" is the way back to the exact box.
-    var usesLooseBox: Bool { !legacyExactBox }
+    /// With the switch on the box is a rough selection (loose_v1); off, the exact box as before ("legacy").
+    var usesLooseBox: Bool { looseBox }
     /// The part of the box that "in frame" is judged on: its core when the box is only a rough selection.
     var framingBox: ObjectCaptureBox { usesLooseBox ? box.scaled(ObjectCaptureConfig.coreFramingRatio) : box }
 
-    func setLegacyExactBox(_ on: Bool) {
-        legacyExactBox = on
-        UserDefaults.standard.set(on, forKey: ObjectCaptureConfig.legacyBoxDefaultsKey)
+    func setLooseBox(_ on: Bool) {
+        looseBox = on
+        UserDefaults.standard.set(on, forKey: ObjectCaptureConfig.looseBoxDefaultsKey)
     }
 
     // MARK: - Lifecycle

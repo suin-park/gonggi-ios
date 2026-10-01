@@ -188,7 +188,7 @@ final class ObjectLooseBoxTests: XCTestCase {
         // the API / storage names did not change with the wording
         XCTAssertEqual(ObjectCaptureConfig.serverCaptureKind, "object")
         XCTAssertEqual(ObjectCapturePackage.librarySourceKind, "gaussian_object")
-        let all = ([ObjectCaptureCopy.title, ObjectCaptureCopy.sizingHint, ObjectCaptureCopy.sizingTips,
+        let all = ([ObjectCaptureCopy.title, ObjectCaptureCopy.sizingHint, ObjectCaptureCopy.sizingHintLoose, ObjectCaptureCopy.sizingTips,
                     ObjectCaptureCopy.manualPlacementHint, ObjectCaptureCopy.captureNote] + ObjectCaptureCopy.introLines)
         for text in all { XCTAssertFalse(text.contains("제품"), text) }
         for g in [ObjectCaptureGuidance.productCutOff, .centerProduct, .walkAround(towardLeft: true), .walkAround(towardLeft: false)] {
@@ -196,8 +196,11 @@ final class ObjectLooseBoxTests: XCTestCase {
         }
     }
 
-    func testTheWayBackToTheExactBoxIsOfferedAndExplained() {
-        XCTAssertFalse(ObjectCaptureCopy.legacyToggle.isEmpty)
-        XCTAssertFalse(ObjectCaptureConfig.legacyBoxDefaultsKey.isEmpty)
+    /// Until the loose_v1 worker is live the loose box is an opt-in internal-test switch; off = build 88 rules.
+    func testLooseBoxIsOffByDefaultAndHasASwitch() {
+        XCTAssertFalse(ObjectCaptureConfig.looseBoxDefaultOn)
+        XCTAssertFalse(ObjectCaptureConfig.looseBoxDefaultsKey.isEmpty)
+        XCTAssertFalse(ObjectCaptureCopy.looseToggle.isEmpty)
+        XCTAssertNotEqual(ObjectCaptureCopy.sizingHint, ObjectCaptureCopy.sizingHintLoose)
     }
 }

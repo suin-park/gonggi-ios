@@ -14,7 +14,9 @@ enum ObjectCaptureCopy {
     static let unsupportedLine = ObjectCaptureSubject.person.startLine
     static let start = "시작"
     /// After the box is placed (automatically or by tap). The box is a guide the user fits; it does not know the product.
-    static let sizingHint = "상자가 물체를 대략 감싸면 돼요. 정확히 맞추지 않아도 괜찮아요."
+    static let sizingHint = "상자가 물체를 넉넉하게 감싸도록 위치와 크기를 맞춰 주세요."
+    /// Loose box switched on (internal test): the box only has to roughly surround the object.
+    static let sizingHintLoose = "상자가 물체를 대략 감싸면 돼요. 정확히 맞추지 않아도 괜찮아요."
     /// While no box exists and automatic placement could not find a steady surface.
     static let manualPlacementHint = "물체 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요."
     /// The worker keeps only what is inside the box, so a tight box cuts the product's top off (GONGGI_OBJECT_V1_002).
@@ -24,8 +26,8 @@ enum ObjectCaptureCopy {
     static let uniformSize = "크기"
     static let advanced = "자세히 조절"
     static let advancedTips = "길쭉한 물체는 가로·높이·깊이를 따로 맞추세요. 높이는 물체 맨 위보다 조금 높게 잡아 주세요"
-    static let legacyToggle = "기존 정밀 박스 방식으로 촬영"
-    static let legacyToggleNote = "상자를 물체에 꼭 맞게 맞춘 경우에만 사용하세요"
+    static let looseToggle = "넉넉한 박스 방식 (내부 테스트)"
+    static let looseToggleNote = "끄면 지금까지의 방식 그대로예요. 켜는 것은 새 3D 처리 서버가 준비된 뒤에 해 주세요"
     static let reviewTitle = "아직 부족한 방향이 있어요"
     static let reviewMore = "더 찍기"
     static let reviewAsIs = "그대로 3D 자산 만들기"
@@ -138,7 +140,7 @@ struct ObjectCaptureFlowView: View {
     private var topText: String {
         switch session.stage {
         case .placing: return session.placementHint ?? ""
-        case .sizing: return ObjectCaptureCopy.sizingHint
+        case .sizing: return session.usesLooseBox ? ObjectCaptureCopy.sizingHintLoose : ObjectCaptureCopy.sizingHint
         case .capturing: return session.guidance?.text ?? ObjectCaptureGuidance.walkAround(towardLeft: true).text
         case .finishing: return ObjectCaptureCopy.finishing
         case .failed(let message): return message
@@ -198,10 +200,10 @@ struct ObjectCaptureFlowView: View {
                             .accessibilityLabel("상자 오른쪽으로 돌리기")
                         Spacer()
                     }
-                    Toggle(isOn: Binding(get: { session.legacyExactBox }, set: { session.setLegacyExactBox($0) })) {
+                    Toggle(isOn: Binding(get: { session.looseBox }, set: { session.setLooseBox($0) })) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(ObjectCaptureCopy.legacyToggle).font(.subheadline.weight(.semibold))
-                            Text(ObjectCaptureCopy.legacyToggleNote).font(.caption).foregroundStyle(.white.opacity(0.7))
+                            Text(ObjectCaptureCopy.looseToggle).font(.subheadline.weight(.semibold))
+                            Text(ObjectCaptureCopy.looseToggleNote).font(.caption).foregroundStyle(.white.opacity(0.7))
                         }
                     }
                 }

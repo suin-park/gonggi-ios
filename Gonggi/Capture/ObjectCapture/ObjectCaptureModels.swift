@@ -44,8 +44,11 @@ enum ObjectCaptureConfig {
     /// Core of the box (share of its size about the base centre) that the capture screen judges for "in frame". The
     /// core being in frame is a statement about the box core only — it does not prove the whole object is visible.
     static let coreFramingRatio: Float = 0.8
-    /// Capture with the previous exact-box rules (returns to build 88 behaviour). Set from the sizing panel.
-    static let legacyBoxDefaultsKey = "com.whik.gonggi.objectCapture.legacyExactBox"
+    /// The loose box (this policy) is an internal-test switch in the sizing panel. It stays OFF by default until the
+    /// worker that understands `loose_v1` is live on the product endpoint: an older worker would judge a loose box by the
+    /// exact-box rules (e.g. "object truncated" when the box sticks out of the photos). Off = build 88 behaviour exactly.
+    static let looseBoxDefaultsKey = "com.whik.gonggi.objectCapture.looseBox"
+    static let looseBoxDefaultOn = false
 
     /// Product-extent evidence (Vision foreground mask): lets a photo be saved when the generous box sticks out of the
     /// photo but the whole product is inside it. Off until the offline validation has passed against the criteria that
