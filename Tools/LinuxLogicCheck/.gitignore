@@ -1,0 +1,3 @@
+.build/
+Sources/Gonggi/Object*.swift
+Tests/GonggiTests/Object*.swift

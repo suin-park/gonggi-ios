@@ -1,0 +1,237 @@
+name: Gonggi iOS Object Capture Validation
+
+# One-off verification of the product capture UX work (automatic box placement, product-extent rule).
+# Runs ONLY on a push to the verification branch below. No archive, export, TestFlight, ASC upload or build-number bump.
+#
+# Jobs
+#   linux-logic        pure logic (rule, planner) with `swift test` on Linux — cheap pre-check
+#   app-tests          app build + ObjectCapture unit tests + synthetic UI renders on an iOS Simulator (macOS)
+#   vision-validation  Vision foreground mask vs the pre-registered criteria (macOS). The validation images come from a
+#                      secret URL (private product photos are never committed); only numbers are uploaded.
+on:
+  push:
+    branches:
+      - verify/object-capture-ux
+
+concurrency:
+  group: gonggi-ios-object-validation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+  OPENCV_VERSION: "4.10.0"
+
+jobs:
+  linux-logic:
+    name: Pure logic on Linux (swift test)
+    runs-on: ubuntu-latest
+    container: swift:5.10-jammy
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy the real sources and tests into the Linux package
+        run: |
+          set -euo pipefail
+          cp Gonggi/Capture/ObjectCapture/ObjectProductEvidence.swift \
+             Gonggi/Capture/ObjectCapture/ObjectAutoPlacement.swift \
+             Tools/LinuxLogicCheck/Sources/Gonggi/
+          cp GonggiTests/ObjectProductEvidenceRuleTests.swift \
+             GonggiTests/ObjectAutoPlacementTests.swift \
+             Tools/LinuxLogicCheck/Tests/GonggiTests/
+
+      - name: swift test
+        working-directory: Tools/LinuxLogicCheck
+        run: |
+          set -euo pipefail
+          swift --version
+          swift test 2>&1 | tee ../../linux-swift-test.log
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-swift-test-log
+          path: linux-swift-test.log
+          if-no-files-found: ignore
+
+  app-tests:
+    name: App build + ObjectCapture tests (iOS Simulator)
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore OpenCV xcframework cache
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Build OpenCV xcframework on cache miss
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh
+          ./scripts/ensure_opencv_xcframework.sh
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+          sw_vers
+
+      - name: Install XcodeGen and generate the project
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+          grep -E "ObjectAutoPlacement.swift|ObjectProductEvidence.swift|ObjectProductSegmenter.swift|ObjectReadiness.swift" Gonggi.xcodeproj/project.pbxproj | head -n 4
+
+      - name: Resolve iOS Simulator destination
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID="$(python3 <<'PY'
+          import json, subprocess, sys
+          out = subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True)
+          data = json.loads(out)
+          runtimes = sorted([k for k in data.get("devices", {}) if "iOS" in k], reverse=True)
+          for rt in runtimes:
+              devices = [d for d in data["devices"][rt] if d.get("isAvailable") and "iPhone" in d.get("name", "")]
+              devices.sort(key=lambda d: d.get("name", ""))
+              for d in devices:
+                  if any(x in d.get("name", "") for x in ("iPhone 15", "iPhone 16", "iPhone 14", "iPhone SE")):
+                      print(d["udid"]); sys.exit(0)
+              if devices:
+                  print(devices[0]["udid"]); sys.exit(0)
+          sys.exit(1)
+          PY
+          )"
+          echo "udid=${UDID}" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "${UDID}" 2>/dev/null || true
+
+      - name: ObjectCapture unit tests (logic)
+        run: |
+          set -euo pipefail
+          set +e
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GonggiTests/ObjectCaptureTests \
+            -only-testing:GonggiTests/ObjectAutoPlacementTests \
+            -only-testing:GonggiTests/ObjectProductEvidenceTests \
+            -only-testing:GonggiTests/ObjectProductEvidenceRuleTests \
+            ARCHS=arm64 EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -resultBundlePath ObjectLogicTests.xcresult \
+            2>&1 | tee xcodebuild-object-logic.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "::group::errors and test summary"
+          grep -E "error:|Executed [0-9]+ tests|Test Case .* failed|Test Suite .* (passed|failed)" xcodebuild-object-logic.log | tail -n 80 || true
+          echo "::endgroup::"
+          exit "${STATUS}"
+
+      - name: Synthetic UI renders (not device captures; failure does not hide the logic result)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ui-snapshots"
+          TEST_RUNNER_GONGGI_SNAPSHOT_DIR="$RUNNER_TEMP/ui-snapshots" xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GonggiTests/ObjectUISnapshotTests \
+            ARCHS=arm64 EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -resultBundlePath ObjectUISnapshots.xcresult \
+            2>&1 | tee xcodebuild-object-ui.log
+          ls -la "$RUNNER_TEMP/ui-snapshots" || true
+          cp -R "$RUNNER_TEMP/ui-snapshots" ui-snapshots
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: object-capture-app-tests
+          path: |
+            xcodebuild-object-logic.log
+            xcodebuild-object-ui.log
+            ObjectLogicTests.xcresult
+            ui-snapshots
+          if-no-files-found: ignore
+
+  vision-validation:
+    name: Vision foreground mask vs the pre-registered criteria (macOS)
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Machine and criteria fingerprint
+        run: |
+          set -euo pipefail
+          sw_vers
+          system_profiler SPHardwareDataType 2>/dev/null | grep -E "Model Name|Chip|Total Number of Cores|Memory" || true
+          echo "criteria sha256: $(shasum -a 256 docs/OBJECT_VISION_VALIDATION_CRITERIA.md | cut -d' ' -f1)"
+          echo "rule file sha256: $(shasum -a 256 Gonggi/Capture/ObjectCapture/ObjectProductEvidence.swift | cut -d' ' -f1)"
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Build the validation tool (the app's own rule file + Vision wrapper)
+        run: |
+          set -euo pipefail
+          swiftc -O -o vtool \
+            Tools/ObjectVisionValidation/main.swift \
+            Gonggi/Capture/ObjectCapture/ObjectProductEvidence.swift \
+            Gonggi/Capture/ObjectCapture/ObjectProductSegmenter.swift
+          ls -la vtool
+
+      - name: Fetch the validation images (secret URL, never printed)
+        env:
+          VISION_DATASET_URL: ${{ secrets.VISION_DATASET_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VISION_DATASET_URL:-}" ]; then echo "::error::VISION_DATASET_URL secret is missing"; exit 1; fi
+          echo "::add-mask::${VISION_DATASET_URL}"
+          mkdir -p dataset
+          curl -sS --fail --retry 3 -o dataset.tar "${VISION_DATASET_URL}"
+          tar -xf dataset.tar -C dataset
+          echo "dataset tar sha256: $(shasum -a 256 dataset.tar | cut -d' ' -f1)"
+          echo "files: $(find dataset -type f | wc -l | tr -d ' ')"
+          test -f dataset/manifest.json
+
+      - name: Run Vision on every case
+        run: |
+          set -euo pipefail
+          ./vtool dataset vision-results.json 2>&1 | tee vtool.log
+
+      - name: Upload numeric results (no image data)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-validation-results
+          path: |
+            vision-results.json
+            vtool.log
+          if-no-files-found: ignore

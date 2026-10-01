@@ -28,7 +28,9 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     @Published private(set) var savedPhotos = 0
     /// Box corners in view points (nil = not drawable this frame).
     @Published private(set) var cornersOnScreen: [CGPoint]?
-    @Published private(set) var placementHint = "제품이 놓인 바닥이나 테이블을 비춘 뒤, 제품 한가운데 아래를 눌러 주세요"
+    /// Placing-stage line. nil while the automatic search is young (the AR coaching overlay speaks then); the manual
+    /// placement sentence after the search ran too long, after "place again", or after a tap found no surface.
+    @Published private(set) var placementHint: String?
 
     let arSession = ARSession()
     weak var arView: ARView?
@@ -37,6 +39,28 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     private(set) var captureId = ""
     private var centerSource = "raycast_estimated_plane"
     private var sizeAdjusted = false
+    /// First placement: the automatic planner and a tap both go through `placementGate` (first claim wins).
+    private var autoPlanner = ObjectAutoPlacementPlanner()
+    private var placementGate = ObjectPlacementGate()
+    private var lastAutoSampleAt: TimeInterval = 0
+    /// Product-extent evidence (only used when `ObjectCaptureConfig.productEvidenceEnabled`).
+    private let segmenter = ObjectProductSegmenter()
+    private var evidenceTracker = ObjectEvidenceTracker()
+    private var evidenceTask: Task<Void, Never>?
+    private var pendingEvidence: PendingEvidence?
+    private var lastEvidenceStartAt: TimeInterval = 0
+    /// Newest analysis result and the frame time it belongs to (guidance wording only).
+    private var latestEvidence: (result: ObjectProductEvidence, at: TimeInterval)?
+
+    /// Everything about the frame being analysed, kept on the main actor (the background task only gets pixels).
+    private struct PendingEvidence {
+        var frame: ARFrame
+        var boxKey: ObjectBoxKey
+        var framing: ObjectFramingResult
+        var trackingNormal: Bool
+        var blurry: Bool
+        var position: ObjectOrbitPosition
+    }
     private var coverage = ObjectOrbitCoverage()
     private var policy = ObjectKeyframePolicy()
     private let sharpness = FrameSharpnessAnalyzer()
@@ -70,14 +94,19 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     }
 
     func stop() {
+        evidenceTask?.cancel()
         arSession.pause()
         jpegQueue.stopAccepting()
     }
 
     // MARK: - Placement / size
 
-    /// Tap on the support surface under the product's middle.
+    /// Tap on the support surface under the product's middle. A touch while placing puts the user in charge:
+    /// the automatic planner never places after this, so the two cannot race into a second box.
     func place(at point: CGPoint) {
+        guard stage == .placing else { return }
+        placementGate.manualTouch()
+        autoPlanner.disable()
         guard let arView else { return }
         let existing = arView.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first
         let hit = existing ?? arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first
@@ -85,18 +114,91 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             placementHint = "바닥이나 테이블 면을 찾지 못했어요. 휴대폰을 천천히 움직여 면을 비춰 주세요"
             return
         }
-        centerSource = existing != nil ? "raycast_existing_plane" : "raycast_estimated_plane"
         let t = hit.worldTransform.columns.3
+        commitPlacement(
+            base: SIMD3<Float>(t.x, t.y, t.z),
+            centerSource: existing != nil ? "raycast_existing_plane" : "raycast_estimated_plane",
+            claim: .manual
+        )
+    }
+
+    /// The one place the box is created. The first claim wins; a second placement (automatic after manual, or the
+    /// other way round) is ignored. Nothing else ever moves the box except the user's own drag, size and turn.
+    private func commitPlacement(base: SIMD3<Float>, centerSource source: String, claim: ObjectPlacementGate.Source) {
+        guard stage == .placing, placementGate.claim(claim) else { return }
+        autoPlanner.disable()
+        centerSource = source
         var b = box
-        b.baseCenter = SIMD3<Float>(t.x, t.y, t.z)
+        b.baseCenter = base
         // One face toward the user: box z axis points at the camera (horizontal).
         if let cam = arSession.currentFrame?.camera.transform.columns.3 {
-            b.yawRadians = atan2(cam.x - t.x, cam.z - t.z)
+            b.yawRadians = atan2(cam.x - base.x, cam.z - base.z)
         }
         box = b
         hasBox = true
+        placementHint = nil
+        evidenceTracker.reset()
+        latestEvidence = nil
         stage = .sizing
         GonggiHaptics.medium()
+    }
+
+    /// Automatic first placement: the surface under the screen centre, once it has held still long enough.
+    /// Runs at the UI publish rate while no box exists. It never runs again after a placement, a touch or
+    /// "place again".
+    private func attemptAutoPlacement(_ frame: ARFrame) {
+        guard stage == .placing, !autoPlanner.isDisabled, let arView else { return }
+        guard frame.timestamp - lastAutoSampleAt >= Self.publishInterval else { return }
+        lastAutoSampleAt = frame.timestamp
+        let bounds = arView.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let centre = CGPoint(x: bounds.midX, y: bounds.midY)
+        let offset = CGFloat(ObjectAutoPlacementConfig.sampleOffsetFraction) * min(bounds.width, bounds.height)
+        let points = [
+            centre,
+            CGPoint(x: centre.x - offset, y: centre.y),
+            CGPoint(x: centre.x + offset, y: centre.y),
+            CGPoint(x: centre.x, y: centre.y - offset),
+            CGPoint(x: centre.x, y: centre.y + offset),
+        ]
+        let hits: [ObjectAutoPlacementHit?] = points.map { raycastHit(at: $0, in: arView) }
+        guard let ray = arView.ray(through: centre) else { return }
+        let cam = frame.camera.transform.columns.3
+        let trackingNormal: Bool
+        if case .normal = frame.camera.trackingState { trackingNormal = true } else { trackingNormal = false }
+        let sample = ObjectAutoPlacementSample(
+            timestamp: frame.timestamp,
+            trackingNormal: trackingNormal,
+            cameraPosition: SIMD3<Float>(cam.x, cam.y, cam.z),
+            centreRayDirection: simd_normalize(ray.direction),
+            hits: hits
+        )
+        let decision = autoPlanner.ingest(sample, boxHeight: ObjectCaptureConfig.defaultSize.y)
+        if case .place(let base, let existing) = decision {
+            commitPlacement(
+                base: base,
+                centerSource: existing ? "auto_raycast_existing_plane" : "auto_raycast_estimated_plane",
+                claim: .auto
+            )
+        } else if placementHint == nil, autoPlanner.shouldShowManualHint(now: frame.timestamp) {
+            placementHint = ObjectCaptureCopy.manualPlacementHint
+        }
+    }
+
+    private func raycastHit(at point: CGPoint, in view: ARView) -> ObjectAutoPlacementHit? {
+        if let result = view.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first {
+            let t = result.worldTransform.columns.3
+            var minSide: Float?
+            if let plane = result.anchor as? ARPlaneAnchor {
+                minSide = min(plane.planeExtent.width, plane.planeExtent.height)
+            }
+            return ObjectAutoPlacementHit(point: SIMD3<Float>(t.x, t.y, t.z), isExistingPlane: true, planeMinSideM: minSide)
+        }
+        if let result = view.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first {
+            let t = result.worldTransform.columns.3
+            return ObjectAutoPlacementHit(point: SIMD3<Float>(t.x, t.y, t.z), isExistingPlane: false, planeMinSideM: nil)
+        }
+        return nil
     }
 
     enum DragPhase { case began, changed, ended }
@@ -204,8 +306,18 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         sizeAdjusted = true
     }
 
+    /// Back to placing, by hand: automatic placement stays off (it would put the box back where the user just
+    /// took it away from), so the manual sentence is shown at once.
     func placeAgain() {
+        placementGate.placeAgain()
+        autoPlanner.disable()
+        evidenceTask?.cancel()
+        pendingEvidence = nil
+        evidenceTracker.reset()
+        latestEvidence = nil
+        cornersOnScreen = nil
         hasBox = false
+        placementHint = ObjectCaptureCopy.manualPlacementHint
         stage = .placing
     }
 
@@ -230,6 +342,11 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         completedCount = 0
         sharpness.reset()
         jpegQueue.reset()
+        evidenceTask?.cancel()
+        pendingEvidence = nil
+        evidenceTracker.reset()
+        latestEvidence = nil
+        lastEvidenceStartAt = 0
         stage = .capturing
     }
 
@@ -238,7 +355,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     }
 
     private func handle(_ frame: ARFrame) {
-        guard hasBox else { return }
+        guard hasBox else {
+            attemptAutoPlacement(frame)
+            return
+        }
         let camT = frame.camera.transform
         let camPos = SIMD3<Float>(camT.columns.3.x, camT.columns.3.y, camT.columns.3.z)
         let publish = frame.timestamp - lastPublishAt >= Self.publishInterval
@@ -255,8 +375,18 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         )
         let fr = ObjectFraming.evaluate(box: box, cameraToWorld: camT, intrinsics: intr)
         let pos = ObjectOrbitCoverage.position(camera: camPos, box: box)
+        // The ONE framing answer for colour and guidance. With product analysis off it is the box rule, unchanged.
+        // With it on, a fresh confirmed analysis can show "capturable" while the box sticks out; photos from such
+        // frames are saved only from the analysed frame itself (see `finishEvidence`), never from this one.
+        let evidenceOn = ObjectCaptureConfig.productEvidenceEnabled
+        let boxKey = ObjectBoxKey(box)
+        var liveEvidence: ObjectProductEvidence?
+        if evidenceOn, evidenceTracker.isFresh(now: frame.timestamp, boxKey: boxKey), let extent = evidenceTracker.latestExtent {
+            liveEvidence = .productInFrame(extent)
+        }
+        let display = ObjectReadiness.resolve(box: fr, evidence: liveEvidence)
         if publish {
-            framing = fr.state
+            framing = display.framing
             currentAzimuthDeg = pos.azimuthDeg
         }
         let trackingNormal: Bool
@@ -271,6 +401,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         let sharp = sharpness.snapshot()
         let cell = ObjectOrbitCoverage.cell(for: pos)
         let dir = simd_normalize(camPos - box.center)
+        // This frame is judged on the box rule alone; product evidence never applies to a frame it was not made for.
         let decision = policy.decide(.init(
             timestamp: frame.timestamp,
             framing: fr.state,
@@ -280,7 +411,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             cellCount: cell.map { coverage.count($0) } ?? 0,
             direction: dir
         ))
-        if case .accept(let reason) = decision, let cell, savePhoto(frame, reason: reason, position: pos, framing: fr.state, sharpness: sharp) {
+        if case .accept(let reason) = decision, let cell, savePhoto(frame, reason: reason, position: pos, framingLabel: fr.state.rawValue, sharpness: sharp) {
             policy.didSave(timestamp: frame.timestamp, direction: dir)
             coverage.record(cell)
             coverageCounts = coverage.counts
@@ -289,10 +420,98 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         } else if case .reject = decision {
             rejectedCount += 1
         }
-        if publish {
-            guidance = ObjectCaptureGuidance.next(
-                trackingNormal: trackingNormal, framing: fr.state, position: pos, coverage: coverage
+        if evidenceOn {
+            startEvidenceIfNeeded(
+                frame: frame, boxKey: boxKey, framing: fr, trackingNormal: trackingNormal,
+                blurry: sharp.state == .blurry, position: pos
             )
+        }
+        if publish {
+            var guidanceEvidence: ObjectProductEvidence?
+            if evidenceOn {
+                if let latest = latestEvidence, frame.timestamp - latest.at <= 1.0 {
+                    guidanceEvidence = latest.result
+                } else {
+                    guidanceEvidence = .unknown(.failed)
+                }
+            }
+            guidance = ObjectCaptureGuidance.next(
+                trackingNormal: trackingNormal, framing: display.framing, position: pos, coverage: coverage,
+                productEvidence: guidanceEvidence
+            )
+        }
+    }
+
+    // MARK: - Product-extent evidence (off unless ObjectCaptureConfig.productEvidenceEnabled)
+
+    /// Starts at most one background analysis, only for a frame the box rule rejects because the box sticks out.
+    /// The AR view and photo saving never wait for it: it works on a copy of the pixels on a background task.
+    private func startEvidenceIfNeeded(
+        frame: ARFrame,
+        boxKey: ObjectBoxKey,
+        framing fr: ObjectFramingResult,
+        trackingNormal: Bool,
+        blurry: Bool,
+        position: ObjectOrbitPosition
+    ) {
+        guard pendingEvidence == nil, trackingNormal, !fr.boxInside, fr.cornersPx.count == 8,
+              fr.state == .partlyOutside || fr.state == .tooClose,
+              frame.timestamp - lastEvidenceStartAt >= ObjectCaptureConfig.evidenceMinIntervalSec,
+              ProcessInfo.processInfo.thermalState.rawValue < ProcessInfo.ThermalState.serious.rawValue,
+              let buffer = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) else { return }
+        let width = Double(CVPixelBufferGetWidth(buffer))
+        let height = Double(CVPixelBufferGetHeight(buffer))
+        guard width > 0, height > 0 else { return }
+        let corners = fr.cornersPx.map { CGPoint(x: Double($0.x) / width, y: Double($0.y) / height) }
+        let hull = Self.convexHull(corners)
+        let baseFace = ObjectFraming.bottomFaceCornerIndices.map { corners[$0] }
+        lastEvidenceStartAt = frame.timestamp
+        pendingEvidence = PendingEvidence(
+            frame: frame, boxKey: boxKey, framing: fr, trackingNormal: trackingNormal, blurry: blurry, position: position
+        )
+        let segmenter = self.segmenter
+        evidenceTask = Task.detached(priority: .utility) { [weak self] in
+            let result = segmenter.analyze(pixelBuffer: buffer, hull: hull, baseFace: baseFace)
+            await self?.finishEvidence(result)
+        }
+    }
+
+    /// Back on the main actor. The result belongs to the frame that was analysed; it is dropped when the box
+    /// changed or capture is no longer running, and a photo is saved from THAT frame only after three agreeing
+    /// analyses (`ObjectEvidenceTracker`).
+    private func finishEvidence(_ result: ObjectProductEvidence) {
+        guard let pending = pendingEvidence else { return }
+        pendingEvidence = nil
+        guard hasBox, stage == .capturing, ObjectBoxKey(box) == pending.boxKey else { return }
+        let stamp = pending.frame.timestamp
+        latestEvidence = (result: result, at: stamp)
+        evidenceTracker.record(frameTimestamp: stamp, evidence: result, boxKey: pending.boxKey)
+        guard evidenceTracker.confirms(frameTimestamp: stamp, boxKey: pending.boxKey) else { return }
+        let readiness = ObjectReadiness.resolve(box: pending.framing, evidence: result)
+        guard readiness.usedProductEvidence else { return }
+        let frame = pending.frame
+        let camT = frame.camera.transform
+        let camPos = SIMD3<Float>(camT.columns.3.x, camT.columns.3.y, camT.columns.3.z)
+        let cell = ObjectOrbitCoverage.cell(for: pending.position)
+        let dir = simd_normalize(camPos - box.center)
+        let decision = policy.decide(.init(
+            timestamp: stamp,
+            framing: readiness.framing,
+            trackingNormal: pending.trackingNormal,
+            blurry: pending.blurry,
+            cell: cell,
+            cellCount: cell.map { coverage.count($0) } ?? 0,
+            direction: dir
+        ))
+        if case .accept(let reason) = decision, let cell,
+           savePhoto(frame, reason: reason, position: pending.position, framingLabel: readiness.label, sharpness: sharpness.snapshot()) {
+            policy.didSave(timestamp: stamp, direction: dir)
+            coverage.record(cell)
+            coverageCounts = coverage.counts
+            bandFill = coverage.bandFill
+            savedPhotos = policy.savedCount
+        } else if case .reject = decision {
+            rejectedCount += 1
         }
     }
 
@@ -300,7 +519,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         _ frame: ARFrame,
         reason: String,
         position: ObjectOrbitPosition,
-        framing: ObjectFramingState,
+        framingLabel: String,
         sharpness: FrameSharpnessAnalyzer.Snapshot
     ) -> Bool {
         guard let paths, let owned = SpatialPixelBufferCopy.deepCopy(frame.capturedImage) else { return false }
@@ -336,7 +555,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             azimuthDeg: (position.azimuthDeg * 10).rounded() / 10,
             elevationDeg: (position.elevationDeg * 10).rounded() / 10,
             distanceM: (position.distanceM * 1000).rounded() / 1000,
-            framing: framing.rawValue
+            framing: framingLabel
         )
         let enqueued = jpegQueue.tryEnqueue(SpatialJPEGEncodeQueue.Job(snapshot: snapshot)) { [weak self] result in
             Task { @MainActor in self?.jpegFinished(result) }

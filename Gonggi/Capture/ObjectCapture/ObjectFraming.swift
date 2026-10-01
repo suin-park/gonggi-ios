@@ -18,6 +18,8 @@ struct ObjectFramingResult: Equatable {
     var fill: Double
     /// Projected corners (sensor pixels) — for the wireframe overlay.
     var cornersPx: [SIMD2<Float>]
+    /// All 8 corners are inside the photo (with the edge margin). False when the box sticks out or is behind the camera.
+    var boxInside: Bool = false
 }
 
 enum ObjectFraming {
@@ -29,6 +31,10 @@ enum ObjectFraming {
         var width: Float
         var height: Float
     }
+
+    /// Indices into `ObjectCaptureBox.corners` of the bottom face (y = -1), in polygon order.
+    /// corners are ordered (sx, sy, sz) with each -1 then +1: index = 4*(sx>0) + 2*(sy>0) + (sz>0).
+    static let bottomFaceCornerIndices = [0, 1, 5, 4]
 
     /// World point → sensor pixel; nil when behind the camera.
     static func project(_ p: SIMD3<Float>, cameraToWorld: simd_float4x4, intrinsics k: Intrinsics) -> SIMD2<Float>? {
@@ -66,6 +72,6 @@ enum ObjectFraming {
         } else {
             state = .ok
         }
-        return ObjectFramingResult(state: state, fill: fill, cornersPx: pts)
+        return ObjectFramingResult(state: state, fill: fill, cornersPx: pts, boxInside: inside)
     }
 }

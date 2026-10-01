@@ -35,6 +35,15 @@ enum ObjectCaptureConfig {
     static let minViewChangeDeg: Double = 4.0
     /// Photos per cell after which a cell counts as covered for guidance.
     static let coveredPhotosPerCell = 2
+
+    /// Product-extent evidence (Vision foreground mask): lets a photo be saved when the generous box sticks out of the
+    /// photo but the whole product is inside it. Off until the offline validation has passed against the criteria that
+    /// were fixed before it ran (docs/OBJECT_VISION_VALIDATION_CRITERIA.md). When off, nothing in capture changes.
+    static let productEvidenceEnabled = false
+    /// At most one product analysis per this interval, and only one at a time; it never blocks the AR view or saving.
+    static let evidenceMinIntervalSec: Double = 0.2
+    /// Analysis input: the long edge of the photo copy handed to Vision.
+    static let evidenceLongEdgePx = 640
 }
 
 /// Oriented product box in the ARKit world (gravity +Y, meters).

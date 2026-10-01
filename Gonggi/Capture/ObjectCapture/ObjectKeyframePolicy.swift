@@ -88,15 +88,23 @@ enum ObjectCaptureGuidance: Equatable {
     /// Band fill above which the band counts as done for guidance (not a completion requirement).
     static let bandDoneFill = 0.75
 
+    /// `productEvidence` is nil while product analysis is off: the box rule speaks as before. With analysis on, "the
+    /// product is cut off" is only said when the analysis found the product at the photo edge; a box that merely sticks
+    /// out (no evidence either way) says to step back instead of claiming the product is cut.
     static func next(
         trackingNormal: Bool,
         framing: ObjectFramingState,
         position: ObjectOrbitPosition,
-        coverage: ObjectOrbitCoverage
+        coverage: ObjectOrbitCoverage,
+        productEvidence: ObjectProductEvidence? = nil
     ) -> ObjectCaptureGuidance {
         if !trackingNormal { return .trackingLimited }
         switch framing {
-        case .behind, .partlyOutside: return .productCutOff
+        case .behind: return .productCutOff
+        case .partlyOutside:
+            guard let productEvidence else { return .productCutOff }
+            if case .productCutOff = productEvidence { return .productCutOff }
+            return .stepBack
         case .tooClose: return .stepBack
         case .tooFar: return .stepCloser
         case .offCenter: return .centerProduct

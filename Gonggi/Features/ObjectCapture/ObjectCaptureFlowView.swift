@@ -11,7 +11,10 @@ enum ObjectCaptureCopy {
         "바닥과 주변이 함께 찍혀도 괜찮아요. 결과에서는 제품만 남겨요",
     ]
     static let start = "시작"
-    static let sizingHint = "상자를 눌러 제품 아래로 끌어 옮기고, 가로·깊이·높이를 넉넉하게 맞춰 주세요"
+    /// After the box is placed (automatically or by tap). The box is a guide the user fits; it does not know the product.
+    static let sizingHint = "상자가 제품을 넉넉하게 감싸도록 위치와 크기를 맞춰 주세요."
+    /// While no box exists and automatic placement could not find a steady surface.
+    static let manualPlacementHint = "제품 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요."
     /// The worker keeps only what is inside the box, so a tight box cuts the product's top off (GONGGI_OBJECT_V1_002).
     static let sizingTips = "상자 안을 한 손가락으로 끌어 옮기고, 두 손가락으로 돌려요. 높이는 제품 맨 위보다 조금 높게 잡아 주세요"
     static let width = "가로"
@@ -97,14 +100,16 @@ struct ObjectCaptureFlowView: View {
 
     private var topBar: some View {
         HStack(alignment: .top) {
-            Text(topText)
-                .font(.headline)
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .fixedSize(horizontal: false, vertical: true)
+            if !topText.isEmpty {
+                Text(topText)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Spacer(minLength: 8)
             Button(ObjectCaptureCopy.close) {
                 session.stop()
@@ -120,7 +125,7 @@ struct ObjectCaptureFlowView: View {
 
     private var topText: String {
         switch session.stage {
-        case .placing: return session.placementHint
+        case .placing: return session.placementHint ?? ""
         case .sizing: return ObjectCaptureCopy.sizingHint
         case .capturing: return session.guidance?.text ?? ObjectCaptureGuidance.walkAround(towardLeft: true).text
         case .finishing: return ObjectCaptureCopy.finishing
