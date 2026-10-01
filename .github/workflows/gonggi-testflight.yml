@@ -190,6 +190,9 @@ jobs:
           if [[ "${MODE}" == "targeted" ]]; then
             ONLY=(
               -only-testing:GonggiTests/ObjectCaptureTests
+              -only-testing:GonggiTests/ObjectAutoPlacementTests
+              -only-testing:GonggiTests/ObjectProductEvidenceTests
+              -only-testing:GonggiTests/ObjectProductEvidenceRuleTests
               -only-testing:GonggiTests/AppServerConfigTests
               -only-testing:GonggiTests/ProductCardServerGateTests
               -only-testing:GonggiTests/RecordHomeTests
@@ -218,6 +221,42 @@ jobs:
             echo "::error::targeted tests failed — not archiving"
             exit 1
           fi
+
+      - name: Guard - Vision product-extent judgement stays off in this build
+        run: |
+          set -euo pipefail
+          grep -q 'static let productEvidenceEnabled = false' Gonggi/Capture/ObjectCapture/ObjectCaptureModels.swift
+          echo "productEvidenceEnabled is false: the box rule is the only capture-ready rule."
+
+      - name: Synthetic UI renders (not device captures; a failure here does not block the upload)
+        id: ui_renders
+        if: ${{ inputs.pre_archive_tests != 'none' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)['devices']
+          for rt in sorted([k for k in data if 'iOS' in k], reverse=True):
+              phones = sorted([d for d in data[rt] if d.get('isAvailable') and 'iPhone' in d.get('name', '')], key=lambda d: d['name'])
+              pick = [d for d in phones if any(x in d['name'] for x in ('iPhone 16', 'iPhone 15', 'iPhone 14'))] or phones
+              if pick:
+                  print(pick[0]['udid']); sys.exit(0)
+          sys.exit(1)")"
+          mkdir -p "${RUNNER_TEMP}/ui-snapshots"
+          TEST_RUNNER_GONGGI_SNAPSHOT_DIR="${RUNNER_TEMP}/ui-snapshots" xcodebuild test             -project "${{ env.PROJECT }}"             -scheme "${{ env.SCHEME }}"             -configuration Debug             -destination "platform=iOS Simulator,id=${UDID}"             -only-testing:GonggiTests/ObjectUISnapshotTests             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""             2>&1 | tee xcodebuild-ui-renders.log
+          cp -R "${RUNNER_TEMP}/ui-snapshots" ui-snapshots
+
+      - name: Upload UI renders and test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: object-capture-ui-renders
+          path: |
+            ui-snapshots
+            xcodebuild-pre-archive-test.log
+            xcodebuild-ui-renders.log
+          if-no-files-found: ignore
 
       - name: Pre-archive auth config check
         run: |
