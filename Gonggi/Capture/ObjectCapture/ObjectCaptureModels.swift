@@ -49,6 +49,9 @@ enum ObjectCaptureConfig {
     /// exact-box rules (e.g. "object truncated" when the box sticks out of the photos). Off = build 88 behaviour exactly.
     static let looseBoxDefaultsKey = "com.whik.gonggi.objectCapture.looseBox"
     static let looseBoxDefaultOn = false
+    /// Moving the box by the optical axes while walking is OFF: it would hide a tracking problem (the box follows the
+    /// camera's idea of the world) and could add a new position error. The estimate is only logged (`refine_shadow`).
+    static let centreRefinementEnabled = false
 
     /// Product-extent evidence (Vision foreground mask): lets a photo be saved when the generous box sticks out of the
     /// photo but the whole product is inside it. Off until the offline validation has passed against the criteria that

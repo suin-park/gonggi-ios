@@ -48,6 +48,13 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     @Published private(set) var walkProgress: Double = 0
     /// One line under the placing sentence: what to fix after a rejected tap.
     @Published private(set) var locatingNote: String?
+    /// Tracking is not stable: what to do. Shown instead of the walking guidance; placement and photo saving wait.
+    @Published private(set) var trackingNote: String?
+    /// A helper only (never a requirement): shown with an insufficient-features note.
+    @Published private(set) var trackingHelper: String?
+    /// Small live readout of the numbers that tell AR drift from a placement error (advanced, off by default).
+    @Published var showsDiagnostics = false
+    @Published private(set) var diagnosticsReadout: String?
     /// The old way for objects on a table: tap the support surface itself.
     @Published private(set) var floorTapMode = false
     /// Show the box wireframe too (advanced). The default shows the ring only: nothing to fit.
@@ -80,7 +87,25 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     private var trace = ObjectPlacementTrace(appBuild: ObjectPlacementTrace.currentAppBuild(), device: UIDevice.current.model)
     private var traceStart: TimeInterval?
     private var lastTraceSampleAt: TimeInterval = -10
+    private var baseAnchor: ARAnchor?
     private var baseAnchorId: UUID?
+    private var gate = ObjectTrackingGate()
+    private var lastGateStatus: String?
+    private var lastFloorSampleAt: TimeInterval = 0
+    private var firstTapAt: TimeInterval = 0
+    private var isDragging = false
+    private var dragMoved = false
+    private var lastSizeTraceAt: TimeInterval = -10
+    private var lastShadowAt: TimeInterval = -10
+    /// Return check: where and how the phone stood when the box was placed, and a picture around the guide centre.
+    private var startPose: ObjectReturnCheck.Pose?
+    private var startROI: CGImage?
+    private var startPlacedAt: TimeInterval = 0
+    private var pathSincePlacement: Float = 0
+    private var lastPathPosition: SIMD3<Float>?
+    private var lastReturnCheckAt: TimeInterval = -100
+    private var returnCheckBusy = false
+    private var returnCheckSummary: String?
     private var baseAnchorOrigin: SIMD3<Float>?
     private var baseAnchorLatest: SIMD3<Float>?
     /// Product-extent evidence (only used when `ObjectCaptureConfig.productEvidenceEnabled`).
@@ -134,6 +159,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     var framingBox: ObjectCaptureBox { box.scaled(ObjectCaptureConfig.coreFramingRatio) }
 
     func setLooseBox(_ on: Bool) {
+        trace.add(traceTime(), "toggle_loose_box", ["on": on ? 1 : 0])
         looseBox = on
         UserDefaults.standard.set(on, forKey: ObjectCaptureConfig.looseBoxDefaultsKey)
     }
@@ -181,10 +207,16 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         guard stage == .placing || stage == .secondTap, let arView, let frame = arSession.currentFrame else { return }
         if floorTapMode, stage == .placing { place(at: point); return }
         placementGate.manualTouch()
-        guard case .normal = frame.camera.trackingState else {
-            locatingNote = "휴대폰을 천천히 움직여 주세요"
+        // Tracking must have been normal for a while AND the floor must hold still; the map status alone decides nothing.
+        let status = gate.placementStatus(now: frame.timestamp)
+        if status != .stable {
+            let text = ObjectTrackingGate.recoveryText(status)
+            locatingNote = text?.line
+            trackingHelper = text?.helper
+            trace.add(traceTime(), "tap_blocked", ["sx": Double(point.x), "sy": Double(point.y)], ["why": "\(status)"])
             return
         }
+        trackingHelper = nil
         guard let ray = arView.ray(through: point) else { return }
         let r = ObjectRay(origin: ray.origin, direction: ray.direction)
         let floorY = lowestSurfaceY(at: point, in: arView)
@@ -203,6 +235,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 return
             }
             trace.add(traceTime(), "tap1", v)
+            firstTapAt = frame.timestamp
             firstTap = LocatingTap(ray: r, floorY: floorY, screen: point, cameraPosition: camPos)
             firstTapMarker = point
             locatingNote = nil
@@ -219,7 +252,22 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         }
         // second tap
         guard let first = firstTap else { return }
+        // The world may have shifted since the first tap (tracking was lost and found again): start over, do not mix the two.
+        if let relocalized = gate.lastRelocalizedAt, relocalized > firstTapAt {
+            trace.add(traceTime(), "tap1_invalidated", v, ["why": "relocalized"])
+            firstTap = nil
+            firstTapMarker = nil
+            stage = .placing
+            locatingNote = "추적이 한 번 끊겼어요. 처음부터 물체 가운데를 다시 눌러 주세요"
+            return
+        }
         switch ObjectTwoTap.estimate(first: first.ray, second: r) {
+        case .success(let res) where floorY != nil && abs((floorY ?? 0) - first.floorY) > 0.05:
+            // the two floor measurements disagree: the floor (or the world) moved between the taps
+            v["floorDisagreeM"] = Double(abs((floorY ?? 0) - first.floorY))
+            trace.add(traceTime(), "tap2_rejected", v, ["why": "floor_disagree"])
+            locatingNote = "바닥 인식이 흔들려요. 바닥을 천천히 비추고 다시 눌러 주세요"
+            _ = res
         case .success(let res):
             v["convergenceDeg"] = res.convergenceDeg
             v["skewM"] = res.skewM
@@ -245,16 +293,6 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         }
     }
 
-    /// Skip the second tap: the first tap's line of sight at a typical object height. The estimate is corrected while the
-    /// user walks around (see `refineWhileWalking`), but until then it can be off by 0.2–0.3 m.
-    func skipSecondTap() {
-        guard stage == .secondTap, let first = firstTap, let p = initialPointXZ else { return }
-        trace.add(traceTime(), "skip_second_tap")
-        refiner = ObjectCentreRefiner()
-        refiner.addAnchor(first.ray)
-        commitLocated(centre: p, floorY: first.floorY, source: "single_tap_height_rule")
-    }
-
     /// Where the line of sight meets the horizontal plane at `centreHeight` above the floor (horizontal position).
     nonisolated static func heightRulePoint(ray: ObjectRay, floorY: Float, centreHeight: Float) -> SIMD2<Double>? {
         guard ray.direction.y < -1e-3 else { return nil }
@@ -278,7 +316,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     private func traceTime() -> Double {
         let now = arSession.currentFrame?.timestamp ?? ProcessInfo.processInfo.systemUptime
-        if traceStart == nil { traceStart = now }
+        if traceStart == nil {
+            traceStart = now
+            trace.startedAtEpochMs = (Date().timeIntervalSince1970 * 1000).rounded()
+        }
         return now - (traceStart ?? now)
     }
 
@@ -300,17 +341,174 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         latestEvidence = nil
         userMovedBox = false
         refineFrozen = false
-        let anchor = ARAnchor(name: "gonggi.objectBase", transform: Self.translationMatrix(b.baseCenter))
-        arSession.add(anchor: anchor)
-        baseAnchorId = anchor.identifier
-        baseAnchorOrigin = b.baseCenter
-        baseAnchorLatest = b.baseCenter
+        attachAnchor(at: b.baseCenter)
+        captureReturnReference()
         trace.add(traceTime(), "located", [
             "bx": Double(b.baseCenter.x), "by": Double(b.baseCenter.y), "bz": Double(b.baseCenter.z),
             "sizeX": Double(b.size.x), "sizeY": Double(b.size.y), "sizeZ": Double(b.size.z),
         ], ["source": source])
         stage = .sizing
         GonggiHaptics.medium()
+    }
+
+    /// The guide stands on an ARAnchor: when ARKit improves its map the anchor moves with the real world and the guide follows
+    /// (see `followAnchor`). A hand-made change (drag) re-creates the anchor at the new place, so the same movement is never
+    /// applied twice (once as the anchor, once as an offset).
+    private func attachAnchor(at base: SIMD3<Float>) {
+        if let old = baseAnchor { arSession.remove(anchor: old) }
+        let anchor = ARAnchor(name: "gonggi.objectBase", transform: Self.translationMatrix(base))
+        arSession.add(anchor: anchor)
+        baseAnchor = anchor
+        baseAnchorId = anchor.identifier
+        baseAnchorOrigin = base
+        baseAnchorLatest = base
+    }
+
+    private func followAnchor(_ frame: ARFrame) {
+        guard hasBox, !isDragging, let id = baseAnchorId,
+              let a = frame.anchors.first(where: { $0.identifier == id }) else { return }
+        let c = a.transform.columns.3
+        let p = SIMD3<Float>(c.x, c.y, c.z)
+        baseAnchorLatest = p
+        guard let next = ObjectAnchorFollow.nextBase(current: box.baseCenter, anchor: p, isDragging: isDragging) else { return }
+        let moved = simd_distance(next, box.baseCenter)
+        var b = box
+        b.baseCenter = next
+        box = b
+        trace.add(traceTime(), "anchor_follow", [
+            "moveM": Double(moved), "bx": Double(p.x), "by": Double(p.y), "bz": Double(p.z),
+            "sinceStartM": Double(baseAnchorOrigin.map { simd_distance($0, p) } ?? 0),
+        ])
+    }
+
+    /// The pose and a picture around the guide centre at the moment the guide was placed (for the return check).
+    private func captureReturnReference() {
+        startPose = nil
+        startROI = nil
+        pathSincePlacement = 0
+        lastPathPosition = nil
+        returnCheckSummary = nil
+        guard let frame = arSession.currentFrame else { return }
+        startPose = ObjectReturnCheck.pose(of: frame.camera.transform)
+        startPlacedAt = frame.timestamp
+        lastPathPosition = startPose?.position
+        let res = frame.camera.imageResolution
+        let k = frame.camera.intrinsics
+        let intr = ObjectFraming.Intrinsics(
+            fx: k.columns.0.x, fy: k.columns.1.y, cx: k.columns.2.x, cy: k.columns.2.y,
+            width: Float(res.width), height: Float(res.height)
+        )
+        if let px = ObjectFraming.project(box.center, cameraToWorld: frame.camera.transform, intrinsics: intr),
+           let rect = ObjectReturnCheck.roiRect(centre: px, imageWidth: Int(res.width), imageHeight: Int(res.height)) {
+            startROI = ObjectReturnCheck.crop(frame.capturedImage, rect: rect)
+            trace.add(traceTime(), "return_reference", ["guidePxX": Double(px.x), "guidePxY": Double(px.y), "roiX": Double(rect.minX), "roiY": Double(rect.minY)])
+        }
+    }
+
+    /// Back near the placement pose after a real walk: compare the picture around the guide centre now with the one from the
+    /// placement. The offset in pixels is the guide-versus-object displacement as the camera sees it.
+    private func returnCheckStep(_ frame: ARFrame) {
+        guard hasBox, let start = startPose, let startROI, !returnCheckBusy,
+              frame.timestamp - lastReturnCheckAt >= ObjectReturnCheck.minIntervalSec,
+              frame.timestamp - startPlacedAt >= ObjectReturnCheck.minElapsedSec,
+              pathSincePlacement >= ObjectReturnCheck.minPathM,
+              case .normal = frame.camera.trackingState else { return }
+        let now = ObjectReturnCheck.pose(of: frame.camera.transform)
+        let d = ObjectReturnCheck.delta(from: start, to: now)
+        guard ObjectReturnCheck.isNearStart(d) else { return }
+        let res = frame.camera.imageResolution
+        let k = frame.camera.intrinsics
+        let intr = ObjectFraming.Intrinsics(
+            fx: k.columns.0.x, fy: k.columns.1.y, cx: k.columns.2.x, cy: k.columns.2.y,
+            width: Float(res.width), height: Float(res.height)
+        )
+        guard let px = ObjectFraming.project(box.center, cameraToWorld: frame.camera.transform, intrinsics: intr),
+              let rect = ObjectReturnCheck.roiRect(centre: px, imageWidth: Int(res.width), imageHeight: Int(res.height)),
+              let nowROI = ObjectReturnCheck.crop(frame.capturedImage, rect: rect) else { return }
+        lastReturnCheckAt = frame.timestamp
+        returnCheckBusy = true
+        let focal = Double(k.columns.0.x)
+        let anchorShift = Double(baseAnchorOrigin.flatMap { o in baseAnchorLatest.map { simd_distance(o, $0) } } ?? 0)
+        let t = traceTime()
+        let elapsed = frame.timestamp - startPlacedAt
+        let path = Double(pathSincePlacement)
+        Task.detached(priority: .utility) { [weak self] in
+            let reg = ObjectReturnCheck.register(start: startROI, now: nowROI)
+            await MainActor.run {
+                guard let self else { return }
+                self.returnCheckBusy = false
+                var v: [String: Double] = [
+                    "posDeltaM": Double(d.positionM), "yawDeltaDeg": Double(d.yawDeg), "pitchDeltaDeg": Double(d.pitchDeg),
+                    "anchorShiftM": anchorShift, "elapsedSec": elapsed, "pathM": path,
+                    "guidePxX": Double(px.x), "guidePxY": Double(px.y),
+                ]
+                if let reg {
+                    v["txPx"] = reg.txPx; v["tyPx"] = reg.tyPx; v["magPx"] = reg.magnitudePx
+                    v["magDeg"] = atan(reg.magnitudePx / focal) * 180 / .pi
+                    self.returnCheckSummary = String(
+                        format: "한 바퀴 확인: 가이드-물체 화면 어긋남 %.1f px (%.2f°) · 카메라 위치 차 %.0f cm · 앵커 이동 %.1f mm",
+                        reg.magnitudePx, atan(reg.magnitudePx / focal) * 180 / .pi, Double(d.positionM) * 100, anchorShift * 1000
+                    )
+                } else {
+                    self.returnCheckSummary = "한 바퀴 확인: 비교하지 못했어요"
+                }
+                self.trace.add(t, "return_check", v)
+            }
+        }
+    }
+
+    /// Feeds the tracking gate every frame and keeps the recovery note up to date; while no box exists it also samples the
+    /// floor height (the gate wants a floor that holds still before it lets a tap through).
+    private func updateGate(_ frame: ARFrame) {
+        let tracking = ObjectARDiagnostics.trackingName(frame.camera.trackingState)
+        let mapping = ObjectARDiagnostics.mappingName(frame.worldMappingStatus)
+        gate.ingest(timestamp: frame.timestamp, tracking: tracking, mapping: mapping)
+        if !hasBox, frame.timestamp - lastFloorSampleAt >= 0.25, let arView {
+            lastFloorSampleAt = frame.timestamp
+            let b = arView.bounds
+            if b.width > 0 {
+                let y = lowestSurfaceY(at: CGPoint(x: b.midX, y: b.midY + 0.2 * b.height), in: arView)
+                    ?? lowestSurfaceY(at: CGPoint(x: b.midX, y: b.midY), in: arView)
+                gate.addFloorSample(timestamp: frame.timestamp, y: y)
+            }
+        }
+        let status: ObjectTrackingGate.Status
+        switch stage {
+        case .placing, .secondTap: status = gate.placementStatus(now: frame.timestamp)
+        case .sizing, .capturing: status = gate.captureStatus(now: frame.timestamp)
+        default: status = .stable
+        }
+        let key = "\(status)"
+        if key != lastGateStatus {
+            lastGateStatus = key
+            trace.add(traceTime(), "gate", ["floorSpread": Double(gate.floorSpread(now: frame.timestamp) ?? -1)], [
+                "status": key, "tracking": tracking, "mapping": mapping, "stage": "\(stage)",
+            ])
+        }
+        let text = ObjectTrackingGate.recoveryText(status)
+        // a settling state right after a tap flow step is not an alarm: show the note only when something is wrong or waiting
+        // assign only on change: this runs every frame and every assignment of a @Published value redraws the screen
+        if trackingNote != text?.line { trackingNote = text?.line }
+        if trackingHelper != text?.helper { trackingHelper = text?.helper }
+        if !hasBox, stage == .placing || stage == .secondTap, let line = text?.line, locatingNote != line { locatingNote = line }
+        if hasBox, let last = lastPathPosition {
+            let p = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
+            pathSincePlacement += simd_distance(last, p)
+            lastPathPosition = p
+        }
+    }
+
+    private func updateDiagnosticsReadout(_ frame: ARFrame) {
+        guard showsDiagnostics, hasBox else { diagnosticsReadout = nil; return }
+        let since = gate.normalSince.map { frame.timestamp - $0 } ?? 0
+        let shift = baseAnchorOrigin.flatMap { o in baseAnchorLatest.map { simd_distance(o, $0) } } ?? 0
+        var lines = [
+            String(format: "추적 %@ %.0f초 · 지도 %@", gate.currentTracking, since, gate.currentMapping),
+            String(format: "앵커 이동 %.1f mm · 걸은 거리 %.1f m", Double(shift) * 1000, Double(pathSincePlacement)),
+        ]
+        if let d = supportHeightDelta() { lines.append(String(format: "바닥 높이 차 %+.1f cm", Double(d) * 100)) }
+        lines.append(returnCheckSummary ?? "한 바퀴 돌아오면 가이드와 물체의 어긋남을 잽니다")
+        diagnosticsReadout = lines.joined(separator: "\n")
     }
 
     private static func translationMatrix(_ p: SIMD3<Float>) -> simd_float4x4 {
@@ -334,6 +532,17 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         let toCentre = simd_normalize(box.center - camPos)
         guard Double(acos(max(-1, min(1, simd_dot(toCentre, simd_normalize(axis)))))) * 180 / .pi <= 25 else { return }
         refiner.add(ObjectRay(origin: camPos, direction: axis))
+        guard ObjectCaptureConfig.centreRefinementEnabled else {
+            // Off: the estimate is only written down, so a later look can compare it with the guide without moving anything.
+            if frame.timestamp - lastShadowAt >= 3, let est = refiner.estimate() {
+                lastShadowAt = frame.timestamp
+                let cur = SIMD2<Double>(Double(box.baseCenter.x), Double(box.baseCenter.z))
+                trace.add(traceTime(), "refine_shadow", [
+                    "estX": est.point.x, "estZ": est.point.y, "arcDeg": est.arcDeg, "distFromGuideM": simd_length(est.point - cur),
+                ])
+            }
+            return
+        }
         guard !userMovedBox, !refineFrozen, let est = refiner.estimate(),
               est.arcDeg >= ObjectCentreRefiner.minArcDeg else { return }
         let cur = SIMD2<Double>(Double(box.baseCenter.x), Double(box.baseCenter.z))
@@ -358,17 +567,23 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     /// Once a second, whatever the stage: the numbers that tell placement geometry from AR drift.
     private func sampleTrace(_ frame: ARFrame) {
-        guard frame.timestamp - lastTraceSampleAt >= 1.0 else { return }
+        guard frame.timestamp - lastTraceSampleAt >= 0.5 else { return }
         lastTraceSampleAt = frame.timestamp
         let t = frame.camera.transform
         let cam = t.columns.3
+        let q = simd_quatf(t)
         let axis = -SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z)
         var v: [String: Double] = [
             "cx": Double(cam.x), "cy": Double(cam.y), "cz": Double(cam.z),
+            "cqx": Double(q.imag.x), "cqy": Double(q.imag.y), "cqz": Double(q.imag.z), "cqw": Double(q.real),
             "pitchDown": Double(asin(max(-1, min(1, -axis.y)))) * 180 / .pi,
         ]
         if hasBox {
             v["bx"] = Double(box.baseCenter.x); v["by"] = Double(box.baseCenter.y); v["bz"] = Double(box.baseCenter.z)
+            v["guideYaw"] = Double(box.yawRadians)
+            if let l = baseAnchorLatest { v["ax"] = Double(l.x); v["ay"] = Double(l.y); v["az"] = Double(l.z) }
+            v["isDragging"] = isDragging ? 1 : 0
+            v["pathM"] = Double(pathSincePlacement)
             v["sizeX"] = Double(box.size.x); v["sizeY"] = Double(box.size.y); v["sizeZ"] = Double(box.size.z)
             if let arView, let p = arView.project(box.center) { v["centrePxX"] = Double(p.x); v["centrePxY"] = Double(p.y) }
             if let d = supportHeightDelta() { v["floorDelta"] = Double(d) }
@@ -428,6 +643,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         placementHint = nil
         evidenceTracker.reset()
         latestEvidence = nil
+        userMovedBox = false
+        attachAnchor(at: b.baseCenter)
+        captureReturnReference()
+        trace.add(traceTime(), "placed_floor_tap", ["bx": Double(b.baseCenter.x), "by": Double(b.baseCenter.y), "bz": Double(b.baseCenter.z)])
         stage = .sizing
         GonggiHaptics.medium()
     }
@@ -563,6 +782,15 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         guard hasBox, stage == .sizing else { return }
         if phase == .ended {
             dragOffset = nil
+            if isDragging {
+                isDragging = false
+                if dragMoved {
+                    attachAnchor(at: box.baseCenter)   // one source of truth again: the anchor is where the user put the guide
+                    captureReturnReference()
+                }
+                trace.add(traceTime(), "drag_end", ["moved": dragMoved ? 1 : 0, "bx": Double(box.baseCenter.x), "bz": Double(box.baseCenter.z)])
+            }
+            dragMoved = false
             return
         }
         guard let tracking = arSession.currentFrame?.camera.trackingState, case .normal = tracking else { return }
@@ -574,6 +802,9 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         else { return }
         guard phase == .changed, let offset = dragOffset else {
             dragOffset = SIMD3<Float>(box.baseCenter.x - hit.x, 0, box.baseCenter.z - hit.z)
+            isDragging = true
+            dragMoved = false
+            trace.add(traceTime(), "drag_begin", ["hitX": Double(hit.x), "hitZ": Double(hit.z), "bx": Double(box.baseCenter.x), "bz": Double(box.baseCenter.z)])
             GonggiHaptics.light()
             return
         }
@@ -584,6 +815,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         box = b
         sizeAdjusted = true
         userMovedBox = true
+        dragMoved = true
         trace.add(traceTime(), "drag", ["hitX": Double(hit.x), "hitZ": Double(hit.z), "bx": Double(next.x), "bz": Double(next.z)])
     }
 
@@ -599,7 +831,16 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     /// One-slider sizing: the whole box scales about its base centre and keeps its proportions.
     var uniformScale: Float { box.size.x / ObjectCaptureConfig.defaultSize.x }
 
+    private func traceSizeChange() {
+        let now = arSession.currentFrame?.timestamp ?? 0
+        guard now - lastSizeTraceAt >= 0.25 else { return }
+        lastSizeTraceAt = now
+        trace.add(traceTime(), "size", ["sizeX": Double(box.size.x), "sizeY": Double(box.size.y), "sizeZ": Double(box.size.z),
+                                        "bx": Double(box.baseCenter.x), "bz": Double(box.baseCenter.z)])
+    }
+
     func setUniformScale(_ scale: Float) {
+        defer { traceSizeChange() }
         let current = max(uniformScale, 0.01)
         var b = box
         b.size = b.size * (scale / current)
@@ -608,6 +849,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     }
 
     func rotate(byRadians delta: Float) {
+        trace.add(traceTime(), "rotate", ["deltaRad": Double(delta)])
         box.yawRadians += delta
         sizeAdjusted = true
     }
@@ -639,6 +881,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     // MARK: - Capture
 
     func beginCapture() {
+        trace.add(traceTime(), "begin_capture", ["bx": Double(box.baseCenter.x), "bz": Double(box.baseCenter.z)])
         do {
             let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
             self.paths = paths
@@ -678,23 +921,13 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         let planes = anchors.filter { $0 is ARPlaneAnchor }.count
-        let mine = anchors.first(where: { $0.name == "gonggi.objectBase" })
-        let minePos = mine.map { SIMD3<Float>($0.transform.columns.3.x, $0.transform.columns.3.y, $0.transform.columns.3.z) }
-        let mineId = mine?.identifier
-        guard planes > 0 || minePos != nil else { return }
-        MainActor.assumeIsolated {
-            if planes > 0 { self.diagnostics.planeAnchorUpdated(count: planes) }
-            if let minePos, mineId == self.baseAnchorId {
-                self.baseAnchorLatest = minePos
-                if let o = self.baseAnchorOrigin {
-                    self.trace.add(self.traceTime(), "anchorUpdate", ["shiftM": Double(simd_distance(o, minePos))])
-                }
-            }
-        }
+        guard planes > 0 else { return }
+        MainActor.assumeIsolated { self.diagnostics.planeAnchorUpdated(count: planes) }
     }
 
     private func handle(_ frame: ARFrame) {
         sampleTrace(frame)
+        updateGate(frame)
         guard hasBox else {
             // TF90: no crosshair placement. While waiting for the second tap, show how far the user has walked.
             if stage == .secondTap, frame.timestamp - lastPublishAt >= Self.publishInterval {
@@ -703,7 +936,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             }
             return
         }
+        followAnchor(frame)
         refineWhileWalking(frame)
+        returnCheckStep(frame)
+        updateDiagnosticsReadout(frame)
         let camT = frame.camera.transform
         let camPos = SIMD3<Float>(camT.columns.3.x, camT.columns.3.y, camT.columns.3.z)
         let publish = frame.timestamp - lastPublishAt >= Self.publishInterval
@@ -734,8 +970,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             framing = display.framing
             currentAzimuthDeg = pos.azimuthDeg
         }
-        let trackingNormal: Bool
-        if case .normal = frame.camera.trackingState { trackingNormal = true } else { trackingNormal = false }
+        // A photo is saved only when tracking has been normal for a second (not right after a limited stretch / relocalisation).
+        let trackingNormal = gate.captureStatus(now: frame.timestamp) == .stable
 
         guard stage == .capturing else { return }
         diagnostics.ingest(
@@ -1009,8 +1245,14 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         review: ObjectCoverageReview? = nil,
         walkProgress: Double = 0,
         locatingNote: String? = nil,
-        marker: CGPoint? = nil
+        marker: CGPoint? = nil,
+        trackingNote: String? = nil,
+        trackingHelper: String? = nil,
+        readout: String? = nil
     ) {
+        self.trackingNote = trackingNote
+        self.trackingHelper = trackingHelper
+        self.diagnosticsReadout = readout
         self.walkProgress = walkProgress
         self.locatingNote = locatingNote
         self.firstTapMarker = marker

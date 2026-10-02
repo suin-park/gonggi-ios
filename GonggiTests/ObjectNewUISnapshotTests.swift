@@ -30,6 +30,9 @@ final class ObjectNewUISnapshotTests: XCTestCase {
         let highlight: Bool
         var ring: [CGPoint]? = nil
         var marker: CGPoint? = nil
+        var note: String? = nil
+        var helper: String? = nil
+        var readout: String? = nil
         let panel: Content
 
         var body: some View {
@@ -45,6 +48,15 @@ final class ObjectNewUISnapshotTests: XCTestCase {
                             .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    if let note {
+                        Text(note).font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
+                            .padding(10).background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let helper {
+                        Text(helper).font(.caption).foregroundStyle(.white.opacity(0.8))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     Spacer(minLength: 0)
                     panel
                     Text(caption)
@@ -55,6 +67,7 @@ final class ObjectNewUISnapshotTests: XCTestCase {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                if let readout { ObjectDiagnosticsChip(text: readout) }
             }
         }
     }
@@ -142,6 +155,24 @@ final class ObjectNewUISnapshotTests: XCTestCase {
         try save("22_준비됨_원_하나만_보임", Backdrop(
             top: ObjectCaptureCopy.readyHint, caption: "위치가 잡힌 뒤: 바닥 원(상자 아님)과 크기 슬라이더 — " + note,
             highlight: false, ring: ellipse, panel: ObjectSizingPanel(session: ready)))
+
+        let weak = session(loose: false)
+        weak.debugPresent(stage: .sizing, box: box, trackingNote: ObjectTrackingGate.recoveryText(.insufficientFeatures)?.line,
+                          trackingHelper: ObjectTrackingGate.recoveryText(.insufficientFeatures)?.helper)
+        try save("23_추적불안정_회복안내_배치_보류", Backdrop(
+            top: ObjectCaptureCopy.readyHint, caption: "추적이 약할 때: 배치와 사진 저장을 잠시 멈추고 회복 안내. 무늬 있는 물건은 보조 안내일 뿐 — " + note,
+            highlight: false, ring: ellipse, note: ObjectTrackingGate.recoveryText(.insufficientFeatures)?.line,
+            helper: ObjectTrackingGate.recoveryText(.insufficientFeatures)?.helper, panel: ObjectSizingPanel(session: weak)))
+        let diag = session(loose: false)
+        diag.debugPresent(stage: .sizing, box: box)
+        try save("24_위치유지_진단표시", Backdrop(
+            top: ObjectCaptureCopy.readyHint, caption: "한 바퀴 돌아온 뒤의 진단 표시 예(숫자는 예시) — " + note,
+            highlight: false, ring: ellipse,
+            readout: "추적 normal 42초 · 지도 extending
+앵커 이동 0.0 mm · 걸은 거리 6.8 m
+바닥 높이 차 +0.3 cm
+한 바퀴 확인: 가이드-물체 화면 어긋남 3.1 px (0.09°) · 카메라 위치 차 11 cm · 앵커 이동 0.0 mm",
+            panel: ObjectSizingPanel(session: diag)))
 
         // The finish review is a system confirmation dialog (not drawable here); show its real text.
         var coverage = ObjectOrbitCoverage()

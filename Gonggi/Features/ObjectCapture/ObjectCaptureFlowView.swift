@@ -20,15 +20,15 @@ enum ObjectCaptureCopy {
     /// While no box exists and automatic placement could not find a steady surface.
     static let manualPlacementHint = "물체 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요."
     /// The worker keeps only what is inside the box, so a tight box cuts the product's top off (GONGGI_OBJECT_V1_002).
-    static let sizingTips = "원이 물체를 감싸기만 하면 돼요. 크기는 슬라이더 하나면 충분하고, 위치는 걸으면서 자동으로 맞춰져요"
+    static let sizingTips = "원이 물체를 감싸기만 하면 돼요. 크기는 슬라이더 하나면 충분해요"
     /// Capture-screen footnote: green means a good place to take photos, not that the whole object is verified in frame.
     static let captureNote = "초록 상자는 촬영하기 좋은 위치예요. 물체가 화면 밖으로 잘리지 않는지 직접 확인해 주세요"
     /// TF90 locating: tap the object itself, from two places. Nothing to drag, size or turn first.
     static let tapObjectHint = "물체의 가운데를 눌러 주세요"
     static let secondTapHint = "옆으로 두세 걸음 이동한 뒤, 물체 가운데를 한 번 더 눌러 주세요"
-    static let readyHint = "원 안에 물체가 들어오면 돼요. 정확히 맞추지 않아도 걸으면서 자동으로 보정돼요"
+    static let readyHint = "원 안에 물체가 들어오면 돼요. 정확히 맞추지 않아도 괜찮아요"
     static let walkProgress = "이동한 각도"
-    static let skipSecondTap = "건너뛰기"
+    static let showDiagnostics = "위치 유지 진단 표시"
     static let floorTapInstead = "바닥을 눌러 직접 놓기 (테이블 위 물체)"
     static let showCube = "상자 모양도 보기"
     static let shareTrace = "위치 진단 기록 공유"
@@ -81,6 +81,10 @@ struct ObjectCaptureFlowView: View {
             if session.showsCube {
                 ObjectBoxOverlay(corners: session.cornersOnScreen, highlight: session.framing == .ok)
                     .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+            if session.showsDiagnostics, let text = session.diagnosticsReadout {
+                ObjectDiagnosticsChip(text: text)
                     .allowsHitTesting(false)
             }
             VStack(spacing: 12) {
@@ -141,6 +145,16 @@ struct ObjectCaptureFlowView: View {
                         Text(note)
                             .font(.subheadline)
                             .foregroundStyle(.white.opacity(0.85))
+                    }
+                    if let note = session.trackingNote, session.stage == .sizing || session.stage == .capturing {
+                        Text(note)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
+                    if let helper = session.trackingHelper {
+                        Text(helper)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.75))
                     }
                 }
                 .foregroundStyle(.white)
@@ -244,6 +258,8 @@ struct ObjectSizingPanel: View {
                         Spacer()
                     }
                     Toggle(ObjectCaptureCopy.showCube, isOn: $session.showsCube)
+                        .font(.subheadline.weight(.semibold))
+                    Toggle(ObjectCaptureCopy.showDiagnostics, isOn: $session.showsDiagnostics)
                         .font(.subheadline.weight(.semibold))
                     ObjectTraceShareButton(session: session)
                     Toggle(isOn: Binding(get: { session.looseBox }, set: { session.setLooseBox($0) })) {
@@ -402,7 +418,6 @@ struct ObjectLocatingPanel: View {
                         .foregroundStyle(.white.opacity(0.85))
                 }
                 HStack {
-                    Button(ObjectCaptureCopy.skipSecondTap) { session.skipSecondTap() }
                     Spacer()
                     Button(ObjectCaptureCopy.placeAgain) { session.placeAgain() }
                 }
@@ -417,6 +432,25 @@ struct ObjectLocatingPanel: View {
         }
         .padding(14)
         .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+/// Small live readout under the status bar: tracking, anchor movement, floor height, the return check.
+struct ObjectDiagnosticsChip: View {
+    let text: String
+
+    var body: some View {
+        VStack {
+            Text(text)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white)
+                .padding(8)
+                .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 150)
+                .padding(.horizontal, 12)
+            Spacer()
+        }
     }
 }
 

@@ -14,12 +14,15 @@ struct ObjectPlacementTrace: Codable, Equatable {
         var text: [String: String]
     }
 
-    var schema = 1
+    var schema = 2
     var appBuild: String
     var device: String
+    /// Wall-clock time of the first event (epoch ms). Every event time `tSec` is ARFrame time (the camera's own clock) since
+    /// that moment, so camera, anchor, guide and user actions share ONE time base; add `startedAtEpochMs` to match a recording.
+    var startedAtEpochMs: Double = 0
     var events: [Event] = []
     /// Newest events are dropped once the cap is reached except `sample`s, which are thinned: the file stays small.
-    static let maxEvents = 700
+    static let maxEvents = 1500
 
     mutating func add(_ t: Double, _ kind: String, _ values: [String: Double] = [:], _ text: [String: String] = [:]) {
         if events.count >= Self.maxEvents {
