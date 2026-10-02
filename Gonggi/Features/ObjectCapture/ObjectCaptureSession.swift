@@ -52,6 +52,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     @Published private(set) var trackingNote: String?
     /// A helper only (never a requirement): shown with an insufficient-features note.
     @Published private(set) var trackingHelper: String?
+    /// World discontinuity (large anchor/camera jump): photo saving stays paused until the user reconfirms the range or restarts.
+    @Published private(set) var rangeConsistencyHold = false
+    /// One line explaining the hold (nil when not holding).
+    @Published private(set) var rangeHoldNote: String?
     /// Small live readout of the numbers that tell AR drift from a placement error (advanced, off by default).
     @Published var showsDiagnostics = false
     @Published private(set) var diagnosticsReadout: String?
@@ -98,6 +102,11 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     /// True while a size slider (or other control) is being edited — box drag must not start.
     private var controlsActive = false
     private var lastSizeTraceAt: TimeInterval = -10
+    /// Box written to object.json / used by the worker. Frozen at begin_capture (and after an explicit reconfirm).
+    /// Live `box` may follow small stable anchor updates for the on-screen guide; a late jump must not rewrite this.
+    private var processingBox: ObjectCaptureBox?
+    /// Last camera translation used to detect metre-scale world rebases (not ordinary walking).
+    private var lastConsistencyCameraPos: SIMD3<Float>?
     private var lastShadowAt: TimeInterval = -10
     /// Return check: where and how the phone stood when the box was placed, and a picture around the guide centre.
     private var startPose: ObjectReturnCheck.Pose?
@@ -387,9 +396,9 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         GonggiHaptics.medium()
     }
 
-    /// The guide stands on an ARAnchor: when ARKit improves its map the anchor moves with the real world and the guide follows
-    /// (see `followAnchor`). A hand-made change (drag) re-creates the anchor at the new place, so the same movement is never
-    /// applied twice (once as the anchor, once as an offset).
+    /// The guide stands on an ARAnchor: when ARKit improves its map the anchor moves with the real world and the guide may
+    /// follow a *small* update while tracking is stable (see `followAnchor`). Large jumps are rejected and the anchor is
+    /// re-pinned to the current guide so the same movement is never applied twice (once as the anchor, once as an offset).
     private func attachAnchor(at base: SIMD3<Float>) {
         if let old = baseAnchor { arSession.remove(anchor: old) }
         let anchor = ARAnchor(name: "gonggi.objectBase", transform: Self.translationMatrix(base))
@@ -406,14 +415,89 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         let c = a.transform.columns.3
         let p = SIMD3<Float>(c.x, c.y, c.z)
         baseAnchorLatest = p
-        guard let next = ObjectAnchorFollow.nextBase(current: box.baseCenter, anchor: p, isDragging: isDragging) else { return }
-        let moved = simd_distance(next, box.baseCenter)
-        var b = box
-        b.baseCenter = next
-        box = b
-        trace.add(traceTime(), "anchor_follow", [
-            "moveM": Double(moved), "bx": Double(p.x), "by": Double(p.y), "bz": Double(p.z),
-            "sinceStartM": Double(baseAnchorOrigin.map { simd_distance($0, p) } ?? 0),
+        let trackingAllowsFollow = gate.captureStatus(now: frame.timestamp) == .stable && !rangeConsistencyHold
+        switch ObjectAnchorFollow.decide(
+            current: box.baseCenter, anchor: p, isDragging: isDragging, trackingAllowsFollow: trackingAllowsFollow
+        ) {
+        case .none, .holdUnstable:
+            return
+        case .apply(let next):
+            let moved = simd_distance(next, box.baseCenter)
+            var b = box
+            b.baseCenter = next
+            box = b
+            // Live guide may follow a small map refinement. processingBox stays locked at begin_capture /
+            // explicit reconfirm so a later jump cannot rewrite the worker range for already-saved photos.
+            trace.add(traceTime(), "anchor_follow", [
+                "moveM": Double(moved), "bx": Double(p.x), "by": Double(p.y), "bz": Double(p.z),
+                "sinceStartM": Double(baseAnchorOrigin.map { simd_distance($0, p) } ?? 0),
+            ])
+        case .rejectLargeJump(let moveM):
+            trace.add(traceTime(), "anchor_follow_rejected", [
+                "moveM": Double(moveM), "bx": Double(p.x), "by": Double(p.y), "bz": Double(p.z),
+                "keptBx": Double(box.baseCenter.x), "keptBy": Double(box.baseCenter.y), "keptBz": Double(box.baseCenter.z),
+                "sinceStartM": Double(baseAnchorOrigin.map { simd_distance($0, p) } ?? 0),
+            ])
+            // Re-pin so ARKit's jumped anchor is not the source of truth anymore.
+            attachAnchor(at: box.baseCenter)
+            noteWorldDiscontinuity(reason: "anchor_jump", magnitudeM: moveM)
+        }
+    }
+
+    /// Metre-scale camera rebase or rejected anchor jump: pause photo saving until the user reconfirms or restarts.
+    private func noteWorldDiscontinuity(reason: String, magnitudeM: Float) {
+        guard stage == .capturing || stage == .sizing else { return }
+        trace.add(traceTime(), "world_discontinuity", [
+            "moveM": Double(magnitudeM), "savedPhotos": Double(savedPhotos),
+        ], ["reason": reason])
+        guard stage == .capturing else { return }
+        rangeConsistencyHold = true
+        rangeHoldNote = savedPhotos > 0
+            ? "위치 인식이 크게 흔들렸어요. 상자가 물체를 감싸는지 확인한 뒤 이어서 찍거나, 처음부터 다시 촬영해 주세요"
+            : "위치 인식이 크게 흔들렸어요. 상자가 물체를 감싸는지 확인해 주세요"
+        // Do not rewrite processingBox from the jumped world — keep the locked selection range.
+        if let locked = processingBox {
+            box = locked
+            attachAnchor(at: locked.baseCenter)
+        }
+    }
+
+    /// User checked the on-screen cube still covers the product; resume capturing with the locked processing range.
+    func resumeCaptureAfterRangeCheck() {
+        guard rangeConsistencyHold, stage == .capturing else { return }
+        trace.add(traceTime(), "range_check_resume", [
+            "bx": Double(box.baseCenter.x), "by": Double(box.baseCenter.y), "bz": Double(box.baseCenter.z),
+            "savedPhotos": Double(savedPhotos),
+        ])
+        if let locked = processingBox { box = locked; attachAnchor(at: locked.baseCenter) }
+        rangeConsistencyHold = false
+        rangeHoldNote = nil
+        lastConsistencyCameraPos = nil
+    }
+
+    /// User will re-fit the cube; discard photos taken before the discontinuity (poses may not match the new world).
+    func refitRangeAfterDiscontinuity() {
+        guard rangeConsistencyHold else { return }
+        trace.add(traceTime(), "range_refit", ["discardedPhotos": Double(savedPhotos)])
+        clearCapturedPhotosForRangeReset()
+        rangeConsistencyHold = false
+        rangeHoldNote = nil
+        processingBox = nil
+        lastConsistencyCameraPos = nil
+        stage = .sizing
+    }
+
+    /// After re-fitting in sizing, lock the new range and continue capturing (photos were cleared).
+    func confirmRefitAndResumeCapture() {
+        guard stage == .sizing, hasBox else { return }
+        processingBox = box
+        attachAnchor(at: box.baseCenter)
+        rangeConsistencyHold = false
+        rangeHoldNote = nil
+        lastConsistencyCameraPos = nil
+        stage = .capturing
+        trace.add(traceTime(), "range_refit_confirmed", [
+            "bx": Double(box.baseCenter.x), "by": Double(box.baseCenter.y), "bz": Double(box.baseCenter.z),
         ])
     }
 
@@ -933,13 +1017,20 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         cornersOnScreen = nil
         hasBox = false
         placementHint = nil
+        processingBox = nil
+        rangeConsistencyHold = false
+        rangeHoldNote = nil
+        lastConsistencyCameraPos = nil
         stage = .placing
     }
 
     // MARK: - Capture
 
     func beginCapture() {
-        trace.add(traceTime(), "begin_capture", ["bx": Double(box.baseCenter.x), "bz": Double(box.baseCenter.z)])
+        trace.add(traceTime(), "begin_capture", [
+            "bx": Double(box.baseCenter.x), "by": Double(box.baseCenter.y), "bz": Double(box.baseCenter.z),
+            "sizeX": Double(box.size.x), "sizeY": Double(box.size.y), "sizeZ": Double(box.size.z),
+        ])
         do {
             let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
             self.paths = paths
@@ -970,7 +1061,32 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         evidenceTracker.reset()
         latestEvidence = nil
         lastEvidenceStartAt = 0
+        // Lock the worker selection range at the moment capture starts. Later metre-scale AR jumps must not rewrite it.
+        processingBox = box
+        rangeConsistencyHold = false
+        rangeHoldNote = nil
+        lastConsistencyCameraPos = nil
+        attachAnchor(at: box.baseCenter)
         stage = .capturing
+    }
+
+    /// Drops in-session photos after a world discontinuity so a re-fitted box is not mixed with poses from another map.
+    private func clearCapturedPhotosForRangeReset() {
+        keyframes = []
+        objectFrames = []
+        pendingFrames = [:]
+        enqueuedCount = 0
+        completedCount = 0
+        savedPhotos = 0
+        coverage = ObjectOrbitCoverage()
+        savedCoverage = ObjectOrbitCoverage()
+        pendingCells = [:]
+        coverageCounts = savedCoverage.counts
+        bandFill = savedCoverage.bandFill
+        policy = ObjectKeyframePolicy()
+        sharpness.reset()
+        jpegQueue.reset()
+        review = nil
     }
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
@@ -1041,6 +1157,15 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         lastCameraPosition = camPos
         if !trackingNormal { trackingFailureCount += 1 }
 
+        // Metre-scale camera rebase (V1_012 ~2.3 m) is not ordinary walking — hold photos until the user checks the range.
+        if let jump = ObjectAnchorFollow.cameraJumpM(previous: lastConsistencyCameraPos, current: camPos),
+           !rangeConsistencyHold {
+            noteWorldDiscontinuity(reason: "camera_jump", magnitudeM: jump)
+        }
+        lastConsistencyCameraPos = camPos
+
+        let allowSave = trackingNormal && !rangeConsistencyHold
+
         sharpness.scheduleSample(pixelBuffer: frame.capturedImage, at: frame.timestamp)
         let sharp = sharpness.snapshot()
         let cell = ObjectOrbitCoverage.cell(for: pos)
@@ -1049,13 +1174,13 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         let decision = policy.decide(.init(
             timestamp: frame.timestamp,
             framing: fr.state,
-            trackingNormal: trackingNormal,
+            trackingNormal: allowSave,
             blurry: sharp.state == .blurry,
             cell: cell,
             cellCount: cell.map { coverage.count($0) } ?? 0,
             direction: dir
         ))
-        if case .accept(let reason) = decision, let cell,
+        if case .accept(let reason) = decision, let cell, allowSave,
            savePhoto(frame, reason: reason, position: pos, cell: cell, framingLabel: fr.state.rawValue, sharpness: sharp) {
             policy.didSave(timestamp: frame.timestamp, direction: dir)
             coverage.record(cell)
@@ -1064,7 +1189,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         }
         if evidenceOn {
             startEvidenceIfNeeded(
-                frame: frame, boxKey: boxKey, framing: fr, trackingNormal: trackingNormal,
+                frame: frame, boxKey: boxKey, framing: fr, trackingNormal: allowSave,
                 blurry: sharp.state == .blurry, position: pos
             )
         }
@@ -1078,7 +1203,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 }
             }
             guidance = ObjectCaptureGuidance.next(
-                trackingNormal: trackingNormal, framing: display.framing, position: pos, coverage: savedCoverage,
+                trackingNormal: allowSave, framing: display.framing, position: pos, coverage: savedCoverage,
                 productEvidence: guidanceEvidence
             )
         }
@@ -1392,8 +1517,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 reconstructionCompletion: nil
             ))
             let saved = Set(keyframes.map(\.frameId))
+            // Worker selection range = locked processing box, not a late live-guide jump.
+            let exportBox = processingBox ?? box
             try ObjectCaptureFile.make(
-                box: box,
+                box: exportBox,
                 centerSource: centerSource,
                 sizeSource: sizeAdjusted ? "user_adjusted" : "default",
                 coverage: savedCoverage,

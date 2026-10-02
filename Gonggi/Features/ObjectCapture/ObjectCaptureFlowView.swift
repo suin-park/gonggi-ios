@@ -50,6 +50,9 @@ enum ObjectCaptureCopy {
     static let finishing = "사진을 정리하고 있어요"
     static let close = "닫기"
     static let bands = ["낮게", "중간", "높게"]
+    static let rangeHoldResume = "상자가 맞아요, 이어서"
+    static let rangeHoldRefit = "상자 다시 맞추기"
+    static let rangeHoldRestart = "처음부터"
 
     static func photos(_ n: Int) -> String { "사진 \(n)장" }
 
@@ -147,17 +150,21 @@ struct ObjectCaptureFlowView: View {
                         Text(topText)
                             .font(.headline)
                     }
-                    if let note = session.locatingNote {
+                    if let note = session.locatingNote, session.trackingNote == nil {
                         Text(note)
                             .font(.subheadline)
                             .foregroundStyle(.white.opacity(0.85))
                     }
-                    if let note = session.trackingNote, session.stage == .placing || session.stage == .secondTap || session.stage == .sizing || session.stage == .capturing {
+                    if let note = session.rangeHoldNote {
+                        Text(note)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    } else if let note = session.trackingNote {
                         Text(note)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.orange)
                     }
-                    if let helper = session.trackingHelper {
+                    if let helper = session.trackingHelper, session.trackingNote != nil {
                         Text(helper)
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.75))
@@ -183,25 +190,27 @@ struct ObjectCaptureFlowView: View {
         }
     }
 
-    /// Status chip is shown for guidance text and/or tracking recovery — never an empty press prompt alone.
+    /// Status chip: placement touch hint XOR tracking/range recovery — never both at once (D3).
     private var showsStatusChip: Bool {
         !topText.isEmpty
-            || session.locatingNote != nil
+            || (session.locatingNote != nil && session.trackingNote == nil)
             || session.trackingNote != nil
             || session.trackingHelper != nil
+            || session.rangeHoldNote != nil
     }
 
     private var topText: String {
+        // Tracking / range recovery replaces placement and walk guidance (no duplicate chip lines).
+        if session.trackingNote != nil || session.rangeHoldNote != nil {
+            return ""
+        }
         switch session.stage {
         case .placing:
-            // Do not ask the user to press while tracking cannot accept a touch.
-            if session.trackingNote != nil { return "" }
             if session.floorTapMode {
                 return session.placementHint ?? ObjectCaptureCopy.manualPlacementHint
             }
             return session.placementHint ?? ObjectCaptureCopy.tapObjectHint
         case .secondTap:
-            if session.trackingNote != nil { return "" }
             return ObjectCaptureCopy.secondTapHint
         case .sizing: return ObjectCaptureCopy.readyHint
         case .capturing: return session.guidance?.text ?? ObjectCaptureGuidance.walkAround(towardLeft: true).text
@@ -336,12 +345,16 @@ struct ObjectCapturingPanel: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text(ObjectCaptureCopy.captureNote)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.85))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-            capturingControls
+            if session.rangeConsistencyHold {
+                rangeHoldControls
+            } else {
+                Text(ObjectCaptureCopy.captureNote)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                capturingControls
+            }
         }
         .confirmationDialog(
             ObjectCaptureCopy.reviewTitle,
@@ -356,6 +369,25 @@ struct ObjectCapturingPanel: View {
         } message: {
             Text(session.review?.message ?? "")
         }
+    }
+
+    private var rangeHoldControls: some View {
+        VStack(spacing: 10) {
+            Button(ObjectCaptureCopy.rangeHoldResume) { session.resumeCaptureAfterRangeCheck() }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(GonggiColors.accentTeal, in: Capsule())
+                .foregroundStyle(.white)
+            Button(ObjectCaptureCopy.rangeHoldRefit) { session.refitRangeAfterDiscontinuity() }
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.white)
+            Button(ObjectCaptureCopy.rangeHoldRestart) { session.placeAgain() }
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.85))
+        }
+        .padding(14)
+        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var capturingControls: some View {

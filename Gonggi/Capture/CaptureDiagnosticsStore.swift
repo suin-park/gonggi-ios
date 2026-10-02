@@ -498,6 +498,10 @@ enum SpaceGenerationErrorPresenter {
     /// Server error codes of the 3D 공간 기록 path → user copy (never raw codes / tokens).
     static func message(forServerCode code: String) -> String? {
         switch code {
+        case "OBJECT_INIT_POINTS_INSUFFICIENT", "OBJECT_NO_SPARSE_POINTS":
+            return "선택 범위 안에 학습에 필요한 점이 부족해요.\n상자가 물체를 감싸도록 다시 촬영해 주세요. 원본은 기기에 보관돼 있어요."
+        case "OBJECT_PACKAGE_INVALID":
+            return "3D 자산 촬영 정보를 읽지 못했어요.\n보관함에서 다시 시도하거나 새로 촬영해 주세요."
         case "NATIVE_UNAVAILABLE":
             return "3D 공간 생성 서버가 아직 준비되지 않았어요.\n촬영 원본은 기기에 보관돼 있어요. 잠시 후 보관함에서 다시 시도해 주세요."
         case "RUNPOD_SUBMIT_FAILED":

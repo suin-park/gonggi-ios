@@ -111,15 +111,66 @@ struct ObjectTrackingGate {
     }
 }
 
-/// The guide stands on an ARAnchor. ARKit may move the anchor when it improves its map; the guide follows. While the user
-/// drags the guide the anchor is ignored, and when the drag ends a NEW anchor is made at the new place: the same movement is
-/// never applied twice (once as an anchor update, once as the user's offset).
+/// The guide stands on an ARAnchor. ARKit may move the anchor when it improves its map; the guide can follow a *small*
+/// update while tracking is stable. Large jumps (map merge / relocalisation discontinuities) must not rewrite
+/// `box.baseCenter`, and unstable tracking must not apply the anchor at all — photo poses and the selection range would
+/// otherwise diverge (V1_012: 1.22 m `anchor_follow` after `limited_initializing`).
 enum ObjectAnchorFollow {
-    static let minMoveM: Float = 0.0005
+    enum Decision: Equatable {
+        case none
+        case apply(SIMD3<Float>)
+        case rejectLargeJump(moveM: Float)
+        case holdUnstable
+    }
 
-    /// The base the guide should take now, or nil when it should stay where it is.
+    static let minMoveM: Float = 0.0005
+    /// Provisional cap for a single follow step. Metre-scale V1_012 jump (1.22 m) is rejected; centimetre map refinements pass.
+    static let maxFollowStepM: Float = 0.08
+    /// Frame-to-frame camera translation above this signals a world rebase, not ordinary walking (V1_012 ~2.3 m).
+    static let maxCameraStepM: Float = 0.50
+
+    /// Whether the guide should move to the anchor now. Drag wins; unstable tracking holds; large jumps are rejected.
+    static func decide(
+        current: SIMD3<Float>,
+        anchor: SIMD3<Float>,
+        isDragging: Bool,
+        trackingAllowsFollow: Bool
+    ) -> Decision {
+        guard !isDragging else { return .none }
+        guard trackingAllowsFollow else { return .holdUnstable }
+        let d = simd_distance(current, anchor)
+        guard d > minMoveM else { return .none }
+        if d > maxFollowStepM { return .rejectLargeJump(moveM: d) }
+        return .apply(anchor)
+    }
+
+    /// Compatibility wrapper used by older call sites / tests that only need apply-or-nil.
     static func nextBase(current: SIMD3<Float>, anchor: SIMD3<Float>, isDragging: Bool) -> SIMD3<Float>? {
-        guard !isDragging else { return nil }
-        return simd_distance(current, anchor) > minMoveM ? anchor : nil
+        switch decide(current: current, anchor: anchor, isDragging: isDragging, trackingAllowsFollow: true) {
+        case .apply(let p): return p
+        default: return nil
+        }
+    }
+
+    /// Camera translation jump inconsistent with continuous tracking (same AR clock as the guide).
+    static func cameraJumpM(previous: SIMD3<Float>?, current: SIMD3<Float>) -> Float? {
+        guard let previous else { return nil }
+        let d = simd_distance(previous, current)
+        return d > maxCameraStepM ? d : nil
+    }
+}
+
+/// Pure checks for V1_012-style capture discontinuities (no ARKit).
+enum ObjectCaptureConsistency {
+    /// V1_012 recorded jump: reject as a normal follow.
+    static let v1012AnchorFollowMoveM: Float = 1.2246607
+
+    static func shouldHoldPhotos(trackingStable: Bool, rangeConsistencyHold: Bool) -> Bool {
+        !trackingStable || rangeConsistencyHold
+    }
+
+    /// After a discontinuity, auto-resume is not allowed when photos already exist in a prior world frame.
+    static func requiresUserRangeAction(savedPhotoCount: Int, discontinuityDetected: Bool) -> Bool {
+        discontinuityDetected && savedPhotoCount > 0
     }
 }

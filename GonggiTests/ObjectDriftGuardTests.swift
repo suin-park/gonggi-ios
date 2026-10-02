@@ -86,6 +86,56 @@ final class ObjectDriftGuardTests: XCTestCase {
         XCTAssertNil(ObjectAnchorFollow.nextBase(current: base, anchor: moved, isDragging: true), "the user's drag wins while it lasts")
     }
 
+    func testV1012LargeAnchorFollowIsRejectedNotApplied() {
+        // GONGGI_OBJECT_V1_012: anchor_follow moveM=1.2247 after limited_initializing — must not become a normal follow.
+        let base = SIMD3<Float>(-0.9056721, -1.2729919, -1.2789011)
+        let jumped = SIMD3<Float>(-0.1596429, -2.0585189, -0.7077780)
+        let move = simd_distance(base, jumped)
+        XCTAssertEqual(move, ObjectCaptureConsistency.v1012AnchorFollowMoveM, accuracy: 1e-3)
+
+        let decision = ObjectAnchorFollow.decide(
+            current: base, anchor: jumped, isDragging: false, trackingAllowsFollow: true
+        )
+        guard case .rejectLargeJump(let rejected) = decision else {
+            return XCTFail("V1_012 jump must be rejectLargeJump, got \(decision)")
+        }
+        XCTAssertEqual(rejected, move, accuracy: 1e-4)
+        XCTAssertNil(ObjectAnchorFollow.nextBase(current: base, anchor: jumped, isDragging: false),
+                     "compatibility nextBase must not apply a metre-scale jump")
+    }
+
+    func testSmallStableAnchorUpdateStillApplies() {
+        let base = SIMD3<Float>(0, 0, -1)
+        let small = base + SIMD3<Float>(0.02, 0, -0.01)
+        let d = ObjectAnchorFollow.decide(current: base, anchor: small, isDragging: false, trackingAllowsFollow: true)
+        XCTAssertEqual(d, .apply(small))
+    }
+
+    func testUnstableTrackingHoldsAnchorFollow() {
+        let base = SIMD3<Float>(0, 0, -1)
+        let small = base + SIMD3<Float>(0.02, 0, 0)
+        let d = ObjectAnchorFollow.decide(current: base, anchor: small, isDragging: false, trackingAllowsFollow: false)
+        XCTAssertEqual(d, .holdUnstable)
+    }
+
+    func testCameraJumpDetectsV1012StyleRebase() {
+        let before = SIMD3<Float>(-1.184, -0.783, -1.896)
+        let after = SIMD3<Float>(0.208, -1.566, -0.226)
+        let jump = ObjectAnchorFollow.cameraJumpM(previous: before, current: after)
+        XCTAssertNotNil(jump)
+        XCTAssertGreaterThan(jump!, 2.0)
+        XCTAssertNil(ObjectAnchorFollow.cameraJumpM(previous: before, current: before + SIMD3(0.05, 0, 0)))
+    }
+
+    func testPhotosHeldWhenRangeConsistencyRequiresUserAction() {
+        XCTAssertTrue(ObjectCaptureConsistency.shouldHoldPhotos(trackingStable: true, rangeConsistencyHold: true))
+        XCTAssertTrue(ObjectCaptureConsistency.shouldHoldPhotos(trackingStable: false, rangeConsistencyHold: false))
+        XCTAssertFalse(ObjectCaptureConsistency.shouldHoldPhotos(trackingStable: true, rangeConsistencyHold: false))
+        // 253 photos before jump → user must reconfirm; do not auto-resume.
+        XCTAssertTrue(ObjectCaptureConsistency.requiresUserRangeAction(savedPhotoCount: 253, discontinuityDetected: true))
+        XCTAssertFalse(ObjectCaptureConsistency.requiresUserRangeAction(savedPhotoCount: 0, discontinuityDetected: true))
+    }
+
     func testCentreRefinementStaysOff() {
         XCTAssertFalse(ObjectCaptureConfig.centreRefinementEnabled)
     }
