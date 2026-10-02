@@ -52,10 +52,14 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     @Published private(set) var trackingNote: String?
     /// A helper only (never a requirement): shown with an insufficient-features note.
     @Published private(set) var trackingHelper: String?
-    /// World discontinuity (large anchor/camera jump): photo saving stays paused until the user reconfirms the range or restarts.
+    /// World discontinuity (large anchor/camera jump): photo saving stays paused until the user closes or (anchor-only) resumes.
     @Published private(set) var rangeConsistencyHold = false
     /// One line explaining the hold (nil when not holding).
     @Published private(set) var rangeHoldNote: String?
+    /// What kind of discontinuity triggered the hold (nil when not holding).
+    @Published private(set) var discontinuityKind: ObjectCaptureConsistency.DiscontinuityKind?
+    /// Same-capture resume is allowed only for recoverable anchor-only breaks (camera frame continuous).
+    @Published private(set) var canResumeSameCapture = false
     /// Small live readout of the numbers that tell AR drift from a placement error (advanced, off by default).
     @Published var showsDiagnostics = false
     @Published private(set) var diagnosticsReadout: String?
@@ -416,8 +420,11 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         let p = SIMD3<Float>(c.x, c.y, c.z)
         baseAnchorLatest = p
         let trackingAllowsFollow = gate.captureStatus(now: frame.timestamp) == .stable && !rangeConsistencyHold
+        // During capturing the on-screen cube stays locked to processingBox (no live follow drift).
+        let allowApply = stage != .capturing
         switch ObjectAnchorFollow.decide(
-            current: box.baseCenter, anchor: p, isDragging: isDragging, trackingAllowsFollow: trackingAllowsFollow
+            current: box.baseCenter, anchor: p, isDragging: isDragging,
+            trackingAllowsFollow: trackingAllowsFollow, allowApply: allowApply
         ) {
         case .none, .holdUnstable:
             return
@@ -426,8 +433,6 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             var b = box
             b.baseCenter = next
             box = b
-            // Live guide may follow a small map refinement. processingBox stays locked at begin_capture /
-            // explicit reconfirm so a later jump cannot rewrite the worker range for already-saved photos.
             trace.add(traceTime(), "anchor_follow", [
                 "moveM": Double(moved), "bx": Double(p.x), "by": Double(p.y), "bz": Double(p.z),
                 "sinceStartM": Double(baseAnchorOrigin.map { simd_distance($0, p) } ?? 0),
@@ -439,66 +444,96 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 "sinceStartM": Double(baseAnchorOrigin.map { simd_distance($0, p) } ?? 0),
             ])
             // Re-pin so ARKit's jumped anchor is not the source of truth anymore.
-            attachAnchor(at: box.baseCenter)
-            noteWorldDiscontinuity(reason: "anchor_jump", magnitudeM: moveM)
+            let pin = processingBox?.baseCenter ?? box.baseCenter
+            if let locked = processingBox { box = locked }
+            attachAnchor(at: pin)
+            noteWorldDiscontinuity(anchorRejectedMoveM: moveM, cameraJumpM: nil)
         }
     }
 
-    /// Metre-scale camera rebase or rejected anchor jump: pause photo saving until the user reconfirms or restarts.
-    private func noteWorldDiscontinuity(reason: String, magnitudeM: Float) {
-        guard stage == .capturing || stage == .sizing else { return }
-        trace.add(traceTime(), "world_discontinuity", [
-            "moveM": Double(magnitudeM), "savedPhotos": Double(savedPhotos),
-        ], ["reason": reason])
+    /// Metre-scale camera rebase or rejected anchor jump. Camera-frame breaks never append to the same package.
+    private func noteWorldDiscontinuity(anchorRejectedMoveM: Float?, cameraJumpM: Float?) {
         guard stage == .capturing else { return }
+        guard let kind = ObjectCaptureConsistency.classify(
+            anchorRejectedMoveM: anchorRejectedMoveM, cameraJumpM: cameraJumpM
+        ) else { return }
+        // Escalate if we already hold for camera-frame.
+        if let existing = discontinuityKind, existing == .unrecoveredCameraFrame {
+            return
+        }
+        if discontinuityKind == .recoverableAnchorOnly, kind == .recoverableAnchorOnly {
+            return
+        }
+        let policy = ObjectCaptureConsistency.resumePolicy(kind: kind, savedPhotoCount: savedPhotos)
+        discontinuityKind = kind
+        canResumeSameCapture = (policy == .mayResumeSameCapture)
         rangeConsistencyHold = true
-        rangeHoldNote = savedPhotos > 0
-            ? "위치 인식이 크게 흔들렸어요. 상자가 물체를 감싸는지 확인한 뒤 이어서 찍거나, 처음부터 다시 촬영해 주세요"
-            : "위치 인식이 크게 흔들렸어요. 상자가 물체를 감싸는지 확인해 주세요"
-        // Do not rewrite processingBox from the jumped world — keep the locked selection range.
+        switch kind {
+        case .unrecoveredCameraFrame:
+            rangeHoldNote = savedPhotos > 0
+                ? "위치 좌표계가 바뀌었어요. 지금까지 찍은 사진은 보관하고, 같은 촬영에 이어 찍지 마세요"
+                : "위치 좌표계가 바뀌었어요. 새 촬영으로 시작해 주세요"
+        case .recoverableAnchorOnly:
+            rangeHoldNote = "위치 앵커가 크게 흔들렸어요. 상자는 촬영 시작 범위로 유지했어요"
+        }
+        trace.add(traceTime(), "world_discontinuity", [
+            "moveM": Double(cameraJumpM ?? anchorRejectedMoveM ?? 0),
+            "savedPhotos": Double(savedPhotos),
+            "canResume": canResumeSameCapture ? 1 : 0,
+        ], ["reason": cameraJumpM != nil ? "camera_jump" : "anchor_jump", "kind": "\(kind)"])
+        // Keep live cube == processingBox (worker range). Never adopt the jumped anchor position.
         if let locked = processingBox {
             box = locked
             attachAnchor(at: locked.baseCenter)
         }
     }
 
-    /// User checked the on-screen cube still covers the product; resume capturing with the locked processing range.
+    /// Anchor-only recovery: same AR world as saved poses; live cube stays on processingBox.
+    /// User confirmation is not treated as coordinate proof — resume is gated by `canResumeSameCapture`.
     func resumeCaptureAfterRangeCheck() {
-        guard rangeConsistencyHold, stage == .capturing else { return }
+        guard rangeConsistencyHold, stage == .capturing, canResumeSameCapture,
+              discontinuityKind == .recoverableAnchorOnly,
+              let locked = processingBox else { return }
+        box = locked
+        attachAnchor(at: locked.baseCenter)
         trace.add(traceTime(), "range_check_resume", [
-            "bx": Double(box.baseCenter.x), "by": Double(box.baseCenter.y), "bz": Double(box.baseCenter.z),
+            "bx": Double(locked.baseCenter.x), "by": Double(locked.baseCenter.y), "bz": Double(locked.baseCenter.z),
             "savedPhotos": Double(savedPhotos),
-        ])
-        if let locked = processingBox { box = locked; attachAnchor(at: locked.baseCenter) }
+        ], ["kind": "recoverableAnchorOnly"])
         rangeConsistencyHold = false
         rangeHoldNote = nil
-        lastConsistencyCameraPos = nil
+        discontinuityKind = nil
+        canResumeSameCapture = false
     }
 
-    /// User will re-fit the cube; discard photos taken before the discontinuity (poses may not match the new world).
-    func refitRangeAfterDiscontinuity() {
-        guard rangeConsistencyHold else { return }
-        trace.add(traceTime(), "range_refit", ["discardedPhotos": Double(savedPhotos)])
+    /// Finish this package (preserve photos + placementTrace). Safe from a discontinuity hold.
+    func finishPreservingCapture() async -> CaptureSessionSummary? {
+        if rangeConsistencyHold {
+            trace.add(traceTime(), "capture_preserve_close", [
+                "savedPhotos": Double(savedPhotos),
+            ], ["kind": discontinuityKind.map { "\($0)" } ?? "hold"])
+        }
+        rangeConsistencyHold = false
+        rangeHoldNote = nil
+        canResumeSameCapture = false
+        discontinuityKind = nil
+        return await finish()
+    }
+
+    /// Start a new placing session without deleting packages already written by `finish`.
+    func beginNewCaptureSessionAfterPreserve() {
+        trace.add(traceTime(), "new_session_after_preserve", ["priorPhotos": Double(savedPhotos)])
         clearCapturedPhotosForRangeReset()
-        rangeConsistencyHold = false
-        rangeHoldNote = nil
         processingBox = nil
-        lastConsistencyCameraPos = nil
-        stage = .sizing
-    }
-
-    /// After re-fitting in sizing, lock the new range and continue capturing (photos were cleared).
-    func confirmRefitAndResumeCapture() {
-        guard stage == .sizing, hasBox else { return }
-        processingBox = box
-        attachAnchor(at: box.baseCenter)
         rangeConsistencyHold = false
         rangeHoldNote = nil
+        discontinuityKind = nil
+        canResumeSameCapture = false
         lastConsistencyCameraPos = nil
-        stage = .capturing
-        trace.add(traceTime(), "range_refit_confirmed", [
-            "bx": Double(box.baseCenter.x), "by": Double(box.baseCenter.y), "bz": Double(box.baseCenter.z),
-        ])
+        sessionId = UUID().uuidString
+        captureId = ""
+        placeAgain()
+        start()
     }
 
     /// The pose and a picture around the guide centre at the moment the guide was placed (for the return check).
@@ -1020,6 +1055,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         processingBox = nil
         rangeConsistencyHold = false
         rangeHoldNote = nil
+        discontinuityKind = nil
+        canResumeSameCapture = false
         lastConsistencyCameraPos = nil
         stage = .placing
     }
@@ -1061,10 +1098,12 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         evidenceTracker.reset()
         latestEvidence = nil
         lastEvidenceStartAt = 0
-        // Lock the worker selection range at the moment capture starts. Later metre-scale AR jumps must not rewrite it.
+        // Lock the worker selection range at the moment capture starts. Live cube stays on this box for the whole capture.
         processingBox = box
         rangeConsistencyHold = false
         rangeHoldNote = nil
+        discontinuityKind = nil
+        canResumeSameCapture = false
         lastConsistencyCameraPos = nil
         attachAnchor(at: box.baseCenter)
         stage = .capturing
@@ -1157,12 +1196,17 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         lastCameraPosition = camPos
         if !trackingNormal { trackingFailureCount += 1 }
 
-        // Metre-scale camera rebase (V1_012 ~2.3 m) is not ordinary walking — hold photos until the user checks the range.
-        if let jump = ObjectAnchorFollow.cameraJumpM(previous: lastConsistencyCameraPos, current: camPos),
-           !rangeConsistencyHold {
-            noteWorldDiscontinuity(reason: "camera_jump", magnitudeM: jump)
+        // Metre-scale camera rebase (V1_012 ~2.3 m) is not ordinary walking — close the capture; do not append.
+        if let jump = ObjectAnchorFollow.cameraJumpM(previous: lastConsistencyCameraPos, current: camPos) {
+            noteWorldDiscontinuity(anchorRejectedMoveM: nil, cameraJumpM: jump)
         }
         lastConsistencyCameraPos = camPos
+
+        // Capture lock: on-screen cube == processingBox (drag/size/rotate only in sizing).
+        if let locked = processingBox, stage == .capturing,
+           !ObjectCaptureConsistency.liveMatchesProcessing(live: box, processing: locked) {
+            box = locked
+        }
 
         let allowSave = trackingNormal && !rangeConsistencyHold
 
@@ -1517,7 +1561,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 reconstructionCompletion: nil
             ))
             let saved = Set(keyframes.map(\.frameId))
-            // Worker selection range = locked processing box, not a late live-guide jump.
+            // Worker selection range = locked processing box. During capture live cube is forced equal to it.
+            if let locked = processingBox { box = locked }
             let exportBox = processingBox ?? box
             try ObjectCaptureFile.make(
                 box: exportBox,

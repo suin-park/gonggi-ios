@@ -111,6 +111,15 @@ final class ObjectDriftGuardTests: XCTestCase {
         XCTAssertEqual(d, .apply(small))
     }
 
+    func testCaptureLockDoesNotApplySmallFollowToLiveCube() {
+        let base = SIMD3<Float>(0, 0, -1)
+        let small = base + SIMD3<Float>(0.02, 0, 0)
+        let d = ObjectAnchorFollow.decide(
+            current: base, anchor: small, isDragging: false, trackingAllowsFollow: true, allowApply: false
+        )
+        XCTAssertEqual(d, .none, "during capturing, small follow must not move the live cube off processingBox")
+    }
+
     func testUnstableTrackingHoldsAnchorFollow() {
         let base = SIMD3<Float>(0, 0, -1)
         let small = base + SIMD3<Float>(0.02, 0, 0)
@@ -127,13 +136,66 @@ final class ObjectDriftGuardTests: XCTestCase {
         XCTAssertNil(ObjectAnchorFollow.cameraJumpM(previous: before, current: before + SIMD3(0.05, 0, 0)))
     }
 
+    func testV1012CameraDiscontinuityForbidsAppendingToSameCapture() {
+        let kind = ObjectCaptureConsistency.classify(anchorRejectedMoveM: nil, cameraJumpM: ObjectCaptureConsistency.v1012CameraJumpM)
+        XCTAssertEqual(kind, .unrecoveredCameraFrame)
+        let policy = ObjectCaptureConsistency.v1012AfterJumpPolicy(photosBeforeJump: 253)
+        XCTAssertEqual(policy, .mustCloseCapturePreserve)
+        XCTAssertFalse(ObjectCaptureConsistency.resumePolicy(kind: .unrecoveredCameraFrame, savedPhotoCount: 253) == .mayResumeSameCapture)
+    }
+
+    func testAnchorOnlyMayResumeWithoutTreatingUserEyeballAsProof() {
+        let kind = ObjectCaptureConsistency.classify(
+            anchorRejectedMoveM: ObjectCaptureConsistency.v1012AnchorFollowMoveM, cameraJumpM: nil
+        )
+        XCTAssertEqual(kind, .recoverableAnchorOnly)
+        XCTAssertEqual(
+            ObjectCaptureConsistency.resumePolicy(kind: .recoverableAnchorOnly, savedPhotoCount: 253),
+            .mayResumeSameCapture
+        )
+        // Camera jump escalates even if an anchor jump also happened.
+        XCTAssertEqual(
+            ObjectCaptureConsistency.classify(
+                anchorRejectedMoveM: ObjectCaptureConsistency.v1012AnchorFollowMoveM,
+                cameraJumpM: ObjectCaptureConsistency.v1012CameraJumpM
+            ),
+            .unrecoveredCameraFrame
+        )
+    }
+
+    func testPackageMustNotMixEndBoxWithPreJumpPoses() {
+        let begin = SIMD3<Float>(-0.9052531, -1.2720890, -1.2802246)
+        let end = SIMD3<Float>(-0.1596429, -2.0585189, -0.7077780)
+        // Closing after camera jump: processing stays on begin — OK.
+        XCTAssertFalse(ObjectCaptureConsistency.wouldMixEndBoxWithPreJumpPoses(
+            processingBase: begin, beginCaptureBase: begin, endJumpedBase: end,
+            policy: .mustCloseCapturePreserve
+        ))
+        // Wrong: exporting end-jumped box after close — the V1_012 failure mode.
+        XCTAssertTrue(ObjectCaptureConsistency.wouldMixEndBoxWithPreJumpPoses(
+            processingBase: end, beginCaptureBase: begin, endJumpedBase: end,
+            policy: .mustCloseCapturePreserve
+        ))
+        // Resume with processing still on begin — OK.
+        XCTAssertFalse(ObjectCaptureConsistency.wouldMixEndBoxWithPreJumpPoses(
+            processingBase: begin, beginCaptureBase: begin, endJumpedBase: end,
+            policy: .mayResumeSameCapture
+        ))
+    }
+
+    func testLiveCubeMustMatchProcessingBoxDuringCapture() {
+        let a = ObjectCaptureBox(baseCenter: [-0.9, -1.27, -1.28], size: [0.282, 0.282, 0.282], yawRadians: 0.55)
+        let b = a
+        XCTAssertTrue(ObjectCaptureConsistency.liveMatchesProcessing(live: a, processing: b))
+        var drifted = a
+        drifted.baseCenter.x += 0.05
+        XCTAssertFalse(ObjectCaptureConsistency.liveMatchesProcessing(live: drifted, processing: a))
+    }
+
     func testPhotosHeldWhenRangeConsistencyRequiresUserAction() {
         XCTAssertTrue(ObjectCaptureConsistency.shouldHoldPhotos(trackingStable: true, rangeConsistencyHold: true))
         XCTAssertTrue(ObjectCaptureConsistency.shouldHoldPhotos(trackingStable: false, rangeConsistencyHold: false))
         XCTAssertFalse(ObjectCaptureConsistency.shouldHoldPhotos(trackingStable: true, rangeConsistencyHold: false))
-        // 253 photos before jump → user must reconfirm; do not auto-resume.
-        XCTAssertTrue(ObjectCaptureConsistency.requiresUserRangeAction(savedPhotoCount: 253, discontinuityDetected: true))
-        XCTAssertFalse(ObjectCaptureConsistency.requiresUserRangeAction(savedPhotoCount: 0, discontinuityDetected: true))
     }
 
     func testCentreRefinementStaysOff() {

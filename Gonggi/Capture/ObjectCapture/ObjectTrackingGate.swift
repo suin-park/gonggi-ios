@@ -112,9 +112,8 @@ struct ObjectTrackingGate {
 }
 
 /// The guide stands on an ARAnchor. ARKit may move the anchor when it improves its map; the guide can follow a *small*
-/// update while tracking is stable. Large jumps (map merge / relocalisation discontinuities) must not rewrite
-/// `box.baseCenter`, and unstable tracking must not apply the anchor at all — photo poses and the selection range would
-/// otherwise diverge (V1_012: 1.22 m `anchor_follow` after `limited_initializing`).
+/// update while tracking is stable **before** capture starts. During capture the live cube stays locked to
+/// `processingBox` so the worker range and on-screen guide cannot diverge. Large jumps are rejected (V1_012).
 enum ObjectAnchorFollow {
     enum Decision: Equatable {
         case none
@@ -130,17 +129,20 @@ enum ObjectAnchorFollow {
     static let maxCameraStepM: Float = 0.50
 
     /// Whether the guide should move to the anchor now. Drag wins; unstable tracking holds; large jumps are rejected.
+    /// `allowApply` is false while capturing: the cube stays on the locked processing box.
     static func decide(
         current: SIMD3<Float>,
         anchor: SIMD3<Float>,
         isDragging: Bool,
-        trackingAllowsFollow: Bool
+        trackingAllowsFollow: Bool,
+        allowApply: Bool = true
     ) -> Decision {
         guard !isDragging else { return .none }
         guard trackingAllowsFollow else { return .holdUnstable }
         let d = simd_distance(current, anchor)
         guard d > minMoveM else { return .none }
         if d > maxFollowStepM { return .rejectLargeJump(moveM: d) }
+        guard allowApply else { return .none }
         return .apply(anchor)
     }
 
@@ -164,13 +166,77 @@ enum ObjectAnchorFollow {
 enum ObjectCaptureConsistency {
     /// V1_012 recorded jump: reject as a normal follow.
     static let v1012AnchorFollowMoveM: Float = 1.2246607
+    /// V1_012 camera teleport after limited tracking (~2.3 m between consecutive keyframes / samples).
+    static let v1012CameraJumpM: Float = 2.31
+
+    enum DiscontinuityKind: Equatable {
+        /// Rejected anchor jump; camera translation stayed continuous — same AR world as saved poses.
+        case recoverableAnchorOnly
+        /// Camera (or camera+anchor) world rebase — cannot append photos to the same package.
+        case unrecoveredCameraFrame
+    }
+
+    enum ResumePolicy: Equatable {
+        /// Same capture may continue; live cube must stay on processingBox.
+        case mayResumeSameCapture
+        /// Finish/preserve this package, then a new session — never append poses from another world.
+        case mustCloseCapturePreserve
+    }
 
     static func shouldHoldPhotos(trackingStable: Bool, rangeConsistencyHold: Bool) -> Bool {
         !trackingStable || rangeConsistencyHold
     }
 
-    /// After a discontinuity, auto-resume is not allowed when photos already exist in a prior world frame.
-    static func requiresUserRangeAction(savedPhotoCount: Int, discontinuityDetected: Bool) -> Bool {
-        discontinuityDetected && savedPhotoCount > 0
+    /// Classify discontinuity. Camera jump always wins over an anchor-only label.
+    static func classify(anchorRejectedMoveM: Float?, cameraJumpM: Float?) -> DiscontinuityKind? {
+        if let c = cameraJumpM, c > ObjectAnchorFollow.maxCameraStepM {
+            return .unrecoveredCameraFrame
+        }
+        if let a = anchorRejectedMoveM, a > ObjectAnchorFollow.maxFollowStepM {
+            return .recoverableAnchorOnly
+        }
+        return nil
+    }
+
+    /// User eyeballing the cube is never enough to prove pose/box consistency after a camera-frame break.
+    static func resumePolicy(kind: DiscontinuityKind, savedPhotoCount: Int) -> ResumePolicy {
+        switch kind {
+        case .unrecoveredCameraFrame:
+            return .mustCloseCapturePreserve
+        case .recoverableAnchorOnly:
+            // Even with zero photos, camera-frame is the only hard split; anchor-only may resume.
+            // With photos, resume is allowed only because poses and processingBox share the pre-jump world
+            // (programmatic: camera did not jump). User confirmation is not the verification.
+            return .mayResumeSameCapture
+        }
+    }
+
+    /// Package export must use the locked processing box, identical to the on-screen cube during capture.
+    static func liveMatchesProcessing(live: ObjectCaptureBox, processing: ObjectCaptureBox, positionToleranceM: Float = 1e-4) -> Bool {
+        simd_distance(live.baseCenter, processing.baseCenter) <= positionToleranceM
+            && simd_distance(live.size, processing.size) <= positionToleranceM
+            && abs(live.yawRadians - processing.yawRadians) <= 1e-4
+    }
+
+    /// V1_012: 253 photos then a camera-frame break → closing preserves those photos; resume must not append.
+    static func v1012AfterJumpPolicy(photosBeforeJump: Int = 253) -> ResumePolicy {
+        resumePolicy(kind: .unrecoveredCameraFrame, savedPhotoCount: photosBeforeJump)
+    }
+
+    /// A package that mixes a post-jump end box with pre-jump poses is invalid (the V1_012 failure mode).
+    static func wouldMixEndBoxWithPreJumpPoses(
+        processingBase: SIMD3<Float>,
+        beginCaptureBase: SIMD3<Float>,
+        endJumpedBase: SIMD3<Float>,
+        policy: ResumePolicy
+    ) -> Bool {
+        let lockedToBegin = simd_distance(processingBase, beginCaptureBase) < 0.01
+        let wronglyUsesEnd = simd_distance(processingBase, endJumpedBase) < 0.01
+        if policy == .mustCloseCapturePreserve {
+            // Closing keeps begin-locked processing box; must not export end-jumped base.
+            return wronglyUsesEnd
+        }
+        // Resume same capture only when processing stayed on begin world.
+        return !lockedToBegin || wronglyUsesEnd
     }
 }

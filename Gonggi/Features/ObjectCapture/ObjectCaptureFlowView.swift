@@ -50,9 +50,9 @@ enum ObjectCaptureCopy {
     static let finishing = "사진을 정리하고 있어요"
     static let close = "닫기"
     static let bands = ["낮게", "중간", "높게"]
-    static let rangeHoldResume = "상자가 맞아요, 이어서"
-    static let rangeHoldRefit = "상자 다시 맞추기"
-    static let rangeHoldRestart = "처음부터"
+    static let rangeHoldResume = "이어서 촬영"
+    static let rangeHoldFinish = "지금까지 사진으로 마치기"
+    static let rangeHoldNewSession = "새 촬영 시작"
 
     static func photos(_ n: Int) -> String { "사진 \(n)장" }
 
@@ -229,7 +229,8 @@ struct ObjectCaptureFlowView: View {
         case .capturing:
             ObjectCapturingPanel(session: session) {
                 Task {
-                    if let s = await session.finish() { summary = s }
+                    // Clears discontinuity hold (if any) then writes package with locked processingBox.
+                    if let s = await session.finishPreservingCapture() { summary = s }
                 }
             }
         case .finishing:
@@ -373,18 +374,31 @@ struct ObjectCapturingPanel: View {
 
     private var rangeHoldControls: some View {
         VStack(spacing: 10) {
-            Button(ObjectCaptureCopy.rangeHoldResume) { session.resumeCaptureAfterRangeCheck() }
+            if session.canResumeSameCapture {
+                Button(ObjectCaptureCopy.rangeHoldResume) { session.resumeCaptureAfterRangeCheck() }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(GonggiColors.accentTeal, in: Capsule())
+                    .foregroundStyle(.white)
+            }
+            // Camera-frame break: close this package (preserve photos + diagnostics). Never append more frames.
+            Button(ObjectCaptureCopy.rangeHoldFinish) { onFinish() }
                 .font(.headline)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(GonggiColors.accentTeal, in: Capsule())
+                .background(session.canResumeSameCapture ? Color.white.opacity(0.2) : GonggiColors.accentTeal, in: Capsule())
                 .foregroundStyle(.white)
-            Button(ObjectCaptureCopy.rangeHoldRefit) { session.refitRangeAfterDiscontinuity() }
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.white)
-            Button(ObjectCaptureCopy.rangeHoldRestart) { session.placeAgain() }
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.85))
+            Button(ObjectCaptureCopy.rangeHoldNewSession) {
+                if session.savedPhotos >= 2 {
+                    // Preserve current package via the normal finish path, then the user starts again from the entry screen.
+                    onFinish()
+                } else {
+                    session.beginNewCaptureSessionAfterPreserve()
+                }
+            }
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.white.opacity(0.85))
         }
         .padding(14)
         .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
