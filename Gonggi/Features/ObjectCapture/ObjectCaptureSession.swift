@@ -55,10 +55,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     /// Small live readout of the numbers that tell AR drift from a placement error (advanced, off by default).
     @Published var showsDiagnostics = false
     @Published private(set) var diagnosticsReadout: String?
-    /// The old way for objects on a table: tap the support surface itself.
-    @Published private(set) var floorTapMode = false
-    /// Show the box wireframe too (advanced). The default shows the ring only: nothing to fit.
-    @Published var showsCube = false
+    /// The old way for objects on a table: tap the support surface itself. Default locating mode.
+    @Published private(set) var floorTapMode = true
+    /// Show the box wireframe (default on). Screen box matches object.json size/pose.
+    @Published var showsCube = true
 
     let arSession = ARSession()
     weak var arView: ARView?
@@ -95,6 +95,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     private var firstTapAt: TimeInterval = 0
     private var isDragging = false
     private var dragMoved = false
+    /// True while a size slider (or other control) is being edited — box drag must not start.
+    private var controlsActive = false
     private var lastSizeTraceAt: TimeInterval = -10
     private var lastShadowAt: TimeInterval = -10
     /// Return check: where and how the phone stood when the box was placed, and a picture around the guide centre.
@@ -197,8 +199,42 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
 
     func useFloorTap() {
         floorTapMode = true
-        placementHint = ObjectCaptureCopy.manualPlacementHint
+        firstTap = nil
+        firstTapMarker = nil
+        locatingNote = nil
+        walkProgress = 0
+        stage = .placing
+        // Only invite a press when tracking can accept it.
+        if let frame = arSession.currentFrame, gate.placementStatus(now: frame.timestamp) == .stable {
+            placementHint = ObjectCaptureCopy.manualPlacementHint
+        } else {
+            placementHint = nil
+        }
         trace.add(traceTime(), "floor_tap_mode")
+    }
+
+    /// Optional auxiliary: tap the object itself from two places (triangulation).
+    func useTwoTapLocating() {
+        floorTapMode = false
+        firstTap = nil
+        firstTapMarker = nil
+        locatingNote = nil
+        walkProgress = 0
+        stage = .placing
+        if let frame = arSession.currentFrame, gate.placementStatus(now: frame.timestamp) == .stable {
+            placementHint = ObjectCaptureCopy.tapObjectHint
+        } else {
+            placementHint = nil
+        }
+        trace.add(traceTime(), "two_tap_mode")
+    }
+
+    /// Size / advanced sliders: while editing, the AR drag must not move the box.
+    func setControlsActive(_ active: Bool) {
+        controlsActive = active
+        if active {
+            dragBox(at: .zero, phase: .ended)
+        }
     }
 
     /// A tap on the OBJECT (its middle). First tap: remember the line of sight. Second tap, from another place: the two
@@ -490,7 +526,15 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         // assign only on change: this runs every frame and every assignment of a @Published value redraws the screen
         if trackingNote != text?.line { trackingNote = text?.line }
         if trackingHelper != text?.helper { trackingHelper = text?.helper }
-        if !hasBox, stage == .placing || stage == .secondTap, let line = text?.line, locatingNote != line { locatingNote = line }
+        if !hasBox, stage == .placing || stage == .secondTap {
+            if status != .stable {
+                // Do not invite a press while a touch cannot be accepted.
+                if placementHint != nil { placementHint = nil }
+                if let line = text?.line, locatingNote != line { locatingNote = line }
+            } else if locatingNote != nil, text == nil {
+                locatingNote = nil
+            }
+        }
         if hasBox, let last = lastPathPosition {
             let p = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
             pathSincePlacement += simd_distance(last, p)
@@ -611,7 +655,18 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         guard stage == .placing else { return }
         placementGate.manualTouch()
         autoPlanner.disable()
-        guard let arView else { return }
+        guard let arView, let frame = arSession.currentFrame else { return }
+        let status = gate.placementStatus(now: frame.timestamp)
+        if status != .stable {
+            let text = ObjectTrackingGate.recoveryText(status)
+            locatingNote = text?.line
+            trackingHelper = text?.helper
+            placementHint = nil
+            trace.add(traceTime(), "floor_tap_blocked", ["sx": Double(point.x), "sy": Double(point.y)], ["why": "\(status)"])
+            return
+        }
+        trackingHelper = nil
+        locatingNote = nil
         let existing = arView.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first
         let hit = existing ?? arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first
         guard let hit else {
@@ -689,7 +744,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 claim: .auto
             )
         } else if placementHint == nil, autoPlanner.shouldShowManualHint(now: frame.timestamp) {
-            placementHint = ObjectCaptureCopy.manualPlacementHint
+            // Invite a floor press only when tracking can accept it.
+            if gate.placementStatus(now: frame.timestamp) == .stable {
+                placementHint = ObjectCaptureCopy.manualPlacementHint
+            }
         }
     }
 
@@ -766,10 +824,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         return inside || nearest <= margin
     }
 
-    /// A drag moves the box only when it starts on the drawn box — dragging empty screen does nothing.
+    /// A drag moves the box only when it starts on the drawn cube — empty screen and size sliders do nothing.
     func canStartDrag(at point: CGPoint) -> Bool {
-        guard hasBox, stage == .sizing else { return false }
-        guard let outline = ringOnScreen ?? cornersOnScreen, outline.count >= 3 else { return false }
+        guard hasBox, stage == .sizing, !controlsActive else { return false }
+        guard let outline = cornersOnScreen, outline.count >= 3 else { return false }
         return Self.boxOutlineContains(corners: outline, point: point, margin: Self.grabMarginPt)
     }
 
@@ -793,10 +851,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             dragMoved = false
             return
         }
+        guard !controlsActive else { return }
         guard let tracking = arSession.currentFrame?.camera.trackingState, case .normal = tracking else { return }
-        // The plane through the box CENTRE (where the object's body is), not the floor: a finger on the object then
-        // moves the box exactly as far as the object under it (the floor plane moved it 1.2–1.5x as far).
-        let planeY = box.baseCenter.y + box.size.y / 2
+        // Floor / support plane at the box base (pre-TF90 cube drag).
+        let planeY = box.baseCenter.y
         guard let arView, let ray = arView.ray(through: point),
               let hit = Self.supportPlaneHit(origin: ray.origin, direction: ray.direction, planeY: planeY)
         else { return }
@@ -864,7 +922,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         initialPointXZ = nil
         locatingNote = nil
         walkProgress = 0
-        floorTapMode = false
+        floorTapMode = true
         ringOnScreen = nil
         refiner = ObjectCentreRefiner()
         trace.add(traceTime(), "place_again")
@@ -1220,9 +1278,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             ringOnScreen = nil
             return
         }
-        let ring = ObjectFootprintRing.points(centre: box.baseCenter, radius: ObjectFootprintRing.radius(for: box))
-        let ringPts = ring.compactMap { arView.project($0) }
-        ringOnScreen = ringPts.count == ring.count ? ringPts : nil
+        // Floor ring is not drawn on the main screen; keep nil so drag hit-tests use the cube only.
+        ringOnScreen = nil
         var pts: [CGPoint] = []
         for c in box.corners {
             guard let p = arView.project(c) else {
@@ -1240,6 +1297,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
     func debugPresent(
         stage: Stage,
         box: ObjectCaptureBox? = nil,
+        screenCorners: [CGPoint]? = nil,
         filledAzimuthBins: [Int] = [],
         guidance: ObjectCaptureGuidance? = nil,
         review: ObjectCoverageReview? = nil,
@@ -1257,6 +1315,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         self.locatingNote = locatingNote
         self.firstTapMarker = marker
         if let box { self.box = box; hasBox = true }
+        if let screenCorners { cornersOnScreen = screenCorners }
         var c = ObjectOrbitCoverage()
         var photos = 0
         for (band, n) in filledAzimuthBins.enumerated() {

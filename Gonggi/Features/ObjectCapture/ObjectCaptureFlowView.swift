@@ -17,20 +17,21 @@ enum ObjectCaptureCopy {
     static let sizingHint = "상자가 물체를 넉넉하게 감싸도록 위치와 크기를 맞춰 주세요."
     /// Loose box switched on (internal test): the box only has to roughly surround the object.
     static let sizingHintLoose = "상자가 물체를 대략 감싸면 돼요. 정확히 맞추지 않아도 괜찮아요."
-    /// While no box exists and automatic placement could not find a steady surface.
+    /// Default placing: tap the support surface under the product (floor / table).
     static let manualPlacementHint = "물체 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요."
-    /// The worker keeps only what is inside the box, so a tight box cuts the product's top off (GONGGI_OBJECT_V1_002).
-    static let sizingTips = "원이 물체를 감싸기만 하면 돼요. 크기는 슬라이더 하나면 충분해요"
+    /// The worker keeps only what is inside the box, so a tight box cuts the product off.
+    static let sizingTips = "상자가 물체를 감싸도록 맞추세요. 크기는 슬라이더로, 위치는 상자를 끌어 옮기세요"
     /// Capture-screen footnote: green means a good place to take photos, not that the whole object is verified in frame.
     static let captureNote = "초록 상자는 촬영하기 좋은 위치예요. 물체가 화면 밖으로 잘리지 않는지 직접 확인해 주세요"
-    /// TF90 locating: tap the object itself, from two places. Nothing to drag, size or turn first.
+    /// Optional auxiliary locating: tap the object itself from two places.
     static let tapObjectHint = "물체의 가운데를 눌러 주세요"
     static let secondTapHint = "옆으로 두세 걸음 이동한 뒤, 물체 가운데를 한 번 더 눌러 주세요"
-    static let readyHint = "원 안에 물체가 들어오면 돼요. 정확히 맞추지 않아도 괜찮아요"
+    static let readyHint = "상자가 물체를 감싸면 돼요. 손가락으로 옮기고 크기를 맞춰 주세요"
     static let walkProgress = "이동한 각도"
     static let showDiagnostics = "위치 유지 진단 표시"
-    static let floorTapInstead = "바닥을 눌러 직접 놓기 (테이블 위 물체)"
-    static let showCube = "상자 모양도 보기"
+    static let twoTapInstead = "물체를 두 번 눌러 놓기 (보조)"
+    static let floorTapInstead = "바닥을 눌러 직접 놓기"
+    static let showCube = "상자 보이기"
     static let shareTrace = "위치 진단 기록 공유"
     static let uniformSize = "크기"
     static let advanced = "자세히 조절"
@@ -73,11 +74,14 @@ struct ObjectCaptureFlowView: View {
         ZStack {
             ObjectCaptureARView(session: session)
                 .ignoresSafeArea()
-            ObjectFootprintOverlay(
-                ring: session.ringOnScreen, marker: session.firstTapMarker, highlight: session.framing == .ok
-            )
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+            // Two-tap auxiliary only: show where the first tap landed. No floor ring on the main screen.
+            if session.stage == .secondTap, session.firstTapMarker != nil {
+                ObjectFootprintOverlay(
+                    ring: nil, marker: session.firstTapMarker, highlight: false
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            }
             if session.showsCube {
                 ObjectBoxOverlay(corners: session.cornersOnScreen, highlight: session.framing == .ok)
                     .ignoresSafeArea()
@@ -137,16 +141,18 @@ struct ObjectCaptureFlowView: View {
 
     private var topBar: some View {
         HStack(alignment: .top) {
-            if !topText.isEmpty {
+            if showsStatusChip {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(topText)
-                        .font(.headline)
+                    if !topText.isEmpty {
+                        Text(topText)
+                            .font(.headline)
+                    }
                     if let note = session.locatingNote {
                         Text(note)
                             .font(.subheadline)
                             .foregroundStyle(.white.opacity(0.85))
                     }
-                    if let note = session.trackingNote, session.stage == .sizing || session.stage == .capturing {
+                    if let note = session.trackingNote, session.stage == .placing || session.stage == .secondTap || session.stage == .sizing || session.stage == .capturing {
                         Text(note)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.orange)
@@ -177,10 +183,26 @@ struct ObjectCaptureFlowView: View {
         }
     }
 
+    /// Status chip is shown for guidance text and/or tracking recovery — never an empty press prompt alone.
+    private var showsStatusChip: Bool {
+        !topText.isEmpty
+            || session.locatingNote != nil
+            || session.trackingNote != nil
+            || session.trackingHelper != nil
+    }
+
     private var topText: String {
         switch session.stage {
-        case .placing: return session.placementHint ?? ObjectCaptureCopy.tapObjectHint
-        case .secondTap: return ObjectCaptureCopy.secondTapHint
+        case .placing:
+            // Do not ask the user to press while tracking cannot accept a touch.
+            if session.trackingNote != nil { return "" }
+            if session.floorTapMode {
+                return session.placementHint ?? ObjectCaptureCopy.manualPlacementHint
+            }
+            return session.placementHint ?? ObjectCaptureCopy.tapObjectHint
+        case .secondTap:
+            if session.trackingNote != nil { return "" }
+            return ObjectCaptureCopy.secondTapHint
         case .sizing: return ObjectCaptureCopy.readyHint
         case .capturing: return session.guidance?.text ?? ObjectCaptureGuidance.walkAround(towardLeft: true).text
         case .finishing: return ObjectCaptureCopy.finishing
@@ -233,7 +255,8 @@ struct ObjectSizingPanel: View {
                     .frame(minWidth: 36, alignment: .leading)
                 Slider(
                     value: Binding(get: { Double(session.uniformScale) }, set: { session.setUniformScale(Float($0)) }),
-                    in: 0.15...7.0
+                    in: 0.15...7.0,
+                    onEditingChanged: { session.setControlsActive($0) }
                 )
                 Text("\(Int((session.box.size.max() * 100).rounded()))cm")
                     .font(.subheadline.monospacedDigit())
@@ -293,7 +316,8 @@ struct ObjectSizingPanel: View {
                 .frame(minWidth: 36, alignment: .leading)
             Slider(
                 value: Binding(get: { Double(value) }, set: { set(Float($0)) }),
-                in: Double(ObjectCaptureConfig.minSide)...Double(ObjectCaptureConfig.maxSide)
+                in: Double(ObjectCaptureConfig.minSide)...Double(ObjectCaptureConfig.maxSide),
+                onEditingChanged: { session.setControlsActive($0) }
             )
             Text("\(Int((value * 100).rounded()))cm")
                 .font(.subheadline.monospacedDigit())
@@ -403,7 +427,7 @@ struct ObjectCaptureIntroView: View {
     }
 }
 
-/// Locating step: tap the object, walk, tap it again. Skipping and the old floor tap are one line each.
+/// Locating step: floor tap is the default; two-tap on the object is an optional auxiliary.
 struct ObjectLocatingPanel: View {
     @ObservedObject var session: ObjectCaptureSession
 
@@ -423,7 +447,12 @@ struct ObjectLocatingPanel: View {
                 }
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.white)
-            } else if !session.floorTapMode {
+            } else if session.floorTapMode {
+                Button(ObjectCaptureCopy.twoTapInstead) { session.useTwoTapLocating() }
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
                 Button(ObjectCaptureCopy.floorTapInstead) { session.useFloorTap() }
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.9))
@@ -539,7 +568,7 @@ struct ObjectCaptureARView: UIViewRepresentable {
         ])
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
         view.addGestureRecognizer(tap)
-        // Placed box: one finger on the box drags it along the floor (empty screen does nothing), two fingers turn it.
+        // Placed box: one finger on the cube drags it on the floor plane; two fingers turn it (drag stops).
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.panned(_:)))
         pan.maximumNumberOfTouches = 1
         pan.delegate = context.coordinator

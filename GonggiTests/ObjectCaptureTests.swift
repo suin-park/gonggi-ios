@@ -222,11 +222,43 @@ final class ObjectCaptureTests: XCTestCase {
         XCTAssertEqual(hit!.z, -1.2, accuracy: 1e-4)
         XCTAssertNil(ObjectCaptureSession.supportPlaneHit(origin: eye, direction: SIMD3(0, 0.2, -1), planeY: 0), "above the horizon")
         XCTAssertNil(ObjectCaptureSession.supportPlaneHit(origin: eye, direction: SIMD3(0, 0, -1), planeY: 0), "parallel")
-        // TF90: the sizing tips say one slider is enough; dragging is an advanced fallback.
+        // Floor-tap is default; two-tap locating is optional. Sizing tips mention the cube slider + drag.
         XCTAssertTrue(ObjectCaptureCopy.sizingTips.contains("슬라이더"))
+        XCTAssertTrue(ObjectCaptureCopy.sizingTips.contains("상자"))
+        XCTAssertFalse(ObjectCaptureCopy.sizingTips.contains("원"))
         XCTAssertLessThanOrEqual(ObjectCaptureSession.maxDragStepM, 0.3, "a pose jump must not fling the box")
         XCTAssertTrue(ObjectCaptureCopy.advancedTips.contains("맨 위보다"))
+        XCTAssertTrue(ObjectCaptureCopy.manualPlacementHint.contains("바닥"))
+        XCTAssertTrue(ObjectCaptureCopy.twoTapInstead.contains("두 번"))
     }
+
+    #if DEBUG
+    /// Sliders mark controls active so a drag cannot start on the cube at the same time.
+    @MainActor
+    func testControlsActiveBlocksDragStartOnCube() {
+        let session = ObjectCaptureSession()
+        let box = ObjectCaptureBox(baseCenter: [0, 0, 0], size: [0.3, 0.4, 0.2], yawRadians: 0)
+        let corners: [CGPoint] = [
+            CGPoint(x: 100, y: 400), CGPoint(x: 260, y: 420), CGPoint(x: 300, y: 360), CGPoint(x: 140, y: 345),
+            CGPoint(x: 100, y: 250), CGPoint(x: 260, y: 270), CGPoint(x: 300, y: 210), CGPoint(x: 140, y: 195),
+        ]
+        session.debugPresent(stage: .sizing, box: box, screenCorners: corners)
+        XCTAssertTrue(session.canStartDrag(at: CGPoint(x: 200, y: 300)))
+        session.setControlsActive(true)
+        XCTAssertFalse(session.canStartDrag(at: CGPoint(x: 200, y: 300)))
+        session.setControlsActive(false)
+        XCTAssertTrue(session.canStartDrag(at: CGPoint(x: 200, y: 300)))
+    }
+
+    @MainActor
+    func testRestoreDefaultsFloorTapAndCubeVisible() {
+        let session = ObjectCaptureSession()
+        XCTAssertTrue(session.showsCube)
+        XCTAssertTrue(session.floorTapMode)
+        session.useTwoTapLocating()
+        XCTAssertFalse(session.floorTapMode)
+    }
+    #endif
 
     /// A drag starts only on the drawn box (or within the touch slop of its outline), never on empty screen.
     func testBoxDragStartsOnlyOnTheBox() {
