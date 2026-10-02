@@ -168,10 +168,7 @@ final class ObjectNewUISnapshotTests: XCTestCase {
         try save("24_위치유지_진단표시", Backdrop(
             top: ObjectCaptureCopy.readyHint, caption: "한 바퀴 돌아온 뒤의 진단 표시 예(숫자는 예시) — " + note,
             highlight: false, ring: ellipse,
-            readout: "추적 normal 42초 · 지도 extending
-앵커 이동 0.0 mm · 걸은 거리 6.8 m
-바닥 높이 차 +0.3 cm
-한 바퀴 확인: 가이드-물체 화면 어긋남 3.1 px (0.09°) · 카메라 위치 차 11 cm · 앵커 이동 0.0 mm",
+            readout: "추적 normal 42초 · 지도 extending\n앵커 이동 0.0 mm · 걸은 거리 6.8 m\n바닥 높이 차 +0.3 cm\n한 바퀴 확인: 가이드-물체 화면 어긋남 3.1 px (0.09°) · 카메라 위치 차 11 cm · 앵커 이동 0.0 mm",
             panel: ObjectSizingPanel(session: diag)))
 
         // The finish review is a system confirmation dialog (not drawable here); show its real text.
