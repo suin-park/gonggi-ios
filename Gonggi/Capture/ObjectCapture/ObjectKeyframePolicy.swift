@@ -12,6 +12,9 @@ struct ObjectKeyframePolicy {
 
     private(set) var lastSavedAt: TimeInterval?
     private(set) var lastSavedDirection: SIMD3<Float>?
+    /// Camera pose of the last SAVED photo (nil until a caller passes it; the near-duplicate guard is off without it).
+    private(set) var lastSavedCameraPosition: SIMD3<Float>?
+    private(set) var lastSavedCameraForward: SIMD3<Float>?
     private(set) var savedCount = 0
 
     struct Input {
@@ -23,6 +26,9 @@ struct ObjectKeyframePolicy {
         var cellCount: Int
         /// Unit direction from the product centre to the camera.
         var direction: SIMD3<Float>
+        /// Camera position / viewing direction (world). Optional: without them the near-duplicate guard is skipped.
+        var cameraPosition: SIMD3<Float>? = nil
+        var cameraForward: SIMD3<Float>? = nil
     }
 
     func decide(_ i: Input) -> Decision {
@@ -35,6 +41,7 @@ struct ObjectKeyframePolicy {
             return .reject(reason: "too_soon")
         }
         if i.cellCount < ObjectCaptureConfig.coveredPhotosPerCell {
+            if isNearDuplicate(i) { return .reject(reason: "idle_near_duplicate") }
             return .accept(reason: "new_cell")
         }
         if let prev = lastSavedDirection {
@@ -46,9 +53,33 @@ struct ObjectKeyframePolicy {
         return .accept(reason: "first")
     }
 
-    mutating func didSave(timestamp: TimeInterval, direction: SIMD3<Float>) {
+    /// Pose-only: the camera is within the thresholds of the last saved photo in both position and viewing direction.
+    /// The reference only moves in `didSave`, so a rejected frame never makes later photos harder to get.
+    private func isNearDuplicate(_ i: Input) -> Bool {
+        guard ObjectCaptureConfig.idleDuplicateGuardEnabled,
+              let lastPos = lastSavedCameraPosition, let lastFwd = lastSavedCameraForward,
+              let pos = i.cameraPosition, let fwd = i.cameraForward else { return false }
+        return NearDuplicateGuard(
+            minTranslationM: ObjectCaptureConfig.idleDuplicateMinTranslationM,
+            minRotationDeg: ObjectCaptureConfig.idleDuplicateMinRotationDeg
+        ).isNearDuplicate(
+            translationM: simd_distance(pos, lastPos),
+            rotationDeg: NearDuplicateGuard.rotationDeg(from: lastFwd, to: fwd)
+        )
+    }
+
+    mutating func didSave(
+        timestamp: TimeInterval,
+        direction: SIMD3<Float>,
+        cameraPosition: SIMD3<Float>? = nil,
+        cameraForward: SIMD3<Float>? = nil
+    ) {
         lastSavedAt = timestamp
         lastSavedDirection = direction
+        if let cameraPosition, let cameraForward {
+            lastSavedCameraPosition = cameraPosition
+            lastSavedCameraForward = cameraForward
+        }
         savedCount += 1
     }
 }

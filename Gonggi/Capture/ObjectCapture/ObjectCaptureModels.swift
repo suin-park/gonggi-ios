@@ -35,6 +35,13 @@ enum ObjectCaptureConfig {
     static let minViewChangeDeg: Double = 4.0
     /// Photos per cell after which a cell counts as covered for guidance.
     static let coveredPhotosPerCell = 2
+    /// A photo that only fills a not-yet-covered cell also needs a real change since the last SAVED photo (camera moved
+    /// this far or turned this far); a motionless camera must not save the cell's photos back to back. Own values: the
+    /// product is seen from about arm's length, so the same sway is a larger share of the view than in a room.
+    /// Provisional (not tuned on results); `false` restores the old behaviour.
+    static let idleDuplicateGuardEnabled = true
+    static let idleDuplicateMinTranslationM: Float = 0.03
+    static let idleDuplicateMinRotationDeg: Double = 2.5
 
     /// Box policy written to object.json. `loose_v1`: the box is only a rough selection of the object — the worker
     /// widens it for the final crop and prompts the mask model from its core, and capture judges "in frame" on the box

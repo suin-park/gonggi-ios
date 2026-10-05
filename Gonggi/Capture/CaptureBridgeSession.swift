@@ -313,6 +313,17 @@ struct CaptureBridgeSession: Equatable {
         // Continuity soft-band OK. Promote using cumulative baseline vs reconstructionAnchor.
         // Frame-local parallaxGrade is diagnostic only (not a hard gate).
         if signals.baselineFromReconstructionAnchorM >= CaptureBridgeConfig.minReconstructionTranslationM {
+            // Idle only: while bridging, the exit save below must stay possible. Reject without touching any state, so
+            // the anchors (last saved photo) stay where they are and slow motion keeps accumulating against them.
+            if mode == .idle,
+               CaptureBridgeConfig.idleDuplicateGuardEnabled,
+               CaptureBridgeConfig.idleDuplicateGuard.isNearDuplicate(
+                   translationM: signals.translationM,
+                   rotationDeg: max(signals.yawDeltaDeg, signals.forwardAngleDeg)
+               )
+            {
+                return decision(.reject, "idle_near_duplicate", signals, kind: .none, counts: false)
+            }
             mode = .idle
             bridgeTargetYawDeg = nil
             return decision(.accept, "continuity_ok", signals, kind: .reconstructionKeyframe, counts: true)

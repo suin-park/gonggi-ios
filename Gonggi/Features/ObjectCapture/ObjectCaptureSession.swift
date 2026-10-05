@@ -1222,11 +1222,16 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             blurry: sharp.state == .blurry,
             cell: cell,
             cellCount: cell.map { coverage.count($0) } ?? 0,
-            direction: dir
+            direction: dir,
+            cameraPosition: camPos,
+            cameraForward: CaptureMath.forwardVector(from: frame.camera.transform)
         ))
         if case .accept(let reason) = decision, let cell, allowSave,
            savePhoto(frame, reason: reason, position: pos, cell: cell, framingLabel: fr.state.rawValue, sharpness: sharp) {
-            policy.didSave(timestamp: frame.timestamp, direction: dir)
+            policy.didSave(
+                timestamp: frame.timestamp, direction: dir,
+                cameraPosition: camPos, cameraForward: CaptureMath.forwardVector(from: frame.camera.transform)
+            )
             coverage.record(cell)
         } else if case .reject = decision {
             rejectedCount += 1
@@ -1312,11 +1317,16 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             blurry: pending.blurry,
             cell: cell,
             cellCount: cell.map { coverage.count($0) } ?? 0,
-            direction: dir
+            direction: dir,
+            cameraPosition: camPos,
+            cameraForward: CaptureMath.forwardVector(from: camT)
         ))
         if case .accept(let reason) = decision, let cell,
            savePhoto(frame, reason: reason, position: pending.position, cell: cell, framingLabel: readiness.label, sharpness: sharpness.snapshot()) {
-            policy.didSave(timestamp: stamp, direction: dir)
+            policy.didSave(
+                timestamp: stamp, direction: dir,
+                cameraPosition: camPos, cameraForward: CaptureMath.forwardVector(from: camT)
+            )
             coverage.record(cell)
         } else if case .reject = decision {
             rejectedCount += 1

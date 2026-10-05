@@ -65,6 +65,19 @@ enum CaptureBridgeConfig {
     /// Minimum **cumulative** translation from last reconstructionAnchor (meters). Provisional.
     /// Continuity bridge observations do not reset this baseline.
     static var minReconstructionTranslationM: Float = 0.025
+
+    // MARK: Idle near-duplicate guard (space capture)
+
+    /// A regular (idle) `continuity_ok` save also needs a real change since the last SAVED photo: at least this much
+    /// translation or this much turn (yaw / pitch). Without it, 2.5 cm of hand sway against the last reconstruction
+    /// keyframe was enough to save a photo every 0.3 s while standing still. Bridge, reacquire, first-photo and
+    /// stale-anchor saves are not affected. Provisional (not tuned on results); `false` restores the old behaviour.
+    static var idleDuplicateGuardEnabled = true
+    static var idleDuplicateMinTranslationM: Float = 0.05
+    static var idleDuplicateMinRotationDeg: Double = 3.0
+    static var idleDuplicateGuard: NearDuplicateGuard {
+        NearDuplicateGuard(minTranslationM: idleDuplicateMinTranslationM, minRotationDeg: idleDuplicateMinRotationDeg)
+    }
     /// Soft upper translation for a single continuity step (vs continuityAnchor).
     static var maxStepTranslationM: Float = 0.85
 

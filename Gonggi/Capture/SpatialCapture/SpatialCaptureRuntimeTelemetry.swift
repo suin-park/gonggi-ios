@@ -77,7 +77,7 @@ final class SpatialCaptureRuntimeTelemetry: @unchecked Sendable {
             blurRejectedCount += 1
         case "motion_too_fast", "angular_too_fast":
             motionRejectedCount += 1
-        case "translation_too_small":
+        case "translation_too_small", "idle_near_duplicate":
             translationRejectedCount += 1
         case "low_texture":
             lowTextureRejectedCount += 1

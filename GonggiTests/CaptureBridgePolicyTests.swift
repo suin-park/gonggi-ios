@@ -41,9 +41,10 @@ final class CaptureBridgePolicyTests: XCTestCase {
         let origin = yawTransform(degrees: 0)
         session.noteAccepted(timestamp: 0, transform: origin, yawDeltaDeg: 0, frustumOverlap: 1, kind: .reconstructionKeyframe)
         var sawReconPromotion = false
-        // Steps must exceed poseJitterTranslationM (0.012) and reach recon baseline (0.025).
+        // Steps must exceed poseJitterTranslationM (0.012), the recon baseline (0.025) and the idle near-duplicate
+        // guard (0.05 from the last saved photo; 3 cm steps used to be saved, now only accumulated movement is).
         for i in 1...5 {
-            let cand = yawTransform(degrees: 0, translation: SIMD3(0.03 * Float(i), 0, 0))
+            let cand = yawTransform(degrees: 0, translation: SIMD3(0.06 * Float(i), 0, 0))
             let d = decide(to: cand, timestamp: Double(i) * 0.35, session: &session)
             XCTAssertTrue(d.accept, "step \(i) \(d.reason)")
             session.noteAccepted(
