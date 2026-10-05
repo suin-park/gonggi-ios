@@ -5,6 +5,11 @@ name: Gonggi iOS idle-duplicate guard check
 # OpenCV xcframework is restored from the main-branch cache; a cache miss fails the run instead of rebuilding OpenCV.
 on:
   workflow_dispatch:
+  # A new workflow file cannot be dispatched before it exists on the default branch: one run is started by the push that
+  # adds/changes this file on this branch only.
+  push:
+    branches: [fix/idle-duplicate-photo-guard]
+    paths: [".github/workflows/gonggi-ios-idle-guard-check.yml"]
 
 permissions:
   contents: read
