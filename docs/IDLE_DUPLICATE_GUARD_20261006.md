@@ -57,3 +57,15 @@ The new XCTest file `GonggiTests/IdleDuplicateGuardTests.swift` encodes the same
 5. Space: turn fast while walking; cover the camera for 3 s and uncover: capture continues, no stuck "bridging".
 6. Product: hold still at the start: at most one photo for the cell; walk around the product: normal cell coverage, finish enabled.
 7. Check `capture_telemetry` / rejected reasons contain `idle_near_duplicate` and that photo counts per minute drop while standing.
+
+## macOS CI result (run 37388800564, commit f0e1ece, simulator, public repo)
+
+- Compile (build-for-testing): passed. Required targeted classes: `IdleDuplicateGuardTests` 12/12 passed; CaptureBridgePolicy, CaptureBridgeReplay,
+  AdaptiveKeyframeTF62, ReanchorAfterStall, SpatialCapturePackage, CaptureDataFoundation, ObjectCapture, ObjectProductEvidence all passed.
+  `PendingAngularRescueTests.testV1036PoseReplayMatchesPythonGoldens` failed on counts (intended change; link violations / chain intact held).
+- Real Swift replay of V1_036 (PoseReplayHarness, pending rescue included), guard off (old goldens) -> on: live saves 453 -> 427
+  (recon 424 -> 396, bridge 29 -> 31), jitter seeds 2/3: 435 -> 414, 431 -> 413; longest live gap 1.48 s -> 2.12 s; link violations 0, chain intact.
+- Full GonggiTests (informational): 1099 tests, 29 failing cases: 28 unrelated to the changed code (Build63PhaseLocalTests 11, DirectionCaptureGuideTests 4,
+  ServiceIATests 3, PrimaryGuidancePresenterTests 2, CaptureCandidateSafetyCapPresentationTests 2, VRPlacementMath, SpaceRecordAsyncContract, SpaceLinkMath,
+  GuidanceRuleEngine, CaptureQualityState: guidance copy / UI maths), not compared against a baseline run of 830fa89 (unconfirmed that they pre-exist).
+- The golden test was then changed to check the old goldens with the guard off and the measured values with the guard on (not re-run on CI yet).

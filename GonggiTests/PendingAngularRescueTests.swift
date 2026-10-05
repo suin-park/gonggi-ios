@@ -1170,51 +1170,57 @@ final class PendingAngularRescueTests: XCTestCase {
     }
 
     /// V1_036 pose replay vs Python `e2e_angular_pending_rescue_report.json` goldens.
+    /// The Python goldens describe the policy WITHOUT the idle near-duplicate guard, so they are checked with the guard
+    /// switched off (this also proves the guard is the only difference). The guard-on numbers were measured by the same
+    /// Swift replay on CI (run 37388800564) and are pinned as the new contract; link violations, chain integrity and
+    /// the recon-link rejects stay at their old values in both modes.
     func testV1036PoseReplayMatchesPythonGoldens() throws {
         let poses = try Self.loadV1036Poses()
-        let goldens: [(String, [PoseReplayHarness.PoseRow], Expected)] = [
-            ("original", poses, Expected(
-                liveRecon: 424, liveBridge: 29, liveN: 453,
-                maxGap: 1.4838, rescue: 25, link: 0, cap: false
-            )),
-            ("seed2", PoseReplayHarness.applyTimestampJitter(poses: poses, seed: 2, maxAbsMs: 2.0),
-             Expected(
-                liveRecon: 398, liveBridge: 37, liveN: 435,
-                maxGap: 2.1842, rescue: 33, link: 0, cap: false
-             )),
-            ("seed3", PoseReplayHarness.applyTimestampJitter(poses: poses, seed: 3, maxAbsMs: 5.0),
-             Expected(
-                liveRecon: 394, liveBridge: 37, liveN: 431,
-                maxGap: 2.1892, rescue: 31, link: 0, cap: false
-             )),
+        let jitter2 = PoseReplayHarness.applyTimestampJitter(poses: poses, seed: 2, maxAbsMs: 2.0)
+        let jitter3 = PoseReplayHarness.applyTimestampJitter(poses: poses, seed: 3, maxAbsMs: 5.0)
+        let guardOff: [(String, [PoseReplayHarness.PoseRow], Expected)] = [
+            ("original", poses, Expected(liveRecon: 424, liveBridge: 29, liveN: 453, maxGap: 1.4838, rescue: 25, link: 0, cap: false)),
+            ("seed2", jitter2, Expected(liveRecon: 398, liveBridge: 37, liveN: 435, maxGap: 2.1842, rescue: 33, link: 0, cap: false)),
+            ("seed3", jitter3, Expected(liveRecon: 394, liveBridge: 37, liveN: 431, maxGap: 2.1892, rescue: 31, link: 0, cap: false)),
         ]
+        let guardOn: [(String, [PoseReplayHarness.PoseRow], Expected)] = [
+            ("original", poses, Expected(liveRecon: 396, liveBridge: 31, liveN: 427, maxGap: 2.1173, rescue: 27, link: 0, cap: false)),
+            ("seed2", jitter2, Expected(liveRecon: 377, liveBridge: 37, liveN: 414, maxGap: 2.1160, rescue: 33, link: 0, cap: false)),
+            ("seed3", jitter3, Expected(liveRecon: 378, liveBridge: 35, liveN: 413, maxGap: 2.1112, rescue: 30, link: 0, cap: false)),
+        ]
+        let savedGuard = CaptureBridgeConfig.idleDuplicateGuardEnabled
+        defer { CaptureBridgeConfig.idleDuplicateGuardEnabled = savedGuard }
 
         var report: [String: Any] = [:]
-        for (label, input, exp) in goldens {
-            let m = PoseReplayHarness.replay(poses: input)
-            report[label] = [
-                "swiftLiveN": m.liveN,
-                "swiftLiveRecon": m.liveRecon,
-                "swiftLiveBridge": m.liveBridge,
-                "swiftMaxLiveGap": m.maxLiveNoAcceptSec,
-                "swiftLinkViolations": m.linkViolations,
-                "swiftRescueFlushN": m.rescueFlushN,
-                "swiftCapReached": m.capReached,
-                "pythonLiveN": exp.liveN,
-                "pythonLiveRecon": exp.liveRecon,
-                "pythonLiveBridge": exp.liveBridge,
-                "pythonMaxLiveGap": exp.maxGap,
-                "pythonRescue": exp.rescue,
-            ]
-            XCTAssertEqual(m.linkViolations, exp.link, "\(label) link violations")
-            XCTAssertEqual(m.reconLinkRejects, 0, "\(label) recon link rejects")
-            XCTAssertEqual(m.capReached, exp.cap, "\(label) cap")
-            XCTAssertEqual(m.liveN, exp.liveN, "\(label) live N")
-            XCTAssertEqual(m.liveRecon, exp.liveRecon, "\(label) live recon")
-            XCTAssertEqual(m.liveBridge, exp.liveBridge, "\(label) live bridge")
-            XCTAssertEqual(m.rescueFlushN, exp.rescue, "\(label) rescue flush")
-            XCTAssertEqual(m.maxLiveNoAcceptSec, exp.maxGap, accuracy: 0.05, "\(label) max live gap")
-            XCTAssertTrue(m.chainIntactLive, "\(label) chain intact")
+        for (mode, goldens) in [("guardOff", guardOff), ("guardOn", guardOn)] {
+            CaptureBridgeConfig.idleDuplicateGuardEnabled = mode == "guardOn"
+            for (label, input, exp) in goldens {
+                let m = PoseReplayHarness.replay(poses: input)
+                let tag = "\(mode)/\(label)"
+                report[tag] = [
+                    "swiftLiveN": m.liveN,
+                    "swiftLiveRecon": m.liveRecon,
+                    "swiftLiveBridge": m.liveBridge,
+                    "swiftMaxLiveGap": m.maxLiveNoAcceptSec,
+                    "swiftLinkViolations": m.linkViolations,
+                    "swiftRescueFlushN": m.rescueFlushN,
+                    "swiftCapReached": m.capReached,
+                    "expectedLiveN": exp.liveN,
+                    "expectedLiveRecon": exp.liveRecon,
+                    "expectedLiveBridge": exp.liveBridge,
+                    "expectedMaxGap": exp.maxGap,
+                    "expectedRescue": exp.rescue,
+                ]
+                XCTAssertEqual(m.linkViolations, exp.link, "\(tag) link violations")
+                XCTAssertEqual(m.reconLinkRejects, 0, "\(tag) recon link rejects")
+                XCTAssertEqual(m.capReached, exp.cap, "\(tag) cap")
+                XCTAssertEqual(m.liveN, exp.liveN, "\(tag) live N")
+                XCTAssertEqual(m.liveRecon, exp.liveRecon, "\(tag) live recon")
+                XCTAssertEqual(m.liveBridge, exp.liveBridge, "\(tag) live bridge")
+                XCTAssertEqual(m.rescueFlushN, exp.rescue, "\(tag) rescue flush")
+                XCTAssertEqual(m.maxLiveNoAcceptSec, exp.maxGap, accuracy: 0.05, "\(tag) max live gap")
+                XCTAssertTrue(m.chainIntactLive, "\(tag) chain intact")
+            }
         }
         // Visible in XCTest log for Gate report.
         let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
