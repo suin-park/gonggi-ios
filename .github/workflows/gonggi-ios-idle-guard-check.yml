@@ -1,12 +1,13 @@
 name: Gonggi iOS idle-duplicate guard check
 
-# One-off validation of branch fix/idle-duplicate-photo-guard: simulator compile + unit tests.
-# Manual only (workflow_dispatch). No archive, export, TestFlight or ASC upload, no build-number change.
-# OpenCV xcframework is restored from the main-branch cache; a cache miss fails the run instead of rebuilding OpenCV.
+# One-off validation of branch fix/idle-duplicate-photo-guard: simulator compile + unit tests, and the same full test
+# command on the baseline commit 830fa89 (TestFlight 2.0 (92)) to tell pre-existing failures from new ones.
+# No archive, export, TestFlight or ASC upload, no build-number change. OpenCV xcframework comes from the main-branch cache;
+# a cache miss fails the run instead of rebuilding OpenCV.
 on:
   workflow_dispatch:
   # A new workflow file cannot be dispatched before it exists on the default branch: one run is started by the push that
-  # adds/changes this file on this branch only.
+  # changes this file on this branch only.
   push:
     branches: [fix/idle-duplicate-photo-guard]
     paths: [".github/workflows/gonggi-ios-idle-guard-check.yml"]
@@ -21,12 +22,22 @@ env:
 
 jobs:
   check:
-    name: Compile + unit tests (simulator)
+    name: ${{ matrix.name }}
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: branch
+            ref: ${{ github.sha }}
+          - name: baseline-830fa89
+            ref: 830fa8910fb18e0a4655641fde2b1f39cd616141
     steps:
-      - name: Checkout
+      - name: Checkout ${{ matrix.name }}
         uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
 
       - name: Restore OpenCV xcframework (cache only)
         uses: actions/cache/restore@v4
@@ -41,13 +52,13 @@ jobs:
           XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
           echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
           xcodebuild -version
+          git rev-parse HEAD
 
       - name: Install XcodeGen and generate project
         run: |
           set -euo pipefail
           command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate
-          grep -E "NearDuplicateGuard.swift|IdleDuplicateGuardTests.swift" Gonggi.xcodeproj/project.pbxproj | head -4
 
       - name: Resolve simulator
         id: sim
@@ -65,6 +76,7 @@ jobs:
           PY
           )"
           echo "udid=${UDID}" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "${UDID}" || true
 
       - name: Build for testing (compile app + tests)
         run: |
@@ -84,7 +96,8 @@ jobs:
       - name: Boot simulator
         run: xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
 
-      - name: Targeted tests (required)
+      - name: Targeted tests incl. V1_036 diagnostics (branch only)
+        if: matrix.name == 'branch'
         run: |
           set -euo pipefail
           set +e
@@ -106,9 +119,11 @@ jobs:
           STATUS=${PIPESTATUS[0]}
           set -e
           grep -E "Test Suite '.*' (passed|failed)|error:|failed \(|Executed [0-9]+ tests" targeted.log | tail -n 80 || true
+          echo "===== V1_036 reports ====="
+          awk '/V1_036_SWIFT_VS_PYTHON|V1_036_GUARD_DIAG/ {p=1} p {print} /^}$/ {p=0}' targeted.log | head -n 400
           exit "${STATUS}"
 
-      - name: Full GonggiTests (informational)
+      - name: Full GonggiTests (same command on both commits)
         if: always()
         continue-on-error: true
         run: |
@@ -120,17 +135,21 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee full.log
           STATUS=${PIPESTATUS[0]}
-          grep -E "Test Case '.*' failed|error:|Executed [0-9]+ tests" full.log | tail -n 80 || true
+          grep -E "Executed [0-9]+ tests, with" full.log | tail -n 2 || true
+          grep -E "Test Case '.*' failed" full.log | sed -E "s/.*Test Case '-\[GonggiTests\.([A-Za-z0-9_]+) ([A-Za-z0-9_]+)\]' failed.*/\1.\2/" | sort -u > failed_cases.txt
+          echo "failing test cases: $(wc -l < failed_cases.txt)"
+          cat failed_cases.txt
           exit "${STATUS}"
 
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: idle-guard-check-logs
+          name: idle-guard-check-${{ matrix.name }}
           path: |
             build.log
             targeted.log
             full.log
+            failed_cases.txt
           if-no-files-found: ignore
           retention-days: 7

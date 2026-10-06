@@ -1183,10 +1183,11 @@ final class PendingAngularRescueTests: XCTestCase {
             ("seed2", jitter2, Expected(liveRecon: 398, liveBridge: 37, liveN: 435, maxGap: 2.1842, rescue: 33, link: 0, cap: false)),
             ("seed3", jitter3, Expected(liveRecon: 394, liveBridge: 37, liveN: 431, maxGap: 2.1892, rescue: 31, link: 0, cap: false)),
         ]
+        // Guard on: the "original" run was measured completely on CI (run 37388800564, every value reported by a failing
+        // assertion). The jitter seeds are NOT pinned: only some of their values were observed, so they are checked for
+        // the invariants below and their values are printed (see report) instead of being guessed.
         let guardOn: [(String, [PoseReplayHarness.PoseRow], Expected)] = [
             ("original", poses, Expected(liveRecon: 396, liveBridge: 31, liveN: 427, maxGap: 2.1173, rescue: 27, link: 0, cap: false)),
-            ("seed2", jitter2, Expected(liveRecon: 377, liveBridge: 37, liveN: 414, maxGap: 2.1160, rescue: 33, link: 0, cap: false)),
-            ("seed3", jitter3, Expected(liveRecon: 378, liveBridge: 35, liveN: 413, maxGap: 2.1112, rescue: 30, link: 0, cap: false)),
         ]
         let savedGuard = CaptureBridgeConfig.idleDuplicateGuardEnabled
         defer { CaptureBridgeConfig.idleDuplicateGuardEnabled = savedGuard }
@@ -1221,6 +1222,20 @@ final class PendingAngularRescueTests: XCTestCase {
                 XCTAssertEqual(m.maxLiveNoAcceptSec, exp.maxGap, accuracy: 0.05, "\(tag) max live gap")
                 XCTAssertTrue(m.chainIntactLive, "\(tag) chain intact")
             }
+        }
+        // Guard on, jitter seeds: invariants only (values printed, not pinned).
+        CaptureBridgeConfig.idleDuplicateGuardEnabled = true
+        for (label, input) in [("seed2", jitter2), ("seed3", jitter3)] {
+            let m = PoseReplayHarness.replay(poses: input)
+            report["guardOn/\(label)"] = [
+                "swiftLiveN": m.liveN, "swiftLiveRecon": m.liveRecon, "swiftLiveBridge": m.liveBridge,
+                "swiftMaxLiveGap": m.maxLiveNoAcceptSec, "swiftLinkViolations": m.linkViolations,
+                "swiftRescueFlushN": m.rescueFlushN, "swiftCapReached": m.capReached,
+            ]
+            XCTAssertEqual(m.linkViolations, 0, "guardOn/\(label) link violations")
+            XCTAssertEqual(m.reconLinkRejects, 0, "guardOn/\(label) recon link rejects")
+            XCTAssertFalse(m.capReached, "guardOn/\(label) cap")
+            XCTAssertTrue(m.chainIntactLive, "guardOn/\(label) chain intact")
         }
         // Visible in XCTest log for Gate report.
         let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
@@ -1295,5 +1310,155 @@ final class PendingAngularRescueTests: XCTestCase {
 private extension CaptureBridgeSession {
     var reconstructionAnchorCountSnapshot: (recon: Int, bridge: Int) {
         (reconstructionKeyframeCount, continuityBridgeObservationCount)
+    }
+}
+
+// MARK: - Idle near-duplicate guard: links, coverage and the longest no-save gap (V1_036 pose replay)
+
+extension PendingAngularRescueTests {
+    private struct GapSave {
+        let rel: Double
+        let kind: CaptureAcceptKind
+        let reason: String
+    }
+
+    /// Pose-only diagnostic + invariants on the real Swift policy (PoseReplayHarness: bridge session, pending rescue,
+    /// link gate). Compares the guard off (previous behaviour) with the guard on. Printed under `V1_036_GUARD_DIAG`.
+    func testV1036GuardKeepsLinksAndCoverageAndExplainsTheLongestGap() throws {
+        let poses = try Self.loadV1036Poses()
+        let t0 = try XCTUnwrap(poses.first?.timestamp)
+        let savedGuard = CaptureBridgeConfig.idleDuplicateGuardEnabled
+        defer { CaptureBridgeConfig.idleDuplicateGuardEnabled = savedGuard }
+
+        CaptureBridgeConfig.idleDuplicateGuardEnabled = false
+        let off = PoseReplayHarness.replay(poses: poses)
+        CaptureBridgeConfig.idleDuplicateGuardEnabled = true
+        let on = PoseReplayHarness.replay(poses: poses)
+
+        // 1) Links / chain / re-anchors: unchanged by the guard.
+        for (label, m) in [("off", off), ("on", on)] {
+            XCTAssertEqual(m.linkViolations, 0, "\(label) link violations")
+            XCTAssertEqual(m.reconLinkRejects, 0, "\(label) recon link rejects")
+            XCTAssertTrue(m.chainIntactLive, "\(label) chain intact")
+            XCTAssertFalse(m.capReached, "\(label) cap")
+        }
+        XCTAssertEqual(on.liveSegments, off.liveSegments, "stale-anchor segments (recovery) preserved")
+        let reanchor = CaptureBridgeSession.reanchorReason
+        XCTAssertEqual(
+            on.enqueued.filter { $0.reason == reanchor }.count,
+            off.enqueued.filter { $0.reason == reanchor }.count,
+            "re-anchor (tracking recovery) saves preserved"
+        )
+
+        // 2) Viewing-direction coverage: 15° yaw x 15° pitch bins that hold a saved photo must not shrink.
+        func bin(_ x: simd_float4x4) -> String {
+            let yp = CaptureMath.yawPitchDegrees(from: x)
+            return "\(Int(floor((yp.yaw + 180) / 15)))_\(Int(floor((yp.pitch + 90) / 15)))"
+        }
+        let rels = poses.map { $0.timestamp - t0 }
+        // Nearest pose by time (no exact floating-point key match, no force unwraps).
+        func poseAt(_ rel: Double) -> simd_float4x4 {
+            var lo = 0
+            var hi = rels.count - 1
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if rels[mid] < rel { lo = mid + 1 } else { hi = mid }
+            }
+            if lo > 0, abs(rels[lo - 1] - rel) < abs(rels[lo] - rel) { lo -= 1 }
+            return poses[lo].transform
+        }
+        func savedBins(_ m: PoseReplayHarness.Metrics) -> Set<String> {
+            Set(m.enqueued.map { bin(poseAt($0.rel)) })
+        }
+        let binsOff = savedBins(off)
+        let binsOn = savedBins(on)
+        let lost = binsOff.subtracting(binsOn)
+        XCTAssertTrue(lost.isEmpty, "view-direction bins that lost every photo: \(lost.sorted())")
+
+        // 3) The longest gap between live saves, with the guard on: still camera, or something else?
+        func liveSaves(_ m: PoseReplayHarness.Metrics) -> [GapSave] {
+            m.enqueued.filter { $0.liveCaptureEnqueue }.map { GapSave(rel: $0.rel, kind: $0.kind, reason: $0.reason) }
+                .sorted { $0.rel < $1.rel }
+        }
+        let onSaves = liveSaves(on)
+        let offSaves = liveSaves(off)
+        func longestGap(_ s: [GapSave]) -> (a: GapSave, b: GapSave)? {
+            zip(s, s.dropFirst()).max { ($0.1.rel - $0.0.rel) < ($1.1.rel - $1.0.rel) }.map { (a: $0.0, b: $0.1) }
+        }
+        let gapOn = try XCTUnwrap(longestGap(onSaves))
+        let gapOff = try XCTUnwrap(longestGap(offSaves))
+
+        func forwardAngleDeg(_ a: simd_float4x4, _ b: simd_float4x4) -> Double {
+            Double(CaptureMath.rotationDeltaRadians(from: a, to: b)) * 180 / .pi
+        }
+
+        func describe(_ gap: (a: GapSave, b: GapSave), saves: [GapSave]) -> [String: Any] {
+            let xa = poseAt(gap.a.rel)
+            let inGap = poses.filter { $0.timestamp - t0 > gap.a.rel && $0.timestamp - t0 < gap.b.rel }
+            var maxTrans: Float = 0
+            var maxRot = 0.0
+            var path: Float = 0
+            var prev = xa
+            var notNormal = 0
+            for p in inGap {
+                maxTrans = max(maxTrans, CaptureMath.translationMeters(from: xa, to: p.transform))
+                maxRot = max(maxRot, forwardAngleDeg(xa, p.transform))
+                path += CaptureMath.translationMeters(from: prev, to: p.transform)
+                prev = p.transform
+                if !p.trackingNormal { notNormal += 1 }
+            }
+            // Reasons the live selector gives to frames of the gap, from the saved-anchor state at the gap start.
+            var reasons: [String: Int] = [:]
+            var session = CaptureBridgeSession()
+            let lastRecon = saves.last { $0.rel <= gap.a.rel && $0.kind == .reconstructionKeyframe } ?? gap.a
+            session.noteAccepted(timestamp: t0 + lastRecon.rel, transform: poseAt(lastRecon.rel), yawDeltaDeg: 0, frustumOverlap: 1, kind: .reconstructionKeyframe)
+            if gap.a.kind == .continuityBridgeObservation {
+                session.noteAccepted(timestamp: t0 + gap.a.rel, transform: xa, yawDeltaDeg: 0, frustumOverlap: 1, kind: .continuityBridgeObservation)
+            }
+            for p in inGap {
+                var s = session
+                let d = KeyframeSelector3DGS.shouldAccept(
+                    timestamp: p.timestamp, transform: p.transform, trackingNormal: p.trackingNormal,
+                    lastKeyframeTimestamp: t0 + gap.a.rel, lastKeyframeTransform: xa, bridgeSession: &s
+                )
+                reasons[d.accept ? "ACCEPT:\(d.reason)" : d.reason, default: 0] += 1
+            }
+            return [
+                "fromRel": gap.a.rel, "toRel": gap.b.rel, "seconds": gap.b.rel - gap.a.rel,
+                "startKind": gap.a.kind.rawValue, "frames": inGap.count, "framesTrackingNotNormal": notNormal,
+                "maxTranslationFromLastSavedM": Double(maxTrans), "maxRotationFromLastSavedDeg": maxRot,
+                "pathLengthM": Double(path),
+                "netTranslationToNextSaveM": Double(CaptureMath.translationMeters(from: xa, to: poseAt(gap.b.rel))),
+                "rotationToNextSaveDeg": forwardAngleDeg(xa, poseAt(gap.b.rel)),
+                "selectorReasonsOnFrames": reasons,
+            ]
+        }
+        let onGapInfo = describe(gapOn, saves: onSaves)
+
+        // What the guard-off run saved inside the guard-on gap: duplicates of the previous save, or real changes?
+        let inside = offSaves.filter { $0.rel > gapOn.a.rel && $0.rel < gapOn.b.rel }
+        var offInside: [[String: Any]] = []
+        var prevX = poseAt(gapOn.a.rel)
+        var nearDup = 0
+        for s in inside {
+            let x = poseAt(s.rel)
+            let tr = CaptureMath.translationMeters(from: prevX, to: x)
+            let rot = forwardAngleDeg(prevX, x)
+            if tr < CaptureBridgeConfig.idleDuplicateMinTranslationM && rot < CaptureBridgeConfig.idleDuplicateMinRotationDeg { nearDup += 1 }
+            offInside.append(["rel": s.rel, "kind": s.kind.rawValue, "reason": s.reason, "translationFromPrevSaveM": Double(tr), "rotationFromPrevSaveDeg": rot])
+            prevX = x
+        }
+
+        let report: [String: Any] = [
+            "harnessMaxLiveGapOff": off.maxLiveNoAcceptSec, "harnessMaxLiveGapOn": on.maxLiveNoAcceptSec,
+            "liveSavesOff": off.liveN, "liveSavesOn": on.liveN,
+            "savedBinsOff": binsOff.count, "savedBinsOn": binsOn.count,
+            "longestGapOffSeconds": gapOff.b.rel - gapOff.a.rel,
+            "longestGapOn": onGapInfo,
+            "guardOffSavesInsideTheGuardOnGap": offInside,
+            "guardOffSavesInsideGapThatWereNearDuplicates": nearDup,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+        if let s = String(data: data, encoding: .utf8) { print("V1_036_GUARD_DIAG\n\(s)") }
     }
 }
