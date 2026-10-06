@@ -1359,8 +1359,39 @@ extension PendingAngularRescueTests {
         }
         let binsOff = savedBins(off)
         let binsOn = savedBins(on)
-        let lost = binsOff.subtracting(binsOn)
-        XCTAssertTrue(lost.isEmpty, "view-direction bins that lost every photo: \(lost.sorted())")
+        // Bin counts are only reported: a 15 deg bin edge can split two photos that look at the same thing
+        // (V1_036: the single "lost" bin held one photo at pitch 15.4 deg whose replacement, 0.17 s earlier, 1.6 cm and 2.5 deg
+        // away with full frustum overlap, sits at pitch 14.6 deg). The assertion below is the observation-level check.
+        let lostBins = binsOff.subtracting(binsOn).sorted()
+
+        // Substitute observation: every photo the previous policy saved must have a photo of the new run within +-2 s at
+        // the same place (<= 2x the duplicate radius = 10 cm), the same view (<= the 8 deg bridge save step) and an
+        // overlapping view (>= the bridge frustum-overlap floor). Position AND direction AND overlap: a similar angle seen
+        // from another place does not count.
+        let onAll = on.enqueued.sorted { $0.rel < $1.rel }
+        var withoutSubstitute: [Double] = []
+        var outsideDuplicateRadius = 0
+        for e in off.enqueued {
+            let xo = poseAt(e.rel)
+            var found = false
+            var insideRadius = false
+            for q in onAll where abs(q.rel - e.rel) <= 2.0 {
+                let smp = FrustumOverlapProxy.sample(from: xo, to: poseAt(q.rel))
+                if Double(smp.translationM) <= 2 * Double(CaptureBridgeConfig.idleDuplicateMinTranslationM),
+                   smp.forwardAngleDeg <= CaptureBridgeConfig.minBridgeSaveAngularDeg,
+                   smp.frustumOverlap >= CaptureBridgeConfig.minFrustumOverlapBridge
+                {
+                    found = true
+                    if smp.translationM < CaptureBridgeConfig.idleDuplicateMinTranslationM,
+                       smp.forwardAngleDeg < CaptureBridgeConfig.idleDuplicateMinRotationDeg
+                    {
+                        insideRadius = true
+                    }
+                }
+            }
+            if !found { withoutSubstitute.append(e.rel) } else if !insideRadius { outsideDuplicateRadius += 1 }
+        }
+        XCTAssertTrue(withoutSubstitute.isEmpty, "photos of the old run without a substitute observation at t=\(withoutSubstitute)")
 
         // 3) The longest gap between live saves, with the guard on: still camera, or something else?
         func liveSaves(_ m: PoseReplayHarness.Metrics) -> [GapSave] {
@@ -1439,7 +1470,9 @@ extension PendingAngularRescueTests {
         let report: [String: Any] = [
             "harnessMaxLiveGapOff": off.maxLiveNoAcceptSec, "harnessMaxLiveGapOn": on.maxLiveNoAcceptSec,
             "liveSavesOff": off.liveN, "liveSavesOn": on.liveN,
-            "savedBinsOff": binsOff.count, "savedBinsOn": binsOn.count,
+            "savedBinsOff": binsOff.count, "savedBinsOn": binsOn.count, "binsWithoutAnyPhotoAfterGuard": lostBins,
+            "oldPhotosWithoutSubstitute": withoutSubstitute.count,
+            "oldPhotosSubstitutedOnlyOutsideTheDuplicateRadius": outsideDuplicateRadius,
             "longestGapOffSeconds": gapOff.b.rel - gapOff.a.rel,
             "longestGapOn": onGapInfo,
             "guardOffSavesInsideTheGuardOnGap": offInside,

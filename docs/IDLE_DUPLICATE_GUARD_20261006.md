@@ -85,3 +85,22 @@ The new XCTest file `GonggiTests/IdleDuplicateGuardTests.swift` encodes the same
 - Baseline 830fa89 vs branch, same full command: 27 failing cases on 830fa89, the same 27 on the branch (pre-existing: Build63PhaseLocalTests 11, DirectionCaptureGuideTests 4,
   ServiceIATests 3, PrimaryGuidancePresenterTests 2, CaptureCandidateSafetyCapPresentationTests 2, VRPlacementMathTests, SpaceRecordAsyncContractTests,
   SpaceLinkMathTests, GuidanceRuleEngineTests, CaptureQualityStateTests 1 each). New on the branch: only the coverage test above.
+
+## Lost view-direction bin and the 2.1 s gap (local analysis, no new CI run)
+
+Method: the Python reference replay `tmp/v1_036/e2e_angular_pending_rescue_replay.py` (the file PoseReplayHarness mirrors, in the gonggi-ios-tf65 worktree) with the guard
+added to its `evaluate`. It reproduces the Swift CI numbers exactly (guard off 453/424/29/25, gap 1.4838 s; guard on 427/396/31/27, gap 2.1173 s; bins 87 -> 86, lost bin (18, 7)),
+so its saved-photo lists are used. Script: `scripts/lost_view_bin_analysis.py`. Pose only: no images exist locally, so "image overlap" is the pose frustum proxy.
+
+- Lost bin (yaw 90..105, pitch 15..30): ONE old photo, t = 86.328 s, yaw 102.0, pitch 15.4 (0.4 deg above the bin edge). Replacements kept by the guard run:
+  86.161 s (0.167 s earlier, 1.6 cm, 2.5 deg, frustum overlap 1.00, bin pitch 14.6 = the neighbouring bin) and 86.794 s (+0.467 s, 1.5 cm, 7.2 deg, overlap 0.80).
+  Verdict: the observation was kept; the bin count is a 15 deg edge artifact.
+- Why the old photo is absent: not an `idle_near_duplicate` rejection of that frame. In the guard-on chain the frame is `translation_too_small` (1.6 cm / 2.5 deg from the guard-on photo
+  0.167 s earlier). The guard rejected 878 candidate frames in the run (first at 1.15 s, 9 frames within the 2 s before 86.3 s, the last at 85.944 s), which re-timed the saves, so both
+  chains alternate (old-only and new-only photos interleave every ~0.1-0.7 s) and the anchors differ.
+- 2.117 s gap (135.28-137.39 s): no `idle_near_duplicate` inside it (translation_too_small 115, min_interval 11). The guard did reject three frames just before it (135.226-135.26 s) and many
+  earlier, so the gap exists because the guard-on chain had a different last save / reconstruction anchor, after which the unchanged rules (2.5 cm or 8 deg) found nothing to save for
+  2.1 s (camera moved 2.5 cm, turned up to 6.2 deg). The old chain saved a 1.5 cm / 0.5 deg near duplicate at 136.01 s and a photo at 137.24 s.
+- All 454 old photos (incl. end-of-stream) have a new-run photo within +-2 s: 393 inside the duplicate radius (<5 cm and <3 deg), all 454 within 10 cm / 6 deg, nearest-photo frustum overlap >= 0.80.
+- Test: the 15 deg bin-count assertion was replaced by a substitute-observation assertion (every old photo needs a new photo within +-2 s, <= 10 cm, <= 8 deg, frustum overlap >= 0.32 -
+  position, direction and overlap together; bounds from existing constants). The replay predicts 0 failures; this Swift assertion has not been run on CI yet. Bin counts are still printed.
