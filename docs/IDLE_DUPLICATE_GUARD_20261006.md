@@ -69,3 +69,19 @@ The new XCTest file `GonggiTests/IdleDuplicateGuardTests.swift` encodes the same
   ServiceIATests 3, PrimaryGuidancePresenterTests 2, CaptureCandidateSafetyCapPresentationTests 2, VRPlacementMath, SpaceRecordAsyncContract, SpaceLinkMath,
   GuidanceRuleEngine, CaptureQualityState: guidance copy / UI maths), not compared against a baseline run of 830fa89 (unconfirmed that they pre-exist).
 - The golden test was then changed to check the old goldens with the guard off and the measured values with the guard on (not re-run on CI yet).
+
+## CI run 37392246001 (commit 22b0616): fixed golden test, longest gap, baseline comparison
+
+- Golden test now passes: with the guard OFF the real Swift replay reproduces the old Python goldens exactly (all three variants), so the guard is the only
+  difference. Guard ON values (printed by Swift): original 427 / recon 396 / bridge 31 / rescue 27 / gap 2.117 s; seed2 414 / 377 / 37 / 33 / 2.116 s;
+  seed3 413 / 378 / 35 / 30 / 2.111 s. Link violations 0, recon link rejects 0, chain intact, cap not reached in every variant.
+- Longest live gap (2.117 s, 135.28 -> 137.39 s of V1_036): tracking normal for all 126 frames, max movement from the last saved photo 2.5 cm (path 6.8 cm),
+  max turn 6.2 deg, selector reasons: translation_too_small 115, min_interval 11 (no idle_near_duplicate in the gap). Guard-off saved two photos inside it:
+  one 1.5 cm / 0.5 deg from the previous photo (a near duplicate, now suppressed) and one 2.5 cm / 5.4 deg (the next photo now comes at 137.39 s instead
+  of 137.24 s). So: a nearly still camera with a slow 6 deg turn that the old rules (2.5 cm or 8 deg) do not save either.
+- Coverage: photos per 15x15 deg view-direction bin: 87 bins (off) vs 86 (on); bin yaw 18 / pitch 7 lost its only photo. The new strict test
+  `testV1036GuardKeepsLinksAndCoverageAndExplainsTheLongestGap` therefore FAILS (kept red, not weakened). Whether a neighbouring bin / nearby photo covers that
+  direction was not measured.
+- Baseline 830fa89 vs branch, same full command: 27 failing cases on 830fa89, the same 27 on the branch (pre-existing: Build63PhaseLocalTests 11, DirectionCaptureGuideTests 4,
+  ServiceIATests 3, PrimaryGuidancePresenterTests 2, CaptureCandidateSafetyCapPresentationTests 2, VRPlacementMathTests, SpaceRecordAsyncContractTests,
+  SpaceLinkMathTests, GuidanceRuleEngineTests, CaptureQualityStateTests 1 each). New on the branch: only the coverage test above.

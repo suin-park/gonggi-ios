@@ -1183,11 +1183,12 @@ final class PendingAngularRescueTests: XCTestCase {
             ("seed2", jitter2, Expected(liveRecon: 398, liveBridge: 37, liveN: 435, maxGap: 2.1842, rescue: 33, link: 0, cap: false)),
             ("seed3", jitter3, Expected(liveRecon: 394, liveBridge: 37, liveN: 431, maxGap: 2.1892, rescue: 31, link: 0, cap: false)),
         ]
-        // Guard on: the "original" run was measured completely on CI (run 37388800564, every value reported by a failing
-        // assertion). The jitter seeds are NOT pinned: only some of their values were observed, so they are checked for
-        // the invariants below and their values are printed (see report) instead of being guessed.
+        // Guard on: every value below was printed by the real Swift replay on CI (run 37392246001, report
+        // V1_036_SWIFT_VS_PYTHON, guardOn/*), not estimated from failure messages.
         let guardOn: [(String, [PoseReplayHarness.PoseRow], Expected)] = [
             ("original", poses, Expected(liveRecon: 396, liveBridge: 31, liveN: 427, maxGap: 2.1173, rescue: 27, link: 0, cap: false)),
+            ("seed2", jitter2, Expected(liveRecon: 377, liveBridge: 37, liveN: 414, maxGap: 2.1160, rescue: 33, link: 0, cap: false)),
+            ("seed3", jitter3, Expected(liveRecon: 378, liveBridge: 35, liveN: 413, maxGap: 2.1113, rescue: 30, link: 0, cap: false)),
         ]
         let savedGuard = CaptureBridgeConfig.idleDuplicateGuardEnabled
         defer { CaptureBridgeConfig.idleDuplicateGuardEnabled = savedGuard }
@@ -1222,20 +1223,6 @@ final class PendingAngularRescueTests: XCTestCase {
                 XCTAssertEqual(m.maxLiveNoAcceptSec, exp.maxGap, accuracy: 0.05, "\(tag) max live gap")
                 XCTAssertTrue(m.chainIntactLive, "\(tag) chain intact")
             }
-        }
-        // Guard on, jitter seeds: invariants only (values printed, not pinned).
-        CaptureBridgeConfig.idleDuplicateGuardEnabled = true
-        for (label, input) in [("seed2", jitter2), ("seed3", jitter3)] {
-            let m = PoseReplayHarness.replay(poses: input)
-            report["guardOn/\(label)"] = [
-                "swiftLiveN": m.liveN, "swiftLiveRecon": m.liveRecon, "swiftLiveBridge": m.liveBridge,
-                "swiftMaxLiveGap": m.maxLiveNoAcceptSec, "swiftLinkViolations": m.linkViolations,
-                "swiftRescueFlushN": m.rescueFlushN, "swiftCapReached": m.capReached,
-            ]
-            XCTAssertEqual(m.linkViolations, 0, "guardOn/\(label) link violations")
-            XCTAssertEqual(m.reconLinkRejects, 0, "guardOn/\(label) recon link rejects")
-            XCTAssertFalse(m.capReached, "guardOn/\(label) cap")
-            XCTAssertTrue(m.chainIntactLive, "guardOn/\(label) chain intact")
         }
         // Visible in XCTest log for Gate report.
         let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
