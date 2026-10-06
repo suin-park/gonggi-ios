@@ -208,6 +208,14 @@ jobs:
               -only-testing:GonggiTests/MobileAuthFreshTokenTests
               -only-testing:GonggiTests/SpatialCapturePackageTests
               -only-testing:GonggiTests/LibraryCardRoutingTests
+              # idle near-duplicate guard (space + product capture), build 93
+              -only-testing:GonggiTests/IdleDuplicateGuardTests
+              -only-testing:GonggiTests/PendingAngularRescueTests
+              -only-testing:GonggiTests/CaptureBridgePolicyTests
+              -only-testing:GonggiTests/CaptureBridgeReplayTests
+              -only-testing:GonggiTests/ReanchorAfterStallTests
+              -only-testing:GonggiTests/AdaptiveKeyframeTF62Tests
+              -only-testing:GonggiTests/CaptureDataFoundationTests
             )
           fi
           set +e
