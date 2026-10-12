@@ -16,6 +16,7 @@ enum RecordHomeCopy {
     static let title = "기록"
     static let productSection = "3D 자산"
     static let spaceSection = "공간"
+    static let storeSection = StoreShelfCopy.sectionTitle
 
     static let photoTo3D = Choice(title: "사진으로 3D 만들기", line: "사진 한 장으로 입체 모습을 만들어요",
                                   icon: "photo.on.rectangle.angled")
@@ -24,6 +25,11 @@ enum RecordHomeCopy {
     static let space360 = Choice(title: "360 공간", line: "한 자리에서 주변을 둘러봐요",
                                  icon: "arrow.triangle.2.circlepath.circle")
     static let walkableSpace = Choice(title: "걸어보는 공간", line: "공간 안을 이동하며 볼 수 있어요", icon: "figure.walk")
+
+    static let recordShelf = Choice(title: StoreShelfCopy.recordTitle, line: StoreShelfCopy.recordLine,
+                                    icon: "square.stack.3d.up")
+    static let findProduct = Choice(title: StoreShelfCopy.findTitle, line: StoreShelfCopy.findLine,
+                                    icon: "magnifyingglass")
 
     static let photoAccepted = "3D 생성을 시작했어요. 보관함의 3D 자산에서 결과를 볼 수 있어요."
     static let walkableUnavailable = "이 계정에서는 아직 걸어보는 공간을 사용할 수 없어요."
@@ -60,6 +66,24 @@ enum RecordSpaceOption: Equatable {
         switch self {
         case .space360: return RecordHomeCopy.space360
         case .walkable: return RecordHomeCopy.walkableSpace
+        }
+    }
+}
+
+/// 매장 section (under 3D 자산 and 공간): 매대 기록하기 first, 제품 찾기 second. Listed only behind the
+/// development flag `StoreShelfFeatureFlags.menuVisible`.
+enum RecordStoreOption: Equatable {
+    case recordShelf
+    case findProduct
+
+    static func visible(menuVisible: Bool) -> [RecordStoreOption] {
+        menuVisible ? [.recordShelf, .findProduct] : []
+    }
+
+    var choice: RecordHomeCopy.Choice {
+        switch self {
+        case .recordShelf: return RecordHomeCopy.recordShelf
+        case .findProduct: return RecordHomeCopy.findProduct
         }
     }
 }
@@ -171,6 +195,9 @@ struct RecordHomeScreen<Footer: View>: View {
     let spaceOptions: [RecordSpaceOption]
     let onProduct: (RecordProductOption) -> Void
     let onSpace: (RecordSpaceOption) -> Void
+    /// 매장 section; empty hides it (the default, so existing callers are unchanged).
+    var storeOptions: [RecordStoreOption] = []
+    var onStore: (RecordStoreOption) -> Void = { _ in }
     /// DEBUG screenshots: start scrolled to the last row (large-text check).
     var scrollToLastRow = false
     @ViewBuilder var footer: () -> Footer
@@ -199,7 +226,18 @@ struct RecordHomeScreen<Footer: View>: View {
                             ForEach(Array(spaceOptions.enumerated()), id: \.offset) { index, option in
                                 if index > 0 { RecordRowDivider() }
                                 RecordChoiceRow(choice: option.choice) { onSpace(option) }
-                                    .id(index == spaceOptions.count - 1 ? Self.lastRowId : "space-\(index)")
+                                    .id(index == spaceOptions.count - 1 && storeOptions.isEmpty
+                                        ? Self.lastRowId : "space-\(index)")
+                            }
+                        }
+                        if !storeOptions.isEmpty {
+                            Spacer(minLength: 32).frame(maxHeight: 48)
+                            RecordSection(title: RecordHomeCopy.storeSection) {
+                                ForEach(Array(storeOptions.enumerated()), id: \.offset) { index, option in
+                                    if index > 0 { RecordRowDivider() }
+                                    RecordChoiceRow(choice: option.choice) { onStore(option) }
+                                        .id(index == storeOptions.count - 1 ? Self.lastRowId : "store-\(index)")
+                                }
                             }
                         }
                         footer()
@@ -209,6 +247,8 @@ struct RecordHomeScreen<Footer: View>: View {
                     .frame(minHeight: geo.size.height, alignment: .top)
                 }
                 .scrollBounceBehavior(.basedOnSize)
+                // The last row must scroll clear of the tab bar and the home indicator.
+                .safeAreaInset(edge: .bottom) { Color.clear.frame(height: GonggiSpacing.lg) }
                 .onAppear {
                     guard scrollToLastRow else { return }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

@@ -85,6 +85,9 @@ struct CaptureContainerView: View {
         case threeDSpaceRecord
         /// Physical product capture from the 기록 row (also reachable from the DEBUG list).
         case productObjectCapture
+        /// 매장: 매대 기록하기 / 제품 찾기 (development flag; see StoreShelfFeatureFlags).
+        case storeRecord
+        case storeSearch
         case debug(CaptureMode)
     }
 
@@ -170,6 +173,24 @@ struct CaptureContainerView: View {
             ObjectCaptureFlowView(onClose: { activeFlow = .none })
                 .environmentObject(appState)
         }
+        .fullScreenCover(isPresented: Binding(
+            get: { activeFlow == .storeRecord },
+            set: { presented in
+                if !presented { activeFlow = .none }
+            }
+        )) {
+            StoreShelfFlowView(mode: .record, onClose: { activeFlow = .none })
+                .environmentObject(appState)
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { activeFlow == .storeSearch },
+            set: { presented in
+                if !presented { activeFlow = .none }
+            }
+        )) {
+            StoreShelfFlowView(mode: .search, onClose: { activeFlow = .none })
+                .environmentObject(appState)
+        }
         .sheet(isPresented: $showPhotoTo3D) {
             // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기".
             CreateAssetFlowView(
@@ -251,6 +272,14 @@ struct CaptureContainerView: View {
                     activeFlow = .directionCapture
                 case .walkable:
                     openWalkableSpace()
+                }
+            },
+            storeOptions: RecordStoreOption.visible(menuVisible: StoreShelfFeatureFlags.menuVisible),
+            onStore: { option in
+                GonggiHaptics.medium()
+                switch option {
+                case .recordShelf: activeFlow = .storeRecord
+                case .findProduct: activeFlow = .storeSearch
                 }
             },
             scrollToLastRow: scrollToLastRow

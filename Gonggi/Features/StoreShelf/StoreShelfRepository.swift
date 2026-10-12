@@ -1,0 +1,127 @@
+import Foundation
+
+/// Read side. The search camera receives only this (plus the diagnostics writer below), so a product held up to the
+/// camera can never reach a call that rewrites a recorded shelf position.
+protocol StoreShelfReading {
+    func stores() -> [StoreRecord]
+    func worldMapInfo(storeId: String) -> StoreWorldMapInfo?
+    func loadWorldMapData(storeId: String) throws -> Data
+    func markers(storeId: String) -> [StoreTestMarker]
+    func restoreAttempts(storeId: String) -> [StoreRestoreAttempt]
+}
+
+/// Shelf data writer: record mode only.
+protocol StoreShelfWriting: StoreShelfReading {
+    func createStore(name: String) throws -> StoreRecord
+    func saveWorldMap(storeId: String, data: Data, info: StoreWorldMapInfo, markers: [StoreTestMarker]) throws
+}
+
+/// Diagnostics only (restore attempts). It does not touch shelf positions or the saved map.
+protocol StoreRestoreLogWriting {
+    func appendRestoreAttempt(storeId: String, attempt: StoreRestoreAttempt) throws
+}
+
+enum StoreShelfRepositoryError: Error, Equatable {
+    case emptyName
+    case unknownStore
+    case noWorldMap
+}
+
+/// Files under Application Support/StoreShelf/<storeId>/ (not the caches folder: the system may purge that).
+/// `index.json` lists stores; per store: `worldmap.arworldmap`, `worldmap.json`, `markers.json`, `attempts.json`.
+final class StoreShelfRepository: StoreShelfWriting, StoreRestoreLogWriting {
+    private let root: URL
+    private let fm = FileManager.default
+
+    init(rootURL: URL? = nil) {
+        if let rootURL {
+            root = rootURL
+        } else {
+            let base = (try? FileManager.default.url(
+                for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+            )) ?? FileManager.default.temporaryDirectory
+            root = base.appendingPathComponent("StoreShelf", isDirectory: true)
+        }
+    }
+
+    static let shared = StoreShelfRepository()
+
+    // MARK: Reading
+
+    func stores() -> [StoreRecord] {
+        let list: [StoreRecord] = read([StoreRecord].self, from: root.appendingPathComponent("index.json")) ?? []
+        return list.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func worldMapInfo(storeId: String) -> StoreWorldMapInfo? {
+        read(StoreWorldMapInfo.self, from: dir(storeId).appendingPathComponent("worldmap.json"))
+    }
+
+    func loadWorldMapData(storeId: String) throws -> Data {
+        let url = dir(storeId).appendingPathComponent("worldmap.arworldmap")
+        guard fm.fileExists(atPath: url.path) else { throw StoreShelfRepositoryError.noWorldMap }
+        return try Data(contentsOf: url)
+    }
+
+    func markers(storeId: String) -> [StoreTestMarker] {
+        read([StoreTestMarker].self, from: dir(storeId).appendingPathComponent("markers.json")) ?? []
+    }
+
+    func restoreAttempts(storeId: String) -> [StoreRestoreAttempt] {
+        read([StoreRestoreAttempt].self, from: dir(storeId).appendingPathComponent("attempts.json")) ?? []
+    }
+
+    // MARK: Writing
+
+    func createStore(name: String) throws -> StoreRecord {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw StoreShelfRepositoryError.emptyName }
+        let record = StoreRecord(id: UUID().uuidString, name: String(trimmed.prefix(40)), createdAt: Date())
+        try fm.createDirectory(at: dir(record.id), withIntermediateDirectories: true)
+        var all = stores()
+        all.append(record)
+        try write(all, to: root.appendingPathComponent("index.json"))
+        return record
+    }
+
+    func saveWorldMap(storeId: String, data: Data, info: StoreWorldMapInfo, markers: [StoreTestMarker]) throws {
+        guard stores().contains(where: { $0.id == storeId }) else { throw StoreShelfRepositoryError.unknownStore }
+        let d = dir(storeId)
+        try fm.createDirectory(at: d, withIntermediateDirectories: true)
+        // Map file first, then its description: an interrupted save never leaves a description for a map that was
+        // not written.
+        try data.write(to: d.appendingPathComponent("worldmap.arworldmap"), options: .atomic)
+        try write(markers, to: d.appendingPathComponent("markers.json"))
+        try write(info, to: d.appendingPathComponent("worldmap.json"))
+    }
+
+    func appendRestoreAttempt(storeId: String, attempt: StoreRestoreAttempt) throws {
+        guard stores().contains(where: { $0.id == storeId }) else { throw StoreShelfRepositoryError.unknownStore }
+        var all = restoreAttempts(storeId: storeId)
+        all.append(attempt)
+        try write(Array(all.suffix(100)), to: dir(storeId).appendingPathComponent("attempts.json"))
+    }
+
+    // MARK: Files
+
+    private func dir(_ storeId: String) -> URL {
+        // The id is a UUID we generated; keep only safe characters regardless.
+        let safe = storeId.filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        return root.appendingPathComponent(safe.isEmpty ? "_" : safe, isDirectory: true)
+    }
+
+    private func read<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(type, from: data)
+    }
+
+    private func write<T: Encodable>(_ value: T, to url: URL) throws {
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(value).write(to: url, options: .atomic)
+    }
+}
