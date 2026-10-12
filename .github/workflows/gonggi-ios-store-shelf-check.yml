@@ -120,6 +120,10 @@ jobs:
             -only-testing:GonggiTests/StoreShelfTests \
             -only-testing:GonggiTests/StoreShelfCoreTests \
             -only-testing:GonggiTests/StoreShelfCoreTests2 \
+            -only-testing:GonggiTests/StoreShelfCoreTests3 \
+            -only-testing:GonggiTests/StoreShelfCoreTests4 \
+            -only-testing:GonggiTests/StoreShelfCoreTests5 \
+            -only-testing:GonggiTests/ShelfRecognitionFixtureTests \
             -only-testing:GonggiTests/RecordHomeTests \
             CODE_SIGNING_ALLOWED=NO \
             2>&1 | tee store-tests.log
