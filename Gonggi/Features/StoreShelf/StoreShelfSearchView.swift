@@ -77,6 +77,8 @@ final class StoreShelfSearchViewModel: ObservableObject {
     @Published var nameResults: [ShelfProduct] = []
     @Published var assetCapability: StoreShelfAssetCapability?
     @Published var recognitionNote: String?
+    /// Where the search stands: looking, candidates, unregistered, or one product locked (guidance runs).
+    @Published private(set) var session = ShelfSearchSession()
 
     private var cancellables = Set<AnyCancellable>()
     private var metric: StoreSearchMetric
@@ -121,7 +123,7 @@ final class StoreShelfSearchViewModel: ObservableObject {
         let engine = ShelfSearchEngine(data: data, featureRevision: revision)
         self.engine = engine
         engine.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
-        engine.$outcome.receive(on: DispatchQueue.main).sink { [weak self] o in self?.recognized(o) }.store(in: &cancellables)
+        engine.onFrame = { [weak self] result in self?.handleFrame(result) }
         alignment.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         let recognitionOn = recognitionNote == nil
         controller.onFrame = { [weak self] frame in
@@ -186,29 +188,80 @@ final class StoreShelfSearchViewModel: ObservableObject {
 
     // MARK: Recognition and selection
 
-    private func recognized(_ outcome: ShelfMatchOutcome?) {
-        guard let outcome else { return }
-        if metric.recognizedAt == nil { metric.recognizedAt = Date() }
-        switch outcome {
-        case .matched(let c):
-            metric.outcome = "matched"
-            metric.matchedProductId = c.productId
-            selectProduct(c.productId)
-        case .uncertain: metric.outcome = "uncertain"
-        case .unregistered: metric.outcome = "unregistered"
-        case .noGallery: metric.outcome = "noGallery"
+    private var uptime: Double { ProcessInfo.processInfo.systemUptime }
+
+    /// One analysed frame: vote over frames (the session), settle an unclear image result with text read on the pack,
+    /// lock once. Nothing here opens a guidance screen: the screen follows `session.state`.
+    private func handleFrame(_ r: ShelfSearchFrameResult) {
+        guard !session.isLocked else { return }
+        var event: ShelfSearchSession.Event?
+        if let o = r.outcome {
+            event = session.ingest(o, time: uptime)
+        } else {
+            event = session.ingestEmpty()
         }
-        saveMetric()
+        if case .candidates(let list) = session.state, !r.readLines.isEmpty {
+            let ids = list.map(\.productId)
+            if let id = ShelfTextResolver.resolve(candidates: ids, names: nameKeys(for: ids), readLines: r.readLines) {
+                event = session.settleWithText(productId: id) ?? event
+            }
+        }
+        if metric.recognizedAt == nil, r.outcome != nil { metric.recognizedAt = Date() }
+        apply(event)
     }
 
-    func selectProduct(_ id: String) {
+    private func nameKeys(for ids: [String]) -> [String: [String]] {
+        var out: [String: [String]] = [:]
+        for id in ids {
+            guard let p = data.product(id) else { continue }
+            var names = [p.name] + (p.ocrTokens ?? [])
+            if let alias = source.productLinks[id]?.catalogName { names.append(alias) }
+            out[id] = names
+        }
+        return out
+    }
+
+    private func apply(_ event: ShelfSearchSession.Event?) {
+        guard let event else { return }
+        switch event {
+        case .locked(let id, let src):
+            engine?.setPaused(true)
+            metric.outcome = (src == .image || src == .text || src == .photo) ? "matched" : "picked"
+            lockProduct(id)
+        case .candidates:
+            metric.outcome = "uncertain"
+            saveMetric()
+        case .unregistered:
+            metric.outcome = "unregistered"
+            saveMetric()
+        case .cleared, .released:
+            break
+        }
+        objectWillChange.send()
+    }
+
+    private func lockProduct(_ id: String) {
         selectedProductId = id
         metric.matchedProductId = id
+        if metric.recognizedAt == nil { metric.recognizedAt = Date() }
         chosenPlacement = nil
         plan = nil
         assetCapability = nil
         choosePlacement(forProduct: id)
         loadAssetCapability(productId: id)
+        saveMetric()
+    }
+
+    /// A product chosen by hand: from the candidates or from the name search.
+    func selectProduct(_ id: String) {
+        let origin: ShelfSearchSession.Source = nameResults.contains(where: { $0.id == id }) ? .name : .pick
+        apply(session.lock(productId: id, source: origin))
+    }
+
+    /// Name shown for a product: the verified catalogue name when one is linked, else the stored name.
+    func displayName(_ p: ShelfProduct) -> String {
+        if let n = source.productLinks[p.id]?.catalogName, !n.trimmingCharacters(in: .whitespaces).isEmpty { return n }
+        return p.name
     }
 
     func choosePlacement(forProduct id: String) {
@@ -237,15 +290,25 @@ final class StoreShelfSearchViewModel: ObservableObject {
             return
         }
         engine.analyze(photo: cg) { [weak self] outcome in
-            if outcome == nil { self?.infoText = "사진에서 제품을 읽지 못했어요" }
+            guard let self else { return }
+            guard let outcome else {
+                self.infoText = "사진에서 제품을 읽지 못했어요"
+                return
+            }
+            self.apply(self.session.present(outcome, source: .photo))
         }
     }
 
     func searchByName() {
-        nameResults = ShelfNameSearch.search(nameQuery, products: data.products)
+        let aliases = source.productLinks.compactMapValues { $0.catalogName.map { [$0] } }
+        nameResults = ShelfNameSearch.search(nameQuery, products: data.products, aliases: aliases)
     }
 
+    /// End of a guidance / "다른 제품 찾기": back to looking at the camera. The product just ended is not locked again
+    /// immediately while the camera still points at it.
     func newSearch() {
+        _ = session.release(now: uptime)
+        engine?.setPaused(false)
         engine?.reset()
         selectedProductId = nil
         chosenPlacement = nil
@@ -270,6 +333,12 @@ final class StoreShelfSearchViewModel: ObservableObject {
 
     private func saveMetric() {
         try? repository.updateSearch(metric)
+    }
+
+    /// Seconds from the first recognised frame to the start of guidance (nil until both happened).
+    var secondsRecognitionToGuidance: Double? {
+        guard let r = metric.recognizedAt, let g = metric.guidanceStartedAt else { return nil }
+        return g.timeIntervalSince(r)
     }
 
     // MARK: Linked 3D asset (existing catalog product; nothing is generated here)
@@ -590,7 +659,7 @@ struct StoreShelfSearchView: View {
     private var recognition: some View {
         if let productId = model.selectedProductId, let product = model.data.product(productId) {
             productResult(product)
-        } else if case .uncertain(let candidates)? = model.engine?.outcome {
+        } else if case .candidates(let candidates) = model.session.state {
             VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
                 Text("비슷한 제품이 여러 개예요. 맞는 제품을 골라 주세요")
                     .font(.footnote.weight(.semibold))
@@ -604,7 +673,7 @@ struct StoreShelfSearchView: View {
                 }
                 searchActions
             }
-        } else if case .unregistered? = model.engine?.outcome {
+        } else if case .unregistered = model.session.state {
             VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
                 Text("등록되지 않은 제품이에요")
                     .font(.footnote.weight(.semibold))
@@ -616,7 +685,7 @@ struct StoreShelfSearchView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-                Text(model.recognitionNote == nil ? "찾을 제품을 화면 가운데에 비춰 주세요" : "제품 이름으로 찾아 주세요")
+                Text(model.recognitionNote == nil ? "찾을 제품을 화면 가운데에 비춰 주세요. 자동으로 찾아요" : "제품 이름으로 찾아 주세요")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
                 searchActions
@@ -637,7 +706,7 @@ struct StoreShelfSearchView: View {
             }
             ForEach(model.nameResults) { p in
                 Button { model.selectProduct(p.id) } label: {
-                    Text(p.name).font(.footnote).foregroundStyle(.white)
+                    Text(model.displayName(p)).font(.footnote).foregroundStyle(.white)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 6)
                 }
@@ -658,8 +727,8 @@ struct StoreShelfSearchView: View {
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .background(.white.opacity(0.18), in: Capsule())
                 }
-                if model.engine?.outcome != nil || model.selectedProductId != nil {
-                    Button("다시 찾기") { model.newSearch() }
+                if model.session.state != .searching || model.selectedProductId != nil {
+                    Button(model.selectedProductId != nil ? "안내 끝내고 다른 제품 찾기" : "다시 찾기") { model.newSearch() }
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12).padding(.vertical, 8)
@@ -676,7 +745,7 @@ struct StoreShelfSearchView: View {
                 Image(uiImage: img).resizable().scaledToFit().frame(width: 72, height: 72)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            Text(p.name).font(.caption).foregroundStyle(.white).lineLimit(1)
+            Text(model.displayName(p)).font(.caption).foregroundStyle(.white).lineLimit(1)
         }
     }
 
@@ -689,7 +758,7 @@ struct StoreShelfSearchView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(product.name).font(.headline).foregroundStyle(.white)
+                    Text(model.displayName(product)).font(.headline).foregroundStyle(.white)
                     Text("기록된 진열 위치 \(placements.count)곳").font(.footnote).foregroundStyle(.white.opacity(0.85))
                 }
                 Spacer()
@@ -703,7 +772,8 @@ struct StoreShelfSearchView: View {
                     if let note = plan.routeNote { Text(note).font(.caption).foregroundStyle(.white.opacity(0.8)) }
                 }
             } else if model.chosenPlacement != nil, !model.alignment.state.isAligned {
-                Text("공간이 맞춰지면 카메라 화면에 안내해요").font(.footnote).foregroundStyle(.white.opacity(0.85))
+                Text("제품을 찾았어요. 주변을 천천히 비추면 공간이 맞춰지고, 맞춰지면 바로 위치를 안내해요")
+                    .font(.footnote).foregroundStyle(.white.opacity(0.85))
             }
             assetButtons
             Text("진열 위치의 기록이며 현재 재고는 확인하지 않아요").font(.caption).foregroundStyle(.white.opacity(0.65))

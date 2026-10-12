@@ -25,6 +25,8 @@ struct ShelfCrop {
     var jpeg: Data
     var sharpness: Float
     var color: [Float]
+    /// Luma standard deviation of the crop: near 0 for a flat strip (door edge, light bar, empty wall).
+    var lumaStd: Float = 0
 }
 
 final class ShelfProductDetector {
@@ -170,7 +172,7 @@ final class ShelfAppearanceExtractor {
         let sharp = StoreImageStats.laplacianVariance(luma: luma, width: 64, height: 64)
         let rgba = rgbaPixels(cg, side: 32)
         let color = StoreImageStats.colorDescriptor(rgba: rgba, width: 32, height: 32)
-        return ShelfCrop(image: cg, jpeg: jpeg, sharpness: sharp, color: color)
+        return ShelfCrop(image: cg, jpeg: jpeg, sharpness: sharp, color: color, lumaStd: StoreImageStats.lumaStd(luma: luma))
     }
 
     private func gray(_ cg: CGImage, side: Int) -> [UInt8] {
@@ -229,6 +231,79 @@ final class ShelfAppearanceExtractor {
         default:
             return []
         }
+    }
+}
+
+extension ShelfAppearanceExtractor {
+    /// A larger upright crop (long side `longSide`) for reading text and barcodes. Not stored.
+    func cropForText(pixelBuffer: CVPixelBuffer, rect: StoreImageSpace.PixelRect, longSide: CGFloat = 720, padding: Float = 0.04) -> CGImage? {
+        let w = CGFloat(CVPixelBufferGetWidth(pixelBuffer)), h = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+        let padU = CGFloat(rect.width * padding), padV = CGFloat(rect.height * padding)
+        let minU = max(0, CGFloat(rect.minU) - padU), maxU = min(w, CGFloat(rect.maxU) + padU)
+        let minV = max(0, CGFloat(rect.minV) - padV), maxV = min(h, CGFloat(rect.maxV) + padV)
+        guard maxU - minU >= 16, maxV - minV >= 16 else { return nil }
+        let ciRect = CGRect(x: minU, y: h - maxV, width: maxU - minU, height: maxV - minV)
+        let upright = CIImage(cvPixelBuffer: pixelBuffer).cropped(to: ciRect).oriented(.right)
+        let ext = upright.extent
+        guard ext.width > 1, ext.height > 1 else { return nil }
+        let scale = min(2, longSide / max(ext.width, ext.height))
+        let placed = upright
+            .transformed(by: CGAffineTransform(translationX: -ext.origin.x, y: -ext.origin.y))
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        return ShelfAppearanceExtractor.textContext.createCGImage(placed, from: placed.extent)
+    }
+
+    fileprivate static let textContext = CIContext(options: nil)
+}
+
+/// Text and barcodes on a product crop. Korean and English are requested when this device / API revision supports
+/// them; what was actually used is reported in `summary` and stored with the recording's diagnostics.
+final class ShelfTextReader {
+    struct Reading {
+        var lines: [ShelfTextLine]
+        var barcodes: [String]
+    }
+
+    private let wantedLanguages = ["ko-KR", "en-US"]
+    private(set) var summary = "unchecked"
+    private var languages: [String] = []
+    private var revision = 0
+
+    init() {
+        let probe = VNRecognizeTextRequest()
+        probe.recognitionLevel = .accurate
+        revision = probe.revision
+        let supported = (try? probe.supportedRecognitionLanguages()) ?? []
+        languages = wantedLanguages.filter { supported.contains($0) }
+        if languages.isEmpty, supported.contains("en-US") { languages = ["en-US"] }
+        summary = "rev\(revision) " + (languages.isEmpty ? "none" : languages.joined(separator: ",")) + " of " + supported.joined(separator: ",")
+    }
+
+    /// True when Korean text can be read on this device.
+    var readsKorean: Bool { languages.contains("ko-KR") }
+
+    func read(_ image: CGImage) -> Reading {
+        let text = VNRecognizeTextRequest()
+        text.recognitionLevel = .accurate
+        // Brand names are often not dictionary words: no language correction.
+        text.usesLanguageCorrection = false
+        text.minimumTextHeight = 0.02
+        if !languages.isEmpty { text.recognitionLanguages = languages }
+        let barcode = VNDetectBarcodesRequest()
+        let handler = VNImageRequestHandler(cgImage: image, orientation: .up, options: [:])
+        do { try handler.perform([text, barcode]) } catch { return Reading(lines: [], barcodes: []) }
+        var lines: [ShelfTextLine] = []
+        for case let o as VNRecognizedTextObservation in text.results ?? [] {
+            guard let top = o.topCandidates(1).first else { continue }
+            let b = o.boundingBox
+            lines.append(ShelfTextLine(text: top.string, confidence: top.confidence, heightFraction: Float(b.height),
+                                       centerY: Float(1 - b.midY)))
+        }
+        var codes: [String] = []
+        for case let o as VNBarcodeObservation in barcode.results ?? [] {
+            if let p = o.payloadStringValue, p.count >= 8, p.allSatisfy({ $0.isNumber }) { codes.append(p) }
+        }
+        return Reading(lines: lines, barcodes: Array(Set(codes)).sorted())
     }
 }
 

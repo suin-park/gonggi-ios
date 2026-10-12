@@ -288,14 +288,24 @@ enum ShelfNameSearch {
         return String(folded.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) && !CharacterSet.punctuationCharacters.contains($0) })
     }
 
-    /// Exact name first, then prefix, then substring; ties in name order. An empty query returns nothing.
-    static func search(_ query: String, products: [ShelfProduct], limit: Int = 8) -> [ShelfProduct] {
+    /// Exact name first, then prefix, then substring; ties in name order. An empty query returns nothing. The stored name,
+    /// the text read on the package (`ocrTokens`) and any verified catalogue names (`aliases`, by product id) are searched.
+    static func search(_ query: String, products: [ShelfProduct], aliases: [String: [String]] = [:], limit: Int = 8) -> [ShelfProduct] {
         let q = normalize(query)
         guard !q.isEmpty else { return [] }
         var scored: [(rank: Int, product: ShelfProduct)] = []
         for p in products {
-            let n = normalize(p.name)
-            if n == q { scored.append((0, p)) } else if n.hasPrefix(q) { scored.append((1, p)) } else if n.contains(q) { scored.append((2, p)) }
+            var names = [p.name] + (aliases[p.id] ?? [])
+            if let b = p.brand { names.append(b) }
+            if let t = p.ocrTokens { names += t }
+            var best: Int?
+            for raw in names {
+                let n = normalize(raw)
+                guard !n.isEmpty else { continue }
+                let rank = n == q ? 0 : (n.hasPrefix(q) ? 1 : (n.contains(q) ? 2 : nil))
+                if let rank, rank < (best ?? Int.max) { best = rank }
+            }
+            if let best { scored.append((best, p)) }
         }
         scored.sort { ($0.rank, $0.product.name) < ($1.rank, $1.product.name) }
         return Array(scored.prefix(limit).map(\.product))

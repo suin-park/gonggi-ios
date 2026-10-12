@@ -31,6 +31,17 @@ final class StoreShelfRecordViewModel: ObservableObject {
     @Published var draft: StoreShelfData?
     @Published var draftImages: [String: Data] = [:]
     @Published var rejected: [ShelfRejectedRegion] = []
+    private(set) var diagnostics: StoreRecordingDiagnostics?
+
+    /// One line for testers: what the detection / tracking did on this pass (shown in TestFlight builds only).
+    var diagnosticsLine: String? {
+        guard let d = diagnostics else { return nil }
+        let structural = (d.droppedRegions["tooSmallPhysically"] ?? 0) + (d.droppedRegions["tooLargePhysically"] ?? 0)
+            + (d.droppedRegions["extremeAspect"] ?? 0) + (d.droppedRegions["flatTexture"] ?? 0)
+        let overlap = (d.droppedRegions["container"] ?? 0) + (d.droppedRegions["part"] ?? 0)
+        return "진단 · 프레임 \(d.processedFrames) · 검출 \(d.rawRegions) → 구조물/비제품 제외 \(structural) · 겹침 제외 \(overlap) · 관측 \(d.observations)"
+            + " · 후보 \(d.clustersBeforeMerge)→병합 \(d.clustersMerged)→\(d.candidates) · 이름 읽음 \(d.namedAutomatically)/\(d.productsAfterGrouping)"
+    }
     @Published var existingMap = false
     @Published var corrections = 0
     @Published var signMessage: String?
@@ -240,8 +251,14 @@ final class StoreShelfRecordViewModel: ObservableObject {
                 if let url = output.cropFiles[c.cropRefs[k]], let d = try? Data(contentsOf: url) { images[name] = d }
             }
         }
-        var updated = ShelfDataUpdater.apply(candidates: candidates, groups: groups, cropFileNames: names, shelf: shelf,
-                                             coverage: coverage, now: now, to: base, naming: naming).data
+        let applied = ShelfDataUpdater.apply(candidates: candidates, groups: groups, cropFileNames: names, shelf: shelf,
+                                             coverage: coverage, now: now, to: base, naming: naming)
+        var updated = applied.data
+        var diag = output.diagnostics
+        diag.productsAfterGrouping = groups.count
+        diag.namedAutomatically = applied.summary.namedAutomatically
+        diag.nameUnread = applied.summary.nameUnread
+        diagnostics = diag
         updated.walkTrail = Array((base.walkTrail + output.trail).suffix(4000))
         if let f = controller.detectedFloorY { updated.floorY = min(updated.floorY ?? f, f) }
         updated.referenceSigns = base.referenceSigns + newSigns
@@ -264,6 +281,9 @@ final class StoreShelfRecordViewModel: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, draft!.products[i].name != trimmed else { return }
         draft!.products[i].name = String(trimmed.prefix(40))
+        draft!.products[i].nameSource = ShelfNameSource.manual
+        draft!.products[i].reviewReasons.removeAll { ShelfNameReview.all.contains($0) }
+        draft!.products[i].needsReview = !draft!.products[i].reviewReasons.isEmpty
         note("rename")
     }
 
@@ -292,6 +312,24 @@ final class StoreShelfRecordViewModel: ObservableObject {
         d.products[ti].colorDescriptors += d.products[si].colorDescriptors
         d.products[ti].imageFileNames += d.products[si].imageFileNames
         d.products[ti].similarProductIds.removeAll { $0 == source || $0 == target }
+        // The merged product keeps the name a person set, else the better read name; unread placeholders never win.
+        let src = d.products[si]
+        if !d.products[ti].nameIsProtected, !ShelfProductNameExtractor.isPlaceholder(src.name),
+           src.nameIsProtected || (src.nameConfidence ?? 0) > (d.products[ti].nameConfidence ?? 0)
+            || ShelfProductNameExtractor.isPlaceholder(d.products[ti].name) {
+            d.products[ti].name = src.name
+            d.products[ti].nameSource = src.nameSource
+            d.products[ti].nameConfidence = src.nameConfidence
+            d.products[ti].brand = src.brand
+            d.products[ti].variantText = src.variantText
+            d.products[ti].volumeText = src.volumeText
+        }
+        d.products[ti].ocrTokens = Array(Set((d.products[ti].ocrTokens ?? []) + (src.ocrTokens ?? [])).sorted().prefix(24))
+        d.products[ti].barcodes = Array(Set((d.products[ti].barcodes ?? []) + (src.barcodes ?? []))).sorted()
+        if !ShelfProductNameExtractor.isPlaceholder(d.products[ti].name) {
+            d.products[ti].reviewReasons.removeAll { $0 == ShelfNameReview.unread }
+            d.products[ti].needsReview = !d.products[ti].reviewReasons.isEmpty
+        }
         for i in d.placements.indices where d.placements[i].productId == source { d.placements[i].productId = target }
         d.products.remove(at: si)
         for i in d.products.indices { d.products[i].similarProductIds.removeAll { $0 == source } }
@@ -302,9 +340,17 @@ final class StoreShelfRecordViewModel: ObservableObject {
     /// "These look alike but are different products": keeps them apart and clears the review flag.
     func confirmDistinct(productId: String) {
         guard let i = draft?.products.firstIndex(where: { $0.id == productId }) else { return }
-        draft!.products[i].needsReview = false
-        draft!.products[i].reviewReasons = []
+        draft!.products[i].reviewReasons.removeAll { !ShelfNameReview.all.contains($0) }
+        draft!.products[i].needsReview = !draft!.products[i].reviewReasons.isEmpty
         note("confirm_distinct")
+    }
+
+    /// "The automatically read name is right."
+    func confirmName(productId: String) {
+        guard let i = draft?.products.firstIndex(where: { $0.id == productId }) else { return }
+        draft!.products[i].reviewReasons.removeAll { $0 == ShelfNameReview.confirm }
+        draft!.products[i].needsReview = !draft!.products[i].reviewReasons.isEmpty
+        note("confirm_name")
     }
 
     func confirmPlacement(_ id: String) {
@@ -338,7 +384,8 @@ final class StoreShelfRecordViewModel: ObservableObject {
                 productsSaved: data.products.count, placementsSaved: data.placements.count,
                 rejectedBlurry: rejected.filter { $0.reason == .blurry }.count,
                 rejectedFewObservations: rejected.filter { $0.reason == .tooFewObservations }.count,
-                unplaceableDetections: out?.unplaceableDetections ?? 0, manualCorrections: corrections, correctionKinds: correctionKinds)
+                unplaceableDetections: out?.unplaceableDetections ?? 0, manualCorrections: corrections, correctionKinds: correctionKinds,
+                diagnostics: diagnostics)
             try repository.appendRegistration(metric)
             StoreShelfSelection.lastStoreId = store.id
             savedSummary = "제품 \(data.products.count)개, 위치 \(data.placements.count)곳을 저장했어요"
@@ -604,6 +651,11 @@ struct StoreShelfReviewView: View {
             Text("제품 \(data.products.count)개 · 위치 \(data.placements.count)곳 · 저장하지 못한 영역 \(model.rejected.count)곳")
                 .font(.subheadline)
                 .foregroundStyle(GonggiColors.textSecondary)
+            if StoreShelfFeatureFlags.testMarkersEnabled, let line = model.diagnosticsLine {
+                Text(line)
+                    .font(.caption2)
+                    .foregroundStyle(GonggiColors.textTertiary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
@@ -647,6 +699,14 @@ struct StoreShelfReviewView: View {
                     })
                     .font(.headline)
                     .foregroundStyle(GonggiColors.textPrimary)
+                    if product.nameSource == ShelfNameSource.auto, !product.reviewReasons.contains(ShelfNameReview.confirm) {
+                        Label("제품에 적힌 이름을 자동으로 읽었어요", systemImage: "text.viewfinder")
+                            .font(.caption)
+                            .foregroundStyle(GonggiColors.textTertiary)
+                    }
+                    if let volume = product.volumeText {
+                        Text(volume).font(.caption).foregroundStyle(GonggiColors.textSecondary)
+                    }
                     if product.needsReview {
                         ForEach(product.reviewReasons, id: \.self) { r in
                             Label(r, systemImage: "exclamationmark.triangle")
@@ -661,7 +721,10 @@ struct StoreShelfReviewView: View {
                 placementRow(placement)
             }
             HStack(spacing: GonggiSpacing.sm) {
-                if product.needsReview {
+                if product.reviewReasons.contains(ShelfNameReview.confirm) {
+                    Button("이름이 맞아요") { model.confirmName(productId: product.id) }
+                }
+                if product.reviewReasons.contains(where: { !ShelfNameReview.all.contains($0) }) {
                     Button("다른 제품이 맞아요") { model.confirmDistinct(productId: product.id) }
                 }
                 Button("다른 제품과 합치기") { mergeSource = product.id }

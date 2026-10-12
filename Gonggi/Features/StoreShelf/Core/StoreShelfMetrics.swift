@@ -17,6 +17,8 @@ struct StoreRegistrationMetric: Codable, Equatable, Sendable {
     /// Manual edits in the review screen (rename, delete, merge, confirm look-alike, ...).
     var manualCorrections: Int
     var correctionKinds: [String: Int]
+    /// Detection / tracking / naming counters of this pass (nil on records saved before they existed).
+    var diagnostics: StoreRecordingDiagnostics? = nil
 
     var durationSeconds: Double { finishedAt.timeIntervalSince(startedAt) }
 }

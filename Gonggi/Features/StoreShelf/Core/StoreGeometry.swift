@@ -255,6 +255,24 @@ enum ShelfPositionEstimator {
                                 cosIncidence: hit.cosIncidence, uncertaintyM: unc)
     }
 
+    /// How the view direction relates to the plane, for parallax handling of items that stand behind the plane front.
+    struct ViewGeometry: Equatable, Sendable {
+        var tanU: Float
+        var tanV: Float
+        /// World displacement for one metre of depth behind the plane along the viewing ray.
+        var rayPerDepth: Vec3
+    }
+
+    static func viewGeometry(plane: ShelfPlane, camera: StoreCameraModel, fix: ShelfPositionFix) -> ViewGeometry? {
+        let cam = plane.coordinates(of: camera.position)
+        guard cam.offset > 0.2, let dir = (fix.world - camera.position).normalized else { return nil }
+        let towardsPlane = -dir.dot(plane.normal)
+        guard towardsPlane > 0.05 else { return nil }
+        func clamp(_ x: Float) -> Float { min(3, max(-3, x)) }
+        return ViewGeometry(tanU: clamp((fix.u - cam.u) / cam.offset), tanV: clamp((fix.v - cam.v) / cam.offset),
+                            rayPerDepth: dir * (1 / towardsPlane))
+    }
+
     /// Physical size of a pixel box lying on the plane at `distance`: pinhole, ignoring the (small) tilt.
     static func physicalSize(pixelWidth: Float, pixelHeight: Float, distance: Float, camera: StoreCameraModel) -> (w: Float, h: Float) {
         (pixelWidth * distance / max(camera.fx, 1e-6), pixelHeight * distance / max(camera.fy, 1e-6))

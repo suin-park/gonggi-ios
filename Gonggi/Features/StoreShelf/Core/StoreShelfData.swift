@@ -73,6 +73,16 @@ struct ShelfProduct: Codable, Equatable, Identifiable, Sendable {
     var similarProductIds: [String]
     var needsReview: Bool
     var reviewReasons: [String]
+    /// Where the name came from: "auto" (read from the package), "manual" (typed by a person), "catalog" (verified
+    /// catalogue product). nil on data saved before names were read automatically.
+    var nameSource: String? = nil
+    var nameConfidence: Float? = nil
+    var brand: String? = nil
+    var variantText: String? = nil
+    var volumeText: String? = nil
+    /// Normalised text read on the package (name search and text-assisted recognition).
+    var ocrTokens: [String]? = nil
+    var barcodes: [String]? = nil
 }
 
 struct ShelfPlacement: Codable, Equatable, Identifiable, Sendable {
