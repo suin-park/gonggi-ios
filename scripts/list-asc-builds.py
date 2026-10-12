@@ -44,6 +44,22 @@ def main() -> int:
         pre = (b.get("relationships", {}).get("preReleaseVersion", {}).get("data") or {}).get("id")
         rows.append({"marketing": versions.get(pre), "build": a.get("version"), "state": a.get("processingState"), "uploaded": a.get("uploadedDate"), "expired": a.get("expired")})
     print(json.dumps({"bundle": bundle, "count": len(rows), "builds": rows}, ensure_ascii=False, indent=1))
+
+    # Beta distribution state (read-only): internal groups and each recent build's internal state.
+    try:
+        groups = api(f"/v1/apps/{app_id}/betaGroups?limit=20&fields[betaGroups]=name,isInternalGroup,hasAccessToAllBuilds,publicLinkEnabled", tok)
+        print("BETA_GROUPS", json.dumps([{"name": g["attributes"].get("name"), "internal": g["attributes"].get("isInternalGroup"),
+                                          "allBuilds": g["attributes"].get("hasAccessToAllBuilds"), "publicLink": g["attributes"].get("publicLinkEnabled")}
+                                         for g in groups.get("data", [])], ensure_ascii=False))
+        for b in builds.get("data", [])[:3]:
+            try:
+                d = api(f"/v1/builds/{b['id']}/buildBetaDetail", tok).get("data", {}).get("attributes", {})
+                print("BUILD_BETA_DETAIL", b["attributes"].get("version"), json.dumps({"internal": d.get("internalBuildState"), "external": d.get("externalBuildState"),
+                                                                                       "autoNotify": d.get("autoNotifyEnabled")}))
+            except Exception as exc:  # noqa: BLE001
+                print("BUILD_BETA_DETAIL", b["attributes"].get("version"), "unavailable", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001
+        print("BETA_GROUPS unavailable", type(exc).__name__)
     nums = [int(r["build"]) for r in rows if str(r["build"]).isdigit()]
     print("HIGHEST_BUILD_NUMBER", max(nums) if nums else None)
     return 0
