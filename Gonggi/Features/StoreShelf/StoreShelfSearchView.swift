@@ -281,15 +281,15 @@ final class StoreShelfSearchViewModel: ObservableObject {
         Task { [weak self] in
             do {
                 let product = try await client.fetchProduct(id: link.catalogProductId)
-                let variant = CatalogCurtainListPlaceController.resolveVariant(in: product, preferredId: nil)
-                let has3D = product.placementType == .furniture3D
-                    && (variant?.usdzUrl?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("https://") ?? false)
-                var specOK = false
-                if case .success = CatalogPlacementSpecValidator.validate(variant?.placementSpec) { specOK = true }
-                let canPlace = has3D && specOK
                 await MainActor.run {
                     guard let self, self.selectedProductId == productId else { return }
-                    self.assetCapability = StoreShelfAssetCapability(catalogProductId: link.catalogProductId, canView3D: has3D, canPlaceInSpace: canPlace)
+                    let variant = CatalogCurtainListPlaceController.resolveVariant(in: product, preferredId: nil)
+                    let has3D = product.placementType == .furniture3D
+                        && (variant?.usdzUrl?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("https://") ?? false)
+                    var specOK = false
+                    if case .success = CatalogPlacementSpecValidator.validate(variant?.placementSpec) { specOK = true }
+                    self.assetCapability = StoreShelfAssetCapability(
+                        catalogProductId: link.catalogProductId, canView3D: has3D, canPlaceInSpace: has3D && specOK)
                 }
             } catch {
                 // No buttons when the asset cannot be confirmed.
