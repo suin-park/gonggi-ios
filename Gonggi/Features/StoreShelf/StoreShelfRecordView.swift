@@ -32,6 +32,34 @@ final class StoreShelfRecordViewModel: ObservableObject {
     @Published var draftImages: [String: Data] = [:]
     @Published var rejected: [ShelfRejectedRegion] = []
     private(set) var diagnostics: StoreRecordingDiagnostics?
+    private var candidateProductIds: [String] = []
+    @Published var diagnosticsZipURL: URL?
+    @Published var diagnosticsExportError: String?
+    @Published var exportingDiagnostics = false
+
+    /// Test builds only: packs what this pass saw (frames, boxes, crops, tracking decisions, OCR, camera poses) into one
+    /// ZIP for the share sheet. Only on an explicit tap; nothing is uploaded.
+    func exportDiagnostics() {
+        guard let output, !exportingDiagnostics else { return }
+        exportingDiagnostics = true
+        diagnosticsExportError = nil
+        let bundle = StoreDiagnosticsExporter.recordingBundle(output: output, storeId: store.id,
+                                                              candidateProductIds: candidateProductIds, draft: draft)
+        let directory = output.diagParts.workDir
+        let stamp = Int(Date().timeIntervalSince1970)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try StoreDiagnosticsExporter.writeZip(bundle: bundle, directory: directory,
+                                                                         fileName: "StoreShelfDiag-record-\(stamp).zip") }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.exportingDiagnostics = false
+                switch result {
+                case .success(let url): self.diagnosticsZipURL = url
+                case .failure: self.diagnosticsExportError = "진단 자료를 만들지 못했어요"
+                }
+            }
+        }
+    }
 
     /// One line for testers: what the detection / tracking did on this pass (shown in TestFlight builds only).
     var diagnosticsLine: String? {
@@ -58,7 +86,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
     private var existing: StoreShelfData
     private var newSigns: [ShelfReferenceSign] = []
     private var signImages: [String: Data] = [:]
-    private var output: ShelfRecordingOutput?
+    private(set) var output: ShelfRecordingOutput?
     private var shelfId = UUID().uuidString
 
     init(store: StoreRecord) {
@@ -259,6 +287,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
         diag.namedAutomatically = applied.summary.namedAutomatically
         diag.nameUnread = applied.summary.nameUnread
         diagnostics = diag
+        candidateProductIds = applied.summary.candidateProductIds
         updated.walkTrail = Array((base.walkTrail + output.trail).suffix(4000))
         if let f = controller.detectedFloorY { updated.floorY = min(updated.floorY ?? f, f) }
         updated.referenceSigns = base.referenceSigns + newSigns
@@ -616,6 +645,7 @@ struct StoreShelfReviewView: View {
 
     @State private var mergeSource: String?
     @State private var renameText: [String: String] = [:]
+    @State private var showDiagnosticsShare = false
 
     private var data: StoreShelfData { model.draft ?? StoreShelfData.empty(storeId: model.store.id) }
 
@@ -630,6 +660,10 @@ struct StoreShelfReviewView: View {
             }
         }
         .background(GonggiAmbientBackground())
+        .onChange(of: model.diagnosticsZipURL) { _, url in showDiagnosticsShare = url != nil }
+        .sheet(isPresented: $showDiagnosticsShare, onDismiss: { model.diagnosticsZipURL = nil }) {
+            if let url = model.diagnosticsZipURL { CaptureExportShareSheet(items: [url]) }
+        }
         .confirmationDialog("어느 제품과 합칠까요?", isPresented: Binding(
             get: { mergeSource != nil }, set: { if !$0 { mergeSource = nil } }
         ), titleVisibility: .visible) {
@@ -789,9 +823,29 @@ struct StoreShelfReviewView: View {
             PrimaryButton(title: "저장하기", icon: "square.and.arrow.down") { model.save() }
                 .disabled(model.step == .saving || data.products.isEmpty)
             SecondaryButton(title: "더 촬영하기", icon: "camera") { model.returnToScanning() }
+            diagnosticsButton
         }
         .padding(.horizontal, 20)
         .padding(.vertical, GonggiSpacing.sm)
+    }
+
+    /// Test builds only.
+    @ViewBuilder
+    private var diagnosticsButton: some View {
+        if StoreShelfFeatureFlags.testMarkersEnabled {
+            VStack(spacing: 2) {
+                Button {
+                    model.exportDiagnostics()
+                } label: {
+                    Label(model.exportingDiagnostics ? "진단 자료 만드는 중..." : "진단 자료 내보내기", systemImage: "square.and.arrow.up")
+                        .font(.footnote.weight(.semibold))
+                }
+                .disabled(model.exportingDiagnostics || model.output == nil)
+                if let e = model.diagnosticsExportError {
+                    Text(e).font(.caption).foregroundStyle(GonggiColors.warningCritical)
+                }
+            }
+        }
     }
 
     private var savedView: some View {
@@ -810,6 +864,7 @@ struct StoreShelfReviewView: View {
                 .padding(.horizontal, 24)
             SecondaryButton(title: "나중에 게시하기", icon: "clock") { onDone() }
                 .padding(.horizontal, 40)
+            diagnosticsButton
             Spacer()
         }
     }

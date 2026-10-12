@@ -79,6 +79,39 @@ final class StoreShelfSearchViewModel: ObservableObject {
     @Published var recognitionNote: String?
     /// Where the search stands: looking, candidates, unregistered, or one product locked (guidance runs).
     @Published private(set) var session = ShelfSearchSession()
+    @Published var diagnosticsZipURL: URL?
+    @Published var diagnosticsExportError: String?
+    @Published var exportingDiagnostics = false
+    private var diagEvents: [StoreDiagSearchEvent] = []
+    private var startUptime: Double = ProcessInfo.processInfo.systemUptime
+    private var firstProductLogged = false
+
+    private func logEvent(_ kind: String, productId: String? = nil, detail: String? = nil) {
+        diagEvents.append(StoreDiagSearchEvent(t: ProcessInfo.processInfo.systemUptime - startUptime, kind: kind, productId: productId,
+                                               detail: detail))
+    }
+
+    /// Test builds only: frames, boxes, ranking and the timeline of this search into one ZIP for the share sheet.
+    func exportDiagnostics() {
+        guard let engine, !exportingDiagnostics else { return }
+        exportingDiagnostics = true
+        diagnosticsExportError = nil
+        let parts = engine.diagnosticsParts()
+        let bundle = StoreDiagnosticsExporter.searchBundle(parts: parts, storeId: source.storeId, events: diagEvents)
+        let stamp = Int(Date().timeIntervalSince1970)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try StoreDiagnosticsExporter.writeZip(bundle: bundle, directory: parts.workDir,
+                                                                         fileName: "StoreShelfDiag-search-\(stamp).zip") }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.exportingDiagnostics = false
+                switch result {
+                case .success(let url): self.diagnosticsZipURL = url
+                case .failure: self.diagnosticsExportError = "진단 자료를 만들지 못했어요"
+                }
+            }
+        }
+    }
 
     private var cancellables = Set<AnyCancellable>()
     private var metric: StoreSearchMetric
@@ -121,6 +154,9 @@ final class StoreShelfSearchViewModel: ObservableObject {
             }
         }
         let engine = ShelfSearchEngine(data: data, featureRevision: revision)
+        startUptime = ProcessInfo.processInfo.systemUptime
+        engine.startUptime = startUptime
+        logEvent("start")
         self.engine = engine
         engine.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         engine.onFrame = { [weak self] result in self?.handleFrame(result) }
@@ -146,6 +182,7 @@ final class StoreShelfSearchViewModel: ObservableObject {
             switch state {
             case .aligned(let method, _, _, _):
                 if self.metric.alignedAt == nil {
+                    self.logEvent("aligned", detail: method.rawValue)
                     self.metric.alignedAt = Date()
                     self.metric.alignmentMethod = method.rawValue
                     self.saveMetric()
@@ -207,6 +244,10 @@ final class StoreShelfSearchViewModel: ObservableObject {
             }
         }
         if metric.recognizedAt == nil, r.outcome != nil { metric.recognizedAt = Date() }
+        if !firstProductLogged, r.outcome != nil {
+            firstProductLogged = true
+            logEvent("firstProduct")
+        }
         apply(event)
     }
 
@@ -225,17 +266,22 @@ final class StoreShelfSearchViewModel: ObservableObject {
         guard let event else { return }
         switch event {
         case .locked(let id, let src):
+            logEvent("locked", productId: id, detail: src.rawValue)
             engine?.setPaused(true)
             metric.outcome = (src == .image || src == .text || src == .photo) ? "matched" : "picked"
             lockProduct(id)
         case .candidates:
+            logEvent("candidates")
             metric.outcome = "uncertain"
             saveMetric()
         case .unregistered:
+            logEvent("unregistered")
             metric.outcome = "unregistered"
             saveMetric()
-        case .cleared, .released:
-            break
+        case .cleared:
+            logEvent("cleared")
+        case .released:
+            logEvent("released")
         }
         objectWillChange.send()
     }
@@ -335,10 +381,12 @@ final class StoreShelfSearchViewModel: ObservableObject {
         try? repository.updateSearch(metric)
     }
 
-    /// Seconds from the first recognised frame to the start of guidance (nil until both happened).
+    /// Seconds from the moment the product was LOCKED to the start of guidance (nil until both happened). It includes
+    /// the wait for the space to be restored; the time to lock is `firstProduct` -> `locked` in the exported timeline.
     var secondsRecognitionToGuidance: Double? {
-        guard let r = metric.recognizedAt, let g = metric.guidanceStartedAt else { return nil }
-        return g.timeIntervalSince(r)
+        guard let l = diagEvents.last(where: { $0.kind == "locked" }), let g = diagEvents.last(where: { $0.kind == "guidance" }),
+              g.t >= l.t else { return nil }
+        return g.t - l.t
     }
 
     // MARK: Linked 3D asset (existing catalog product; nothing is generated here)
@@ -386,6 +434,7 @@ final class StoreShelfSearchViewModel: ObservableObject {
                 plan = p
                 controller.showGuidance(p, cameraPosition: frame.camera.position)
                 if metric.guidanceStartedAt == nil {
+                    logEvent("guidance", productId: selectedProductId)
                     metric.guidanceStartedAt = Date()
                     switch p.kind {
                     case .straightDirection: metric.guidanceKind = "straight"
@@ -438,6 +487,7 @@ struct StoreShelfSearchView: View {
     @StateObject private var furnitureAR = CatalogFurnitureARController()
     @State private var pickerItem: PhotosPickerItem?
     @State private var detailProductId: String?
+    @State private var showDiagnosticsShare = false
 
     init(source: StoreShelfSearchSource, onBack: @escaping () -> Void, onRecordFirst: (() -> Void)? = nil) {
         self.source = source
@@ -455,6 +505,10 @@ struct StoreShelfSearchView: View {
             }
         }
         .onDisappear { model.stop() }
+        .onChange(of: model.diagnosticsZipURL) { _, url in showDiagnosticsShare = url != nil }
+        .sheet(isPresented: $showDiagnosticsShare, onDismiss: { model.diagnosticsZipURL = nil }) {
+            if let url = model.diagnosticsZipURL { CaptureExportShareSheet(items: [url]) }
+        }
         .fullScreenCover(item: $furnitureAR.presentedARItem, onDismiss: { furnitureAR.dismissAR() }) { item in
             AssetARQuickLookView(localUsdzURL: item.url)
         }
@@ -606,6 +660,16 @@ struct StoreShelfSearchView: View {
             }
             if let text = model.infoText {
                 Text(text).font(.footnote).foregroundStyle(GonggiColors.warningCritical)
+            }
+            if StoreShelfFeatureFlags.testMarkersEnabled {
+                Button {
+                    model.exportDiagnostics()
+                } label: {
+                    Label(model.exportingDiagnostics ? "진단 자료 만드는 중..." : "진단 자료 내보내기", systemImage: "square.and.arrow.up")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                .disabled(model.exportingDiagnostics || model.engine == nil)
             }
         }
         .padding(GonggiSpacing.md)
@@ -777,6 +841,9 @@ struct StoreShelfSearchView: View {
             }
             assetButtons
             Text("진열 위치의 기록이며 현재 재고는 확인하지 않아요").font(.caption).foregroundStyle(.white.opacity(0.65))
+            if let s = model.secondsRecognitionToGuidance, StoreShelfFeatureFlags.testMarkersEnabled {
+                Text(String(format: "제품 확정 후 안내 시작까지 %.1f초", s)).font(.caption).foregroundStyle(.white.opacity(0.65))
+            }
             if StoreShelfFeatureFlags.testMarkersEnabled { verdictRow }
             searchActions
         }

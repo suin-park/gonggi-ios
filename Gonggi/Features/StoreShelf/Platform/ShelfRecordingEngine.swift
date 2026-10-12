@@ -1,6 +1,19 @@
 import CoreGraphics
 import CoreVideo
+import UIKit
 import Foundation
+
+/// What a recording pass kept for the diagnostics export (nothing leaves the device unless the person exports it).
+struct ShelfRecordingDiagParts {
+    var frames: [StoreDiagFrame]
+    var observations: [StoreDiagObservation]
+    var associations: [ShelfAssociationTrace]
+    var plane: ShelfPlane?
+    var ocrSummary: String
+    var settings: StoreDiagSettings
+    /// Folder that holds `frames/…` and `ocr/…` images; observation crops are `<workDir>/<ref>`.
+    var workDir: URL
+}
 
 /// Output of one recording pass, ready for review.
 struct ShelfRecordingOutput {
@@ -13,6 +26,7 @@ struct ShelfRecordingOutput {
     var cropFiles: [String: URL]
     var trail: [ShelfWalkSample]
     var diagnostics: StoreRecordingDiagnostics
+    var diagParts: ShelfRecordingDiagParts
 }
 
 /// Turns camera frames into merged product candidates. Detection, placement on the shelf plane and image features all
@@ -21,6 +35,9 @@ struct ShelfRecordingOutput {
 /// Per frame: detect regions -> place each on the shelf plane -> judge "is this one product?" on physical size, shape
 /// and texture -> drop containers (shelf levels) and parts (labels) among the regions of the same frame -> features ->
 /// at most one text read (OCR) where an item still lacks reads -> tracking / merging in the aggregator.
+///
+/// Every stage is also written down (frames, regions with verdicts, observations, association decisions) so that a
+/// failure can be traced to its stage offline; the person exports that explicitly.
 final class ShelfRecordingEngine: ObservableObject {
     @Published private(set) var processedFrames = 0
     @Published private(set) var trackedProducts = 0
@@ -34,6 +51,7 @@ final class ShelfRecordingEngine: ObservableObject {
     private let extractor = ShelfAppearanceExtractor()
     private let textReader = ShelfTextReader()
     private var aggregator = ShelfObservationAggregator()
+    private let filterConfig = ShelfRegionFilterConfig()
     private var plane: ShelfPlane?
     private var busy = false
     private var lastProcessedTime: Double = -10
@@ -42,12 +60,24 @@ final class ShelfRecordingEngine: ObservableObject {
     private var frames = 0
     private let workDir: URL
 
+    // Diagnostics recording (engine queue only).
+    private var diagFrames: [StoreDiagFrame] = []
+    private var diagObservations: [StoreDiagObservation] = []
+    private var diagTraces: [ShelfAssociationTrace] = []
+    private var diagFrameImages = 0
+    private var diagOcrImages = 0
+    /// One camera image in `frameImageStride` analysed frames, at most `maxFrameImages` of them, at most 1024 px.
+    private let frameImageStride = 3
+    private let maxFrameImages = 90
+    private let maxOcrImages = 40
+
     /// An item is read for text until this many of its observations carry text.
     private let textReadsWanted = 3
 
     init() {
         workDir = FileManager.default.temporaryDirectory.appendingPathComponent("StoreShelfRecording-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: workDir.appendingPathComponent("frames"), withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: workDir.appendingPathComponent("ocr"), withIntermediateDirectories: true)
         diagnostics.ocrSummary = textReader.summary
     }
 
@@ -62,6 +92,7 @@ final class ShelfRecordingEngine: ObservableObject {
     }
 
     private struct Prepared {
+        var regionIndex: Int
         var region: ShelfDetectedRegion
         var fix: ShelfPositionFix
         var geometry: ShelfPositionEstimator.ViewGeometry?
@@ -69,6 +100,7 @@ final class ShelfRecordingEngine: ObservableObject {
         var crop: ShelfCrop
         var verdict: ShelfRegionVerdict
         var clipped: Bool
+        var aspect: Float
     }
 
     /// Records where the person walks (always, also before the shelf plane exists) and, when a plane is set and
@@ -85,8 +117,15 @@ final class ShelfRecordingEngine: ObservableObject {
             let regions = self.detector.detect(pixelBuffer: frame.pixelBuffer)
             self.diagnostics.rawRegions += regions.count
 
+            var diagRegions: [StoreDiagRegion] = regions.enumerated().map { i, r in
+                StoreDiagRegion(index: i, source: r.source, score: r.score, minU: r.rect.minU, minV: r.rect.minV, maxU: r.rect.maxU,
+                                maxV: r.rect.maxV, placed: false, u: nil, v: nil, distance: nil, cosIncidence: nil, widthM: nil,
+                                heightM: nil, aspect: nil, lumaStd: nil, clipped: nil, verdict: nil, arbiter: "unplaced",
+                                observationRef: nil)
+            }
+
             var prepared: [Prepared] = []
-            for region in regions {
+            for (ri, region) in regions.enumerated() {
                 let c = region.rect.centre
                 guard let fix = ShelfPositionEstimator.estimate(plane: plane, camera: frame.camera, pixelU: c.u, pixelV: c.v) else {
                     self.diagnostics.unplaceable += 1
@@ -96,30 +135,59 @@ final class ShelfRecordingEngine: ObservableObject {
                 // product's width along the shelf.
                 let size = ShelfPositionEstimator.physicalSize(pixelWidth: region.rect.height, pixelHeight: region.rect.width,
                                                                distance: fix.distance, camera: frame.camera)
-                guard let crop = self.extractor.crop(pixelBuffer: frame.pixelBuffer, rect: region.rect) else { continue }
+                diagRegions[ri].placed = true
+                diagRegions[ri].u = fix.u
+                diagRegions[ri].v = fix.v
+                diagRegions[ri].distance = fix.distance
+                diagRegions[ri].cosIncidence = fix.cosIncidence
+                diagRegions[ri].widthM = size.w
+                diagRegions[ri].heightM = size.h
+                guard let crop = self.extractor.crop(pixelBuffer: frame.pixelBuffer, rect: region.rect) else {
+                    diagRegions[ri].arbiter = "notFeatured"
+                    continue
+                }
                 let edge: Float = 3
                 let clipped = region.rect.minU <= edge || region.rect.minV <= edge
                     || region.rect.maxU >= imageW - edge || region.rect.maxV >= imageH - edge
                 let long = max(region.rect.width, region.rect.height), short = max(1, min(region.rect.width, region.rect.height))
                 let evidence = ShelfRegionEvidence(widthM: size.w, heightM: size.h, aspect: long / short, lumaStd: crop.lumaStd, clipped: clipped)
-                let verdict = ShelfRegionFilter.assess(evidence)
-                if case .reject(let reason) = verdict { self.diagnostics.addDropped(reason.rawValue) }
-                prepared.append(Prepared(region: region, fix: fix,
+                let verdict = ShelfRegionFilter.assess(evidence, config: self.filterConfig)
+                diagRegions[ri].aspect = long / short
+                diagRegions[ri].lumaStd = crop.lumaStd
+                diagRegions[ri].clipped = clipped
+                switch verdict {
+                case .accept:
+                    diagRegions[ri].verdict = "accept"
+                case .reject(let reason):
+                    diagRegions[ri].verdict = reason.rawValue
+                    diagRegions[ri].arbiter = "notProduct"
+                    self.diagnostics.addDropped(reason.rawValue)
+                }
+                prepared.append(Prepared(regionIndex: ri, region: region, fix: fix,
                                          geometry: ShelfPositionEstimator.viewGeometry(plane: plane, camera: frame.camera, fix: fix),
-                                         size: size, crop: crop, verdict: verdict, clipped: clipped))
+                                         size: size, crop: crop, verdict: verdict, clipped: clipped, aspect: long / short))
             }
 
             // Containers (a shelf level holding several products) and parts (a label) among this frame's regions.
             let arbiter = ShelfRegionArbiter.resolve(prepared.map {
                 ShelfRegionArbiter.Item(rect: $0.region.rect, score: $0.region.score, plausible: $0.verdict.isAccepted)
             })
-            for _ in arbiter.containers { self.diagnostics.addDropped("container") }
-            for _ in arbiter.parts { self.diagnostics.addDropped("part") }
+            for i in arbiter.containers {
+                self.diagnostics.addDropped("container")
+                diagRegions[prepared[i].regionIndex].arbiter = "container"
+            }
+            for i in arbiter.parts {
+                self.diagnostics.addDropped("part")
+                diagRegions[prepared[i].regionIndex].arbiter = "part"
+            }
 
-            var observations: [(obs: ShelfObservation, rect: StoreImageSpace.PixelRect, crop: ShelfCrop)] = []
+            var observations: [(obs: ShelfObservation, rect: StoreImageSpace.PixelRect, regionIndex: Int, ocrFile: String?)] = []
             for index in arbiter.kept.prefix(10) {
                 let p = prepared[index]
-                guard let appearance = self.extractor.appearance(of: p.crop) else { continue }
+                guard let appearance = self.extractor.appearance(of: p.crop) else {
+                    diagRegions[p.regionIndex].arbiter = "notFeatured"
+                    continue
+                }
                 let ref = UUID().uuidString + ".jpg"
                 do { try p.crop.jpeg.write(to: self.workDir.appendingPathComponent(ref), options: .atomic) } catch { continue }
                 var o = ShelfObservation(
@@ -130,8 +198,12 @@ final class ShelfRecordingEngine: ObservableObject {
                 o.viewTanV = p.geometry?.tanV
                 o.rayPerDepth = p.geometry?.rayPerDepth
                 o.completeness = p.clipped ? 0.5 : 1
-                observations.append((o, p.region.rect, p.crop))
+                diagRegions[p.regionIndex].arbiter = "kept"
+                diagRegions[p.regionIndex].observationRef = ref
+                observations.append((o, p.region.rect, p.regionIndex, nil))
             }
+            // Kept regions beyond the per-frame limit are not featured.
+            for index in arbiter.kept.dropFirst(10) { diagRegions[prepared[index].regionIndex].arbiter = "notFeatured" }
 
             // One text read per frame, for the sharp, whole item that still has the fewest reads.
             var pick: Int?
@@ -153,9 +225,44 @@ final class ShelfRecordingEngine: ObservableObject {
                 self.diagnostics.barcodeReads += reading.barcodes.count
                 observations[i].obs.texts = reading.lines
                 observations[i].obs.barcodes = reading.barcodes
+                if self.diagOcrImages < self.maxOcrImages {
+                    let name = "ocr/" + observations[i].obs.cropRef
+                    if let data = UIImage(cgImage: big).jpegData(compressionQuality: 0.7),
+                       (try? data.write(to: self.workDir.appendingPathComponent(name), options: .atomic)) != nil {
+                        observations[i].ocrFile = name
+                        self.diagOcrImages += 1
+                    }
+                }
             }
 
-            for item in observations { self.aggregator.add(item.obs) }
+            for item in observations {
+                let trace = self.aggregator.add(item.obs)
+                self.diagTraces.append(trace)
+                let o = item.obs
+                self.diagObservations.append(StoreDiagObservation(
+                    ref: o.cropRef, frameIndex: frameIndex, regionIndex: item.regionIndex, time: o.time, u: o.u, v: o.v, world: o.world,
+                    uncertaintyM: o.uncertaintyM, widthM: o.widthM, heightM: o.heightM, sharpness: o.sharpness,
+                    completeness: o.completeness, viewTanU: o.viewTanU, viewTanV: o.viewTanV, rayPerDepth: o.rayPerDepth,
+                    embedding: StoreVector(o.appearance.embedding), color: o.appearance.color, texts: o.texts, barcodes: o.barcodes,
+                    cropFile: o.cropRef, ocrImageFile: item.ocrFile))
+            }
+
+            // The camera frame itself, thinned and size-limited.
+            var imageFile: String?
+            var imageScale: Float = 1
+            if frameIndex % self.frameImageStride == 0, self.diagFrameImages < self.maxFrameImages,
+               let img = ShelfFrameImage.sensorJPEG(pixelBuffer: frame.pixelBuffer) {
+                let name = String(format: "frames/f%04d.jpg", frameIndex)
+                if (try? img.data.write(to: self.workDir.appendingPathComponent(name), options: .atomic)) != nil {
+                    imageFile = name
+                    imageScale = img.scale
+                    self.diagFrameImages += 1
+                }
+            }
+            self.diagFrames.append(StoreDiagFrame(
+                index: frameIndex, time: frame.time, imageFile: imageFile, imageScale: imageScale, sensorWidth: Int(imageW),
+                sensorHeight: Int(imageH), camera: frame.camera, regions: diagRegions))
+
             self.diagnostics.observations += observations.count
             self.frames += 1
             self.diagnostics.processedFrames = self.frames
@@ -201,9 +308,15 @@ final class ShelfRecordingEngine: ObservableObject {
             d.candidatesWithDepthFit = depths.count
             d.medianDepthM = depths.isEmpty ? nil : depths[depths.count / 2]
             let implausible = (d.droppedRegions["tooSmallPhysically"] ?? 0) + (d.droppedRegions["tooLargePhysically"] ?? 0)
+            let parts = ShelfRecordingDiagParts(
+                frames: self.diagFrames, observations: self.diagObservations, associations: self.diagTraces, plane: self.plane,
+                ocrSummary: self.textReader.summary,
+                settings: StoreDiagBundle.settings(aggregation: self.aggregator.config, filter: self.filterConfig,
+                                                   grouper: ShelfProductGrouper.Thresholds()),
+                workDir: self.workDir)
             let output = ShelfRecordingOutput(result: result, unplaceableDetections: d.unplaceable,
                                               implausibleSizeDetections: implausible, processedFrames: self.frames,
-                                              coverage: coverage, cropFiles: files, trail: trail, diagnostics: d)
+                                              coverage: coverage, cropFiles: files, trail: trail, diagnostics: d, diagParts: parts)
             DispatchQueue.main.async { completion(output) }
         }
     }

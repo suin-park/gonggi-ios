@@ -105,6 +105,32 @@ final class ShelfRecognitionFixtureTests: XCTestCase {
                   + "pred=\(e.predictionCount) detected=\(e.detected) missed=\(e.missed) falsePositives=\(e.falsePositives) "
                   + "merged=\(e.merged) split=\(e.split)")
         }
+        // The same photos through the structural filter (shape, texture, containers, parts): what it keeps, and which real
+        // products it wrongly drops (truth boxes that the raw detector found and the filter then removed).
+        var filtered: [String: ShelfDetectionEvaluation] = [:]
+        var lostByFilter = 0, structureKept = 0
+        for p in photos {
+            guard let pb = pixelBuffer(from: p.image) else { continue }
+            let raw = detector.detect(pixelBuffer: pb)
+            let judged = ShelfRegionJudge.judge(raw, pixelBuffer: pb, extractor: extractor)
+            let kept = judged.filter(\.kept).map(\.region.rect)
+            let truth = p.labels.boxes.map(\.rect)
+            let rawEval = ShelfDetectionEvaluator.evaluate(predictions: raw.map(\.rect), truth: truth)
+            let keptEval = ShelfDetectionEvaluator.evaluate(predictions: kept, truth: truth)
+            filtered[p.labels.split, default: ShelfDetectionEvaluation()] = (filtered[p.labels.split] ?? ShelfDetectionEvaluation()) + keptEval
+            let lost = max(0, rawEval.detected - keptEval.detected)
+            lostByFilter += lost
+            structureKept += keptEval.falsePositives
+            let dropped = Dictionary(grouping: judged.filter { !$0.kept }, by: \.outcome).mapValues(\.count)
+            print("SHELF_FILTER_RESULT \(p.name) raw(pred=\(raw.count) detected=\(rawEval.detected) falsePositives=\(rawEval.falsePositives)) "
+                  + "filtered(pred=\(kept.count) detected=\(keptEval.detected) falsePositives=\(keptEval.falsePositives)) "
+                  + "lostRealProducts=\(lost) dropped=\(dropped)")
+        }
+        for (split, e) in filtered.sorted(by: { $0.key < $1.key }) {
+            print("SHELF_FILTERED_TOTAL split=\(split) truth=\(e.truthCount) detectionRate=\(String(format: "%.2f", e.detectionRate)) "
+                  + "precision=\(String(format: "%.2f", e.precision)) wrongSegmentation=\(String(format: "%.2f", e.wrongSegmentationRate))")
+        }
+        print("SHELF_FILTER_EFFECT lostRealProducts=\(lostByFilter) falsePositivesStillKept=\(structureKept)")
         for (split, e) in detection.sorted(by: { $0.key < $1.key }) {
             print("SHELF_DETECTION_TOTAL split=\(split) truth=\(e.truthCount) detectionRate=\(String(format: "%.2f", e.detectionRate)) "
                   + "precision=\(String(format: "%.2f", e.precision)) wrongSegmentation=\(String(format: "%.2f", e.wrongSegmentationRate))")

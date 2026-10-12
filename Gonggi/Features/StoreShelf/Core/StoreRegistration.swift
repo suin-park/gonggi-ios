@@ -202,6 +202,46 @@ struct ShelfAggregationConfig: Sendable {
     var mergeClusters = true
 }
 
+/// Why a new observation did or did not join an existing cluster (one entry per cluster that was considered).
+struct ShelfClusterConsideration: Codable, Equatable, Sendable {
+    enum Result: String, Codable, Sendable {
+        case joined
+        case sameFrame
+        case tooFar
+        case otherLook
+        case otherBarcode
+        case notBest
+    }
+
+    var clusterId: Int
+    /// Smallest parallax-aware separation to the cluster's reference views (metres); nil when the cluster was skipped
+    /// before the position was computed (same frame).
+    var separation: Float?
+    var radius: Float?
+    /// Smallest appearance distance to the reference views; nil when not computed.
+    var appearance: Float?
+    var result: Result
+    /// Depth behind the shelf plane that the best-matching reference view implied (0 = on the plane).
+    var impliedDepth: Float? = nil
+}
+
+struct ShelfAssociationTrace: Codable, Equatable, Sendable {
+    var cropRef: String
+    var frameIndex: Int
+    /// The cluster the observation ended up in (a new one when `created`).
+    var clusterId: Int
+    var created: Bool
+    var considered: [ShelfClusterConsideration]
+}
+
+struct ShelfClusterMerge: Codable, Equatable, Sendable {
+    var from: Int
+    var into: Int
+    var separation: Float
+    var appearance: Float
+    var impliedDepth: Float? = nil
+}
+
 struct ShelfAggregationResult: Equatable, Sendable {
     var candidates: [ShelfCandidate]
     var rejected: [ShelfRejectedRegion]
@@ -209,15 +249,27 @@ struct ShelfAggregationResult: Equatable, Sendable {
     var clustersBeforeMerge: Int = 0
     var clustersMerged: Int = 0
     var rejectedAbsorbed: Int = 0
+    var merges: [ShelfClusterMerge] = []
+    /// Observation (cropRef) -> index into `candidates`, or -1 when its cluster was not accepted.
+    var observationCandidate: [String: Int] = [:]
+    /// Observation (cropRef) -> id of the (merged) cluster it finished in.
+    var observationCluster: [String: Int] = [:]
 }
 
 /// Parallax: an item that stands `d` metres behind the shelf-front plane appears at hit + d * tan(view angle). Two
 /// observations are the same place if some depth in [0, maxDepth] makes their corrected positions coincide.
 enum ShelfParallax {
     static func minSeparation(_ a: ShelfObservation, _ b: ShelfObservation, maxDepth: Float) -> Float {
+        detailed(a, b, maxDepth: maxDepth).separation
+    }
+
+    /// The smallest separation and the depth (metres behind the plane) that produced it. A large implied depth with a
+    /// large separation at depth 0 means "same item" is only true if the item really stands that far back: the
+    /// diagnostics show it so a wrong merge of neighbours can be told from a correct one.
+    static func detailed(_ a: ShelfObservation, _ b: ShelfObservation, maxDepth: Float) -> (separation: Float, depth: Float) {
         let du = b.u - a.u, dv = b.v - a.v
         guard let tua = a.viewTanU, let tub = b.viewTanU, let tva = a.viewTanV, let tvb = b.viewTanV else {
-            return (du * du + dv * dv).squareRoot()
+            return ((du * du + dv * dv).squareRoot(), 0)
         }
         let gu = tub - tua, gv = tvb - tva
         let g2 = gu * gu + gv * gv
@@ -227,7 +279,7 @@ enum ShelfParallax {
             d = min(max(d, 0), maxDepth)
         }
         let x = du + d * gu, y = dv + d * gv
-        return (x * x + y * y).squareRoot()
+        return ((x * x + y * y).squareRoot(), d)
     }
 
     struct Fit: Equatable, Sendable {
@@ -271,6 +323,7 @@ enum ShelfParallax {
 /// only by parallax of an item standing behind the shelf front are still one item.
 struct ShelfObservationAggregator {
     private struct Cluster {
+        var id: Int
         var observations: [ShelfObservation]
         var overlapConflict = false
 
@@ -281,6 +334,7 @@ struct ShelfObservationAggregator {
 
     let config: ShelfAggregationConfig
     private var clusters: [Cluster] = []
+    private var nextClusterId = 0
 
     init(config: ShelfAggregationConfig = ShelfAggregationConfig()) {
         self.config = config
@@ -322,29 +376,58 @@ struct ShelfObservationAggregator {
     }
 
     /// Index of the cluster `obs` belongs to, and whether a cluster at the same place had a different look.
-    private func bestCluster(for obs: ShelfObservation) -> (index: Int?, otherLookHere: Bool) {
+    private func bestCluster(for obs: ShelfObservation) -> (index: Int?, otherLookHere: Bool, considered: [ShelfClusterConsideration]) {
         var best: (index: Int, cost: Float)?
         var otherLook = false
+        var considered: [ShelfClusterConsideration] = []
         for (i, c) in clusters.enumerated() {
-            if obs.frameIndex >= 0, c.frames.contains(obs.frameIndex) { continue }
+            if obs.frameIndex >= 0, c.frames.contains(obs.frameIndex) {
+                considered.append(ShelfClusterConsideration(clusterId: c.id, separation: nil, radius: nil, appearance: nil, result: .sameFrame))
+                continue
+            }
             let refs = references(c)
             var sep = Float.infinity
-            for r in refs { sep = min(sep, ShelfParallax.minSeparation(r, obs, maxDepth: config.maxDepthBehindPlaneM)) }
+            var depth: Float = 0
+            for r in refs {
+                let m = ShelfParallax.detailed(r, obs, maxDepth: config.maxDepthBehindPlaneM)
+                if m.separation < sep {
+                    sep = m.separation
+                    depth = m.depth
+                }
+            }
             let w = Self.median(c.observations.map(\.widthM))
             let r = radius(widthM: w, uncertaintyM: obs.uncertaintyM)
-            guard sep <= r else { continue }
-            if let d = appearanceDistance(refs, obs), d > config.sameAppearanceMax {
+            guard sep <= r else {
+                considered.append(ShelfClusterConsideration(clusterId: c.id, separation: sep, radius: r, appearance: nil, result: .tooFar,
+                                                            impliedDepth: depth))
+                continue
+            }
+            let d = appearanceDistance(refs, obs)
+            if let d, d > config.sameAppearanceMax {
                 otherLook = true
+                considered.append(ShelfClusterConsideration(clusterId: c.id, separation: sep, radius: r, appearance: d, result: .otherLook,
+                                                            impliedDepth: depth))
                 continue
             }
             if Self.barcodesConflict(c.observations.flatMap(\.barcodes), obs.barcodes) {
                 otherLook = true
+                considered.append(ShelfClusterConsideration(clusterId: c.id, separation: sep, radius: r, appearance: d, result: .otherBarcode,
+                                                            impliedDepth: depth))
                 continue
             }
             let cost = sep / r
+            considered.append(ShelfClusterConsideration(clusterId: c.id, separation: sep, radius: r, appearance: d, result: .joined,
+                                                        impliedDepth: depth))
             if best == nil || cost < best!.cost { best = (i, cost) }
         }
-        return (best?.index, otherLook)
+        // Several clusters fit: only the cheapest one is joined.
+        if let best {
+            let winner = clusters[best.index].id
+            for k in considered.indices where considered[k].result == .joined && considered[k].clusterId != winner {
+                considered[k].result = .notBest
+            }
+        }
+        return (best?.index, otherLook, considered)
     }
 
     /// How many text reads the item `obs` would join already has (callers spend OCR where it is still missing).
@@ -353,9 +436,13 @@ struct ShelfObservationAggregator {
         return clusters[i].observations.filter { !$0.texts.isEmpty }.count
     }
 
-    mutating func add(_ obs: ShelfObservation) {
+    @discardableResult
+    mutating func add(_ obs: ShelfObservation) -> ShelfAssociationTrace {
         let found = bestCluster(for: obs)
+        var trace = ShelfAssociationTrace(cropRef: obs.cropRef, frameIndex: obs.frameIndex, clusterId: -1, created: false,
+                                          considered: found.considered)
         if let i = found.index {
+            trace.clusterId = clusters[i].id
             clusters[i].observations.append(obs)
             if clusters[i].observations.count > config.maxObservationsPerCandidate {
                 if let worst = clusters[i].observations.indices.min(by: {
@@ -365,25 +452,39 @@ struct ShelfObservationAggregator {
                 }
             }
         } else {
-            clusters.append(Cluster(observations: [obs], overlapConflict: found.otherLookHere))
+            let id = nextClusterId
+            nextClusterId += 1
+            trace.clusterId = id
+            trace.created = true
+            clusters.append(Cluster(id: id, observations: [obs], overlapConflict: found.otherLookHere))
         }
+        return trace
     }
 
     /// Two clusters are one item when they never share a frame, sit at one place (parallax-aware) and look the same.
-    private func shouldMerge(_ a: Cluster, _ b: Cluster) -> Bool {
+    private func mergeEvidence(_ a: Cluster, _ b: Cluster) -> (merge: Bool, separation: Float, appearance: Float, depth: Float) {
         let fa = a.frames, fb = b.frames
-        if !fa.isEmpty, !fb.isEmpty, !fa.isDisjoint(with: fb) { return false }
+        if !fa.isEmpty, !fb.isEmpty, !fa.isDisjoint(with: fb) { return (false, .infinity, .infinity, 0) }
         let ta = Set(a.observations.map(\.time)), tb = Set(b.observations.map(\.time))
-        if fa.isEmpty || fb.isEmpty, !ta.isDisjoint(with: tb) { return false }
-        if Self.barcodesConflict(a.observations.flatMap(\.barcodes), b.observations.flatMap(\.barcodes)) { return false }
+        if fa.isEmpty || fb.isEmpty, !ta.isDisjoint(with: tb) { return (false, .infinity, .infinity, 0) }
+        if Self.barcodesConflict(a.observations.flatMap(\.barcodes), b.observations.flatMap(\.barcodes)) {
+            return (false, .infinity, .infinity, 0)
+        }
         let w = max(Self.median(a.observations.map(\.widthM)), Self.median(b.observations.map(\.widthM)))
         let r = radius(widthM: w, uncertaintyM: Self.median(a.observations.map(\.uncertaintyM)))
         let ra = references(a), rb = references(b)
         var sep = Float.infinity
+        var depth: Float = 0
         for x in ra {
-            for y in rb { sep = min(sep, ShelfParallax.minSeparation(x, y, maxDepth: config.maxDepthBehindPlaneM)) }
+            for y in rb {
+                let m = ShelfParallax.detailed(x, y, maxDepth: config.maxDepthBehindPlaneM)
+                if m.separation < sep {
+                    sep = m.separation
+                    depth = m.depth
+                }
+            }
         }
-        guard sep <= r else { return false }
+        guard sep <= r else { return (false, sep, .infinity, depth) }
         var d = Float.infinity
         for x in ra {
             for y in rb {
@@ -391,19 +492,23 @@ struct ShelfObservationAggregator {
             }
         }
         let sameCode = !Set(a.observations.flatMap(\.barcodes)).isDisjoint(with: Set(b.observations.flatMap(\.barcodes)))
-        return d <= config.sameAppearanceMax || sameCode
+        return (d <= config.sameAppearanceMax || sameCode, sep, d, depth)
     }
 
-    private func mergedClusters() -> (clusters: [Cluster], merged: Int) {
+    private func mergedClusters() -> (clusters: [Cluster], merged: Int, log: [ShelfClusterMerge]) {
         var cs = clusters
-        guard config.mergeClusters, cs.count > 1 else { return (cs, 0) }
+        guard config.mergeClusters, cs.count > 1 else { return (cs, 0, []) }
         var merged = 0
+        var log: [ShelfClusterMerge] = []
         var changed = true
         while changed {
             changed = false
             outer: for i in cs.indices {
                 for j in cs.indices where j > i {
-                    if shouldMerge(cs[i], cs[j]) {
+                    let e = mergeEvidence(cs[i], cs[j])
+                    if e.merge {
+                        log.append(ShelfClusterMerge(from: cs[j].id, into: cs[i].id, separation: e.separation, appearance: e.appearance,
+                                                     impliedDepth: e.depth))
                         cs[i].observations.append(contentsOf: cs[j].observations)
                         cs[i].overlapConflict = cs[i].overlapConflict || cs[j].overlapConflict
                         cs.remove(at: j)
@@ -414,12 +519,14 @@ struct ShelfObservationAggregator {
                 }
             }
         }
-        return (cs, merged)
+        return (cs, merged, log)
     }
 
     func finalize() -> ShelfAggregationResult {
-        let (cs, merged) = mergedClusters()
+        let (cs, merged, mergeLog) = mergedClusters()
         var candidates: [ShelfCandidate] = []
+        var observationCandidate: [String: Int] = [:]
+        var observationCluster: [String: Int] = [:]
         var weak: [(cluster: Cluster, u: Float, v: Float, reason: ShelfRejectReason)] = []
         for c in cs {
             let obs = c.observations
@@ -472,8 +579,23 @@ struct ShelfObservationAggregator {
             candidate.barcodes = barcodes
             candidate.frameCount = Set(obs.map { $0.frameIndex >= 0 ? $0.frameIndex : Int($0.time * 1000) }).count
             candidates.append(candidate)
+            for o in obs {
+                observationCandidate[o.cropRef] = candidates.count - 1
+                observationCluster[o.cropRef] = c.id
+            }
         }
+        // `candidates` is sorted below: remember the clusters by candidate to rebuild the index afterwards.
+        let order = candidates.indices.sorted { (candidates[$0].u, candidates[$0].v) < (candidates[$1].u, candidates[$1].v) }
+        var newIndex = [Int](repeating: 0, count: candidates.count)
+        for (rank, old) in order.enumerated() { newIndex[old] = rank }
+        for (k, v) in observationCandidate { observationCandidate[k] = newIndex[v] }
         candidates.sort { ($0.u, $0.v) < ($1.u, $1.v) }
+        for w in weak {
+            for o in w.cluster.observations {
+                observationCandidate[o.cropRef] = -1
+                observationCluster[o.cropRef] = w.cluster.id
+            }
+        }
 
         // Unsaved areas: a weak cluster that belongs to an accepted product is that product's evidence, not a new
         // area; weak clusters on top of each other are one area.
@@ -513,7 +635,8 @@ struct ShelfObservationAggregator {
         }
         rejected.sort { ($0.u, $0.v) < ($1.u, $1.v) }
         return ShelfAggregationResult(candidates: candidates, rejected: rejected, clustersBeforeMerge: clusters.count,
-                                      clustersMerged: merged, rejectedAbsorbed: absorbed)
+                                      clustersMerged: merged, rejectedAbsorbed: absorbed, merges: mergeLog,
+                                      observationCandidate: observationCandidate, observationCluster: observationCluster)
     }
 }
 
@@ -617,6 +740,8 @@ struct ShelfUpdateSummary: Equatable, Sendable {
     var markedNotObserved = 0
     var namedAutomatically = 0
     var nameUnread = 0
+    /// Product id of every candidate (index = candidate index) after grouping and matching with stored products.
+    var candidateProductIds: [String] = []
 }
 
 enum ShelfNameSource {
@@ -656,6 +781,7 @@ enum ShelfDataUpdater {
         var summary = ShelfUpdateSummary()
         var touchedPlacementIds = Set<String>()
         var groupProductIds = [String](repeating: "", count: groups.count)
+        summary.candidateProductIds = [String](repeating: "", count: candidates.count)
 
         func existingDistance(_ cand: ShelfCandidate, _ p: ShelfProduct) -> Float? {
             var best: Float?
@@ -722,6 +848,7 @@ enum ShelfDataUpdater {
             let pi = productIndex!
             let productId = out.products[pi].id
             groupProductIds[gi] = productId
+            for ci in group.candidateIndices { summary.candidateProductIds[ci] = productId }
 
             // Name: a recording fills in or improves an automatic name; a name set by a person is never touched.
             if let ex = extracted, !out.products[pi].nameIsProtected,

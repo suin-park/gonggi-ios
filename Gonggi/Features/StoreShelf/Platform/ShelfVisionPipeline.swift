@@ -234,6 +234,46 @@ final class ShelfAppearanceExtractor {
     }
 }
 
+/// The structural judgement of detected regions (shape, texture, containers, parts) WITHOUT a shelf plane: the same
+/// rules the recording engine applies before it adds the physical-size rule. Used by the labelled-photo evaluation to
+/// measure what the filter keeps and what it wrongly drops.
+enum ShelfRegionJudge {
+    struct Judged {
+        var region: ShelfDetectedRegion
+        /// "kept", "notProduct:<reason>", "container" or "part".
+        var outcome: String
+        var kept: Bool { outcome == "kept" }
+    }
+
+    static func judge(_ regions: [ShelfDetectedRegion], pixelBuffer: CVPixelBuffer, extractor: ShelfAppearanceExtractor,
+                      config: ShelfRegionFilterConfig = ShelfRegionFilterConfig()) -> [Judged] {
+        var verdicts: [ShelfRegionVerdict] = []
+        for r in regions {
+            guard let crop = extractor.crop(pixelBuffer: pixelBuffer, rect: r.rect) else {
+                verdicts.append(.reject(.flatTexture))
+                continue
+            }
+            let long = max(r.rect.width, r.rect.height), short = max(1, min(r.rect.width, r.rect.height))
+            verdicts.append(ShelfRegionFilter.assess(
+                ShelfRegionEvidence(widthM: nil, heightM: nil, aspect: long / short, lumaStd: crop.lumaStd, clipped: false), config: config))
+        }
+        let outcome = ShelfRegionArbiter.resolve(regions.indices.map {
+            ShelfRegionArbiter.Item(rect: regions[$0].rect, score: regions[$0].score, plausible: verdicts[$0].isAccepted)
+        })
+        return regions.indices.map { i in
+            var label = "kept"
+            if case .reject(let reason) = verdicts[i] {
+                label = "notProduct:" + reason.rawValue
+            } else if outcome.containers.contains(i) {
+                label = "container"
+            } else if outcome.parts.contains(i) {
+                label = "part"
+            }
+            return Judged(region: regions[i], outcome: label)
+        }
+    }
+}
+
 extension ShelfAppearanceExtractor {
     /// A larger upright crop (long side `longSide`) for reading text and barcodes. Not stored.
     func cropForText(pixelBuffer: CVPixelBuffer, rect: StoreImageSpace.PixelRect, longSide: CGFloat = 720, padding: Float = 0.04) -> CGImage? {
@@ -308,6 +348,20 @@ final class ShelfTextReader {
 }
 
 enum ShelfFrameImage {
+    /// A whole camera frame in SENSOR orientation (landscape, not rotated) scaled to at most `maxSide`: the frame the
+    /// detectors saw, for diagnostics and offline replay. Returns the JPEG and the scale (exported px per sensor px).
+    static func sensorJPEG(pixelBuffer: CVPixelBuffer, maxSide: CGFloat = 1024, quality: CGFloat = 0.6) -> (data: Data, scale: Float)? {
+        let ci = CIImage(cvPixelBuffer: pixelBuffer)
+        let ext = ci.extent
+        guard ext.width > 1, ext.height > 1 else { return nil }
+        let scale = min(1, maxSide / max(ext.width, ext.height))
+        let scaled = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let ctx = CIContext(options: nil)
+        guard let cg = ctx.createCGImage(scaled, from: scaled.extent),
+              let data = UIImage(cgImage: cg).jpegData(compressionQuality: quality) else { return nil }
+        return (data, Float(scale))
+    }
+
     /// A whole frame as an upright JPEG (the saved shelf photo, the reference sign).
     static func uprightJPEG(pixelBuffer: CVPixelBuffer, maxSide: CGFloat = 1280, quality: CGFloat = 0.7) -> Data? {
         let ci = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)

@@ -76,7 +76,7 @@ struct ShelfMatchConfig: Equatable, Sendable {
     static let uncalibrated = ShelfMatchConfig()
 }
 
-struct ShelfMatchCandidate: Equatable, Sendable {
+struct ShelfMatchCandidate: Codable, Equatable, Sendable {
     var productId: String
     var distance: Float
 }
@@ -100,6 +100,16 @@ enum ShelfMatchOutcome: Equatable, Sendable {
 }
 
 enum ShelfProductMatcher {
+    /// Every product with its best image distance, closest first (diagnostics: shows how far the runner-up was).
+    static func ranking(query: ShelfAppearance, gallery: [(productId: String, appearances: [ShelfAppearance])]) -> [ShelfMatchCandidate] {
+        var scored: [ShelfMatchCandidate] = []
+        for entry in gallery {
+            let ds = entry.appearances.compactMap { query.distance(to: $0) }
+            if let best = ds.min() { scored.append(ShelfMatchCandidate(productId: entry.productId, distance: best)) }
+        }
+        return scored.sorted { $0.distance < $1.distance }
+    }
+
     /// `gallery`: per product, all stored appearances. The product distance is the best (smallest) of its appearances.
     static func match(query: ShelfAppearance, gallery: [(productId: String, appearances: [ShelfAppearance])],
                       config: ShelfMatchConfig = .uncalibrated) -> ShelfMatchOutcome {
