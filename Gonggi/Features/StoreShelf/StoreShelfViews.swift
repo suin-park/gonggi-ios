@@ -31,6 +31,8 @@ enum StoreShelfDevice {
 struct StoreShelfFlowView: View {
     let onClose: () -> Void
 
+    @EnvironmentObject private var appState: AppState
+    @ObservedObject private var role = StoreShelfRoleModel.shared
     @State private var mode: StoreShelfFlowMode
     @State private var stores: [StoreRecord] = []
     @State private var selected: StoreRecord?
@@ -61,7 +63,8 @@ struct StoreShelfFlowView: View {
                 chooser
             }
         }
-        .onAppear {
+        .task {
+            await role.refresh()
             reload()
             if !didAutoSelect {
                 didAutoSelect = true
@@ -72,8 +75,13 @@ struct StoreShelfFlowView: View {
         }
     }
 
+    /// Recording lists only the stores the SERVER says this person manages (demo mode keeps the local list).
     private func reload() {
-        stores = repository.stores()
+        if appState.isMockMode {
+            stores = repository.stores()
+        } else {
+            stores = role.managedStores.map { repository.ensureStore(id: $0.id, name: $0.displayName) }
+        }
     }
 
     private func hasData(_ store: StoreRecord) -> Bool {
@@ -97,13 +105,20 @@ struct StoreShelfFlowView: View {
                 if mode == .search && stores.isEmpty {
                     emptySearch
                 } else {
-                    Text(mode == .record ? "기록할 매장을 고르거나 새로 만들어요" : "찾을 매장을 골라요")
+                    Text(mode == .record
+                         ? (appState.isMockMode ? "기록할 매장을 고르거나 새로 만들어요" : "담당 매장을 골라요")
+                         : "찾을 매장을 골라요")
                         .font(.subheadline)
                         .foregroundStyle(GonggiColors.textSecondary)
                     ForEach(stores) { store in
                         storeRow(store)
                     }
-                    if mode == .record { createStoreSection }
+                    if mode == .record, appState.isMockMode { createStoreSection }
+                    if mode == .record, !appState.isMockMode, stores.isEmpty {
+                        Text("담당으로 지정된 매장이 없어요. 매장 담당자 권한은 관리자가 지정해요.")
+                            .font(.subheadline)
+                            .foregroundStyle(GonggiColors.textSecondary)
+                    }
                 }
 
                 if let errorText {

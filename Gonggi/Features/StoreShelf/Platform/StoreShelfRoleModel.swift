@@ -3,7 +3,6 @@ import Foundation
 
 /// The signed-in person's manager rights, as the SERVER reports them. Nothing local can raise them: if the request
 /// fails the person is a customer.
-@MainActor
 final class StoreShelfRoleModel: ObservableObject {
     static let shared = StoreShelfRoleModel()
 
@@ -13,6 +12,7 @@ final class StoreShelfRoleModel: ObservableObject {
     private let api = StoreShelfAPIClient()
     private var lastToken: String?
 
+    @MainActor
     func refresh() async {
         let token = MobileAuthTokenStore.shared.getAccessToken()
         guard token != nil else {
@@ -35,7 +35,6 @@ final class StoreShelfRoleModel: ObservableObject {
 
 /// One-shot "when in use" location for choosing a nearby store. A denied permission is an ordinary outcome: the store
 /// list can always be searched by name.
-@MainActor
 final class StoreShelfLocationProvider: NSObject, ObservableObject, CLLocationManagerDelegate {
     enum State: Equatable {
         case idle
@@ -67,25 +66,24 @@ final class StoreShelfLocationProvider: NSObject, ObservableObject, CLLocationMa
         }
     }
 
-    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        let status = manager.authorizationStatus
-        Task { @MainActor in
-            switch status {
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        DispatchQueue.main.async {
+            switch manager.authorizationStatus {
             case .denied, .restricted: self.state = .denied
             case .authorizedWhenInUse, .authorizedAlways:
-                if self.state == .requesting { self.manager.requestLocation() }
+                if self.state == .requesting { manager.requestLocation() }
             default: break
             }
         }
     }
 
-    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let l = locations.last else { return }
         let lat = l.coordinate.latitude, lng = l.coordinate.longitude
-        Task { @MainActor in self.state = .located(latitude: lat, longitude: lng) }
+        DispatchQueue.main.async { self.state = .located(latitude: lat, longitude: lng) }
     }
 
-    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        Task { @MainActor in self.state = .failed }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        DispatchQueue.main.async { self.state = .failed }
     }
 }

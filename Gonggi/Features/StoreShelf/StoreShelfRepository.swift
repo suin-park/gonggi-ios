@@ -94,6 +94,25 @@ final class StoreShelfRepository: StoreShelfWriting, StoreRestoreLogWriting, She
 
     // MARK: Writing
 
+    /// A local record for a store that exists on the server (its id is the server's), created once.
+    @discardableResult
+    func ensureStore(id: String, name: String) -> StoreRecord {
+        if let existing = stores().first(where: { $0.id == id }) {
+            if existing.name != name {
+                var all = stores().filter { $0.id != id }
+                all.append(StoreRecord(id: id, name: name, createdAt: existing.createdAt))
+                try? write(all, to: root.appendingPathComponent("index.json"))
+            }
+            return StoreRecord(id: id, name: name, createdAt: existing.createdAt)
+        }
+        let record = StoreRecord(id: id, name: name, createdAt: Date())
+        try? fm.createDirectory(at: dir(id), withIntermediateDirectories: true)
+        var all = stores()
+        all.append(record)
+        try? write(all, to: root.appendingPathComponent("index.json"))
+        return record
+    }
+
     func createStore(name: String) throws -> StoreRecord {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw StoreShelfRepositoryError.emptyName }
