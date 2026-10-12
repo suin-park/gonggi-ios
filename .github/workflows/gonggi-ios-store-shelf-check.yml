@@ -125,7 +125,7 @@ jobs:
             2>&1 | tee store-tests.log
           STATUS=${PIPESTATUS[0]}
           set -e
-          grep -E "Test Suite '.*' (passed|failed)|error:|failed \(|Executed [0-9]+ tests|skipped|SHELF_DETECTION" store-tests.log | tail -n 60 || true
+          grep -E "Test Suite '.*' (passed|failed)|error:|failed \(|Executed [0-9]+ tests|skipped|SHELF_" store-tests.log | tail -n 60 || true
           exit "${STATUS}"
 
       - name: Full GonggiTests (informational)

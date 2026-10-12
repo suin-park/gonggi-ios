@@ -135,6 +135,25 @@ final class ShelfAppearanceExtractor {
         return finish(cg)
     }
 
+    /// A region of an ordinary UPRIGHT photo (a labelled shelf picture in the evaluation harness): no rotation applied.
+    func crop(uprightPhoto image: CGImage, rect: StoreImageSpace.PixelRect, padding: Float = 0.05) -> ShelfCrop? {
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        let padU = CGFloat(rect.width * padding), padV = CGFloat(rect.height * padding)
+        let minU = max(0, CGFloat(rect.minU) - padU), maxU = min(w, CGFloat(rect.maxU) + padU)
+        let minV = max(0, CGFloat(rect.minV) - padV), maxV = min(h, CGFloat(rect.maxV) + padV)
+        guard maxU - minU >= 16, maxV - minV >= 16 else { return nil }
+        let ciRect = CGRect(x: minU, y: h - maxV, width: maxU - minU, height: maxV - minV)
+        let cropped = CIImage(cgImage: image).cropped(to: ciRect)
+        let ext = cropped.extent
+        guard ext.width > 1, ext.height > 1 else { return nil }
+        let scale = min(1, longSide / max(ext.width, ext.height))
+        let placed = cropped
+            .transformed(by: CGAffineTransform(translationX: -ext.origin.x, y: -ext.origin.y))
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        guard let cg = context.createCGImage(placed, from: placed.extent) else { return nil }
+        return finish(cg)
+    }
+
     /// For a photo of a product (search by picture): the whole image is the crop, upright already.
     func crop(photo: CGImage) -> ShelfCrop? {
         let w = CGFloat(photo.width), h = CGFloat(photo.height)
