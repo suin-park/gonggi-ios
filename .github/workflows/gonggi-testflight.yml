@@ -35,6 +35,11 @@ on:
         required: false
         default: 'https://www.3d-locker.com'
         type: string
+      skip_object_capture_guard:
+        description: 'Staging builds only: archive even though the server has no product-capture endpoint (the app hides that row until the server reports it). Logged. Ignored for the production host.'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: gonggi-testflight
@@ -425,7 +430,13 @@ jobs:
           # Product capture is compiled in: archive only when the target server runs the product path with its
           # dedicated endpoint + image digest configured (public, secret-free status route). The app also hides the
           # row until the server says so, and aborts a product upload if the server answers with a space profile.
-          if grep -q "productCaptureAvailable = true" Gonggi/Features/Capture/RecordHomeView.swift; then
+          SKIP_GUARD="${{ inputs.skip_object_capture_guard }}"
+          case "${API_BASE_URL%/}" in
+            https://www.3d-locker.com|https://3d-locker.com) SKIP_GUARD="false" ;;
+          esac
+          if [[ "${SKIP_GUARD}" == "true" ]]; then
+            echo "::warning::object-capture guard skipped for ${API_BASE_URL} (staging build; the app hides product capture until the server reports it)"
+          elif grep -q "productCaptureAvailable = true" Gonggi/Features/Capture/RecordHomeView.swift; then
             STATUS_JSON="$(curl -fsS --max-time 20 "${API_BASE_URL%/}/api/gaussian-spaces/object-capture/status" || true)"
             echo "object-capture status: ${STATUS_JSON:-<none>}"
             if ! printf '%s' "${STATUS_JSON}" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get('ready') is True else 1)"; then
