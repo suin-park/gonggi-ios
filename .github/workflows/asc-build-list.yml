@@ -1,0 +1,28 @@
+name: ASC build list
+
+# Read-only: lists the builds App Store Connect already holds for the app, to choose a build number that is not used.
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/store-shelf-record-entry]
+    paths:
+      - ".github/workflows/asc-build-list.yml"
+      - "scripts/list-asc-builds.py"
+
+permissions:
+  contents: read
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet 'PyJWT[crypto]>=2.8'
+      - name: List builds
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          BUNDLE_ID: com.whik.gonggi
+        run: python3 scripts/list-asc-builds.py
