@@ -52,9 +52,10 @@ struct StoreShelfFlowView: View {
                 case .record:
                     StoreShelfRecordView(store: store, onBack: { selected = nil; reload() })
                 case .search:
-                    StoreShelfSearchView(store: store, onBack: { selected = nil; reload() }, onRecordFirst: {
-                        mode = .record
-                    })
+                    StoreShelfSearchView(
+                        source: StoreShelfSearchSource.localRecord(storeId: store.id, storeName: store.name),
+                        onBack: { selected = nil; reload() },
+                        onRecordFirst: { mode = .record })
                 }
             } else {
                 chooser

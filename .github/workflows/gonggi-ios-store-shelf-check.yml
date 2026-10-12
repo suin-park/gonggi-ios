@@ -36,6 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: swift test
+        shell: bash
         run: |
           set -euo pipefail
           W=/tmp/pkg

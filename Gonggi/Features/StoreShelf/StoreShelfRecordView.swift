@@ -740,10 +740,12 @@ struct StoreShelfReviewView: View {
             Text(model.savedSummary ?? "저장했어요")
                 .font(.headline)
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("앱을 종료해도 기록이 남아요. 제품 찾기에서 확인해 보세요.")
+            Text("이 기기에 저장했어요. 고객이 보려면 게시가 필요해요.")
                 .font(.subheadline)
                 .foregroundStyle(GonggiColors.textSecondary)
-            PrimaryButton(title: "완료", icon: "checkmark") { onDone() }
+            StoreShelfPublishView(store: model.store)
+                .padding(.horizontal, 24)
+            SecondaryButton(title: "나중에 게시하기", icon: "clock") { onDone() }
                 .padding(.horizontal, 40)
             Spacer()
         }

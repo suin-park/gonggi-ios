@@ -4,22 +4,64 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-// 제품 찾기: restore the saved space, recognise the product shown to the camera (or a photo of it) against this store's
-// registered products, look up where it is displayed and guide there in the camera view.
-// This screen only reads shelf data. Recognition results never write a position.
+// 제품 찾기: restore the saved space of the chosen store, recognise the product shown to the camera (or in a photo, or
+// typed by name) against that store's registered products, look up where it is displayed and guide there.
+// This screen only reads shelf data. A recognition result never writes a position.
 
 enum StoreShelfSearchPhase: Equatable {
     case noData(String)
     case ready
 }
 
+/// Everything a search needs, from one published release (customers) or from this device's own record (a manager
+/// trying a record before publishing it).
+struct StoreShelfSearchSource {
+    enum Origin: Equatable {
+        case published(version: Int, fromCache: Bool)
+        case localRecord
+    }
+
+    var storeId: String
+    var storeName: String
+    var data: StoreShelfData
+    var worldMap: Data?
+    var imageData: (String) -> Data?
+    var productLinks: [String: RemoteProductLink]
+    var featureModel: String?
+    var origin: Origin
+
+    static func published(_ s: StoreShelfPublishedSource, storeName: String) -> StoreShelfSearchSource {
+        StoreShelfSearchSource(
+            storeId: s.storeId, storeName: storeName, data: s.data, worldMap: s.worldMap,
+            imageData: { s.images[$0] },
+            productLinks: Dictionary(s.productLinks.map { ($0.storeProductId, $0) }, uniquingKeysWith: { a, _ in a }),
+            featureModel: s.featureModel, origin: .published(version: s.version, fromCache: s.fromCache))
+    }
+
+    static func localRecord(storeId: String, storeName: String, repository: StoreShelfRepository = .shared) -> StoreShelfSearchSource {
+        StoreShelfSearchSource(
+            storeId: storeId, storeName: storeName,
+            data: repository.shelfData(storeId: storeId) ?? StoreShelfData.empty(storeId: storeId),
+            worldMap: try? repository.loadWorldMapData(storeId: storeId),
+            imageData: { repository.imageData(storeId: storeId, fileName: $0) },
+            productLinks: [:], featureModel: nil, origin: .localRecord)
+    }
+}
+
+/// What the linked catalog product can do, from its own detail (never guessed from how the image looks).
+struct StoreShelfAssetCapability: Equatable {
+    var catalogProductId: String
+    var canView3D: Bool
+    var canPlaceInSpace: Bool
+}
+
 final class StoreShelfSearchViewModel: ObservableObject {
-    let store: StoreRecord
+    let source: StoreShelfSearchSource
     let repository = StoreShelfRepository.shared
     let controller = StoreShelfARController()
     private(set) lazy var alignment = StoreAlignmentSession(controller: controller)
 
-    let data: StoreShelfData
+    var data: StoreShelfData { source.data }
     let phase: StoreShelfSearchPhase
     private(set) var engine: ShelfSearchEngine?
     private var planner: StoreGuidancePlanner?
@@ -31,7 +73,10 @@ final class StoreShelfSearchViewModel: ObservableObject {
     @Published var destinationOnScreen = false
     @Published var verdict: String?
     @Published var infoText: String?
-    @Published var elapsedText = ""
+    @Published var nameQuery = ""
+    @Published var nameResults: [ShelfProduct] = []
+    @Published var assetCapability: StoreShelfAssetCapability?
+    @Published var recognitionNote: String?
 
     private var cancellables = Set<AnyCancellable>()
     private var metric: StoreSearchMetric
@@ -40,52 +85,58 @@ final class StoreShelfSearchViewModel: ObservableObject {
     private var cameraLive: Vec3?
     private var map: ARWorldMap?
     private var restoreLogged = false
+    private var started = false
+    private var catalogClient: CatalogAPIClient?
 
-    init(store: StoreRecord) {
-        self.store = store
-        let d = StoreShelfRepository.shared.shelfData(storeId: store.id) ?? StoreShelfData.empty(storeId: store.id)
-        data = d
-        if d.products.isEmpty || d.placements.isEmpty {
-            phase = .noData(StoreShelfCopy.noWorldMapLine)
-        } else if StoreShelfRepository.shared.worldMapInfo(storeId: store.id) == nil {
+    init(source: StoreShelfSearchSource) {
+        self.source = source
+        if source.data.products.isEmpty || source.data.placements.isEmpty || source.worldMap == nil {
             phase = .noData(StoreShelfCopy.noWorldMapLine)
         } else {
             phase = .ready
         }
-        metric = StoreSearchMetric(id: UUID().uuidString, storeId: store.id, startedAt: Date(), alignedAt: nil, recognizedAt: nil,
+        metric = StoreSearchMetric(id: UUID().uuidString, storeId: source.storeId, startedAt: Date(), alignedAt: nil, recognizedAt: nil,
                                    guidanceStartedAt: nil, outcome: "none", matchedProductId: nil, testerVerdict: nil,
                                    alignmentMethod: nil, guidanceKind: nil)
         controller.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
     }
 
     var ready: Bool { phase == .ready }
+    var storeId: String { source.storeId }
+    func imageData(_ name: String) -> Data? { source.imageData(name) }
 
     // MARK: Start
-
-    private var started = false
 
     func start() {
         guard ready, !started else { return }
         started = true
-        let engine = ShelfSearchEngine(data: data)
+        var revision: Int?
+        if let model = source.featureModel {
+            switch StoreFeatureModel.evaluate(release: model, supportedRevisions: StoreShelfFeatureModelInfo.supportedRevisions) {
+            case .compatible(let r, _): revision = r
+            case .incompatible(let reason):
+                recognitionNote = reason + ". 이름으로 찾을 수 있어요."
+            }
+        }
+        let engine = ShelfSearchEngine(data: data, featureRevision: revision)
         self.engine = engine
         engine.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         engine.$outcome.receive(on: DispatchQueue.main).sink { [weak self] o in self?.recognized(o) }.store(in: &cancellables)
         alignment.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        let recognitionOn = recognitionNote == nil
         controller.onFrame = { [weak self] frame in
-            engine.consider(frame)
+            if recognitionOn { engine.consider(frame) }
             self?.tick(frame)
         }
         beginAlignment()
-        StoreShelfSelection.lastStoreId = store.id
+        StoreShelfSelection.lastStoreId = source.storeId
     }
 
     private func beginAlignment() {
         let signs = data.referenceSigns
-        let repo = repository, sid = store.id
-        let images = StoreAlignmentSession.referenceImages(signs: signs) { repo.imageData(storeId: sid, fileName: $0) }
+        let images = StoreAlignmentSession.referenceImages(signs: signs) { [source] in source.imageData($0) }
         var map: ARWorldMap?
-        if let bytes = try? repository.loadWorldMapData(storeId: store.id) { map = try? StoreWorldMapCoding.unarchive(bytes) }
+        if let bytes = source.worldMap { map = try? StoreWorldMapCoding.unarchive(bytes) }
         self.map = map
         alignment.begin(map: map, expectedMarkers: 0, signs: signs, images: images)
         alignment.$state.receive(on: DispatchQueue.main).sink { [weak self] state in
@@ -117,13 +168,12 @@ final class StoreShelfSearchViewModel: ObservableObject {
             secondsToRelocalize: outcome == "failed_timeout" ? nil : Date().timeIntervalSince(started),
             markersExpected: 0, markersPresentAfterRestore: 0, trackingReasonsSeen: controller.trackerReasons,
             observedOffset: "not_checked", note: nil)
-        try? repository.appendRestoreAttempt(storeId: store.id, attempt: attempt)
+        try? repository.appendRestoreAttempt(storeId: source.storeId, attempt: attempt)
     }
 
     func retryAlignment() {
         let signs = data.referenceSigns
-        let repo = repository, sid = store.id
-        let images = StoreAlignmentSession.referenceImages(signs: signs) { repo.imageData(storeId: sid, fileName: $0) }
+        let images = StoreAlignmentSession.referenceImages(signs: signs) { [source] in source.imageData($0) }
         restoreLogged = false
         alignment.retry(map: map, expectedMarkers: 0, signs: signs, images: images)
     }
@@ -134,7 +184,7 @@ final class StoreShelfSearchViewModel: ObservableObject {
         cancellables.removeAll()
     }
 
-    // MARK: Recognition
+    // MARK: Recognition and selection
 
     private func recognized(_ outcome: ShelfMatchOutcome?) {
         guard let outcome else { return }
@@ -156,7 +206,9 @@ final class StoreShelfSearchViewModel: ObservableObject {
         metric.matchedProductId = id
         chosenPlacement = nil
         plan = nil
+        assetCapability = nil
         choosePlacement(forProduct: id)
+        loadAssetCapability(productId: id)
     }
 
     func choosePlacement(forProduct id: String) {
@@ -180,10 +232,17 @@ final class StoreShelfSearchViewModel: ObservableObject {
     }
 
     func analyze(photo: UIImage) {
-        guard let engine, let cg = Self.uprightCGImage(photo) else { return }
+        guard let engine, recognitionNote == nil, let cg = Self.uprightCGImage(photo) else {
+            infoText = recognitionNote ?? "사진을 읽지 못했어요"
+            return
+        }
         engine.analyze(photo: cg) { [weak self] outcome in
             if outcome == nil { self?.infoText = "사진에서 제품을 읽지 못했어요" }
         }
+    }
+
+    func searchByName() {
+        nameResults = ShelfNameSearch.search(nameQuery, products: data.products)
     }
 
     func newSearch() {
@@ -194,9 +253,11 @@ final class StoreShelfSearchViewModel: ObservableObject {
         bearing = nil
         verdict = nil
         infoText = nil
+        nameQuery = ""
+        nameResults = []
+        assetCapability = nil
         controller.clearGuidance()
-        // A new measurement for the next search.
-        metric = StoreSearchMetric(id: UUID().uuidString, storeId: store.id, startedAt: Date(), alignedAt: metric.alignedAt,
+        metric = StoreSearchMetric(id: UUID().uuidString, storeId: source.storeId, startedAt: Date(), alignedAt: metric.alignedAt,
                                    recognizedAt: nil, guidanceStartedAt: nil, outcome: "none", matchedProductId: nil,
                                    testerVerdict: nil, alignmentMethod: metric.alignmentMethod, guidanceKind: nil)
     }
@@ -211,12 +272,39 @@ final class StoreShelfSearchViewModel: ObservableObject {
         try? repository.updateSearch(metric)
     }
 
+    // MARK: Linked 3D asset (existing catalog product; nothing is generated here)
+
+    private func loadAssetCapability(productId: String) {
+        guard let link = source.productLinks[productId] else { return }
+        let client = catalogClient ?? CatalogAPIClient()
+        catalogClient = client
+        Task { [weak self] in
+            do {
+                let product = try await client.fetchProduct(id: link.catalogProductId)
+                let variant = CatalogCurtainListPlaceController.resolveVariant(in: product, preferredId: nil)
+                let has3D = product.placementType == .furniture3D
+                    && (variant?.usdzUrl?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("https://") ?? false)
+                let canPlace = has3D && CatalogPlacementSpecValidator.validate(variant?.placementSpec).isSuccess
+                await MainActor.run {
+                    guard let self, self.selectedProductId == productId else { return }
+                    self.assetCapability = StoreShelfAssetCapability(catalogProductId: link.catalogProductId, canView3D: has3D, canPlaceInSpace: canPlace)
+                }
+            } catch {
+                // No buttons when the asset cannot be confirmed.
+            }
+        }
+    }
+
     // MARK: Guidance
 
     private func tick(_ frame: StoreShelfFrame) {
         cameraLive = frame.camera.position
         guard let placement = chosenPlacement, let t = alignment.state.transform else {
-            if plan != nil { plan = nil; bearing = nil; controller.clearGuidance() }
+            if plan != nil {
+                plan = nil
+                bearing = nil
+                controller.clearGuidance()
+            }
             return
         }
         // The plan (route search) is refreshed once a second; the bearing every frame.
@@ -224,7 +312,6 @@ final class StoreShelfSearchViewModel: ObservableObject {
             lastPlanTime = frame.time
             if planner == nil { planner = StoreGuidancePlanner(data: data) }
             if let p = planner?.plan(placement: placement, alignment: t, cameraLive: frame.camera.position) {
-                if plan?.kind != p.kind || plan?.destination != p.destination { objectWillChange.send() }
                 plan = p
                 controller.showGuidance(p, cameraPosition: frame.camera.position)
                 if metric.guidanceStartedAt == nil {
@@ -241,9 +328,8 @@ final class StoreShelfSearchViewModel: ObservableObject {
         var target = p.destination
         if case .walkableRoute = p.kind {
             let remaining = StoreRouteProgress.remaining(p.route.map { FloorPoint($0) }, position: FloorPoint(frame.camera.position))
-            if remaining.count > 1, let next = remaining.first, let idx = p.route.firstIndex(where: {
-                abs($0.x - next.x) < 1e-4 && abs($0.z - next.z) < 1e-4
-            }), frame.camera.position.distance(to: p.standPoint) > 1.2 {
+            if remaining.count > 1, let next = remaining.first, frame.camera.position.distance(to: p.standPoint) > 1.2,
+               let idx = p.route.firstIndex(where: { abs($0.x - next.x) < 1e-4 && abs($0.z - next.z) < 1e-4 }) {
                 target = p.route[idx]
             }
         }
@@ -268,23 +354,25 @@ final class StoreShelfSearchViewModel: ObservableObject {
             image.draw(in: CGRect(origin: .zero, size: size))
         }.cgImage
     }
-
-    func imageData(_ name: String) -> Data? { repository.imageData(storeId: store.id, fileName: name) }
 }
 
 struct StoreShelfSearchView: View {
-    let store: StoreRecord
+    let source: StoreShelfSearchSource
     let onBack: () -> Void
-    let onRecordFirst: () -> Void
+    /// Offered only to someone who can record this store (a manager); customers get a plain message.
+    var onRecordFirst: (() -> Void)?
 
+    @EnvironmentObject private var appState: AppState
     @StateObject private var model: StoreShelfSearchViewModel
+    @StateObject private var furnitureAR = CatalogFurnitureARController()
     @State private var pickerItem: PhotosPickerItem?
+    @State private var detailProductId: String?
 
-    init(store: StoreRecord, onBack: @escaping () -> Void, onRecordFirst: @escaping () -> Void) {
-        self.store = store
+    init(source: StoreShelfSearchSource, onBack: @escaping () -> Void, onRecordFirst: (() -> Void)? = nil) {
+        self.source = source
         self.onBack = onBack
         self.onRecordFirst = onRecordFirst
-        _model = StateObject(wrappedValue: StoreShelfSearchViewModel(store: store))
+        _model = StateObject(wrappedValue: StoreShelfSearchViewModel(source: source))
     }
 
     var body: some View {
@@ -296,7 +384,18 @@ struct StoreShelfSearchView: View {
             }
         }
         .onDisappear { model.stop() }
+        .fullScreenCover(item: $furnitureAR.presentedARItem, onDismiss: { furnitureAR.dismissAR() }) { item in
+            AssetARQuickLookView(localUsdzURL: item.url)
+        }
+        .sheet(item: Binding(get: { detailProductId.map { IdentifiedProductId(id: $0) } }, set: { detailProductId = $0?.id })) { item in
+            NavigationStack {
+                CatalogProductDetailView(productId: item.id, client: CatalogAPIClient(), isMockMode: appState.isMockMode)
+                    .environmentObject(appState)
+            }
+        }
     }
+
+    private struct IdentifiedProductId: Identifiable { var id: String }
 
     private func noData(_ text: String) -> some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.md) {
@@ -304,16 +403,19 @@ struct StoreShelfSearchView: View {
                 Button("뒤로") { onBack() }.foregroundStyle(GonggiColors.textSecondary)
                 Spacer()
             }
-            Text(store.name)
+            Text(source.storeName)
                 .font(.title2.weight(.bold))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text(text)
+            Text(onRecordFirst == nil ? "이 매장은 아직 게시된 매대 정보가 없어요" : text)
                 .font(.subheadline)
                 .foregroundStyle(GonggiColors.textSecondary)
-            PrimaryButton(title: StoreShelfCopy.recordTitle, icon: "viewfinder") { onRecordFirst() }
+            if let onRecordFirst {
+                PrimaryButton(title: StoreShelfCopy.recordTitle, icon: "viewfinder") { onRecordFirst() }
+            }
             Spacer()
         }
         .padding(20)
+        .background(GonggiAmbientBackground())
     }
 
     private var content: some View {
@@ -328,7 +430,11 @@ struct StoreShelfSearchView: View {
             VStack(spacing: 0) {
                 topBar
                 Spacer()
-                panel
+                ScrollView {
+                    panel
+                }
+                .frame(maxHeight: 420)
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
         .onChange(of: pickerItem) { _, item in
@@ -355,9 +461,10 @@ struct StoreShelfSearchView: View {
                     .background(.black.opacity(0.4), in: Circle())
             }
             .accessibilityLabel("뒤로")
-            Text(store.name)
+            Text(source.storeName)
                 .font(.headline)
                 .foregroundStyle(.white)
+                .lineLimit(1)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(.black.opacity(0.4), in: Capsule())
@@ -411,9 +518,21 @@ struct StoreShelfSearchView: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+            if case .published(let version, let fromCache) = source.origin {
+                Text("게시본 v\(version)" + (fromCache ? " · 저장된 사본 (오프라인)" : ""))
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+            } else {
+                Text("이 기기의 기록 (게시 전)")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
             alignmentStatus
             Divider().background(.white.opacity(0.2))
             recognition
+            if let note = model.recognitionNote {
+                Text(note).font(.footnote).foregroundStyle(GonggiColors.warningCritical)
+            }
             if let text = model.infoText {
                 Text(text).font(.footnote).foregroundStyle(GonggiColors.warningCritical)
             }
@@ -488,14 +607,14 @@ struct StoreShelfSearchView: View {
                 Text("등록되지 않은 제품이에요")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
-                Text("가장 비슷한 제품으로 안내하지 않아요. 「매대 기록하기」로 추가해 주세요.")
+                Text("가장 비슷한 제품으로 안내하지 않아요. 이름으로 찾거나 다른 제품을 비춰 주세요.")
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.85))
                 searchActions
             }
         } else {
             VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-                Text("찾을 제품을 화면 가운데에 비춰 주세요")
+                Text(model.recognitionNote == nil ? "찾을 제품을 화면 가운데에 비춰 주세요" : "제품 이름으로 찾아 주세요")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
                 searchActions
@@ -503,22 +622,49 @@ struct StoreShelfSearchView: View {
         }
     }
 
+    private var nameSearch: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                TextField("제품 이름으로 찾기", text: $model.nameQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.search)
+                    .onSubmit { model.searchByName() }
+                Button("검색") { model.searchByName() }
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white)
+            }
+            ForEach(model.nameResults) { p in
+                Button { model.selectProduct(p.id) } label: {
+                    Text(p.name).font(.footnote).foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 6)
+                }
+            }
+            if model.nameResults.isEmpty, !model.nameQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text("검색 결과가 없어요").font(.caption).foregroundStyle(.white.opacity(0.7))
+            }
+        }
+    }
+
     private var searchActions: some View {
-        HStack(spacing: GonggiSpacing.sm) {
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                Label("사진으로 찾기", systemImage: "photo")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(.white.opacity(0.18), in: Capsule())
+        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+            HStack(spacing: GonggiSpacing.sm) {
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    Label("사진으로 찾기", systemImage: "photo")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(.white.opacity(0.18), in: Capsule())
+                }
+                if model.engine?.outcome != nil || model.selectedProductId != nil {
+                    Button("다시 찾기") { model.newSearch() }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(.white.opacity(0.18), in: Capsule())
+                }
             }
-            if model.engine?.outcome != nil {
-                Button("다시 찾기") { model.newSearch() }
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(.white.opacity(0.18), in: Capsule())
-            }
+            nameSearch
         }
     }
 
@@ -557,10 +703,45 @@ struct StoreShelfSearchView: View {
             } else if model.chosenPlacement != nil, !model.alignment.state.isAligned {
                 Text("공간이 맞춰지면 카메라 화면에 안내해요").font(.footnote).foregroundStyle(.white.opacity(0.85))
             }
+            assetButtons
             Text("진열 위치의 기록이며 현재 재고는 확인하지 않아요").font(.caption).foregroundStyle(.white.opacity(0.65))
             if StoreShelfFeatureFlags.testMarkersEnabled { verdictRow }
             searchActions
         }
+    }
+
+    /// Shown only when the linked catalog product exists and its own detail confirms a usable 3D model.
+    @ViewBuilder
+    private var assetButtons: some View {
+        if let cap = model.assetCapability, cap.canView3D {
+            HStack(spacing: GonggiSpacing.sm) {
+                Button {
+                    furnitureAR.openAR(listProduct: stub(cap.catalogProductId), client: CatalogAPIClient())
+                } label: {
+                    Label("3D로 보기", systemImage: "cube")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(GonggiColors.accentTeal.opacity(0.85), in: Capsule())
+                }
+                if cap.canPlaceInSpace {
+                    Button { detailProductId = cap.catalogProductId } label: {
+                        Label("내 공간에 놓아보기", systemImage: "arkit")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(GonggiColors.accentTeal.opacity(0.85), in: Capsule())
+                    }
+                }
+            }
+        }
+    }
+
+    /// `openAR` needs a list-card product; only its id and placement type are used before the detail is fetched.
+    private func stub(_ id: String) -> CatalogProduct {
+        CatalogProduct(id: id, partnerId: "", partner: nil, productName: "", shortDescription: nil, brandName: nil,
+                       category: nil, placementType: .furniture3D, displayPriceMinor: nil, currency: nil, thumbnailUrl: nil,
+                       widthMm: 0, depthMm: 0, heightMm: 0)
     }
 
     private func placementLine(_ p: ShelfPlacement) -> some View {

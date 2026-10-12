@@ -34,8 +34,9 @@ final class StoreShelfTests: XCTestCase {
     }
 
     func testStoreSectionOrderAndFlag() {
-        XCTAssertEqual(RecordStoreOption.visible(menuVisible: true), [.recordShelf, .findProduct])
-        XCTAssertEqual(RecordStoreOption.visible(menuVisible: false), [])
+        XCTAssertEqual(RecordStoreOption.visible(menuVisible: true, isManager: true), [.recordShelf])
+        XCTAssertEqual(RecordStoreOption.visible(menuVisible: true, isManager: false), [], "customers get no recording menu")
+        XCTAssertEqual(RecordStoreOption.visible(menuVisible: false, isManager: true), [])
         // Existing sections are untouched.
         XCTAssertEqual(RecordProductOption.visible(productCaptureAvailable: true), [.photoTo3D, .productCapture])
         XCTAssertEqual(RecordSpaceOption.visible(walkableVisible: true), [.space360, .walkable])

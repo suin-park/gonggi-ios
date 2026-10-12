@@ -178,8 +178,11 @@ final class ShelfAppearanceExtractor {
     }
 
     /// Vision feature print as a float vector (L2-normalised), combined with the colour descriptor.
-    func appearance(of crop: ShelfCrop) -> ShelfAppearance? {
+    func appearance(of crop: ShelfCrop, revision: Int? = nil) -> ShelfAppearance? {
         let request = VNGenerateImageFeaturePrintRequest()
+        if let revision, VNGenerateImageFeaturePrintRequest.supportedRevisions.contains(revision) {
+            request.revision = revision
+        }
         let handler = VNImageRequestHandler(cgImage: crop.image, orientation: .up, options: [:])
         do { try handler.perform([request]) } catch { return nil }
         for case let o as VNFeaturePrintObservation in request.results ?? [] {

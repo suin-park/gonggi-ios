@@ -78,6 +78,7 @@ enum CaptureMode: String, Identifiable {
 /// 기록 tab: one screen with 제품 and 공간 sections (RecordHomeView.swift).
 struct CaptureContainerView: View {
     @EnvironmentObject private var appState: AppState
+    @ObservedObject private var storeRole = StoreShelfRoleModel.shared
 
     private enum ActiveFlow: Equatable {
         case none
@@ -87,7 +88,6 @@ struct CaptureContainerView: View {
         case productObjectCapture
         /// 매장: 매대 기록하기 / 제품 찾기 (development flag; see StoreShelfFeatureFlags).
         case storeRecord
-        case storeSearch
         case debug(CaptureMode)
     }
 
@@ -182,15 +182,6 @@ struct CaptureContainerView: View {
             StoreShelfFlowView(mode: .record, onClose: { activeFlow = .none })
                 .environmentObject(appState)
         }
-        .fullScreenCover(isPresented: Binding(
-            get: { activeFlow == .storeSearch },
-            set: { presented in
-                if !presented { activeFlow = .none }
-            }
-        )) {
-            StoreShelfFlowView(mode: .search, onClose: { activeFlow = .none })
-                .environmentObject(appState)
-        }
         .sheet(isPresented: $showPhotoTo3D) {
             // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기".
             CreateAssetFlowView(
@@ -231,6 +222,7 @@ struct CaptureContainerView: View {
         // Every account sees the 기록 chooser: 360° starts from its card (build ≤ 83 auto-started it outside the rollout).
         .onAppear {
             Task { await appState.refreshSpatialRecordAvailability() }
+            Task { await storeRole.refresh() }
             #if DEBUG
             if ScreenshotLaunchConfig.recordOpensPhotoSource {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showPhotoTo3D = true }
@@ -274,13 +266,13 @@ struct CaptureContainerView: View {
                     openWalkableSpace()
                 }
             },
-            storeOptions: RecordStoreOption.visible(menuVisible: StoreShelfFeatureFlags.menuVisible),
+            storeOptions: RecordStoreOption.visible(
+                menuVisible: StoreShelfFeatureFlags.menuVisible,
+                isManager: StoreShelfAccess.recordMenuVisible(flag: true, mockMode: appState.isMockMode, access: storeRole.access)
+            ),
             onStore: { option in
                 GonggiHaptics.medium()
-                switch option {
-                case .recordShelf: activeFlow = .storeRecord
-                case .findProduct: activeFlow = .storeSearch
-                }
+                if option == .recordShelf { activeFlow = .storeRecord }
             },
             scrollToLastRow: scrollToLastRow
         ) {

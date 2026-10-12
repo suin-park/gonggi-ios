@@ -16,6 +16,7 @@ struct HomeView: View {
     @State private var viewerLaunch: SpaceViewerLaunch?
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
+    @State private var showStoreFind = false
 
     private let publicAPI = MobilePublicSpacesAPIClient()
 
@@ -27,6 +28,17 @@ struct HomeView: View {
                         .padding(.horizontal, GonggiSpacing.lg)
                         .padding(.top, GonggiSpacing.md)
                         .padding(.bottom, GonggiSpacing.sm)
+
+                    if StoreShelfAccess.findMenuVisible(flag: StoreShelfFeatureFlags.menuVisible) {
+                        RecordSection(title: RecordHomeCopy.storeSection) {
+                            RecordChoiceRow(choice: RecordHomeCopy.findProduct) {
+                                GonggiHaptics.medium()
+                                showStoreFind = true
+                            }
+                        }
+                        .padding(.horizontal, GonggiSpacing.lg)
+                        .padding(.bottom, GonggiSpacing.md)
+                    }
 
                     Picker("콘텐츠", selection: $exploreSegment) {
                         ForEach(ExploreSegment.allCases) { segment in
@@ -89,6 +101,10 @@ struct HomeView: View {
             }
             .fullScreenCover(item: $publicViewerRoute) { route in
                 PublicSpaceViewerLoader(slug: route.slug)
+                    .environmentObject(appState)
+            }
+            .fullScreenCover(isPresented: $showStoreFind) {
+                StoreShelfCustomerView(onClose: { showStoreFind = false })
                     .environmentObject(appState)
             }
             .fullScreenCover(item: $viewerLaunch) { launch in

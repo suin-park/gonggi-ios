@@ -70,14 +70,14 @@ enum RecordSpaceOption: Equatable {
     }
 }
 
-/// 매장 section (under 3D 자산 and 공간): 매대 기록하기 first, 제품 찾기 second. Listed only behind the
-/// development flag `StoreShelfFeatureFlags.menuVisible`.
+/// 매장 section of the 기록 tab (under 3D 자산 and 공간): 매대 기록하기, for store managers only (the server says who
+/// is one) and only behind the development flag. 제품 찾기 is a customer feature and lives on the Home tab.
 enum RecordStoreOption: Equatable {
     case recordShelf
     case findProduct
 
-    static func visible(menuVisible: Bool) -> [RecordStoreOption] {
-        menuVisible ? [.recordShelf, .findProduct] : []
+    static func visible(menuVisible: Bool, isManager: Bool) -> [RecordStoreOption] {
+        menuVisible && isManager ? [.recordShelf] : []
     }
 
     var choice: RecordHomeCopy.Choice {

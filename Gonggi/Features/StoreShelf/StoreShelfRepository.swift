@@ -117,7 +117,7 @@ final class StoreShelfRepository: StoreShelfWriting, StoreRestoreLogWriting, She
     }
 
     func appendRestoreAttempt(storeId: String, attempt: StoreRestoreAttempt) throws {
-        guard stores().contains(where: { $0.id == storeId }) else { throw StoreShelfRepositoryError.unknownStore }
+        // Diagnostics only: customers have no locally created store record, so no store lookup here.
         var all = restoreAttempts(storeId: storeId)
         all.append(attempt)
         try write(Array(all.suffix(100)), to: dir(storeId).appendingPathComponent("attempts.json"))

@@ -23,8 +23,12 @@ final class ShelfSearchEngine: ObservableObject {
     private var busy = false
     private var lastProcessedTime: Double = -10
 
-    init(data: StoreShelfData, config: ShelfMatchConfig = .uncalibrated) {
+    private let featureRevision: Int?
+
+    /// `featureRevision`: the feature-print revision the published embeddings were made with (nil: this OS default).
+    init(data: StoreShelfData, config: ShelfMatchConfig = .uncalibrated, featureRevision: Int? = nil) {
         self.config = config
+        self.featureRevision = featureRevision
         gallery = data.products.map { p in
             let apps: [ShelfAppearance] = p.embeddings.enumerated().map { i, e in
                 ShelfAppearance(embedding: e.values, color: i < p.colorDescriptors.count ? p.colorDescriptors[i].values : [])
@@ -65,7 +69,7 @@ final class ShelfSearchEngine: ObservableObject {
             var result: (ShelfMatchOutcome, Data)?
             if let region = Self.chooseRegion(regions, imageWidth: w, imageHeight: h),
                let crop = self.extractor.crop(pixelBuffer: frame.pixelBuffer, rect: region.rect),
-               let appearance = self.extractor.appearance(of: crop) {
+               let appearance = self.extractor.appearance(of: crop, revision: self.featureRevision) {
                 result = (ShelfProductMatcher.match(query: appearance, gallery: self.gallery, config: self.config), crop.jpeg)
             }
             DispatchQueue.main.async {
@@ -91,7 +95,7 @@ final class ShelfSearchEngine: ObservableObject {
             guard let self else { return }
             var o: ShelfMatchOutcome?
             var jpeg: Data?
-            if let crop = self.extractor.crop(photo: photo), let appearance = self.extractor.appearance(of: crop) {
+            if let crop = self.extractor.crop(photo: photo), let appearance = self.extractor.appearance(of: crop, revision: self.featureRevision) {
                 o = ShelfProductMatcher.match(query: appearance, gallery: self.gallery, config: self.config)
                 jpeg = crop.jpeg
             }
