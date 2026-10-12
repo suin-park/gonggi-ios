@@ -130,3 +130,32 @@ struct StoreShelfData: Codable, Equatable, Sendable {
     func shelf(_ id: String) -> ShelfLayout? { shelves.first { $0.id == id } }
     func placements(ofProduct id: String) -> [ShelfPlacement] { placements.filter { $0.productId == id } }
 }
+
+extension StoreShelfData {
+    /// The same store data expressed in another world frame (saved world -> live world). Plane-relative numbers (u, v,
+    /// tier) do not change; every world position, plane, trail sample and sign pose does.
+    func transformed(by t: Rigid) -> StoreShelfData {
+        var out = self
+        out.shelves = shelves.map { shelf in
+            var s = shelf
+            s.plane = shelf.plane.transformed(by: t)
+            return s
+        }
+        out.placements = placements.map { p in
+            var q = p
+            q.world = t.apply(point: p.world)
+            return q
+        }
+        out.walkTrail = walkTrail.map { w in
+            let p = t.apply(point: Vec3(w.x, w.y, w.z))
+            return ShelfWalkSample(x: p.x, y: p.y, z: p.z, time: w.time)
+        }
+        out.referenceSigns = referenceSigns.map { r in
+            var q = r
+            if let pose = r.savedPose { q.savedPose = t.multiplied(by: pose) }
+            return q
+        }
+        if let f = floorY { out.floorY = t.apply(point: Vec3(0, f, 0)).y }
+        return out
+    }
+}

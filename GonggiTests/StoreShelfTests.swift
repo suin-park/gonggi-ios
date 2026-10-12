@@ -226,4 +226,48 @@ final class StoreShelfTests: XCTestCase {
         XCTAssertNil(StoreTestMarker.markerId(fromAnchorName: nil))
         XCTAssertNil(StoreTestMarker.markerId(fromAnchorName: "gonggi.store.marker."))
     }
+    // MARK: Shelf data, images, metrics, selection (device-side storage)
+
+    func testShelfDataImagesAndMetricsSurviveANewRepositoryInstance() throws {
+        let repo = StoreShelfRepository(rootURL: tempRoot)
+        let store = try repo.createStore(name: "매장")
+        XCTAssertNil(repo.shelfData(storeId: store.id))
+
+        var data = StoreShelfData.empty(storeId: store.id)
+        data.products = [ShelfProduct(id: "p1", name: "제품 1", createdAt: Date(timeIntervalSince1970: 10), imageFileNames: ["img-1.jpg"],
+                                      embeddings: [StoreVector([0.1, 0.2, 0.3])], colorDescriptors: [StoreVector([1, 0])],
+                                      similarProductIds: [], needsReview: false, reviewReasons: [])]
+        try repo.saveShelfData(data)
+        try repo.writeImage(storeId: store.id, fileName: "img-1.jpg", data: Data([0xFF, 0xD8, 0xFF]))
+        let m = StoreRegistrationMetric(id: "r1", storeId: store.id, shelfId: "s", startedAt: Date(timeIntervalSince1970: 0),
+                                        finishedAt: Date(timeIntervalSince1970: 60), productsSaved: 1, placementsSaved: 1,
+                                        rejectedBlurry: 0, rejectedFewObservations: 0, unplaceableDetections: 0,
+                                        manualCorrections: 0, correctionKinds: [:])
+        try repo.appendRegistration(m)
+
+        let again = StoreShelfRepository(rootURL: tempRoot)
+        XCTAssertEqual(again.shelfData(storeId: store.id)?.products.first?.embeddings.first?.values, [0.1, 0.2, 0.3])
+        XCTAssertEqual(again.imageData(storeId: store.id, fileName: "img-1.jpg"), Data([0xFF, 0xD8, 0xFF]))
+        XCTAssertEqual(again.metrics(storeId: store.id).registrations.count, 1)
+        // File names cannot escape the images folder.
+        XCTAssertNil(again.imageData(storeId: store.id, fileName: "../worldmap.json"))
+    }
+
+    func testSavingShelfDataForAnUnknownStoreIsRefused() {
+        let repo = StoreShelfRepository(rootURL: tempRoot)
+        XCTAssertThrowsError(try repo.saveShelfData(StoreShelfData.empty(storeId: "ghost")))
+    }
+
+    func testLastStoreSelectionResolution() throws {
+        let a = StoreRecord(id: "a", name: "A", createdAt: Date())
+        let b = StoreRecord(id: "b", name: "B", createdAt: Date())
+        StoreShelfSelection.lastStoreId = nil
+        XCTAssertNil(StoreShelfSelection.resolve(among: [a, b]), "two stores and no memory: the person chooses")
+        XCTAssertEqual(StoreShelfSelection.resolve(among: [a])?.id, "a", "a single store is used directly")
+        StoreShelfSelection.lastStoreId = "b"
+        XCTAssertEqual(StoreShelfSelection.resolve(among: [a, b])?.id, "b")
+        StoreShelfSelection.lastStoreId = "gone"
+        XCTAssertNil(StoreShelfSelection.resolve(among: [a, b]), "a deleted store is not resurrected")
+        StoreShelfSelection.lastStoreId = nil
+    }
 }

@@ -5,6 +5,6 @@ W=/tmp/pkg
 rm -rf "$W" && mkdir -p "$W/Sources/Gonggi" "$W/Tests/GonggiTests"
 cp /repo/Tools/StoreShelfLogicCheck/Package.swift "$W/"
 cp /repo/Gonggi/Features/StoreShelf/Core/*.swift "$W/Sources/Gonggi/"
-cp /repo/GonggiTests/StoreShelfCoreTests.swift "$W/Tests/GonggiTests/"
+cp /repo/GonggiTests/StoreShelfCoreTests*.swift "$W/Tests/GonggiTests/"
 cd "$W"
 swift test 2>&1

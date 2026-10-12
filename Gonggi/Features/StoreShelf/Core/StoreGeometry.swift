@@ -179,6 +179,14 @@ struct ShelfPlane: Codable, Equatable, Sendable {
 
     var vAxis: Vec3 { Vec3.up }
 
+    /// The same plane seen through a rigid transform (saved world -> live world). v stays world up only if the transform
+    /// is a yaw plus translation, which is what two gravity-aligned sessions differ by; any tilt is ignored on purpose.
+    func transformed(by t: Rigid) -> ShelfPlane {
+        let n = t.rotate(vector: normal).horizontal.normalized ?? normal
+        let u = t.rotate(vector: uAxis).horizontal.normalized ?? uAxis
+        return ShelfPlane(origin: t.apply(point: origin), uAxis: u, normal: n)
+    }
+
     /// Builds the plane from two points on the shelf front (left and right in any order) and where the customer stands.
     /// Returns nil when the points are (almost) above each other or too close to define a direction.
     static func fromBaseline(a: Vec3, b: Vec3, viewer: Vec3, minLength: Float = 0.3) -> ShelfPlane? {

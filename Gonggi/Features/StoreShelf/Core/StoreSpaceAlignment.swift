@@ -140,3 +140,51 @@ enum StoreGuidanceKind: Equatable, Sendable {
         }
     }
 }
+
+// MARK: - Alignment coordinator
+
+/// Collects the restore result and any reference-sign sighting and keeps the current `StoreAlignmentState`.
+/// A timeout without a map and without a sign is a failure; a map that restores later still wins over the failure.
+struct StoreAlignmentCoordinator {
+    let timeoutSeconds: Double
+    let policy: StoreSpaceAlignment.Policy
+    private(set) var state: StoreAlignmentState = .notStarted
+    private var startedAt: Double?
+    private var mapRestored = false
+    private var sign: StoreReferenceImageObservation?
+
+    init(timeoutSeconds: Double = 45, policy: StoreSpaceAlignment.Policy = StoreSpaceAlignment.Policy()) {
+        self.timeoutSeconds = timeoutSeconds
+        self.policy = policy
+    }
+
+    mutating func start(at time: Double) {
+        startedAt = time
+        mapRestored = false
+        sign = nil
+        state = .restoring
+    }
+
+    mutating func worldMapRestored() {
+        mapRestored = true
+        evaluate()
+    }
+
+    mutating func signObserved(savedPose: Rigid, livePose: Rigid) {
+        sign = StoreReferenceImageObservation(savedPose: savedPose, livePose: livePose)
+        evaluate()
+    }
+
+    mutating func tick(at time: Double) {
+        guard case .restoring = state, let startedAt else { return }
+        if time - startedAt > timeoutSeconds { state = .failed(.notRestored) }
+    }
+
+    /// Back to restoring (a retry), keeping nothing from the failed attempt.
+    mutating func retry(at time: Double) { start(at: time) }
+
+    private mutating func evaluate() {
+        let decided = StoreSpaceAlignment.decide(worldMapRestored: mapRestored, imageObservation: sign, policy: policy)
+        if decided.isAligned { state = decided }
+    }
+}
