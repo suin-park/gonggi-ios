@@ -470,7 +470,8 @@ jobs:
             MARKETING_VERSION="${MARKETING_VERSION}" \
             CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
             GONGGI_BUILD_SHA="${BUILD_SHA}" \
-            GONGGI_API_BASE_URL="${API_BASE_URL%/}" \n            GONGGI_STORE_API_BASE_URL="${STORE_API_BASE_URL%/}"
+            GONGGI_API_BASE_URL="${API_BASE_URL%/}" \
+            GONGGI_STORE_API_BASE_URL="${STORE_API_BASE_URL%/}"
 
           if [[ ! -d "${ARCHIVE_PATH}" ]]; then
             echo "::error::Archive not found at ${ARCHIVE_PATH}"
