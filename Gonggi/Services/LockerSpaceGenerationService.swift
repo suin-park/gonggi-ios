@@ -4,6 +4,9 @@ import Foundation
 /// Google client id comes from Info.plist (`GoogleClientID` ← Config/Auth.xcconfig). Do not hardcode.
 struct AppConfiguration: Sendable {
     var apiBaseURL: URL
+    /// Server for the 매장 routes only (`GonggiStoreAPIBaseURL`). Sign-in, credits, spaces and the catalog always use
+    /// `apiBaseURL`; the access token stays the one issued by that server. nil = same server as `apiBaseURL`.
+    var storeAPIBaseURL: URL? = nil
     var sessionCookieName: String
     /// iOS OAuth client id (`….apps.googleusercontent.com`).
     var googleClientID: String
@@ -30,6 +33,18 @@ struct AppConfiguration: Sendable {
         return URL(string: trimmed) ?? productionAPIBaseURL
     }
 
+    /// Where the 매장 routes live: the dedicated store server when the build sets one, otherwise the main server.
+    var storeShelfBaseURL: URL { storeAPIBaseURL ?? apiBaseURL }
+
+    /// Optional store server from the build settings: same host rules as `resolveAPIBaseURL`, but empty means "none".
+    static func resolveStoreAPIBaseURL(_ raw: String?) -> URL? {
+        guard let s = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty, !s.contains("$(") else { return nil }
+        let url = resolveAPIBaseURL(s)
+        // resolveAPIBaseURL falls back to production for a rejected value: treat that as "none", not as a store server.
+        let normalized = s.hasSuffix("/") ? String(s.dropLast()) : s
+        return url.absoluteString == normalized ? url : nil
+    }
+
     /// True when this build talks to the production server.
     var isProductionServer: Bool { apiBaseURL.host?.lowercased() == Self.productionAPIBaseURL.host }
 
@@ -41,6 +56,7 @@ struct AppConfiguration: Sendable {
         let reversed = reversedFromPlist.isEmpty ? reversedGoogleClientID(from: clientID) : reversedFromPlist
         return AppConfiguration(
             apiBaseURL: resolveAPIBaseURL(Bundle.main.object(forInfoDictionaryKey: "GonggiAPIBaseURL") as? String),
+            storeAPIBaseURL: resolveStoreAPIBaseURL(Bundle.main.object(forInfoDictionaryKey: "GonggiStoreAPIBaseURL") as? String),
             sessionCookieName: "whik_session",
             googleClientID: clientID,
             googleReversedClientID: reversed

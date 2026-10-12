@@ -35,6 +35,11 @@ on:
         required: false
         default: 'https://www.3d-locker.com'
         type: string
+      store_api_base_url:
+        description: 'Optional separate server for the 매장 routes only (GONGGI_STORE_API_BASE_URL). Sign-in, credits, spaces and catalog keep using api_base_url. Empty = same server.'
+        required: false
+        default: ''
+        type: string
       skip_object_capture_guard:
         description: 'Staging builds only: archive even though the server has no product-capture endpoint (the app hides that row until the server reports it). Logged. Ignored for the production host.'
         required: false
@@ -420,6 +425,7 @@ jobs:
           MARKETING_VERSION: ${{ inputs.marketing_version }}
           ARCHIVE_PATH: ${{ steps.paths.outputs.archive_path }}
           API_BASE_URL: ${{ inputs.api_base_url }}
+          STORE_API_BASE_URL: ${{ inputs.store_api_base_url }}
         run: |
           set -euo pipefail
           BUILD_SHA="$(git rev-parse --short=12 HEAD)"
@@ -444,6 +450,12 @@ jobs:
               exit 1
             fi
           fi
+          if [[ -n "${STORE_API_BASE_URL}" ]]; then
+            case "${STORE_API_BASE_URL}" in
+              https://*) echo "store routes -> ${STORE_API_BASE_URL%/} (sign-in and everything else -> ${API_BASE_URL%/})" ;;
+              *) echo "::error::store_api_base_url must be https (got ${STORE_API_BASE_URL})"; exit 1 ;;
+            esac
+          fi
           echo "Building archive - marketing ${MARKETING_VERSION}, build ${BUILD_NUMBER}, sha ${BUILD_SHA}, api ${API_BASE_URL}"
           xcodebuild archive \
             -project "${{ env.PROJECT }}" \
@@ -458,7 +470,7 @@ jobs:
             MARKETING_VERSION="${MARKETING_VERSION}" \
             CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
             GONGGI_BUILD_SHA="${BUILD_SHA}" \
-            GONGGI_API_BASE_URL="${API_BASE_URL%/}"
+            GONGGI_API_BASE_URL="${API_BASE_URL%/}" \n            GONGGI_STORE_API_BASE_URL="${STORE_API_BASE_URL%/}"
 
           if [[ ! -d "${ARCHIVE_PATH}" ]]; then
             echo "::error::Archive not found at ${ARCHIVE_PATH}"

@@ -43,7 +43,7 @@ final class StoreShelfAPIClient: @unchecked Sendable {
     }
 
     private func url(_ parts: [String], query: [URLQueryItem] = []) -> URL {
-        var u = config.apiBaseURL.appendingPathComponent("api/gonggi")
+        var u = config.storeShelfBaseURL.appendingPathComponent("api/gonggi")
         for p in parts { u.appendPathComponent(p) }
         guard !query.isEmpty, var c = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return u }
         c.queryItems = query
