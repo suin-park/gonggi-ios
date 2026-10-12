@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreVideo
 import Foundation
 
 /// Output of one recording pass, ready for review.
