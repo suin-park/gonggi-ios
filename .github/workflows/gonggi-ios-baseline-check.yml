@@ -1,0 +1,121 @@
+name: Gonggi iOS baseline test list
+
+# Runs the full GonggiTests on a fixed baseline commit (the parent of the store-shelf branch) with the SAME command and
+# runner as gonggi-ios-store-shelf-check.yml, so pre-existing failures can be told apart from new ones.
+# No archive, export, TestFlight or ASC upload. OpenCV comes from the main-branch cache (a miss fails the run).
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/store-shelf-record-entry]
+    paths:
+      - ".github/workflows/gonggi-ios-baseline-check.yml"
+
+permissions:
+  contents: read
+
+env:
+  PROJECT: Gonggi.xcodeproj
+  SCHEME: Gonggi
+  OPENCV_VERSION: "4.10.0"
+
+jobs:
+  baseline:
+    name: Baseline full tests
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out the baseline commit
+        run: |
+          set -euo pipefail
+          FULL="$(git rev-parse 0874299)"
+          echo "baseline commit: ${FULL}"
+          git checkout --detach "${FULL}"
+          git log --oneline -1
+
+      - name: Restore OpenCV xcframework (cache only)
+        uses: actions/cache/restore@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+          fail-on-cache-miss: true
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Install XcodeGen and generate project
+        run: |
+          set -euo pipefail
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+
+      - name: Resolve simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          UDID="$(python3 <<'PY'
+          import json, subprocess, sys
+          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"], text=True))
+          for rt in sorted([k for k in data.get("devices", {}) if "iOS" in k], reverse=True):
+              ds = [d for d in data["devices"][rt] if d.get("isAvailable") and "iPhone" in d.get("name", "")]
+              ds.sort(key=lambda d: d.get("name", ""))
+              if ds:
+                  print(ds[0]["udid"]); sys.exit(0)
+          sys.exit(1)
+          PY
+          )"
+          echo "udid=${UDID}" >> "$GITHUB_OUTPUT"
+
+      - name: Build for testing
+        run: |
+          set -euo pipefail
+          set +e
+          xcodebuild build-for-testing \
+            -project "${PROJECT}" -scheme "${SCHEME}" -configuration Debug -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO EXCLUDED_ARCHS=x86_64 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          grep -E "error:|fatal error:" build.log | tail -n 40 || true
+          exit "${STATUS}"
+
+      - name: Boot simulator
+        run: xcrun simctl boot "${{ steps.sim.outputs.udid }}" 2>/dev/null || true
+
+      - name: Full GonggiTests (same command as the branch run)
+        continue-on-error: true
+        run: |
+          set +e
+          xcodebuild test-without-building \
+            -project "${PROJECT}" -scheme "${SCHEME}" -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GonggiTests \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee full.log
+          STATUS=${PIPESTATUS[0]}
+          grep -E "Executed [0-9]+ tests, with" full.log | tail -n 2 || true
+          grep -E "Test Case '.*' failed" full.log | sed -E "s/.*Test Case '-\[GonggiTests\.([A-Za-z0-9_]+) ([A-Za-z0-9_]+)\]' failed.*/\1.\2/" | sort -u > failed_cases.txt
+          echo "failing test cases: $(wc -l < failed_cases.txt)"
+          cat failed_cases.txt
+          exit "${STATUS}"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-check-logs
+          path: |
+            build.log
+            full.log
+            failed_cases.txt
+          if-no-files-found: ignore
+          retention-days: 7
