@@ -52,7 +52,11 @@ struct StoreShelfFlowView: View {
             if let store = selected {
                 switch mode {
                 case .record:
-                    StoreShelfRecordView(store: store, onBack: { selected = nil; reload() })
+                    if StoreShelfFeatureFlags.autoCaptureEnabled {
+                        StoreShelfAutoCaptureView(store: store, onBack: { selected = nil; reload() })
+                    } else {
+                        StoreShelfRecordView(store: store, onBack: { selected = nil; reload() })
+                    }
                 case .search:
                     StoreShelfSearchView(
                         source: StoreShelfSearchSource.localRecord(storeId: store.id, storeName: store.name),

@@ -23,6 +23,11 @@ enum StoreShelfAPIError: Error, Equatable {
             switch code {
             case "UPLOAD_INCOMPLETE", "UPLOAD_SIZE_MISMATCH": return "업로드가 완료되지 않았어요. 다시 시도해 주세요"
             case "NOT_STORE_MANAGER": return "이 매장의 담당자가 아니에요"
+            case "ANALYSIS_DISABLED": return "사진 분석을 지금은 사용할 수 없어요"
+            case "ANALYSIS_LIMIT_REACHED": return "이 촬영의 분석 횟수 한도에 도달했어요. 새로 촬영해 주세요"
+            case "TOO_MANY_PHOTOS", "TOO_MANY_PHOTOS_FOR_ANALYSIS": return "사진이 너무 많아요"
+            case "PHOTO_TOO_LARGE", "PHOTOS_TOO_LARGE_FOR_ANALYSIS": return "사진 용량이 너무 커요"
+            case "UPLOAD_INCOMPLETE": return "사진 업로드가 끝나지 않았어요. 다시 시도해 주세요"
             default: return "서버 오류가 발생했어요. 잠시 후 다시 시도해 주세요"
             }
         case .invalidResponse: return "서버 응답을 읽지 못했어요"
@@ -138,6 +143,39 @@ final class StoreShelfAPIClient: @unchecked Sendable {
 
     func unlinkProduct(storeId: String, storeProductId: String) async throws {
         _ = try await send(try request("DELETE", url(["stores", storeId, "product-links", storeProductId]), auth: true), as: Empty.self)
+    }
+
+    // MARK: Automatic capture and analysis (store manager only; the server decides, the app only asks)
+
+    func startCapture(storeId: String, body: StartCaptureBody) async throws -> RemoteStartedCapture {
+        let data = try JSONEncoder().encode(body)
+        return try await send(try request("POST", url(["stores", storeId, "captures"]), body: data, auth: true), as: RemoteStartedCapture.self)
+    }
+
+    func registerPhotos(storeId: String, sessionId: String, body: RegisterPhotosBody) async throws -> RemoteRegisteredPhotos {
+        let data = try JSONEncoder().encode(body)
+        return try await send(try request("POST", url(["stores", storeId, "captures", sessionId, "photos"]), body: data, auth: true),
+                              as: RemoteRegisteredPhotos.self)
+    }
+
+    func confirmUploads(storeId: String, sessionId: String) async throws -> RemoteConfirmedUploads {
+        try await send(try request("POST", url(["stores", storeId, "captures", sessionId, "uploaded"]), body: Data("{}".utf8), auth: true),
+                       as: RemoteConfirmedUploads.self)
+    }
+
+    func startAnalysis(storeId: String, sessionId: String, force: Bool = false) async throws -> RemoteStartedAnalysis {
+        let body = try JSONEncoder().encode(["force": force])
+        return try await send(try request("POST", url(["stores", storeId, "captures", sessionId, "analyze"]), body: body, auth: true),
+                              as: RemoteStartedAnalysis.self)
+    }
+
+    func capture(storeId: String, sessionId: String) async throws -> RemoteCaptureView {
+        try await send(try request("GET", url(["stores", storeId, "captures", sessionId]), auth: true), as: RemoteCaptureView.self)
+    }
+
+    /// One photo to its signed URL (the same bounded PUT as release files).
+    func uploadPhoto(_ data: Data, to target: RemotePhotoUploadTarget) async throws {
+        try await upload(data, to: RemoteUploadTarget(path: target.photoId, url: target.url, contentType: "image/jpeg", expiresInSec: 1800))
     }
 
     // MARK: Object storage (signed URLs; no app credentials)

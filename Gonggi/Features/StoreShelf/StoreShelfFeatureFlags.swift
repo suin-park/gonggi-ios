@@ -8,6 +8,14 @@ enum StoreShelfFeatureFlags {
     private static let menuEnvKey = "GONGGI_STORE_SHELF_MENU"
     private static let testMarkersEnvKey = "GONGGI_STORE_SHELF_TEST_MARKERS"
 
+    static let legacyRecordDefaultsKey = "GonggiStoreShelfLegacyRecord"
+
+    /// 3.0: 매대 기록하기 is the automatic capture with photo analysis. The two-end baseline flow of earlier builds is
+    /// only reachable by setting the UserDefaults flag (development).
+    static var autoCaptureEnabled: Bool {
+        !(UserDefaults.standard.object(forKey: legacyRecordDefaultsKey) as? Bool ?? false)
+    }
+
     /// Product detection and image search are a later stage. This is a constant, not a switch: no flag may make the
     /// search camera present a product or a location as if it were a recognition result.
     static let productRecognitionAvailable = false

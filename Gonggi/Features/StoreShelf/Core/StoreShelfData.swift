@@ -52,6 +52,14 @@ struct ShelfLayout: Codable, Equatable, Identifiable, Sendable {
     var updatedAt: Date
     /// A photo of the shelf, shown when the space cannot be restored.
     var photoFileName: String?
+    /// How well the position of the shelf in space is known: "confirmed", "needs_confirmation" or "unknown" (nil on
+    /// data recorded before shelves were measured automatically: those positions were set by hand).
+    var locationStatus: String? = nil
+    /// When the shelf was last seen in a capture.
+    var lastObservedAt: Date? = nil
+
+    /// A shelf whose position is not known is never a guidance destination.
+    var isGuidable: Bool { locationStatus != "unknown" }
 
     func tier(forV v: Float) -> Int {
         tierBoundaries.filter { $0 <= v }.count
@@ -101,6 +109,10 @@ struct ShelfPlacement: Codable, Equatable, Identifiable, Sendable {
     var lastObservedAt: Date
     var status: ShelfPlacementStatus
     var needsReview: Bool
+    /// Units visible when it was photographed (not stock). nil: not counted.
+    var visibleCount: Int? = nil
+    /// "counted", "lower_bound" or "cannot_count".
+    var countBasis: String? = nil
 }
 
 struct ShelfWalkSample: Codable, Equatable, Sendable {

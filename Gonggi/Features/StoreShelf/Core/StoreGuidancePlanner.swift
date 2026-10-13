@@ -41,7 +41,7 @@ struct StoreGuidancePlanner {
 
     /// `alignment`: saved world -> live world. `cameraLive`: the camera position in the live session.
     func plan(placement: ShelfPlacement, alignment: Rigid, cameraLive: Vec3) -> StoreGuidancePlan? {
-        guard let shelf = data.shelf(placement.shelfId) else { return nil }
+        guard let shelf = data.shelf(placement.shelfId), shelf.isGuidable else { return nil }
         let destLive = alignment.apply(point: placement.world)
         let planeLive = shelf.plane.transformed(by: alignment)
         let standLive = StoreGuidanceMath.standPoint(placementWorld: destLive, plane: planeLive)

@@ -124,6 +124,9 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
     private var detectionImages: Set<ARReferenceImage> = []
     private var guidanceRoot: AnchorEntity?
     private(set) var horizontalPlaneHeights: [UUID: Float] = [:]
+    /// Vertical surfaces ARKit has found in this session (shelf fronts, walls, doors): the measured surfaces a shelf
+    /// position is computed from. Never a guess: only what the session reported.
+    private var verticalPlanes: [UUID: CapturedPlane] = [:]
     private(set) var expectedMarkerCount = 0
 
     var saveReadiness: StoreSaveReadiness { StoreSaveReadiness.from(mappingStatusName: mappingName) }
@@ -163,6 +166,7 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
     func startFresh() {
         guard let session = arView?.session else { return }
         horizontalPlaneHeights = [:]
+        verticalPlanes = [:]
         session.run(StoreWorldMapCoding.configuration(restoring: nil, detectionImages: detectionImages),
                     options: [.resetTracking, .removeExistingAnchors])
     }
@@ -206,6 +210,22 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
         let t = hit.worldTransform.columns.3
         return Vec3(t.x, t.y, t.z)
     }
+
+    /// The surface at the centre of the camera image and its normal, from ARKit's estimation (nil when none was hit).
+    func centreSurfaceHit() -> CapturedSurfaceHit? {
+        guard let arView, let frame = arView.session.currentFrame else { return nil }
+        let centre = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+        guard let hit = arView.raycast(from: centre, allowing: .estimatedPlane, alignment: .vertical).first
+                ?? arView.raycast(from: centre, allowing: .existingPlaneGeometry, alignment: .vertical).first else { return nil }
+        let t = hit.worldTransform.columns.3
+        let n = hit.worldTransform.columns.1
+        let cam = frame.camera.transform.columns.3
+        let d = simd_distance(SIMD3<Float>(t.x, t.y, t.z), SIMD3<Float>(cam.x, cam.y, cam.z))
+        return CapturedSurfaceHit(world: [t.x, t.y, t.z], normal: [n.x, n.y, n.z], distance: d)
+    }
+
+    /// The vertical surfaces seen so far (bounded).
+    var verticalPlaneSnapshot: [CapturedPlane] { Array(verticalPlanes.values.prefix(40)) }
 
     func viewPoint(forWorld w: Vec3) -> CGPoint? {
         arView?.project(StoreWorldMapCoding.simd(w))
@@ -362,6 +382,16 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
 
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
         for case let a as ARImageAnchor in anchors { report(a) }
+        for case let p as ARPlaneAnchor in anchors where p.alignment == .vertical { record(vertical: p) }
+    }
+
+    private func record(vertical p: ARPlaneAnchor) {
+        let t = p.transform
+        let centre = t * SIMD4<Float>(p.center.x, p.center.y, p.center.z, 1)
+        let ax = t.columns.0, ay = t.columns.1, az = t.columns.2
+        verticalPlanes[p.identifier] = CapturedPlane(
+            center: [centre.x, centre.y, centre.z], normal: [ay.x, ay.y, ay.z], axisU: [ax.x, ax.y, ax.z], axisV: [az.x, az.y, az.z],
+            halfU: p.extent.x / 2, halfV: p.extent.z / 2)
     }
 
     private func handle(_ anchors: [ARAnchor]) {
@@ -369,6 +399,7 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
             if let plane = anchor as? ARPlaneAnchor, plane.alignment == .horizontal {
                 horizontalPlaneHeights[plane.identifier] = plane.transform.columns.3.y
             }
+            if let plane = anchor as? ARPlaneAnchor, plane.alignment == .vertical { record(vertical: plane) }
             if let image = anchor as? ARImageAnchor { report(image) }
             guard showsMarkers, let arView, StoreTestMarker.markerId(fromAnchorName: anchor.name) != nil,
                   visuals[anchor.identifier] == nil else { continue }

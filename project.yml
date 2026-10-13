@@ -10,8 +10,8 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: ""
-    MARKETING_VERSION: "2.0"
-    CURRENT_PROJECT_VERSION: "83"
+    MARKETING_VERSION: "3.0"
+    CURRENT_PROJECT_VERSION: "1"
     GONGGI_BUILD_SHA: "local"
     # API server for this build. Production unless the TestFlight workflow passes a staging URL
     # (product 3DGS pre-release builds must not talk to the production server).

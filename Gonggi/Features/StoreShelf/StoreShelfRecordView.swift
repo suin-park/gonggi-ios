@@ -298,6 +298,22 @@ final class StoreShelfRecordViewModel: ObservableObject {
         step = .review
     }
 
+    // MARK: Automatic capture (3.0): the draft comes from the analysis, not from this model's own camera pass
+
+    private var onSavedHook: (() -> Void)?
+
+    /// Opens the review with a draft imported from an analysed capture.
+    func loadImported(result: AnalysisImportResult, mapData: Data?, mapInfo: StoreWorldMapInfo?, onSaved: @escaping () -> Void) {
+        draft = result.data
+        draftImages = result.images
+        self.mapData = mapData
+        self.mapInfo = mapInfo
+        onSavedHook = onSaved
+        existingMap = false
+        startedAt = Date()
+        step = .review
+    }
+
     // MARK: Review edits (each counts as one manual correction)
 
     private func note(_ kind: String) {
@@ -391,7 +407,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
     // MARK: Save
 
     func save() {
-        guard step == .review, var data = draft, let mapData, let mapInfo else { return }
+        guard step == .review, var data = draft else { return }
         step = .saving
         do {
             // Images actually referenced.
@@ -403,9 +419,10 @@ final class StoreShelfRecordViewModel: ObservableObject {
                 if let d = draftImages[name] { try repository.writeImage(storeId: store.id, fileName: name, data: d) }
             }
             data.updatedAt = Date()
-            var info = mapInfo
-            info.markerCount = 0
-            try repository.saveWorldMap(storeId: store.id, data: mapData, info: info, markers: [])
+            if let mapData, var info = mapInfo {
+                info.markerCount = 0
+                try repository.saveWorldMap(storeId: store.id, data: mapData, info: info, markers: [])
+            }
             try repository.saveShelfData(data)
             let out = output
             let metric = StoreRegistrationMetric(
@@ -419,6 +436,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
             StoreShelfSelection.lastStoreId = store.id
             savedSummary = "제품 \(data.products.count)개, 위치 \(data.placements.count)곳을 저장했어요"
             step = .saved
+            onSavedHook?()
         } catch {
             step = .failed("저장하지 못했어요. 저장 공간을 확인해 주세요.")
         }
@@ -774,12 +792,28 @@ struct StoreShelfReviewView: View {
 
     private func placementRow(_ p: ShelfPlacement) -> some View {
         let shelf = data.shelf(p.shelfId)
+        let measured = shelf?.locationStatus != nil
         return HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(shelf?.name ?? "매대") · \(shelf?.tierLabel(forV: p.v) ?? "") · 왼쪽에서 \(String(format: "%.1f", max(0, p.u)))m")
-                    .font(.footnote)
-                    .foregroundStyle(GonggiColors.textSecondary)
-                if p.needsReview {
+                if measured {
+                    Text((shelf?.name ?? "매대") + " · " + VisibleQuantityText.line(visibleCount: p.visibleCount, basis: p.countBasis))
+                        .font(.footnote)
+                        .foregroundStyle(GonggiColors.textSecondary)
+                    if shelf?.locationStatus == "unknown" {
+                        Text("매대 위치 확인 필요")
+                            .font(.caption)
+                            .foregroundStyle(GonggiColors.warningCritical)
+                    } else if shelf?.locationStatus == "needs_confirmation" {
+                        Text("매대 위치가 한 번만 확인됐어요")
+                            .font(.caption)
+                            .foregroundStyle(GonggiColors.textTertiary)
+                    }
+                } else {
+                    Text("\(shelf?.name ?? "매대") · \(shelf?.tierLabel(forV: p.v) ?? "") · 왼쪽에서 \(String(format: "%.1f", max(0, p.u)))m")
+                        .font(.footnote)
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+                if p.needsReview, !measured {
                     Text("위치가 불확실해요 (±\(Int(p.uncertaintyM * 100))cm)")
                         .font(.caption)
                         .foregroundStyle(GonggiColors.warningCritical)

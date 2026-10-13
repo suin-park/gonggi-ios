@@ -1,0 +1,230 @@
+import Foundation
+
+// From the server's analysis draft to the data the rest of the app already understands (shelves, products with image
+// features, placements). Pure Swift: image cropping and feature extraction are injected (`AnalysisImportHooks`).
+//
+// Rules
+//  - A shelf's position is whatever the phone measured (`spatial`). A shelf without it is kept as "위치 확인 필요" and is
+//    never guided to.
+//  - A product's name is what was read on the package. An unread name stays the placeholder "제품 N" with a review
+//    reason; nothing is invented. A name the manager set is never replaced.
+//  - Quantity is what was visible when photographed (`visibleCount`, `countBasis`, `lastObservedAt`), never stock, and
+//    never added up across captures: a new capture replaces the observations of the shelves it saw.
+
+struct AnalysisProductImage: Sendable {
+    var jpeg: Data
+    var embedding: [Float]
+    var color: [Float]
+}
+
+struct AnalysisImportHooks {
+    /// Crop of a product (box in the upright photo, fractions) with its image features; nil when it cannot be made.
+    var productImage: (_ photoId: String, _ box: RemoteBox) -> AnalysisProductImage?
+    /// The upright photo as JPEG (shelf representative image).
+    var shelfPhoto: (_ photoId: String) -> Data?
+}
+
+struct AnalysisImportSummary: Equatable, Sendable {
+    var shelves = 0
+    var shelvesWithoutPosition = 0
+    var products = 0
+    var productsNeedingReview = 0
+    var productsKeptFromBefore = 0
+    var productsRemovedFromBefore = 0
+    var productsWithoutShelf = 0
+}
+
+struct AnalysisImportResult {
+    var data: StoreShelfData
+    var images: [String: Data]
+    var summary: AnalysisImportSummary
+}
+
+enum AnalysisImporter {
+    private static let iso: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    static func parseDate(_ s: String) -> Date? {
+        if let d = iso.date(from: s) { return d }
+        let plain = ISO8601DateFormatter()
+        return plain.date(from: s)
+    }
+
+    static func vec(_ a: [Float]) -> Vec3? {
+        a.count == 3 && a.allSatisfy({ $0.isFinite }) ? Vec3(a[0], a[1], a[2]) : nil
+    }
+
+    /// Plane of a shelf front from the measured position and normal: (u, v, n) right-handed, v = up.
+    static func plane(position: Vec3, normal: Vec3) -> ShelfPlane? {
+        guard let n = normal.horizontal.normalized else { return nil }
+        guard let u = Vec3.up.cross(n).normalized else { return nil }
+        return ShelfPlane(origin: position, uAxis: u, normal: n)
+    }
+
+    static func importDraft(draft: RemoteAnalysisDraft, existing: StoreShelfData, storeId: String, capturedAt: Date,
+                            walkTrail: [ShelfWalkSample], newId: () -> String, hooks: AnalysisImportHooks) -> AnalysisImportResult {
+        var data = StoreShelfData.empty(storeId: storeId)
+        var images: [String: Data] = [:]
+        var summary = AnalysisImportSummary()
+        let now = Date()
+
+        // Shelves.
+        var shelfIdByKey: [String: String] = [:]
+        for s in draft.shelves {
+            let id = newId()
+            shelfIdByKey[s.key] = id
+            var plane = ShelfPlane(origin: .zero, uAxis: Vec3(1, 0, 0), normal: Vec3(0, 0, 1))
+            var status = "unknown"
+            if let sp = s.spatial, let pos = vec(sp.position), let n = vec(sp.normal), let p = Self.plane(position: pos, normal: n) {
+                plane = p
+                status = sp.status == "confirmed" ? "confirmed" : "needs_confirmation"
+            }
+            var photoName: String?
+            if let pid = s.representativePhotoId, let jpeg = hooks.shelfPhoto(pid) {
+                photoName = "shelf-\(id).jpg"
+                images[photoName!] = jpeg
+            }
+            var layout = ShelfLayout(id: id, name: (s.name?.isEmpty == false ? s.name! : "매대 \(data.shelves.count + 1)"), plane: plane,
+                                     tierBoundaries: [], createdAt: now, updatedAt: now, photoFileName: photoName)
+            layout.locationStatus = status
+            layout.lastObservedAt = parseDate(s.lastObservedAt) ?? capturedAt
+            data.shelves.append(layout)
+            summary.shelves += 1
+            if status == "unknown" { summary.shelvesWithoutPosition += 1 }
+        }
+
+        // Products: an existing product with the same printed name keeps its id (and a name a person set).
+        var existingByKey: [String: ShelfProduct] = [:]
+        for p in existing.products where !ShelfProductNameExtractor.isPlaceholder(p.name) {
+            existingByKey[ShelfProductNameExtractor.key(p.name)] = p
+        }
+        var productIdByKey: [String: String] = [:]
+        var matchedExisting = Set<String>()
+        var counter = 0
+        for p in draft.products {
+            counter += 1
+            let read = p.nameOriginal.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
+            let nameKey = read ? ShelfProductNameExtractor.key(p.nameOriginal!) : ""
+            var product: ShelfProduct
+            if read, let old = existingByKey[nameKey] {
+                product = old
+                matchedExisting.insert(old.id)
+                summary.productsKeptFromBefore += 1
+                product.embeddings = []
+                product.colorDescriptors = []
+                product.imageFileNames = []
+                product.similarProductIds = []
+                if !product.nameIsProtected {
+                    product.name = p.nameOriginal!
+                    product.nameSource = ShelfNameSource.auto
+                }
+            } else {
+                product = ShelfProduct(
+                    id: newId(), name: read ? p.nameOriginal! : "제품 \(counter)", createdAt: now, imageFileNames: [], embeddings: [],
+                    colorDescriptors: [], similarProductIds: [], needsReview: false, reviewReasons: [])
+                product.nameSource = read ? ShelfNameSource.auto : nil
+            }
+            product.brand = p.brand
+            product.variantText = p.variant
+            product.volumeText = p.volumeText ?? volumeText(value: p.volumeValue, unit: p.volumeUnit)
+            var tokens = Set<String>()
+            for t in p.printedText + [p.nameOriginal ?? ""] {
+                let k = ShelfProductNameExtractor.key(t)
+                if k.count >= 2 { tokens.insert(k) }
+            }
+            product.ocrTokens = Array(tokens.sorted().prefix(24))
+
+            // Review reasons from what could not be confirmed (the server's texts are kept as they are).
+            var reasons: [String] = []
+            if !read || p.nameReadStatus == "unreadable" {
+                reasons.append(ShelfNameReview.unread)
+            } else if p.nameReadStatus == "partial" {
+                reasons.append(ShelfNameReview.confirm)
+            }
+            for r in p.reviewReasons where !reasons.contains(r) && r != "이름을 읽지 못했어요" && !r.hasPrefix("이름이 일부만") { reasons.append(r) }
+            if product.nameIsProtected { reasons.removeAll { ShelfNameReview.all.contains($0) } }
+            product.reviewReasons = reasons
+
+            // Image: the representative crop; image features for live search.
+            if let rep = p.representative, let img = hooks.productImage(rep.photoId, rep.box) {
+                let file = "img-\(newId()).jpg"
+                images[file] = img.jpeg
+                product.imageFileNames = [file]
+                product.embeddings = [StoreVector(img.embedding)]
+                product.colorDescriptors = [StoreVector(img.color)]
+            }
+            // Additional views for matching: other sightings (bounded).
+            for s in p.sightings.prefix(4) where product.embeddings.count < 4 {
+                if let rep = p.representative, rep.photoId == s.photoId, rep.box == s.box { continue }
+                if let img = hooks.productImage(s.photoId, s.box) {
+                    product.embeddings.append(StoreVector(img.embedding))
+                    product.colorDescriptors.append(StoreVector(img.color))
+                }
+            }
+            productIdByKey[p.key] = product.id
+            data.products.append(product)
+        }
+
+        // Placements: one per product and shelf, with the quantity seen at that time.
+        var hasShelf = Set<String>()
+        for o in draft.observations {
+            guard let pid = productIdByKey[o.productKey], let sk = o.shelfKey, let sid = shelfIdByKey[sk],
+                  let shelf = data.shelves.first(where: { $0.id == sid }) else { continue }
+            let observed = parseDate(o.observedAt) ?? capturedAt
+            var placement = ShelfPlacement(
+                id: newId(), productId: pid, shelfId: sid, u: 0, v: 0, tier: 0, world: shelf.plane.origin, widthM: 0.1, heightM: 0.2,
+                uncertaintyM: 0.3, observationCount: max(1, o.evidencePhotoIds.count), firstObservedAt: observed, lastObservedAt: observed,
+                status: .present, needsReview: shelf.locationStatus != "confirmed")
+            placement.visibleCount = o.visibleCount
+            placement.countBasis = o.countBasis
+            data.placements.append(placement)
+            hasShelf.insert(pid)
+        }
+        for i in data.products.indices {
+            if !hasShelf.contains(data.products[i].id) {
+                summary.productsWithoutShelf += 1
+                let note = "어느 매대에 있는지 확인되지 않았어요"
+                if !data.products[i].reviewReasons.contains(note) { data.products[i].reviewReasons.append(note) }
+            }
+            data.products[i].needsReview = !data.products[i].reviewReasons.isEmpty
+            if data.products[i].needsReview { summary.productsNeedingReview += 1 }
+        }
+
+        // Products of the previous record that this capture did not see: only a person-named product is kept.
+        for old in existing.products where !matchedExisting.contains(old.id) {
+            if old.nameIsProtected, !data.products.contains(where: { $0.id == old.id }) {
+                var kept = old
+                kept.needsReview = true
+                if !kept.reviewReasons.contains("이번 촬영에서는 보이지 않았어요") { kept.reviewReasons.append("이번 촬영에서는 보이지 않았어요") }
+                data.products.append(kept)
+                summary.productsKeptFromBefore += 1
+            } else {
+                summary.productsRemovedFromBefore += 1
+            }
+        }
+        // Image files of kept products stay (the caller copies them from the repository by name).
+        for p in data.products where matchedExisting.contains(p.id) == false && p.imageFileNames.isEmpty { _ = p }
+
+        data.walkTrail = Array(walkTrail.suffix(4000))
+        data.updatedAt = now
+        summary.products = data.products.count
+        return AnalysisImportResult(data: data, images: images, summary: summary)
+    }
+
+    static func volumeText(value: Double?, unit: String?) -> String? {
+        guard let value, let unit, !unit.isEmpty else { return nil }
+        let n = value.rounded() == value ? String(Int(value)) : String(value)
+        return n + unit
+    }
+}
+
+/// The quantity line shown to customers and managers. "촬영 당시", never "재고".
+enum VisibleQuantityText {
+    static func line(visibleCount: Int?, basis: String?) -> String {
+        guard let n = visibleCount, basis != "cannot_count" else { return "수량은 확인되지 않았어요" }
+        return basis == "lower_bound" ? "촬영 당시 \(n)개 이상 확인" : "촬영 당시 \(n)개 확인"
+    }
+}

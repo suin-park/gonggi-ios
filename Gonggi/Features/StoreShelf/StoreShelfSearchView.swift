@@ -311,10 +311,17 @@ final class StoreShelfSearchViewModel: ObservableObject {
     }
 
     func choosePlacement(forProduct id: String) {
-        let placements = data.placements(ofProduct: id)
-        guard !placements.isEmpty else {
+        let all = data.placements(ofProduct: id)
+        guard !all.isEmpty else {
             chosenPlacement = nil
             infoText = "이 제품의 진열 위치가 기록되어 있지 않아요"
+            return
+        }
+        // A shelf whose position was not measured is shown but never guided to.
+        let placements = all.filter { data.shelf($0.shelfId)?.isGuidable ?? false }
+        guard !placements.isEmpty else {
+            chosenPlacement = nil
+            infoText = "이 제품이 있는 매대의 위치가 아직 확인되지 않았어요"
             return
         }
         if let t = alignment.state.transform, let cam = cameraLive {
@@ -886,11 +893,20 @@ struct StoreShelfSearchView: View {
     private func placementLine(_ p: ShelfPlacement) -> some View {
         let shelf = model.data.shelf(p.shelfId)
         let chosen = model.chosenPlacement?.id == p.id
+        let measured = shelf?.locationStatus != nil
         return HStack {
             Image(systemName: chosen ? "largecircle.fill.circle" : "circle").foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 1) {
-                Text("\(shelf?.name ?? "매대") · \(shelf?.tierLabel(forV: p.v) ?? "") · 왼쪽에서 \(String(format: "%.1f", max(0, p.u)))m")
-                    .font(.footnote).foregroundStyle(.white)
+                if measured {
+                    Text((shelf?.name ?? "매대") + " · " + VisibleQuantityText.line(visibleCount: p.visibleCount, basis: p.countBasis))
+                        .font(.footnote).foregroundStyle(.white)
+                    if shelf?.locationStatus == "unknown" {
+                        Text("매대 위치 확인 필요").font(.caption).foregroundStyle(GonggiColors.warningCritical)
+                    }
+                } else {
+                    Text("\(shelf?.name ?? "매대") · \(shelf?.tierLabel(forV: p.v) ?? "") · 왼쪽에서 \(String(format: "%.1f", max(0, p.u)))m")
+                        .font(.footnote).foregroundStyle(.white)
+                }
                 Text(StoreShelfTimeText.lastConfirmed(p.lastObservedAt) + (p.status == .notObservedOnRescan ? " · 최근 촬영에서는 보이지 않았어요" : ""))
                     .font(.caption).foregroundStyle(.white.opacity(0.7))
             }
