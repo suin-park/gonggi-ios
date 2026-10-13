@@ -145,6 +145,11 @@ struct RemoteDraftProduct: Codable, Equatable, Sendable {
     var reviewReasons: [String]
     var matchedStoreProductId: String?
     var nameKey: String?
+    /// No whole-package image could be taken from the photos: show "이미지 확인 필요", never a fragment.
+    var imageNeedsReview: Bool? = nil
+    /// Keys of drafts that may be the same product (not merged because evidence was missing).
+    var possibleSameAs: [String]? = nil
+    var packageKind: String? = nil
 }
 
 struct RemoteDraftObservation: Codable, Equatable, Sendable {
@@ -155,6 +160,9 @@ struct RemoteDraftObservation: Codable, Equatable, Sendable {
     var countBasis: String
     var evidencePhotoIds: [String]
     var observedAt: String
+    /// Distinct physical groups the count is made of / how many of them could not be located.
+    var groups: Int? = nil
+    var unlocatedGroups: Int? = nil
 }
 
 struct RemoteAnalysisDraft: Codable, Equatable, Sendable {
@@ -163,10 +171,23 @@ struct RemoteAnalysisDraft: Codable, Equatable, Sendable {
     var observations: [RemoteDraftObservation]
 }
 
+struct RemoteRunCoverage: Codable, Equatable, Sendable {
+    var totalPhotos: Int
+    var analyzedPhotos: Int
+    var requests: Int
+    var requestLimit: Int
+    /// false: photos were left out; the result is not "all shelves analysed".
+    var complete: Bool
+}
+
 struct RemoteAnalysisRun: Codable, Equatable, Sendable {
     var id: String
     var status: String
     var model: String
+    /// The model name the API answered with (nil until the first answer).
+    var responseModel: String? = nil
+    var pipelineVersion: String? = nil
+    var coverage: RemoteRunCoverage? = nil
     var errorCode: String?
     var inputTokens: Int?
     var outputTokens: Int?

@@ -435,7 +435,7 @@ struct StoreShelfAutoCaptureView: View {
                 .foregroundStyle(GonggiColors.textPrimary)
             if let c = model.coordinator {
                 step("사진 업로드", state: uploadState(c.phase), detail: uploadDetail(c.phase))
-                step("제품과 매대 분석", state: analyzeState(c.phase), detail: c.run.map { "\($0.model) · \($0.status)" })
+                step("제품과 매대 분석", state: analyzeState(c.phase), detail: c.run.map { AnalysisRunText.detail($0) })
                 step("검토 자료 만들기", state: importState(c.phase), detail: nil)
                 if case .analyzing = c.phase {
                     Text("보통 수십 초가 걸려요. 앱을 닫아도 촬영한 사진은 보존돼요. (\(c.elapsedAnalysisSeconds)초)")

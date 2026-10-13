@@ -40,6 +40,25 @@ struct AnalysisImportResult {
     var summary: AnalysisImportSummary
 }
 
+/// Which captured photos go to the server. The app keeps at most `StoreAutoCaptureConfig.maxPhotos`, the server accepts
+/// `serverMaxPhotos` per session; a larger local session (older build) is uploaded as an evenly spread subset instead of
+/// failing, and every photo stays on the device.
+enum StoreUploadPlan {
+    static let serverMaxPhotos = 40
+
+    static func subset<T>(_ photos: [T], max limit: Int) -> [T] {
+        guard limit > 0, photos.count > limit else { return photos }
+        if limit == 1 { return [photos[0]] }
+        var seen = Set<Int>()
+        var out: [T] = []
+        for i in 0..<limit {
+            let idx = Int((Double(i) * Double(photos.count - 1) / Double(limit - 1)).rounded())
+            if seen.insert(idx).inserted { out.append(photos[idx]) }
+        }
+        return out
+    }
+}
+
 enum AnalysisImporter {
     private static let iso: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -225,6 +244,28 @@ enum AnalysisImporter {
 enum VisibleQuantityText {
     static func line(visibleCount: Int?, basis: String?) -> String {
         guard let n = visibleCount, basis != "cannot_count" else { return "수량은 확인되지 않았어요" }
-        return basis == "lower_bound" ? "촬영 당시 \(n)개 이상 확인" : "촬영 당시 \(n)개 확인"
+        return basis == "lower_bound" ? "촬영 당시 최소 \(n)개 확인" : "촬영 당시 \(n)개 확인"
+    }
+}
+
+/// What the processing screen says about a run: the model that really answered (not only the one asked for), the
+/// state, and how many photos were analysed.
+enum AnalysisRunText {
+    static func detail(_ run: RemoteAnalysisRun) -> String {
+        var parts: [String] = []
+        if let answered = run.responseModel {
+            parts.append(answered == run.model ? answered : "요청 \(run.model) / 응답 \(answered)")
+        } else {
+            parts.append("\(run.model) (응답 대기)")
+        }
+        switch run.status {
+        case "SUCCEEDED": parts.append("완료")
+        case "FAILED": parts.append("실패")
+        default: parts.append("분석 중")
+        }
+        if let c = run.coverage {
+            parts.append(c.complete ? "사진 \(c.analyzedPhotos)장 모두 분석" : "사진 \(c.totalPhotos)장 중 \(c.analyzedPhotos)장만 분석 · 일부 영역 미분석")
+        }
+        return parts.joined(separator: " · ")
     }
 }

@@ -146,17 +146,18 @@ final class StoreCaptureCoordinator: ObservableObject {
 
     private func uploadPending(sessionId: String) async throws {
         for _ in 0..<2 {
-            let pending = manifest.pendingUploads
+            let eligible = StoreUploadPlan.subset(manifest.photos, max: StoreUploadPlan.serverMaxPhotos)
+            let pending = eligible.filter { !$0.uploaded }
             guard !pending.isEmpty else { break }
-            phase = .uploading(done: manifest.photos.count - pending.count, total: manifest.photos.count)
+            phase = .uploading(done: eligible.count - pending.count, total: eligible.count)
             let registered = try await api.registerPhotos(
                 storeId: manifest.storeId, sessionId: sessionId,
-                body: RegisterPhotosBody(photos: manifest.photos.map { $0.registerBody(iso: { Self.isoString($0) }) }, planes: manifest.planes))
+                body: RegisterPhotosBody(photos: eligible.map { $0.registerBody(iso: { Self.isoString($0) }) }, planes: manifest.planes))
             let already = Set(registered.alreadyUploaded)
             for id in already {
                 if let i = manifest.photos.firstIndex(where: { $0.id == id }) { manifest.photos[i].uploaded = true }
             }
-            var done = manifest.photos.filter(\.uploaded).count
+            var done = eligible.filter(\.uploaded).count
             for target in registered.uploads {
                 try Task.checkCancellation()
                 guard let i = manifest.photos.firstIndex(where: { $0.id == target.photoId }),
@@ -164,7 +165,7 @@ final class StoreCaptureCoordinator: ObservableObject {
                 try await api.uploadPhoto(data, to: target)
                 manifest.photos[i].uploaded = true
                 done += 1
-                phase = .uploading(done: done, total: manifest.photos.count)
+                phase = .uploading(done: done, total: eligible.count)
                 persist()
             }
             let confirmed = try await api.confirmUploads(storeId: manifest.storeId, sessionId: sessionId)
@@ -175,7 +176,9 @@ final class StoreCaptureCoordinator: ObservableObject {
             }
             persist()
         }
-        if !manifest.pendingUploads.isEmpty { throw StoreShelfAPIError.server(status: 409, code: "UPLOAD_INCOMPLETE") }
+        if StoreUploadPlan.subset(manifest.photos, max: StoreUploadPlan.serverMaxPhotos).contains(where: { !$0.uploaded }) {
+            throw StoreShelfAPIError.server(status: 409, code: "UPLOAD_INCOMPLETE")
+        }
     }
 
     nonisolated static func isoString(_ d: Date) -> String {

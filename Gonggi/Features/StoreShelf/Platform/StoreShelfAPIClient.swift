@@ -164,7 +164,8 @@ final class StoreShelfAPIClient: @unchecked Sendable {
     }
 
     func startAnalysis(storeId: String, sessionId: String, force: Bool = false) async throws -> RemoteStartedAnalysis {
-        let body = try JSONEncoder().encode(["force": force])
+        // reanalyze: "새 설정으로 재분석" (a separate run, its own cache); false: continue / return the same run.
+        let body = try JSONEncoder().encode(["reanalyze": force])
         return try await send(try request("POST", url(["stores", storeId, "captures", sessionId, "analyze"]), body: body, auth: true),
                               as: RemoteStartedAnalysis.self)
     }

@@ -221,7 +221,7 @@ final class StoreShelfCoreTests8: XCTestCase {
 
     func testQuantityTextIsAboutTheTimeOfThePhotoNeverStock() {
         XCTAssertEqual(VisibleQuantityText.line(visibleCount: 3, basis: "counted"), "촬영 당시 3개 확인")
-        XCTAssertEqual(VisibleQuantityText.line(visibleCount: 4, basis: "lower_bound"), "촬영 당시 4개 이상 확인")
+        XCTAssertEqual(VisibleQuantityText.line(visibleCount: 4, basis: "lower_bound"), "촬영 당시 최소 4개 확인")
         XCTAssertEqual(VisibleQuantityText.line(visibleCount: nil, basis: "cannot_count"), "수량은 확인되지 않았어요")
         XCTAssertEqual(VisibleQuantityText.line(visibleCount: 5, basis: "cannot_count"), "수량은 확인되지 않았어요")
         XCTAssertFalse(VisibleQuantityText.line(visibleCount: 3, basis: "counted").contains("재고"))
