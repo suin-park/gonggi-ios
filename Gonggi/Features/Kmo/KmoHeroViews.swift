@@ -37,6 +37,8 @@ enum KmoSurface {
 struct KmoProductStage: View {
     let phase: KmoHeroModel.ModelPhase
     let thumbnailUrl: String?
+    /// 불러오는 동안 함께 보여 줄 짧은 설명(예: 파일 크기).
+    var loadingDetail: String? = nil
     var height: CGFloat = 280
     /// 화면 확인용: 장면 단계와 상관없이 그린다.
     var forceActive = false
@@ -60,6 +62,9 @@ struct KmoProductStage: View {
                 VStack(spacing: 8) {
                     ProgressView().tint(KmoColors.textPrimary)
                     Text("3D 모델을 불러오고 있어요").font(.footnote).foregroundStyle(KmoColors.textSecondary)
+                    if let loadingDetail {
+                        Text(loadingDetail).font(.caption).foregroundStyle(KmoColors.textSecondary)
+                    }
                 }
             case .ready(let box):
                 KmoModelView(scene: box.scene, isActive: active, onInteract: { interacted = true })
@@ -232,6 +237,7 @@ struct KmoHeroSection: View {
             KmoProductStage(
                 phase: model.modelPhase,
                 thumbnailUrl: product.heroThumbnailURL(selectedVariantId: model.variantId),
+                loadingDetail: model.modelSizeText,
                 height: 280,
                 onRetry: { model.retryModel() })
             VStack(alignment: .leading, spacing: 4) {

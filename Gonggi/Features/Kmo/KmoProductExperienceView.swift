@@ -114,6 +114,7 @@ struct KmoProductExperienceView: View {
             KmoProductStage(
                 phase: model.modelPhase,
                 thumbnailUrl: product.heroThumbnailURL(selectedVariantId: model.variantId),
+                loadingDetail: model.modelSizeText,
                 height: 320,
                 onRetry: { model.retryModel() })
         } else if KmoImageSlot.initial(urlString: product.resolvedThumbnailURL).reservesPhotoHeight {

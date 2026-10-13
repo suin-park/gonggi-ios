@@ -39,6 +39,8 @@ final class KmoHeroModel: ObservableObject {
     @Published private(set) var detail: CatalogProduct?
     @Published private(set) var variantId: String?
     @Published private(set) var modelPhase: ModelPhase = .idle
+    /// 내려받는 3D 파일의 대략적인 크기(예: 「약 34MB」). 모를 때는 nil.
+    @Published private(set) var modelSizeText: String?
 
     let client: any CatalogServing
     private var loadTask: Task<Void, Never>?
@@ -130,10 +132,23 @@ final class KmoHeroModel: ObservableObject {
         if case .idle = modelPhase, selectedId != nil { loadModel() }
     }
 
+    /// 파일 크기만 확인한다(내려받지 않는다). 확인하지 못하면 nil.
+    private static func sizeText(of url: URL) async -> String? {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 8
+        guard let (_, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              http.expectedContentLength > 0 else { return nil }
+        let mb = Double(http.expectedContentLength) / 1_048_576
+        return mb < 1 ? "1MB 미만" : "약 \(Int(mb.rounded()))MB"
+    }
+
     private func loadModel() {
         loadTask?.cancel()
         guard let id = selectedId else { return }
         modelPhase = .loading
+        modelSizeText = nil
         let preferred = variantId
         loadTask = Task { [weak self] in
             guard let self else { return }
@@ -158,6 +173,7 @@ final class KmoHeroModel: ObservableObject {
                     return
                 }
                 let key = variant.catalogOwnedAssetId ?? variant.catalogAssetId ?? "\(product.id)-\(variant.id)"
+                self.modelSizeText = await Self.sizeText(of: remote)
                 guard let local = await VRUsdzCache().localURL(assetId: key, remoteURL: remote) else {
                     guard !Task.isCancelled else { return }
                     self.modelPhase = .failed("3D 모델을 불러오지 못했어요")

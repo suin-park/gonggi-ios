@@ -63,7 +63,7 @@ enum KmoModelLoader {
         let cameraNode = SCNNode()
         cameraNode.camera = camera
         cameraNode.name = "kmo.camera"
-        cameraNode.position = SCNVector3(0, 0.1, 3.4)
+        cameraNode.position = SCNVector3(0, 0.1, 4.1)
         root.addChildNode(cameraNode)
         return true
     }
