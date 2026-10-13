@@ -1,6 +1,7 @@
 import SceneKit
 import SwiftUI
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 
 // 홈과 상품 상세의 3D 상품 표시. 실제 등록 상품의 USDZ를 SceneKit으로 열고, 손으로 좌우로 돌려 본다.
 // 세로로 미는 동작은 화면 스크롤로 넘어가도록 가로 동작만 받는다. 한 번에 하나의 장면만 쓴다.

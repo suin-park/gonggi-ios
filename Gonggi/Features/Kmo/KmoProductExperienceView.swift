@@ -251,7 +251,12 @@ struct KmoSavedProductsView: View {
             if let message { Text(message).font(.footnote).foregroundStyle(KmoColors.warning) }
         }
         .task(id: KmoRecentModel.accountId) { items = store.load(account: KmoRecentModel.accountId) }
-        .navigationDestination(item: $product) { KmoProductExperienceView(product: $0, isMockMode: appState.isMockMode) }
+        .navigationDestination(isPresented: Binding(get: { product != nil }, set: { if !$0 { product = nil } })) {
+            if let product {
+                KmoProductExperienceView(product: product, isMockMode: appState.isMockMode)
+                    .environmentObject(appState)
+            }
+        }
     }
 
     private func open(_ item: KmoSavedProduct) {
