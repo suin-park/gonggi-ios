@@ -38,13 +38,15 @@ struct KmoProductStage: View {
     let phase: KmoHeroModel.ModelPhase
     let thumbnailUrl: String?
     var height: CGFloat = 280
+    /// 화면 확인용: 장면 단계와 상관없이 그린다.
+    var forceActive = false
     let onRetry: () -> Void
 
     @Environment(\.kmoTabActive) private var tabActive
     @Environment(\.scenePhase) private var scenePhase
     @State private var interacted = false
 
-    private var active: Bool { tabActive && scenePhase == .active }
+    private var active: Bool { forceActive || (tabActive && scenePhase == .active) }
 
     var body: some View {
         ZStack {

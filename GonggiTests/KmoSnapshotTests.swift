@@ -1,3 +1,4 @@
+import Metal
 import SceneKit
 import SwiftUI
 import XCTest
@@ -167,7 +168,7 @@ final class KmoSnapshotTests: XCTestCase {
                         Text(KmoCopy.tagline).font(.footnote).foregroundStyle(KmoColors.textSecondary)
                     }
                     .padding(.horizontal, 20)
-                    KmoProductStage(phase: .ready(KmoModelSceneBox(scene)), thumbnailUrl: nil, height: 280, onRetry: {})
+                    KmoProductStage(phase: .ready(KmoModelSceneBox(scene)), thumbnailUrl: nil, height: 280, forceActive: true, onRetry: {})
                     VStack(alignment: .leading, spacing: 4) {
                         Text("시험용 의자").font(.title2.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
                         Text("시험 판매자").font(.subheadline).foregroundStyle(KmoColors.textSecondary)
@@ -192,6 +193,42 @@ final class KmoSnapshotTests: XCTestCase {
         .background(KmoSurface.hero)
         try render(view, name: "07-hero-stage-test-model")
         try render(view, name: "07b-hero-stage-large-text", size: CGSize(width: 375, height: 1800), dynamic: .accessibility3)
+    }
+
+    /// 장면 자체가 보이는지: 화면에 올리지 않고 SceneKit 렌더러로 그려 모델이 그림 안에 있는지 확인한다.
+    func testSceneRendersOffscreenAndTheModelIsInFrame() throws {
+        let scene = Self.testScene()
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal을 쓸 수 없는 환경") }
+        let renderer = SCNRenderer(device: device, options: nil)
+        renderer.scene = scene
+        renderer.pointOfView = scene.rootNode.childNode(withName: "kmo.camera", recursively: false)
+        renderer.autoenablesDefaultLighting = true
+        let size = CGSize(width: 480, height: 480)
+        func shot(_ name: String) throws -> UIImage {
+            let image = renderer.snapshot(atTime: 0, with: size, antialiasingMode: .multisampling4X)
+            let dir = ProcessInfo.processInfo.environment["KMO_SHOT_DIR"] ?? NSTemporaryDirectory()
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try XCTUnwrap(image.pngData()).write(to: URL(fileURLWithPath: dir).appendingPathComponent(name + ".png"))
+            return image
+        }
+        func litFraction(_ image: UIImage) -> Double {
+            guard let cg = image.cgImage else { return 0 }
+            let w = cg.width, h = cg.height
+            var data = [UInt8](repeating: 0, count: w * h * 4)
+            let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            ctx?.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            var lit = 0
+            for i in stride(from: 0, to: data.count, by: 4) where Int(data[i]) + Int(data[i + 1]) + Int(data[i + 2]) > 60 { lit += 1 }
+            return Double(lit) / Double(w * h)
+        }
+        let before = try shot("07d-model-offscreen-front")
+        let fractionBefore = litFraction(before)
+        XCTAssertGreaterThan(fractionBefore, 0.03, "모델이 화면 안에 보여야 한다")
+        XCTAssertLessThan(fractionBefore, 0.95, "모델이 화면 전체를 덮지 않는다")
+        KmoModelLoader.rotate(scene: scene, byDx: 120)
+        let after = try shot("07e-model-offscreen-rotated")
+        XCTAssertNotEqual(before.pngData(), after.pngData(), "손으로 돌리면 보이는 모습이 바뀐다")
     }
 
     func testStageLoadingAndFailureStates() throws {
