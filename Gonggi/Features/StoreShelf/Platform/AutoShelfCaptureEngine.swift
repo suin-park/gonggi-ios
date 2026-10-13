@@ -93,6 +93,7 @@ final class AutoShelfCaptureEngine: ObservableObject {
         let sessionId = manifest.clientSessionId
         let maxSide = exportMaxSide, quality = exportQuality
         let state = frame.trackingNormal ? "normal" : "limited"
+        let epoch = controller?.epochId
         let takenAt = Date()
         queue.async { [weak self] in
             guard let self else { return }
@@ -105,7 +106,7 @@ final class AutoShelfCaptureEngine: ObservableObject {
                     sensorWidth: Int(camera.width), sensorHeight: Int(camera.height), fx: camera.fx, fy: camera.fy, cx: camera.cx,
                     cy: camera.cy, pose: camera.cameraToWorld.m, trackingState: state, sharpness: sharpness, bytes: jpeg.count,
                     sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(), surfaceHit: hit,
-                    lowOverlap: lowOverlap, selectionReason: reason, fileName: name, uploaded: false)
+                    lowOverlap: lowOverlap, selectionReason: reason, fileName: name, uploaded: false, epoch: epoch)
             }
             DispatchQueue.main.async {
                 self.writing = false
@@ -114,6 +115,12 @@ final class AutoShelfCaptureEngine: ObservableObject {
                     return
                 }
                 self.manifest.photos.append(photo)
+                if photo.trackingState == "normal" {
+                    self.controller?.addReferenceAnchor(photoId: photo.id, pose: photo.pose)
+                }
+                if let first = self.manifest.photos.first?.epoch, let now = photo.epoch, first != now {
+                    self.notice = "추적이 중간에 다시 맞춰져서, 이전 사진은 매대 위치 계산에서 제외돼요"
+                }
                 self.manifest.planes = planes
                 self.manifest.walkTrail = self.trail.samples
                 self.savedCount = self.manifest.photos.count

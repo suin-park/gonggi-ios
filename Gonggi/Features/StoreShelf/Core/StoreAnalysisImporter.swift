@@ -32,6 +32,11 @@ struct AnalysisImportSummary: Equatable, Sendable {
     var productsKeptFromBefore = 0
     var productsRemovedFromBefore = 0
     var productsWithoutShelf = 0
+    /// Shelves a customer can be guided to (measured position or recorded approach point).
+    var shelvesGuidable = 0
+    /// Of those, shelves guided to a recorded approach point because the shelf position was not measured.
+    var shelvesApproachOnly = 0
+    var shelvesAmbiguous = 0
 }
 
 struct AnalysisImportResult {
@@ -84,7 +89,8 @@ enum AnalysisImporter {
     }
 
     static func importDraft(draft: RemoteAnalysisDraft, existing: StoreShelfData, storeId: String, capturedAt: Date,
-                            walkTrail: [ShelfWalkSample], newId: () -> String, hooks: AnalysisImportHooks) -> AnalysisImportResult {
+                            walkTrail: [ShelfWalkSample], newId: () -> String, hooks: AnalysisImportHooks,
+                            referencePoints: [ShelfReferencePoint] = []) -> AnalysisImportResult {
         var data = StoreShelfData.empty(storeId: storeId)
         var images: [String: Data] = [:]
         var summary = AnalysisImportSummary()
@@ -109,11 +115,30 @@ enum AnalysisImporter {
             var layout = ShelfLayout(id: id, name: (s.name?.isEmpty == false ? s.name! : "매대 \(data.shelves.count + 1)"), plane: plane,
                                      tierBoundaries: [], createdAt: now, updatedAt: now, photoFileName: photoName)
             layout.locationStatus = status
+            layout.positionMethod = status == "unknown" ? nil : s.spatial?.source
+            if let a = s.approach, let p = vec(a.point), let d = vec(a.viewDir) {
+                layout.approach = ShelfApproachPoint(point: p, viewDir: d, bestPhotoId: a.bestPhotoId, evidencePhotoCount: a.photoIds.count,
+                                                     distanceToShelfM: a.distanceToShelfM, status: a.status)
+            }
+            if let g = s.guidance, layout.approach != nil || g.target != "approach_point" {
+                // Ambiguous shelf keys are replaced by shelf ids below, once every shelf has its id.
+                layout.guidance = ShelfGuidanceTarget(target: g.target, status: g.status, basis: g.basis, ambiguousWithShelfIds: g.ambiguousWith)
+            }
             layout.lastObservedAt = parseDate(s.lastObservedAt) ?? capturedAt
             data.shelves.append(layout)
             summary.shelves += 1
             if status == "unknown" { summary.shelvesWithoutPosition += 1 }
         }
+
+        for i in data.shelves.indices {
+            guard var g = data.shelves[i].guidance else { continue }
+            g.ambiguousWithShelfIds = g.ambiguousWithShelfIds.compactMap { shelfIdByKey[$0] }
+            data.shelves[i].guidance = g
+            if data.shelves[i].isGuidable { summary.shelvesGuidable += 1 }
+            if !data.shelves[i].hasMeasuredPosition, data.shelves[i].hasApproachDestination { summary.shelvesApproachOnly += 1 }
+            if !g.ambiguousWithShelfIds.isEmpty { summary.shelvesAmbiguous += 1 }
+        }
+        data.referencePoints = referencePoints.isEmpty ? nil : referencePoints
 
         // Products: an existing product with the same printed name keeps its id (and a name a person set).
         var existingByKey: [String: ShelfProduct] = [:]
@@ -267,5 +292,57 @@ enum AnalysisRunText {
             parts.append(c.complete ? "사진 \(c.analyzedPhotos)장 모두 분석" : "사진 \(c.totalPhotos)장 중 \(c.analyzedPhotos)장만 분석 · 일부 영역 미분석")
         }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// The numbers shown on the review screen. A "placement" is a product-on-a-shelf link: it is not the number of shelves.
+struct StoreSpaceSummary: Equatable, Sendable {
+    var products = 0
+    var shelves = 0
+    /// Product-to-shelf links (the old "위치 N곳").
+    var productShelfLinks = 0
+    /// Shelves a customer can be guided to (measured position, or a recorded approach point).
+    var guidableShelves = 0
+    var approachOnlyShelves = 0
+    /// Shelves whose position / approach is not known: the manager has to look at them.
+    var shelvesNeedingPosition = 0
+    var ambiguousShelves = 0
+    /// Shelves a person confirmed on a device.
+    var verifiedOnDeviceShelves = 0
+
+    init(data: StoreShelfData) {
+        products = data.products.count
+        shelves = data.shelves.count
+        productShelfLinks = data.placements.count
+        for s in data.shelves {
+            if s.isGuidable { guidableShelves += 1 } else { shelvesNeedingPosition += 1 }
+            if !s.hasMeasuredPosition, s.hasApproachDestination { approachOnlyShelves += 1 }
+            if let g = s.guidance, !g.ambiguousWithShelfIds.isEmpty { ambiguousShelves += 1 }
+            if s.deviceVerifiedAt != nil { verifiedOnDeviceShelves += 1 }
+        }
+    }
+
+    var headline: String {
+        "제품 \(products)개 · 매대 \(shelves)곳 · AR 안내 가능 \(guidableShelves)곳 · 위치 확인 필요 \(shelvesNeedingPosition)곳"
+    }
+}
+
+enum ShelfPositionText {
+    /// How the shelf position was obtained, in words a manager can check.
+    static func method(_ s: ShelfLayout) -> String {
+        if s.hasMeasuredPosition {
+            switch s.positionMethod {
+            case "plane_intersection": return "매대 위치: 벽면 인식으로 계산됨"
+            case "surface_hit": return "매대 위치: 표면 측정으로 계산됨"
+            default: return "매대 위치: 직접 지정"
+            }
+        }
+        if s.hasApproachDestination { return "매대 위치는 계산하지 못했어요 · 촬영한 위치까지 안내" }
+        return "위치 확인 필요"
+    }
+
+    /// "계산됨" never means "실기기 검증됨".
+    static func verification(_ s: ShelfLayout) -> String {
+        s.deviceVerifiedAt != nil ? "실기기 안내 확인됨" : "실기기 안내 검증 전"
     }
 }

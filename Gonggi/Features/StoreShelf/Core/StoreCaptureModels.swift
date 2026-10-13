@@ -36,6 +36,9 @@ struct CapturedPhoto: Codable, Equatable, Identifiable, Sendable {
     var selectionReason: String?
     var fileName: String
     var uploaded: Bool = false
+    /// Identifier of the AR coordinate system the pose belongs to ("e1", "e2", ...). The device changes it whenever the
+    /// AR session is restarted, interrupted or relocalised, so poses of different systems are never mixed.
+    var epoch: String? = nil
 }
 
 struct CapturedPlane: Codable, Equatable, Sendable {
@@ -119,6 +122,31 @@ struct RemoteDraftShelf: Codable, Equatable, Sendable {
     var spatial: RemoteShelfSpatial?
     var locationStatus: String
     var lastObservedAt: String
+    /// Where a person stood who photographed the shelf (a measured camera position, NOT the shelf position).
+    var approach: RemoteShelfApproach? = nil
+    var guidance: RemoteShelfGuidance? = nil
+}
+
+struct RemoteShelfApproach: Codable, Equatable, Sendable {
+    var point: [Float]
+    var viewDir: [Float]
+    var photoIds: [String]
+    var bestPhotoId: String
+    var distanceToShelfM: Float?
+    /// "confirmed" | "needs_confirmation"
+    var status: String
+    var spreadM: Float
+}
+
+struct RemoteShelfGuidance: Codable, Equatable, Sendable {
+    /// "approach_point" | "computed_stand_point" | "none"
+    var target: String
+    var point: [Float]?
+    var viewDir: [Float]?
+    /// "ready" | "needs_confirmation" | "unavailable"
+    var status: String
+    var basis: [String]
+    var ambiguousWith: [String]
 }
 
 struct RemoteDraftSighting: Codable, Equatable, Sendable {
@@ -271,6 +299,7 @@ struct RegisterPhotoBody: Codable, Equatable, Sendable {
     var trackingState: String
     var sharpness: Float
     var surfaceHit: CapturedSurfaceHit?
+    var epoch: String?
 }
 
 struct RegisterPhotosBody: Codable, Equatable, Sendable {
@@ -283,6 +312,6 @@ extension CapturedPhoto {
         RegisterPhotoBody(
             id: id, seq: seq, takenAt: iso(takenAt), width: width, height: height, bytes: bytes, sha256: sha256, orientation: orientation,
             pose: pose, intrinsics: .init(fx: fx, fy: fy, cx: cx, cy: cy, sensorWidth: sensorWidth, sensorHeight: sensorHeight),
-            trackingState: trackingState, sharpness: sharpness, surfaceHit: surfaceHit)
+            trackingState: trackingState, sharpness: sharpness, surfaceHit: surfaceHit, epoch: epoch)
     }
 }

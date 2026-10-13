@@ -113,6 +113,12 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
     var onFrame: ((StoreShelfFrame) -> Void)?
     /// A reference sign was (re)detected: its id (the ARReferenceImage name) and its pose in the live session world.
     var onSignPose: ((String, Rigid) -> Void)?
+    /// A reference anchor of the saved map appeared: the photo id it was made for and its pose in the live session world.
+    var onReferenceAnchor: ((String, Rigid) -> Void)?
+    /// Identifier of the AR coordinate system of the running session: changes whenever the session is restarted,
+    /// interrupted or lost its position, so that poses of different systems are never mixed.
+    private(set) var worldEpoch = 1
+    var epochId: String { "e\(worldEpoch)" }
 
     private weak var arView: ARView?
     private var role: Role = .record
@@ -163,8 +169,18 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
         session.run(StoreWorldMapCoding.configuration(restoring: nil, detectionImages: detectionImages))
     }
 
+    /// Marks the place where a capture photo was taken in the world map, so a later restore can be verified against it.
+    func addReferenceAnchor(photoId: String, pose: [Float]) {
+        guard role == .record, let session = arView?.session, pose.count == 16 else { return }
+        let m = simd_float4x4(columns: (
+            SIMD4<Float>(pose[0], pose[1], pose[2], pose[3]), SIMD4<Float>(pose[4], pose[5], pose[6], pose[7]),
+            SIMD4<Float>(pose[8], pose[9], pose[10], pose[11]), SIMD4<Float>(pose[12], pose[13], pose[14], pose[15])))
+        session.add(anchor: ARAnchor(name: ShelfReferencePoint.anchorPrefix + photoId, transform: m))
+    }
+
     func startFresh() {
         guard let session = arView?.session else { return }
+        worldEpoch += 1
         horizontalPlaneHeights = [:]
         verticalPlanes = [:]
         session.run(StoreWorldMapCoding.configuration(restoring: nil, detectionImages: detectionImages),
@@ -175,6 +191,7 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
     func startRestoring(map: ARWorldMap, expectedMarkers: Int) {
         guard let session = arView?.session else { return }
         expectedMarkerCount = expectedMarkers
+        worldEpoch += 1
         restoredMarkerCount = 0
         restoreStartedAt = Date()
         horizontalPlaneHeights = [:]
@@ -197,6 +214,7 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
         timer = nil
         onFrame = nil
         onSignPose = nil
+        onReferenceAnchor = nil
         clearGuidance()
         arView?.session.pause()
         arView?.session.delegate = nil
@@ -362,7 +380,16 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
         }
     }
 
+    func sessionWasInterrupted(_ session: ARSession) {
+        worldEpoch += 1
+    }
+
+    func sessionInterruptionEnded(_ session: ARSession) {
+        worldEpoch += 1
+    }
+
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
+        if role == .record, case .limited(.relocalizing) = camera.trackingState { worldEpoch += 1 }
         switch StoreWorldMapCoding.trackingSummary(camera.trackingState) {
         case .normal: trackingText = role == .search ? "카메라가 안정적으로 추적하고 있어요" : "매대를 천천히 비춰 주세요"
         case .notAvailable: trackingText = "카메라를 사용할 수 없어요"
@@ -401,6 +428,9 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
             }
             if let plane = anchor as? ARPlaneAnchor, plane.alignment == .vertical { record(vertical: plane) }
             if let image = anchor as? ARImageAnchor { report(image) }
+            if let id = ShelfReferencePoint.id(fromAnchorName: anchor.name), let pose = StoreWorldMapCoding.rigid(anchor.transform) {
+                onReferenceAnchor?(id, pose)
+            }
             guard showsMarkers, let arView, StoreTestMarker.markerId(fromAnchorName: anchor.name) != nil,
                   visuals[anchor.identifier] == nil else { continue }
             let model = ModelEntity(mesh: .generateSphere(radius: 0.03), materials: [SimpleMaterial(color: .systemTeal, isMetallic: false)])

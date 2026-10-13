@@ -152,6 +152,11 @@ struct StoreAlignmentCoordinator {
     private var startedAt: Double?
     private var mapRestored = false
     private var sign: StoreReferenceImageObservation?
+    /// Saved poses of the capture's reference anchors, by anchor id. When set, a restored world map counts only if the
+    /// anchors it holds really show up in the live session at the saved places: normal tracking alone is not a restore.
+    private var savedReferences: [String: Rigid] = [:]
+    private var requiresReferences = false
+    private var referenceDiscrepancies: [String: Float] = [:]
 
     init(timeoutSeconds: Double = 45, policy: StoreSpaceAlignment.Policy = StoreSpaceAlignment.Policy()) {
         self.timeoutSeconds = timeoutSeconds
@@ -162,8 +167,33 @@ struct StoreAlignmentCoordinator {
         startedAt = time
         mapRestored = false
         sign = nil
+        referenceDiscrepancies = [:]
         state = .restoring
     }
+
+    /// `saved`: anchor id -> pose in the saved world. Call before `start`. An empty set with `required` means a world map
+    /// alone cannot be trusted (a reference sign still can).
+    mutating func configureReferences(_ saved: [String: Rigid], required: Bool = true) {
+        savedReferences = saved
+        requiresReferences = required
+    }
+
+    /// A reference anchor of the saved map appeared in the live session.
+    mutating func anchorObserved(id: String, livePose: Rigid) {
+        guard let saved = savedReferences[id] else { return }
+        referenceDiscrepancies[id] = (livePose.translationPart - saved.translationPart).length
+        evaluate()
+    }
+
+    /// At least one saved anchor is present and the middle one of them lies at its saved place.
+    var anchorsAgree: Bool {
+        guard !referenceDiscrepancies.isEmpty else { return false }
+        let sorted = referenceDiscrepancies.values.sorted()
+        return sorted[sorted.count / 2] <= policy.agreeTranslationM
+    }
+
+    var observedReferenceCount: Int { referenceDiscrepancies.count }
+    var lacksReferencePoints: Bool { requiresReferences && savedReferences.isEmpty }
 
     mutating func worldMapRestored() {
         mapRestored = true
@@ -184,7 +214,11 @@ struct StoreAlignmentCoordinator {
     mutating func retry(at time: Double) { start(at: time) }
 
     private mutating func evaluate() {
-        let decided = StoreSpaceAlignment.decide(worldMapRestored: mapRestored, imageObservation: sign, policy: policy)
+        let mapCounts = mapRestored && (!requiresReferences || anchorsAgree)
+        var decided = StoreSpaceAlignment.decide(worldMapRestored: mapCounts, imageObservation: sign, policy: policy)
+        if case .aligned(let method, let t, let verified, let disagrees) = decided, method == .worldMap, !verified, requiresReferences {
+            decided = .aligned(method: method, transform: t, verifiedByReferenceImage: true, worldMapDisagrees: disagrees)
+        }
         if decided.isAligned { state = decided }
     }
 }

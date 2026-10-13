@@ -36,9 +36,15 @@ final class StoreAlignmentSession: ObservableObject {
     }
 
     /// `map` nil means the map could not be loaded: only a reference sign can then align the session.
-    func begin(map: ARWorldMap?, expectedMarkers: Int, signs: [ShelfReferenceSign], images: Set<ARReferenceImage>) {
+    func begin(map: ARWorldMap?, expectedMarkers: Int, signs: [ShelfReferenceSign], images: Set<ARReferenceImage>,
+               references: [ShelfReferencePoint] = []) {
         self.signs = Dictionary(signs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         cancellables.removeAll()
+        coordinator.configureReferences(Dictionary(references.map { ($0.id, $0.pose) }, uniquingKeysWith: { first, _ in first }))
+        controller.onReferenceAnchor = { [weak self] id, live in
+            self?.coordinator.anchorObserved(id: id, livePose: live)
+            self?.publish()
+        }
         coordinator.start(at: ProcessInfo.processInfo.systemUptime)
         state = coordinator.state
         startedAt = Date()
@@ -68,15 +74,21 @@ final class StoreAlignmentSession: ObservableObject {
         }
     }
 
-    func retry(map: ARWorldMap?, expectedMarkers: Int, signs: [ShelfReferenceSign], images: Set<ARReferenceImage>) {
-        begin(map: map, expectedMarkers: expectedMarkers, signs: signs, images: images)
+    func retry(map: ARWorldMap?, expectedMarkers: Int, signs: [ShelfReferenceSign], images: Set<ARReferenceImage>,
+               references: [ShelfReferencePoint] = []) {
+        begin(map: map, expectedMarkers: expectedMarkers, signs: signs, images: images, references: references)
     }
+
+    /// Why the saved space could not be confirmed: the record has no reference points (made before they were kept).
+    var recordLacksReferencePoints: Bool { coordinator.lacksReferencePoints }
+    var referencePointsSeen: Int { coordinator.observedReferenceCount }
 
     func stop() {
         timer?.invalidate()
         timer = nil
         cancellables.removeAll()
         controller.onSignPose = nil
+        controller.onReferenceAnchor = nil
     }
 
     private func signSeen(id: String, live: Rigid) {

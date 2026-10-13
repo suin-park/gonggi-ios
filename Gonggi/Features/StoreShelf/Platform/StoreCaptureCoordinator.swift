@@ -197,6 +197,12 @@ final class StoreCaptureCoordinator: ObservableObject {
         let existing = repository.shelfData(storeId: storeId) ?? StoreShelfData.empty(storeId: storeId)
         let trail = manifest.walkTrail
         let capturedAt = manifest.createdAt
+        // Camera poses of the photos of the final AR coordinate system: the anchors the world map holds, used to check a
+        // restore later. Photos of another coordinate system are not part of it.
+        let finalEpoch = manifest.photos.last?.epoch
+        let referencePoints: [ShelfReferencePoint] = manifest.photos
+            .filter { $0.trackingState == "normal" && (finalEpoch == nil || $0.epoch == finalEpoch) }
+            .compactMap { p in Rigid(floats: p.pose).map { ShelfReferencePoint(id: p.id, pose: $0) } }
         let store = self.store
         let result = await Task.detached(priority: .userInitiated) { () -> AnalysisImportResult in
             let extractor = ShelfAppearanceExtractor()
@@ -212,7 +218,8 @@ final class StoreCaptureCoordinator: ObservableObject {
                 },
                 shelfPhoto: { cache.data($0) })
             return AnalysisImporter.importDraft(draft: draft, existing: existing, storeId: storeId, capturedAt: capturedAt,
-                                                walkTrail: trail, newId: { UUID().uuidString }, hooks: hooks)
+                                                walkTrail: trail, newId: { UUID().uuidString }, hooks: hooks,
+                                                referencePoints: referencePoints)
         }.value
         imported = result
         phase = .ready

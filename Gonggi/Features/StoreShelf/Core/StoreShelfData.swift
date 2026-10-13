@@ -42,6 +42,47 @@ enum ShelfPlacementStatus: String, Codable, Sendable {
     case notObservedOnRescan
 }
 
+/// Where a person stood who photographed the shelf: a MEASURED camera position of the capture, in the saved world. It is
+/// never the position of the shelf and is never shown as one.
+struct ShelfApproachPoint: Codable, Equatable, Sendable {
+    var point: Vec3
+    /// Horizontal direction to face the shelf from `point`.
+    var viewDir: Vec3
+    /// Photo (server id) that best shows the shelf from there.
+    var bestPhotoId: String?
+    var evidencePhotoCount: Int
+    var distanceToShelfM: Float?
+    /// "confirmed" | "needs_confirmation"
+    var status: String
+}
+
+/// What a customer is guided to for this shelf, and how sure that is.
+struct ShelfGuidanceTarget: Codable, Equatable, Sendable {
+    /// "approach_point" | "computed_stand_point" | "none"
+    var target: String
+    /// "ready" | "needs_confirmation" | "unavailable"
+    var status: String
+    var basis: [String]
+    /// Shelves seen from the same best photo: the approach point does not tell them apart.
+    var ambiguousWithShelfIds: [String]
+}
+
+/// A place the saved space can be checked against after a restore: the camera pose of a capture photo. The same pose is
+/// stored in the world map as an anchor, so after a real restore the anchor and this pose agree.
+struct ShelfReferencePoint: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var pose: Rigid
+
+    static let anchorPrefix = "gonggi.store.ref."
+    var anchorName: String { Self.anchorPrefix + id }
+
+    static func id(fromAnchorName name: String?) -> String? {
+        guard let name, name.hasPrefix(anchorPrefix) else { return nil }
+        let id = String(name.dropFirst(anchorPrefix.count))
+        return id.isEmpty ? nil : id
+    }
+}
+
 struct ShelfLayout: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var name: String
@@ -57,9 +98,25 @@ struct ShelfLayout: Codable, Equatable, Identifiable, Sendable {
     var locationStatus: String? = nil
     /// When the shelf was last seen in a capture.
     var lastObservedAt: Date? = nil
+    /// How the position was measured: "plane_intersection" | "surface_hit" (nil: set by hand or not measured).
+    var positionMethod: String? = nil
+    var approach: ShelfApproachPoint? = nil
+    var guidance: ShelfGuidanceTarget? = nil
+    /// Set when a person confirmed on a device that the guidance reaches this shelf. A position computed on the server is
+    /// "계산됨"; only this makes it "실기기 검증됨".
+    var deviceVerifiedAt: Date? = nil
 
-    /// A shelf whose position is not known is never a guidance destination.
-    var isGuidable: Bool { locationStatus != "unknown" }
+    /// The shelf itself has a measured (or hand-set) position.
+    var hasMeasuredPosition: Bool { locationStatus != "unknown" }
+
+    /// A recorded approach point can serve as the destination although the shelf position is not known.
+    var hasApproachDestination: Bool {
+        guard let g = guidance, g.target == "approach_point", g.status != "unavailable", approach != nil else { return false }
+        return true
+    }
+
+    /// A shelf with neither a measured position nor an approach point is never a guidance destination.
+    var isGuidable: Bool { hasMeasuredPosition || hasApproachDestination }
 
     func tier(forV v: Float) -> Int {
         tierBoundaries.filter { $0 <= v }.count
@@ -142,6 +199,8 @@ struct StoreShelfData: Codable, Equatable, Sendable {
     var placements: [ShelfPlacement] = []
     var walkTrail: [ShelfWalkSample] = []
     var referenceSigns: [ShelfReferenceSign] = []
+    /// Camera poses of the capture whose anchors the world map holds: checked after a restore (nil on older records).
+    var referencePoints: [ShelfReferencePoint]? = nil
     /// Floor height (world Y) used to draw the path; nil when it could not be estimated.
     var floorY: Float?
     var updatedAt: Date = Date()
@@ -161,7 +220,17 @@ extension StoreShelfData {
         out.shelves = shelves.map { shelf in
             var s = shelf
             s.plane = shelf.plane.transformed(by: t)
+            if var a = shelf.approach {
+                a.point = t.apply(point: a.point)
+                a.viewDir = t.rotate(vector: a.viewDir).horizontal.normalized ?? a.viewDir
+                s.approach = a
+            }
             return s
+        }
+        out.referencePoints = referencePoints?.map { r in
+            var q = r
+            q.pose = t.multiplied(by: r.pose)
+            return q
         }
         out.placements = placements.map { p in
             var q = p

@@ -176,7 +176,7 @@ final class StoreShelfSearchViewModel: ObservableObject {
         var map: ARWorldMap?
         if let bytes = source.worldMap { map = try? StoreWorldMapCoding.unarchive(bytes) }
         self.map = map
-        alignment.begin(map: map, expectedMarkers: 0, signs: signs, images: images)
+        alignment.begin(map: map, expectedMarkers: 0, signs: signs, images: images, references: data.referencePoints ?? [])
         alignment.$state.receive(on: DispatchQueue.main).sink { [weak self] state in
             guard let self else { return }
             switch state {
@@ -214,7 +214,7 @@ final class StoreShelfSearchViewModel: ObservableObject {
         let signs = data.referenceSigns
         let images = StoreAlignmentSession.referenceImages(signs: signs) { [source] in source.imageData($0) }
         restoreLogged = false
-        alignment.retry(map: map, expectedMarkers: 0, signs: signs, images: images)
+        alignment.retry(map: map, expectedMarkers: 0, signs: signs, images: images, references: data.referencePoints ?? [])
     }
 
     func stop() {

@@ -126,7 +126,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
             let images = StoreAlignmentSession.referenceImages(signs: signs) { repo.imageData(storeId: sid, fileName: $0) }
             var map: ARWorldMap?
             if let data = try? repository.loadWorldMapData(storeId: store.id) { map = try? StoreWorldMapCoding.unarchive(data) }
-            alignment.begin(map: map, expectedMarkers: info.markerCount, signs: signs, images: images)
+            alignment.begin(map: map, expectedMarkers: info.markerCount, signs: signs, images: images, references: existing.referencePoints ?? [])
         } else {
             hint = "매대 앞에서 천천히 주변을 비춰 주세요"
             controller.startFresh()
@@ -148,7 +148,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
         let images = StoreAlignmentSession.referenceImages(signs: signs) { repo.imageData(storeId: sid, fileName: $0) }
         var map: ARWorldMap?
         if let data = try? repository.loadWorldMapData(storeId: store.id) { map = try? StoreWorldMapCoding.unarchive(data) }
-        alignment.retry(map: map, expectedMarkers: info.markerCount, signs: signs, images: images)
+        alignment.retry(map: map, expectedMarkers: info.markerCount, signs: signs, images: images, references: existing.referencePoints ?? [])
     }
 
     /// Discards the stored record of this store and starts over in a fresh space.
@@ -398,6 +398,13 @@ final class StoreShelfRecordViewModel: ObservableObject {
         note("confirm_name")
     }
 
+    /// A person confirmed on a device that the guidance leads to this shelf ("실기기 안내 확인됨").
+    func markShelfVerified(_ id: String) {
+        guard let i = draft?.shelves.firstIndex(where: { $0.id == id }) else { return }
+        draft!.shelves[i].deviceVerifiedAt = Date()
+        note("verify_shelf_on_device")
+    }
+
     func confirmPlacement(_ id: String) {
         guard let i = draft?.placements.firstIndex(where: { $0.id == id }) else { return }
         draft!.placements[i].needsReview = false
@@ -434,7 +441,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
                 diagnostics: diagnostics)
             try repository.appendRegistration(metric)
             StoreShelfSelection.lastStoreId = store.id
-            savedSummary = "제품 \(data.products.count)개, 위치 \(data.placements.count)곳을 저장했어요"
+            savedSummary = "제품 \(data.products.count)개, 매대 \(data.shelves.count)곳을 저장했어요"
             step = .saved
             onSavedHook?()
         } catch {
@@ -700,7 +707,7 @@ struct StoreShelfReviewView: View {
             Text("기록 검토")
                 .font(.largeTitle.weight(.bold))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("제품 \(data.products.count)개 · 위치 \(data.placements.count)곳 · 저장하지 못한 영역 \(model.rejected.count)곳")
+            Text(StoreSpaceSummary(data: data).headline + " · 저장하지 못한 영역 \(model.rejected.count)곳")
                 .font(.subheadline)
                 .foregroundStyle(GonggiColors.textSecondary)
             if StoreShelfFeatureFlags.testMarkersEnabled, let line = model.diagnosticsLine {
@@ -718,6 +725,7 @@ struct StoreShelfReviewView: View {
     private var list: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: GonggiSpacing.sm) {
+                shelfSection
                 let sorted = data.products.sorted { ($0.needsReview ? 0 : 1, $0.name) < ($1.needsReview ? 0 : 1, $1.name) }
                 ForEach(sorted) { product in
                     productCard(product)
@@ -726,6 +734,35 @@ struct StoreShelfReviewView: View {
             }
             .padding(.horizontal, 20)
             .padding(.bottom, GonggiSpacing.lg)
+        }
+    }
+
+    /// One row per shelf: how its position was obtained, the products linked to it and whether guidance was verified.
+    private var shelfSection: some View {
+        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+            Text("매대").font(.headline).foregroundStyle(GonggiColors.textPrimary)
+            ForEach(data.shelves) { shelf in
+                let linked = Set(data.placements.filter { $0.shelfId == shelf.id }.map(\.productId)).count
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(shelf.name) · 제품 \(linked)개").font(.subheadline.weight(.semibold)).foregroundStyle(GonggiColors.textPrimary)
+                    Text(ShelfPositionText.method(shelf)).font(.caption).foregroundStyle(GonggiColors.textSecondary)
+                    if let g = shelf.guidance, !g.ambiguousWithShelfIds.isEmpty {
+                        Text("같은 지점에서 여러 매대가 찍혔어요. 안내 지점이 매대를 구분하지 못해요")
+                            .font(.caption).foregroundStyle(GonggiColors.warningCritical)
+                    }
+                    HStack {
+                        Text(ShelfPositionText.verification(shelf)).font(.caption).foregroundStyle(GonggiColors.textTertiary)
+                        Spacer()
+                        if shelf.isGuidable, shelf.deviceVerifiedAt == nil {
+                            Button("기기에서 안내 확인했어요") { model.markShelfVerified(shelf.id) }.font(.caption)
+                        }
+                    }
+                }
+                .padding(GonggiSpacing.sm)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GonggiColors.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+            }
         }
     }
 
