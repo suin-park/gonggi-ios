@@ -60,6 +60,13 @@ def main() -> int:
                 print("BUILD_BETA_DETAIL", b["attributes"].get("version"), "unavailable", type(exc).__name__)
     except Exception as exc:  # noqa: BLE001
         print("BETA_GROUPS unavailable", type(exc).__name__)
+    # The marketing version of the most recent builds, from each build's pre-release version (read-only).
+    for b in builds.get("data", [])[:6]:
+        try:
+            pv = api(f"/v1/builds/{b['id']}/preReleaseVersion", tok).get("data", {}).get("attributes", {})
+            print("PRERELEASE", b["attributes"].get("version"), pv.get("version"), b["attributes"].get("processingState"))
+        except Exception as exc:  # noqa: BLE001
+            print("PRERELEASE", b["attributes"].get("version"), "unavailable", type(exc).__name__)
     nums = [int(r["build"]) for r in rows if str(r["build"]).isdigit()]
     print("HIGHEST_BUILD_NUMBER", max(nums) if nums else None)
     return 0
