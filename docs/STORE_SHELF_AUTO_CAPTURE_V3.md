@@ -15,12 +15,12 @@
 | 항목 | 확인한 내용 |
 |---|---|
 | 호출 경로 | `apps/cloud/src/lib/gonggi-advanced-capture/astra-provider.ts`: OpenAI SDK `chat.completions.create` + `image_url`(data URL) + JSON 응답. 360 공간 기록(`gonggi-space-record`)의 이미지 생성은 별도: OpenAI Images API `gpt-image-2` (`images.edit`) |
-| 모델 ID | Astra 가이드: `GONGGI_ASTRA_MODEL` 없으면 **`gpt-4o`** (운영에 이 변수는 없음 → gpt-4o, 응답 `gpt-4o-2024-08-06`). 활성화 변수 `GONGGI_ASTRA_ENABLED=true`(운영) |
-| 이미지 입력 | gpt-4o, gpt-5.4, gpt-5.4-mini 모두 실제 호출로 이미지 입력과 strict JSON schema 출력이 동작함을 확인 |
+| 모델 ID | **정정**: 이 기능(매장 분석)의 모델은 공식 ID **`gpt-6-astra`**이고 다른 모델로 자동 대체하지 않는다(접근·형식 오류는 상태 코드와 오류 코드 그대로 실패로 보고). 기존 360 공간 기록의 Astra 가이드(`GONGGI_ASTRA_MODEL`)는 변수가 없으면 `gpt-4o`가 기본값이라 운영에서 gpt-4o로 동작한다(이 기능은 그 변수를 읽지 않는다; 운영 변경은 이번 범위 밖). 이전 문서의 "Astra = gpt-4o"는 잘못된 기술이었다. 실제 호출 증거: 요청 ID와 응답 모델명이 실행마다 `StoreAnalysisRun.requestLog`에 남는다 |
+| 이미지 입력 | `gpt-6-astra`로 이미지(data URL, 1568px 이하)와 strict JSON schema 출력이 동작함을 실제 호출로 확인(응답 모델 `gpt-6-astra`, reasoning_effort `low` 지원, `minimal` 미지원) |
 | 인증 | 서버 환경변수 `OPENAI_API_KEY`(길이 164, 앱에는 없음). 앱은 매장 담당자 토큰으로만 서버를 호출하고, 서버가 `StoreShelfManager` 행으로 권한을 검사 |
-| 호출 제한 | 기존 Astra: 시간 제한/재시도 없음(실패 시 mock 가이드로 대체). 이번 분석: 요청당 120 s 제한, 요청 최대 2회(재시도 1회), 구조 오류 시 수정 요청 1회, 확대 보조 요청 최대 1회, 세션당 분석 실행 최대 3회, 사진 최대 14장/24 MB |
+| 호출 제한 | 기존 Astra: 시간 제한/재시도 없음(실패 시 mock 가이드로 대체). 이번 분석: 요청당 230 s 제한, 요청 최대 2회, 구조 오류 시 수정 요청 1회, 확대 보조 요청 1회, 한 실행의 요청 동시 실행 최대 3개, 세션당 분석 실행 최대 4회. 사진: 앱 촬영 상한 24장, 서버 세션 상한 40장(앱이 더 큰 로컬 세션을 가지면 균등하게 40장만 올리고 전부 기기에 보존), 분석 대상은 한도 안이면 전부 |
 | 운영/스테이징 | 이번 분석은 별도 스위치 `STORE_SHELF_ANALYSIS_ENABLED`와 키 `STORE_SHELF_ANALYSIS_OPENAI_API_KEY`를 쓴다. 스테이징에는 이 두 개만 실제 값이고 `OPENAI_API_KEY`와 `GONGGI_ASTRA_ENABLED` 등 다른 기능은 이전처럼 꺼져(더미) 있다 |
-| 모델 선택 | 기본 `STORE_SHELF_ANALYSIS_MODEL`(스테이징 `gpt-4o`), 허용 목록 `gpt-4o, gpt-5.4, gpt-5.4-mini`. 앱이 `model`을 보낼 수 있지만 목록 밖은 400 |
+| 모델 선택 | 기본·허용 목록 모두 `gpt-6-astra`(`STORE_SHELF_ANALYSIS_MODEL`/`_MODELS`). 앱이 `model`을 보내도 목록 밖은 400. 응답 모델명이 요청한 모델과 다르면(`gpt-4o` 등) 실행을 `model_mismatch`로 실패 처리하고 결과를 저장하지 않는다 |
 
 ## 3. 서버 API (모두 매장 담당자 전용, 스테이징)
 
