@@ -31,7 +31,7 @@ final class StoreProductManagementModel: ObservableObject {
         } catch let e as StoreShelfAPIError {
             error = e == .forbidden ? "이 매장의 담당자만 볼 수 있어요" : e.userMessage
         } catch {
-            error = StoreShelfAPIError.transport.userMessage
+            self.error = StoreShelfAPIError.transport.userMessage
         }
     }
 
