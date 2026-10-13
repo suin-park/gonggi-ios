@@ -150,24 +150,6 @@ jobs:
           grep -E "Test Suite '.*' (passed|failed)|error:|failed \(|Executed [0-9]+ tests|skipped|SHELF_" store-tests.log | tail -n 60 || true
           exit "${STATUS}"
 
-      - name: Full GonggiTests (informational)
-        if: always()
-        continue-on-error: true
-        run: |
-          set +e
-          xcodebuild test-without-building \
-            -project "${PROJECT}" -scheme "${SCHEME}" -sdk iphonesimulator \
-            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
-            -only-testing:GonggiTests \
-            CODE_SIGNING_ALLOWED=NO \
-            2>&1 | tee full.log
-          STATUS=${PIPESTATUS[0]}
-          grep -E "Executed [0-9]+ tests, with" full.log | tail -n 2 || true
-          grep -E "Test Case '.*' failed" full.log | sed -E "s/.*Test Case '-\[GonggiTests\.([A-Za-z0-9_]+) ([A-Za-z0-9_]+)\]' failed.*/\1.\2/" | sort -u > failed_cases.txt
-          echo "failing test cases: $(wc -l < failed_cases.txt)"
-          cat failed_cases.txt
-          exit "${STATUS}"
-
       - name: Kmo screen captures (fixed test data)
         if: always()
         continue-on-error: true
@@ -186,6 +168,24 @@ jobs:
           name: kmo-shots
           path: kmo-shots/*.png
           if-no-files-found: warn
+
+      - name: Full GonggiTests (informational)
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          xcodebuild test-without-building \
+            -project "${PROJECT}" -scheme "${SCHEME}" -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:GonggiTests \
+            CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee full.log
+          STATUS=${PIPESTATUS[0]}
+          grep -E "Executed [0-9]+ tests, with" full.log | tail -n 2 || true
+          grep -E "Test Case '.*' failed" full.log | sed -E "s/.*Test Case '-\[GonggiTests\.([A-Za-z0-9_]+) ([A-Za-z0-9_]+)\]' failed.*/\1.\2/" | sort -u > failed_cases.txt
+          echo "failing test cases: $(wc -l < failed_cases.txt)"
+          cat failed_cases.txt
+          exit "${STATUS}"
 
       - name: Upload logs
         if: always()

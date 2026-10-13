@@ -13,12 +13,20 @@ final class KmoSnapshotTests: XCTestCase {
             .environment(\.dynamicTypeSize, dynamic)
             .preferredColorScheme(.dark)
         let host = UIHostingController(rootView: root)
-        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        // 장면에 붙은 창이어야 화면이 그려진다.
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(origin: .zero, size: size))
+        window.frame = CGRect(origin: .zero, size: size)
+        window.windowLevel = .alert + 1
+        window.backgroundColor = UIColor(KmoColors.background)
         window.rootViewController = host
+        window.isHidden = false
         window.makeKeyAndVisible()
         host.view.frame = window.bounds
+        host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        defer { window.isHidden = true }
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
