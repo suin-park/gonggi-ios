@@ -217,7 +217,7 @@ final class PublicSpacesTests: XCTestCase {
 
     func testCommentReportReasonLabels() {
         XCTAssertEqual(PublicSpacesPolicy.commentReportReasonLabel(.personalInfo), "개인정보 노출")
-        XCTAssertEqual(PublicSpacesPolicy.commentReportReasonLabel(.harassment), "괴롭힘·혐오")
+        XCTAssertEqual(PublicSpacesPolicy.commentReportReasonLabel(.harassment), "괴롭힘/혐오")
         XCTAssertEqual(PublicSpacesPolicy.commentReportReasonLabel(.spam), "스팸")
         XCTAssertEqual(PublicSpacesPolicy.commentReportReasonLabel(.inappropriate), "부적절한 내용")
         XCTAssertEqual(PublicSpacesPolicy.commentReportReasonLabel(.copyright), "저작권 침해")

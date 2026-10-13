@@ -42,7 +42,7 @@ enum AssetARCopy {
     static let usdzLoad = "AR 파일을 불러오지 못했어요"
     static let scanHint = "바닥이나 테이블을 천천히 비춰주세요"
     static let tapHint = "놓을 위치를 탭하세요"
-    static let placedHint = "손가락으로 이동·회전·크기를 조절할 수 있어요"
+    static let placedHint = "손가락으로 이동/회전/크기를 조절할 수 있어요"
 }
 
 /// Pure hierarchy check for placement taps (`entity(at:)` often returns a child mesh).

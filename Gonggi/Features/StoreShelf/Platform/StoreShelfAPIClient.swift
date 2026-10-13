@@ -23,6 +23,9 @@ enum StoreShelfAPIError: Error, Equatable {
             switch code {
             case "UPLOAD_INCOMPLETE", "UPLOAD_SIZE_MISMATCH": return "업로드가 완료되지 않았어요. 다시 시도해 주세요"
             case "NOT_STORE_MANAGER": return "이 매장의 담당자가 아니에요"
+            case "COVER_SIZE_INVALID": return "사진 용량이 너무 커요. 다른 사진을 골라 주세요"
+            case "COVER_NOT_UPLOADED": return "사진 올리기가 끝나지 않았어요. 다시 시도해 주세요"
+            case "CONFIRM_REQUIRED": return "공개할 공간을 확인해 주세요"
             case "STALE_CATALOG": return "다른 곳에서 먼저 바뀌었어요. 새로 불러올게요"
             case "NAME_REQUIRED": return "이름을 입력해 주세요"
             case "SHELF_NOT_FOUND": return "매대를 찾지 못했어요"
@@ -178,6 +181,60 @@ final class StoreShelfAPIClient: @unchecked Sendable {
     func catalogPublish(storeId: String, baseVersion: Int) async throws -> RemoteCatalogPublished {
         let body = try JSONEncoder().encode(["baseVersion": baseVersion])
         return try await send(try request("POST", url(["stores", storeId, "catalog", "publish"]), body: body, auth: true), as: RemoteCatalogPublished.self)
+    }
+
+    // MARK: Store content (cover photo, 360 tour spaces)
+
+    func browseStores(latitude: Double?, longitude: Double?) async throws -> [RemoteBrowsableStore] {
+        var q: [URLQueryItem] = []
+        if let latitude, let longitude {
+            q.append(URLQueryItem(name: "lat", value: String(latitude)))
+            q.append(URLQueryItem(name: "lng", value: String(longitude)))
+        }
+        return try await send(try request("GET", url(["stores", "browse"], query: q), auth: false), as: RemoteBrowsableStoresBody.self).items
+    }
+
+    func storeProducts(storeId: String) async throws -> [RemotePublicProduct] {
+        try await send(try request("GET", url(["stores", storeId, "products"]), auth: false), as: RemotePublicProductsBody.self).items
+    }
+
+    func publicTour(storeId: String) async throws -> [RemotePublicTourSpace] {
+        try await send(try request("GET", url(["stores", storeId, "tour"]), auth: false), as: RemotePublicTourBody.self).spaces
+    }
+
+    func tourSpaces(storeId: String) async throws -> [RemoteTourSpace] {
+        try await send(try request("GET", url(["stores", storeId, "tour-spaces"]), auth: true), as: RemoteTourSpacesBody.self).spaces
+    }
+
+    func linkTourSpace(storeId: String, spaceId: String, title: String?) async throws -> RemoteTourSpace {
+        var body: [String: StoreJSONValue] = ["spaceId": .string(spaceId)]
+        if let title, !title.isEmpty { body["title"] = .string(title) }
+        return try await send(try request("POST", url(["stores", storeId, "tour-spaces"]), body: try JSONEncoder().encode(body), auth: true),
+                              as: RemoteTourSpaceBody.self).space
+    }
+
+    func tourAction(storeId: String, tourId: String, action: String, confirm: Bool = false, title: String? = nil) async throws -> RemoteTourSpace {
+        var body: [String: StoreJSONValue] = ["action": .string(action)]
+        if confirm { body["confirm"] = .bool(true) }
+        if let title { body["title"] = .string(title) }
+        return try await send(try request("PATCH", url(["stores", storeId, "tour-spaces", tourId]), body: try JSONEncoder().encode(body), auth: true),
+                              as: RemoteTourSpaceBody.self).space
+    }
+
+    func removeTourSpace(storeId: String, tourId: String) async throws {
+        _ = try await send(try request("DELETE", url(["stores", storeId, "tour-spaces", tourId]), auth: true), as: Empty.self)
+    }
+
+    func coverUpload(storeId: String, bytes: Int) async throws -> RemoteCoverUploadBody.Target {
+        let body: [String: StoreJSONValue] = ["action": .string("upload"), "bytes": .int(bytes), "contentType": .string("image/jpeg")]
+        return try await send(try request("POST", url(["stores", storeId, "cover"]), body: try JSONEncoder().encode(body), auth: true),
+                              as: RemoteCoverUploadBody.self).upload
+    }
+
+    func coverConfirm(storeId: String, key: String) async throws -> String {
+        let body: [String: StoreJSONValue] = ["action": .string("confirm"), "key": .string(key)]
+        return try await send(try request("POST", url(["stores", storeId, "cover"]), body: try JSONEncoder().encode(body), auth: true),
+                              as: RemoteCoverConfirmBody.self).coverUrl
     }
 
     // MARK: Manager

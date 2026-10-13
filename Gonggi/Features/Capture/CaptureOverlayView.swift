@@ -185,8 +185,8 @@ struct CaptureOverlayView: View {
             Spacer()
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("quiet \(String(describing: quietPhase)) · track \(String(format: "%.2f", guidance.quality.trackingQuality))")
-                    Text("comp \(guidance.quality.completionState.rawValue) · recon \(guidance.quality.reconstructionReady)")
+                    Text("quiet \(String(describing: quietPhase)), track \(String(format: "%.2f", guidance.quality.trackingQuality))")
+                    Text("comp \(guidance.quality.completionState.rawValue), recon \(guidance.quality.reconstructionReady)")
                     Text("stage \(guidance.quality.guidanceStage.rawValue)")
                 }
                 .font(.system(size: 9, weight: .medium, design: .monospaced))

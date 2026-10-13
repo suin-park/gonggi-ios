@@ -72,9 +72,9 @@ enum PanoramaGuideFeedback: Equatable {
         case .levelOff:
             return "폰을 너무 위/아래로 기울이지 마세요"
         case .shaky:
-            return "흔들림이 커요 · 천천히 다시 맞춰주세요"
+            return "흔들림이 커요, 천천히 다시 맞춰주세요"
         case .enough:
-            return "충분히 촬영됐어요 · 완료를 눌러주세요"
+            return "충분히 촬영됐어요, 완료를 눌러주세요"
         case .keepGoing:
             return "가이드 선을 유지하면 더 자연스럽게 이어져요"
         }

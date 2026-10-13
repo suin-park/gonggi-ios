@@ -87,4 +87,51 @@ final class KmoSnapshotTests: XCTestCase {
         try render(KmoOwnerHomeView(), name: "03c-owner-home-small-large-text",
                    size: CGSize(width: 375, height: 667), dynamic: .accessibility3)
     }
+
+    // 사진 칸 상태와 매장 목록: 사진 없음은 작은 카드, 불러오기 실패는 다시 시도, 사진이 없는 카드는 큰 빈 상자를 쓰지 않는다.
+    func testPhotoStatesAndStoreList() throws {
+        let noPhoto = RemoteBrowsableStore(id: "a", name: "커모 테스트 편의점", branchName: nil, address: "서울시 테스트로 1",
+                                           latitude: 37.5, longitude: 127, distanceM: 350, coverUrl: nil, hasTour: true)
+        let failing = RemoteBrowsableStore(id: "b", name: "커모 테스트 마트", branchName: "2호점", address: "서울시 테스트로 2",
+                                           latitude: nil, longitude: nil, distanceM: 800,
+                                           coverUrl: "https://invalid.kmo-test.invalid/cover.jpg", hasTour: false)
+        let view = ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                KmoStoreListCard(store: noPhoto)
+                KmoStoreListCard(store: failing)
+                KmoBrowseCard(title: KmoCopy.browseStores, subtitle: "게시된 매장 2곳", photoURL: nil)
+                KmoBrowseCard(title: KmoCopy.mySpace, subtitle: nil, photoURL: nil)
+            }
+            .padding(20)
+        }
+        .background(KmoBackground())
+        try render(view, name: "04-store-list-photo-states")
+    }
+
+    // 큰 글씨에서도 마지막 카드와 버튼까지 닿는지: 화면 높이를 내용 전체로 늘려 한 장에 담는다.
+    func testLargeTextFullContent() throws {
+        let small = CGSize(width: 375, height: 2600)
+        try render(KmoCustomerHomeView(previewRecent: recents), name: "05-home-large-text-full", size: small, dynamic: .accessibility3)
+        let model = StoreProductSearchModel()
+        model.query = "코카콜라"
+        model.results = [sample]
+        model.selected = sample
+        try render(NavigationStack { KmoResultsView(model: model, recent: KmoRecentModel(preview: []), path: .constant([]), autoSearch: false) },
+                   name: "05b-results-large-text-full", size: CGSize(width: 375, height: 2200), dynamic: .accessibility3)
+        try render(NavigationStack { KmoStoreDetailView(model: model, storeId: "s1") },
+                   name: "05c-store-detail-large-text-full", size: CGSize(width: 375, height: 2200), dynamic: .accessibility3)
+        _ = StoreShelfRepository.shared.ensureStore(id: "kmo-shot-store", name: "커모 테스트 편의점")
+        try render(KmoOwnerHomeView(), name: "05d-owner-large-text-full", size: CGSize(width: 375, height: 2200), dynamic: .accessibility3)
+    }
+
+    func testStoreInfoScreen() throws {
+        let store = StoreRecord(id: "kmo-shot-store", name: "커모 테스트 편의점", createdAt: Date())
+        let tours = [
+            RemoteTourSpace(id: "t1", title: "매장 입구에서 계산대까지", status: "DRAFT", width: 4096, height: 2048,
+                            imageUrl: "https://invalid.kmo-test.invalid/t1.jpg", linkedAt: nil, publishedAt: nil),
+            RemoteTourSpace(id: "t2", title: "음료 매대", status: "PUBLISHED", width: 4096, height: 2048,
+                            imageUrl: "https://invalid.kmo-test.invalid/t2.jpg", linkedAt: nil, publishedAt: nil),
+        ]
+        try render(KmoStoreInfoView(store: store, coverUrl: nil, previewTours: tours, onClose: {}), name: "06-store-info")
+    }
 }

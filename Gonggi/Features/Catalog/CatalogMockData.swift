@@ -52,7 +52,7 @@ enum CatalogMockData {
                 displayBrandName: "JD홈드레싱"
             ),
             productName: "3단 라운드 마감장",
-            shortDescription: "Mock 상품 · 실제 판매가·URL 아님",
+            shortDescription: "Mock 상품, 실제 판매가/URL 아님",
             brandName: "JD홈드레싱",
             category: .furniture,
             placementType: .furniture3D,
@@ -89,7 +89,7 @@ enum CatalogMockData {
                 displayBrandName: "JD홈드레싱"
             ),
             productName: "커튼 샘플 (Mock)",
-            shortDescription: "Mock 전용 · AI 커튼 미리보기 POC",
+            shortDescription: "Mock 전용, AI 커튼 미리보기 POC",
             brandName: "JD홈드레싱",
             category: .curtain,
             placementType: .curtain2D,

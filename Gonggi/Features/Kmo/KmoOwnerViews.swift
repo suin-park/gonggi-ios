@@ -49,7 +49,9 @@ struct KmoOwnerHomeView: View {
     @State private var showStoreCapture = false
     @State private var showSolid = false
     @State private var showStorePicker = false
+    @State private var showInfo = false
     @State private var toast: String?
+    private let pendingStore = KmoPendingStoreLinkStore(storage: UserDefaults.standard)
 
     private var stores: [StoreRecord] {
         if appState.isMockMode { return StoreShelfRepository.shared.stores() }
@@ -74,7 +76,7 @@ struct KmoOwnerHomeView: View {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                         tile("상품 관리") { startAdding = false; showManage = true }
                         tile("매대 등록") { prepareStore(store); showShelfRegister = true }
-                        tile("매장 촬영") { showStoreCapture = true }
+                        tile("매장 촬영") { prepareStore(store); showStoreCapture = true }
                         tile("입체 보기 만들기") { showSolid = true }
                     }
                 } else {
@@ -93,7 +95,20 @@ struct KmoOwnerHomeView: View {
             .padding(.bottom, 32)
         }
         .background(KmoBackground())
-        .task { await role.refresh() }
+        .task {
+            await role.refresh()
+            await reconcilePendingLinks()
+        }
+        // 매장 촬영 결과가 완성되면 선택했던 매장의 둘러보기 초안으로 연결한다.
+        .onChange(of: appState.spaces) { _, _ in
+            Task { await reconcilePendingLinks() }
+        }
+        .fullScreenCover(isPresented: $showInfo) {
+            if let store = current {
+                KmoStoreInfoView(store: store, coverUrl: coverUrl(of: store), onClose: { showInfo = false })
+                    .environmentObject(appState)
+            }
+        }
         .fullScreenCover(isPresented: $showManage) {
             if let store = current {
                 StoreProductManagementView(store: store, startAdding: startAdding, onClose: { showManage = false })
@@ -105,7 +120,18 @@ struct KmoOwnerHomeView: View {
                 .environmentObject(appState)
         }
         .fullScreenCover(isPresented: $showStoreCapture) {
-            DirectionCaptureView(onClose: { showStoreCapture = false })
+            DirectionCaptureView(
+                onClose: { showStoreCapture = false },
+                onCaptureCompleted: { result in
+                    // 결과는 보관함에 저장하고, 선택한 매장 연결을 기억해 둔다. 공개는 사장님이 직접 한다.
+                    if let store = current {
+                        pendingStore.add(
+                            KmoPendingStoreLink(storeId: store.id, sessionId: result.sessionId, createdAt: Date()),
+                            account: KmoRecentModel.accountId)
+                    }
+                    appState.enqueueSpaceGeneration(from: result, switchToHome: false)
+                    toast = "촬영 결과가 완성되면 매장 둘러보기 초안으로 연결돼요"
+                })
                 .environmentObject(appState)
         }
         .sheet(isPresented: $showSolid) {
@@ -129,6 +155,32 @@ struct KmoOwnerHomeView: View {
         StoreShelfSelection.lastStoreId = s.id
     }
 
+    private func coverUrl(of store: StoreRecord) -> String? {
+        role.managedStores.first(where: { $0.id == store.id })?.coverUrl
+    }
+
+    /// 완성된 촬영을 서버에 연결한다. 서버가 소유권과 완성 상태를 다시 확인한다.
+    private func reconcilePendingLinks() async {
+        let account = KmoRecentModel.accountId
+        let pending = pendingStore.load(account: account)
+        guard !pending.isEmpty else { return }
+        let refs = appState.spaces.map {
+            KmoLibrarySpaceRef(id: $0.id, sessionId: $0.sessionId, isReady: $0.status == .ready)
+        }
+        let api = StoreShelfAPIClient()
+        for item in KmoPendingLinkReconciler.ready(pending: pending, spaces: refs) {
+            do {
+                _ = try await api.linkTourSpace(storeId: item.link.storeId, spaceId: item.spaceId, title: nil)
+                pendingStore.remove(id: item.link.id, account: account)
+                toast = "매장 둘러보기 초안이 준비됐어요. 매장 정보 수정에서 공개해 주세요"
+            } catch let e as StoreShelfAPIError {
+                // 권한이 없거나 공간을 찾지 못하면 다시 시도해도 같다. 일시적인 실패만 남겨 둔다.
+                if e == .forbidden || e == .notFound { pendingStore.remove(id: item.link.id, account: account) }
+            } catch {
+            }
+        }
+    }
+
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
@@ -147,16 +199,13 @@ struct KmoOwnerHomeView: View {
 
     private func storePanel(_ store: StoreRecord) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            // 매장 대표 사진 자료가 아직 없다. 가상의 사진을 쓰지 않고 기본 상태를 보여 준다.
-            ZStack {
-                KmoColors.card
-                Text("매장 사진이 아직 없어요").font(.subheadline).foregroundStyle(KmoColors.textSecondary)
+            // 사장님이 등록한 대표 사진만 쓴다. 없으면 큰 빈 상자 대신 작은 안내 한 줄.
+            if KmoImageSlot.initial(urlString: coverUrl(of: store)).reservesPhotoHeight {
+                KmoPhotoView(urlString: coverUrl(of: store), height: 150, cornerRadius: 16)
             }
-            .frame(height: 150)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            Text("우리 매장").font(.subheadline).foregroundStyle(KmoColors.textSecondary)
-            HStack {
-                Text(store.name).font(.title.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
+            Text("우리 매장").font(.footnote).foregroundStyle(KmoColors.textSecondary)
+            HStack(alignment: .firstTextBaseline) {
+                Text(store.name).font(.title2.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
                 Spacer()
                 if stores.count > 1 {
                     Button { showStorePicker = true } label: {
@@ -166,6 +215,13 @@ struct KmoOwnerHomeView: View {
                     .buttonStyle(.plain)
                 }
             }
+            Button { showInfo = true } label: {
+                Text(coverUrl(of: store) == nil ? "대표 사진과 매장 정보 등록" : "매장 정보 수정")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(KmoColors.accent)
+                    .frame(minHeight: 44, alignment: .leading)
+            }
+            .buttonStyle(.plain)
         }
     }
 

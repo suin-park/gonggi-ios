@@ -308,7 +308,7 @@ enum PublicSpacesPolicy {
     static func commentReportReasonLabel(_ reason: PublicCommentReportReason) -> String {
         switch reason {
         case .personalInfo: return "개인정보 노출"
-        case .harassment: return "괴롭힘·혐오"
+        case .harassment: return "괴롭힘/혐오"
         case .spam: return "스팸"
         case .inappropriate: return "부적절한 내용"
         case .copyright: return "저작권 침해"

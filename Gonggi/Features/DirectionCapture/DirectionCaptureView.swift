@@ -92,7 +92,7 @@ struct DirectionCaptureView: View {
                 .allowsHitTesting(false)
 
             #if DEBUG
-            Text("\(viewModel.yawDisplay) · \(viewModel.pitchDisplay)")
+            Text("\(viewModel.yawDisplay), \(viewModel.pitchDisplay)")
                 .font(GonggiTypography.caption(11))
                 .foregroundStyle(.white.opacity(0.65))
                 .padding(.top, 6)
@@ -162,7 +162,7 @@ struct DirectionCaptureView: View {
                 }
                 .padding(.horizontal, 24)
             default:
-                Text("계속 움직여도 됩니다 · 자동 촬영 중")
+                Text("계속 움직여도 됩니다, 자동 촬영 중")
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(.white.opacity(0.75))
             }

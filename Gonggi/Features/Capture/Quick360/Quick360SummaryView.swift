@@ -39,7 +39,7 @@ struct Quick360SummaryView: View {
                         reportGrid(report)
                     }
 
-                    Text("파노라마·바닥 데이터는 기기에만 저장됩니다.")
+                    Text("파노라마/바닥 데이터는 기기에만 저장됩니다.")
                         .font(GonggiTypography.caption(12))
                         .foregroundStyle(GonggiColors.textTertiary)
 

@@ -200,7 +200,7 @@ struct PanoramaCaptureOverlayView: View {
     private var bottomHint: String {
         switch viewModel.phase {
         case .capturing:
-            return "제자리에서 천천히 회전 · 다시 누르면 생성"
+            return "제자리에서 천천히 회전, 다시 누르면 생성"
         case .composing:
             return "파노라마 생성 중…"
         default:

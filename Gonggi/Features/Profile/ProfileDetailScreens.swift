@@ -135,7 +135,7 @@ struct ProfileProvidersView: View {
                     }
                 }
             } footer: {
-                Text("연결 추가·해제는 아직 지원하지 않습니다.")
+                Text("연결 추가/해제는 아직 지원하지 않습니다.")
             }
         }
         .scrollContentBackground(.hidden)
@@ -717,7 +717,7 @@ struct ProfileHelpView: View {
                 } header: {
                     Text("내부 테스트")
                 } footer: {
-                    Text("TestFlight·DEBUG 전용. App Store 일반 빌드에는 표시되지 않습니다.")
+                    Text("TestFlight/DEBUG 전용. App Store 일반 빌드에는 표시되지 않습니다.")
                 }
             }
         }

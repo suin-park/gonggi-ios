@@ -467,7 +467,7 @@ enum CaptureUIPresenter {
         case .lowTextureWarning:
             return ("가구나 모서리도 화면에 함께 담아주세요", nil)
         case .captureNearlyComplete:
-            return ("거의 다 담았어요", "천장·바닥 경계와 반대쪽도 걸으며 조금 더 담아 주세요")
+            return ("거의 다 담았어요", "천장/바닥 경계와 반대쪽도 걸으며 조금 더 담아 주세요")
         case .captureGap:
             return ("부족한 방향을 조금 더 담아 주세요", "사진이 계속 저장되도록 천천히 움직여 주세요")
         case .captureCoach:
@@ -528,7 +528,7 @@ enum CaptureUIPresenter {
     static func completionSubtitle(quality: CaptureQualityState) -> String {
         let lines = completionLines(quality)
         guard !lines.isEmpty else { return "공간을 충분히 담았어요. 기록을 완료할 수 있어요" }
-        return "지금 완료해도 돼요. 남은 곳: " + lines.prefix(3).joined(separator: " · ")
+        return "지금 완료해도 돼요. 남은 곳: " + lines.prefix(3).joined(separator: ", ")
     }
 
     private static func completionLines(_ quality: CaptureQualityState) -> [String] {

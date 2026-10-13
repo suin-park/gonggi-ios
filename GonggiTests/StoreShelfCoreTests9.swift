@@ -49,7 +49,7 @@ final class StoreShelfAnalysisTraceTests: XCTestCase {
          "coverage":{"totalPhotos":15,"analyzedPhotos":15,"requests":2,"requestLimit":8,"complete":true}}
         """
         let run = try JSONDecoder().decode(RemoteAnalysisRun.self, from: Data(json.utf8))
-        XCTAssertEqual(AnalysisRunText.detail(run), "gpt-6-astra · 완료 · 사진 15장 모두 분석")
+        XCTAssertEqual(AnalysisRunText.detail(run), "gpt-6-astra, 완료, 사진 15장 모두 분석")
         var other = run
         other.responseModel = "gpt-4o"
         XCTAssertTrue(AnalysisRunText.detail(other).contains("요청 gpt-6-astra / 응답 gpt-4o"))

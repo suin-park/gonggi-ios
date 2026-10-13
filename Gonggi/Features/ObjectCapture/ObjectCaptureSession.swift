@@ -601,7 +601,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                     v["txPx"] = reg.txPx; v["tyPx"] = reg.tyPx; v["magPx"] = reg.magnitudePx
                     v["magDeg"] = atan(reg.magnitudePx / focal) * 180 / .pi
                     self.returnCheckSummary = String(
-                        format: "한 바퀴 확인: 가이드-물체 화면 어긋남 %.1f px (%.2f°) · 카메라 위치 차 %.0f cm · 앵커 이동 %.1f mm",
+                        format: "한 바퀴 확인: 가이드-물체 화면 어긋남 %.1f px (%.2f°), 카메라 위치 차 %.0f cm, 앵커 이동 %.1f mm",
                         reg.magnitudePx, atan(reg.magnitudePx / focal) * 180 / .pi, Double(d.positionM) * 100, anchorShift * 1000
                     )
                 } else {
@@ -666,8 +666,8 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         let since = gate.normalSince.map { frame.timestamp - $0 } ?? 0
         let shift = baseAnchorOrigin.flatMap { o in baseAnchorLatest.map { simd_distance(o, $0) } } ?? 0
         var lines = [
-            String(format: "추적 %@ %.0f초 · 지도 %@", gate.currentTracking, since, gate.currentMapping),
-            String(format: "앵커 이동 %.1f mm · 걸은 거리 %.1f m", Double(shift) * 1000, Double(pathSincePlacement)),
+            String(format: "추적 %@ %.0f초, 지도 %@", gate.currentTracking, since, gate.currentMapping),
+            String(format: "앵커 이동 %.1f mm, 걸은 거리 %.1f m", Double(shift) * 1000, Double(pathSincePlacement)),
         ]
         if let d = supportHeightDelta() { lines.append(String(format: "바닥 높이 차 %+.1f cm", Double(d) * 100)) }
         lines.append(returnCheckSummary ?? "한 바퀴 돌아오면 가이드와 물체의 어긋남을 잽니다")

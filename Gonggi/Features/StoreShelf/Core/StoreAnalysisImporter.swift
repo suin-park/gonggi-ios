@@ -298,9 +298,9 @@ enum AnalysisRunText {
         default: parts.append("분석 중")
         }
         if let c = run.coverage {
-            parts.append(c.complete ? "사진 \(c.analyzedPhotos)장 모두 분석" : "사진 \(c.totalPhotos)장 중 \(c.analyzedPhotos)장만 분석 · 일부 영역 미분석")
+            parts.append(c.complete ? "사진 \(c.analyzedPhotos)장 모두 분석" : "사진 \(c.totalPhotos)장 중 \(c.analyzedPhotos)장만 분석, 일부 영역 미분석")
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -332,7 +332,7 @@ struct StoreSpaceSummary: Equatable, Sendable {
     }
 
     var headline: String {
-        "제품 \(products)개 · 매대 \(shelves)곳 · AR 안내 가능 \(guidableShelves)곳 · 위치 확인 필요 \(shelvesNeedingPosition)곳"
+        "제품 \(products)개, 매대 \(shelves)곳, AR 안내 가능 \(guidableShelves)곳, 위치 확인 필요 \(shelvesNeedingPosition)곳"
     }
 }
 
@@ -346,7 +346,7 @@ enum ShelfPositionText {
             default: return "매대 위치: 직접 지정"
             }
         }
-        if s.hasApproachDestination { return "매대 위치는 계산하지 못했어요 · 촬영한 위치까지 안내" }
+        if s.hasApproachDestination { return "매대 위치는 계산하지 못했어요, 촬영한 위치까지 안내" }
         return "위치 확인 필요"
     }
 

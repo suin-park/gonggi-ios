@@ -111,25 +111,25 @@ final class GaussianGenerationStore: ObservableObject {
         var failureLabel: String {
             if status == GaussianGenerationStore.interruptedStatus
                 || failureCode == GaussianGenerationStore.uploadInterruptedCode {
-                return "업로드 중단 · 다시 시도할 수 있어요"
+                return "업로드 중단, 다시 시도할 수 있어요"
             }
             switch failureCode {
             case "NATIVE_UNAVAILABLE", "RUNPOD_SUBMIT_FAILED":
-                return "생성 서버 준비 안 됨 · 다시 시도할 수 있어요"
+                return "생성 서버 준비 안 됨, 다시 시도할 수 있어요"
             case "JOB_EXPIRED":
-                return "시간 초과 · 다시 시도할 수 있어요"
+                return "시간 초과, 다시 시도할 수 있어요"
             case "OBJECT_PACKAGE_INVALID":
                 return "3D 자산 촬영 정보를 읽지 못했어요"
             case "OBJECT_INIT_POINTS_INSUFFICIENT", "OBJECT_NO_SPARSE_POINTS":
-                return "선택 범위 안에 학습에 필요한 점이 부족해요 · 상자를 물체에 맞게 다시 촬영해 주세요"
+                return "선택 범위 안에 학습에 필요한 점이 부족해요, 상자를 물체에 맞게 다시 촬영해 주세요"
             case "OBJECT_MASK_FAILED":
-                return "제품을 사진에서 구분하지 못했어요 · 다시 시도할 수 있어요"
+                return "제품을 사진에서 구분하지 못했어요, 다시 시도할 수 있어요"
             case "OBJECT_TRUNCATED":
-                return "제품 일부가 잘린 촬영이에요 · 다시 시도할 수 있어요"
+                return "제품 일부가 잘린 촬영이에요, 다시 시도할 수 있어요"
             case "RUNPOD_CANCELLED", "cancelled":
                 return "생성 취소됨"
             default:
-                return "생성 실패 · 다시 시도할 수 있어요"
+                return "생성 실패, 다시 시도할 수 있어요"
             }
         }
 

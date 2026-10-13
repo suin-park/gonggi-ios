@@ -274,30 +274,30 @@ struct CaptureSummaryView: View {
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
             Group {
-                Text(String(format: "duration %.1fs · schema v%d", duration, df.schemaVersion))
-                Text("written \(df.videoFramesWritten) · poses \(df.poseSamples) · dropped \(df.droppedVideoFrames)")
+                Text(String(format: "duration %.1fs, schema v%d", duration, df.schemaVersion))
+                Text("written \(df.videoFramesWritten), poses \(df.poseSamples), dropped \(df.droppedVideoFrames)")
                 if let integ = df.integrity {
-                    Text("MOV samples \(integ.movSamples) · PTS matched \(integ.ptsMatched) · mismatched \(integ.ptsMismatched)")
-                    Text(String(format: "max PTS Δ %.6fs · integrity %@", integ.maxPTSDeltaSec, integ.passed ? "PASS" : "FAIL"))
+                    Text("MOV samples \(integ.movSamples), PTS matched \(integ.ptsMatched), mismatched \(integ.ptsMismatched)")
+                    Text(String(format: "max PTS Δ %.6fs, integrity %@", integ.maxPTSDeltaSec, integ.passed ? "PASS" : "FAIL"))
                 } else {
                     Text("MOV integrity: (release build skips reader)")
                 }
-                Text("selected frames \(df.keyframe3DGSCount) · depth \(df.depthSamples)")
+                Text("selected frames \(df.keyframe3DGSCount), depth \(df.depthSamples)")
                 if let pkg = df.spatialCapturePackageURL {
-                    Text("package \(pkg.lastPathComponent) · valid \(df.spatialCapturePackageValid == true ? "yes" : "no")")
+                    Text("package \(pkg.lastPathComponent), valid \(df.spatialCapturePackageValid == true ? "yes" : "no")")
                 }
-                Text(String(format: "path %.2fm · max baseline %.2fm · grade %@", df.totalPathLengthM, df.maxBaselineM, df.translationBaselineGrade.rawValue))
-                Text(String(format: "viewAngleDiv %.2f · tracking N %.0f%% L %.0f%%", df.viewAngleDiversity, normalFrac * 100, limitedFrac * 100))
+                Text(String(format: "path %.2fm, max baseline %.2fm, grade %@", df.totalPathLengthM, df.maxBaselineM, df.translationBaselineGrade.rawValue))
+                Text(String(format: "viewAngleDiv %.2f, tracking N %.0f%% L %.0f%%", df.viewAngleDiversity, normalFrac * 100, limitedFrac * 100))
                 if let d = df.discontinuity {
                     Text(String(
-                        format: "jumps %d · maxΔt %.2fm · maxΔr %.2frad · track transitions %d",
+                        format: "jumps %d, maxΔt %.2fm, maxΔr %.2frad, track transitions %d",
                         d.possiblePoseJumpCount,
                         d.maxFrameTranslationDeltaM,
                         d.maxFrameRotationDeltaRad,
                         d.trackingStateTransitions
                     ))
                 }
-                Text("overlap: \(df.overlapAvailable ? "yes" : "notAvailable") · sync SoT: videoPTS")
+                Text("overlap: \(df.overlapAvailable ? "yes" : "notAvailable"), sync SoT: videoPTS")
                 Text(String(
                     format: "obsCov %.0f%% / qualCov %.0f%% / overlap %.2f (%@)",
                     df.observedCoverage * 100,
@@ -371,7 +371,7 @@ struct CaptureSummaryView: View {
             .frame(height: 120)
             .background(Color.black.opacity(0.25))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            Text("START ● green → END ● orange · axes X horizontal, Z vertical")
+            Text("START ● green → END ● orange, axes X horizontal, Z vertical")
                 .font(GonggiTypography.caption(11))
                 .foregroundStyle(GonggiColors.textTertiary)
         }

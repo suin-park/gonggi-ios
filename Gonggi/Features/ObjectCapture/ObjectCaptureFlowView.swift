@@ -35,7 +35,7 @@ enum ObjectCaptureCopy {
     static let shareTrace = "위치 진단 기록 공유"
     static let uniformSize = "크기"
     static let advanced = "자세히 조절"
-    static let advancedTips = "길쭉한 물체는 가로·높이·깊이를 따로 맞추세요. 높이는 물체 맨 위보다 조금 높게 잡아 주세요"
+    static let advancedTips = "길쭉한 물체는 가로/높이/깊이를 따로 맞추세요. 높이는 물체 맨 위보다 조금 높게 잡아 주세요"
     static let looseToggle = "넉넉한 박스 방식 (내부 테스트)"
     static let looseToggleNote = "끄면 지금까지의 방식 그대로예요. 켜는 것은 새 3D 처리 서버가 준비된 뒤에 해 주세요"
     static let reviewTitle = "아직 부족한 방향이 있어요"

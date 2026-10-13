@@ -658,7 +658,7 @@ struct StoreShelfSearchView: View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
             if StoreShelfFeatureFlags.testMarkersEnabled {
                 if case .published(let version, let fromCache) = source.origin {
-                    Text("게시본 v\(version)" + (fromCache ? " · 저장된 사본 (오프라인)" : ""))
+                    Text("게시본 v\(version)" + (fromCache ? ", 저장된 사본 (오프라인)" : ""))
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.6))
                 } else {

@@ -618,7 +618,7 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
             status: .ready,
             thumbnailSystemImage: "heart.fill",
             note: nil,
-            memo: "주방·거실 포함",
+            memo: "주방/거실 포함",
             viewerURL: nil
         ),
     ]

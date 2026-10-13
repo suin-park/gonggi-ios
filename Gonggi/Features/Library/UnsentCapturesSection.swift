@@ -40,7 +40,7 @@ struct UnsentCapturesSection: View {
             Button("이 계정으로 업로드") { resend(item) }
             Button("취소", role: .cancel) {}
         } message: { item in
-            Text("\(dateLabel(item)) · 사진 \(item.photoCount)장. 이 기기에서 촬영했지만 계정 정보가 기록되기 전의 촬영이에요.")
+            Text("\(dateLabel(item)), 사진 \(item.photoCount)장. 이 기기에서 촬영했지만 계정 정보가 기록되기 전의 촬영이에요.")
         }
     }
 
@@ -50,7 +50,7 @@ struct UnsentCapturesSection: View {
                 Text(item.suggestedName)
                     .font(GonggiTypography.body(15))
                     .foregroundStyle(GonggiColors.textPrimary)
-                Text("\(dateLabel(item)) · 사진 \(item.photoCount)장")
+                Text("\(dateLabel(item)), 사진 \(item.photoCount)장")
                     .font(GonggiTypography.body(13))
                     .foregroundStyle(GonggiColors.textSecondary)
             }

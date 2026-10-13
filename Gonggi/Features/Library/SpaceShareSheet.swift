@@ -94,7 +94,7 @@ struct SpaceShareSheet: View {
                         .disabled(isLoading || isSaving || !hasAudio)
 
                         if !hasAudio {
-                            Text("이 공간에 업로드·녹음된 오디오가 없어요.")
+                            Text("이 공간에 업로드/녹음된 오디오가 없어요.")
                                 .font(GonggiTypography.caption(13))
                                 .foregroundStyle(GonggiColors.textSecondary)
                         }

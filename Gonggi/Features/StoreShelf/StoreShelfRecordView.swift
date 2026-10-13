@@ -67,8 +67,8 @@ final class StoreShelfRecordViewModel: ObservableObject {
         let structural = (d.droppedRegions["tooSmallPhysically"] ?? 0) + (d.droppedRegions["tooLargePhysically"] ?? 0)
             + (d.droppedRegions["extremeAspect"] ?? 0) + (d.droppedRegions["flatTexture"] ?? 0)
         let overlap = (d.droppedRegions["container"] ?? 0) + (d.droppedRegions["part"] ?? 0)
-        return "진단 · 프레임 \(d.processedFrames) · 검출 \(d.rawRegions) → 구조물/비제품 제외 \(structural) · 겹침 제외 \(overlap) · 관측 \(d.observations)"
-            + " · 후보 \(d.clustersBeforeMerge)→병합 \(d.clustersMerged)→\(d.candidates) · 이름 읽음 \(d.namedAutomatically)/\(d.productsAfterGrouping)"
+        return "진단, 프레임 \(d.processedFrames), 검출 \(d.rawRegions) → 구조물/비제품 제외 \(structural), 겹침 제외 \(overlap), 관측 \(d.observations)"
+            + ", 후보 \(d.clustersBeforeMerge)→병합 \(d.clustersMerged)→\(d.candidates), 이름 읽음 \(d.namedAutomatically)/\(d.productsAfterGrouping)"
     }
     @Published var existingMap = false
     @Published var corrections = 0

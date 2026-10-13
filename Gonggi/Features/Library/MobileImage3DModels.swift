@@ -121,7 +121,7 @@ enum MobileImage3DAPIError: Error, Equatable {
             return "모바일 3D 생성이 아직 열려 있지 않아요"
         case .insufficientCredits(let required, let available):
             if let required, let available {
-                return "3D 생성 크레딧이 부족해요\n필요 \(required) · 보유 \(available)"
+                return "3D 생성 크레딧이 부족해요\n필요 \(required), 보유 \(available)"
             }
             return "3D 생성 크레딧이 부족해요"
         case .generationLimitReached:

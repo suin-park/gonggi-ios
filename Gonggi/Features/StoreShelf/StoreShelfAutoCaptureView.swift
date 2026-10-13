@@ -633,7 +633,7 @@ struct StoreShelfAutoCaptureView: View {
                 }
             }
             if StoreShelfFeatureFlags.testMarkersEnabled, let e = model.engine {
-                Text(String(format: "진단 · 선명도 %.0f", e.lastSharpness))
+                Text(String(format: "진단, 선명도 %.0f", e.lastSharpness))
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.6))
             }

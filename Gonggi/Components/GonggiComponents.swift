@@ -773,7 +773,7 @@ struct GonggiSummaryHero: View {
                         .foregroundStyle(GonggiColors.warning)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("품질 \(qualityLabel) · \(duration)")
+                Text("품질 \(qualityLabel), \(duration)")
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textSecondary)
             }

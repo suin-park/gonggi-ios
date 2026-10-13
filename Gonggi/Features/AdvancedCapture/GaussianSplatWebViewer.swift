@@ -218,7 +218,7 @@ struct GaussianSplatWebViewer: View {
                     parts.append(String(format: "%.0f MB", mb))
                 }
             }
-            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+            return parts.isEmpty ? nil : parts.joined(separator: ", ")
         case .preparing: return "3D 데이터를 읽고 있어요"
         case .displaying: return "화면에 그릴 준비를 하고 있어요"
         case .recovering: return "마지막 위치에서 다시 열어요"
@@ -532,8 +532,8 @@ enum GaussianViewerURL {
 
     static func hint(hasCollision: Bool) -> String {
         hasCollision
-            ? "걷기/자유이동 전환 · 왼쪽 조이스틱 이동 · 드래그로 시점"
-            : "왼쪽 조이스틱으로 이동 · 화면을 드래그해 시점 변경"
+            ? "걷기/자유이동 전환, 왼쪽 조이스틱 이동, 드래그로 시점"
+            : "왼쪽 조이스틱으로 이동, 화면을 드래그해 시점 변경"
     }
 }
 

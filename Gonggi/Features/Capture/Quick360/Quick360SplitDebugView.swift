@@ -41,7 +41,7 @@ struct Quick360SplitDebugView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(isFrozen ? "TEST A — FROZEN" : "SPLIT DEBUG · TEST A")
+                Text(isFrozen ? "TEST A — FROZEN" : "SPLIT DEBUG, TEST A")
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundStyle(isFrozen ? .orange : .white)
 

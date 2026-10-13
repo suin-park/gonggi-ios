@@ -113,7 +113,7 @@ struct Quick360OverlayView: View {
             }
             Button("조금 더 기록하기", role: .cancel) {}
         } message: {
-            Text("위·아래를 조금 더 비추면 공간이 더 완전해져요.")
+            Text("위/아래를 조금 더 비추면 공간이 더 완전해져요.")
         }
     }
 

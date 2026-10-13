@@ -93,3 +93,81 @@ final class KmoCoreTests: XCTestCase {
         XCTAssertNil(KmoStorePick.resolve(managedIds: [], stored: "a"))
     }
 }
+
+final class KmoStoreContentTests: XCTestCase {
+    func testBrowsableStoreDecodesWithAndWithoutPhoto() throws {
+        let json = """
+        {"ok":true,"items":[
+          {"id":"s1","name":"커모 테스트 편의점","branchName":null,"address":"서울","latitude":37.5,"longitude":127.0,"distanceM":350,
+           "coverUrl":"https://get.test/a.jpg","hasTour":true},
+          {"id":"s2","name":"커모 마트","branchName":"2호점","address":"부산","latitude":null,"longitude":null,"distanceM":null,
+           "coverUrl":null,"hasTour":false}]}
+        """
+        let body = try JSONDecoder().decode(RemoteBrowsableStoresBody.self, from: Data(json.utf8))
+        XCTAssertEqual(body.items.count, 2)
+        XCTAssertEqual(body.items[0].hasTour, true)
+        XCTAssertNil(body.items[1].coverUrl)
+        XCTAssertEqual(body.items[1].displayName, "커모 마트 2호점")
+    }
+
+    func testOlderServerAnswerWithoutCoverFieldsStillDecodes() throws {
+        let json = """
+        {"storeId":"s1","name":"A","branchName":null,"address":"x","latitude":null,"longitude":null,"distanceM":null,
+         "lastConfirmedAt":null,"recordedQuantity":null,"quantityVerifiedAt":null,"shelves":[],"productIds":[]}
+        """
+        let e = try JSONDecoder().decode(RemoteProductStoreEntry.self, from: Data(json.utf8))
+        XCTAssertNil(e.coverUrl)
+        XCTAssertNil(e.hasTour)
+    }
+
+    func testImageSlotOnlyReservesPhotoHeightWhenThereIsAPhoto() {
+        XCTAssertEqual(KmoImageSlot.initial(urlString: nil), .none)
+        XCTAssertEqual(KmoImageSlot.initial(urlString: "  "), .none)
+        XCTAssertEqual(KmoImageSlot.initial(urlString: "https://x/y.jpg"), .loading)
+        XCTAssertFalse(KmoImageSlot.none.reservesPhotoHeight)
+        XCTAssertTrue(KmoImageSlot.loading.reservesPhotoHeight)
+        XCTAssertTrue(KmoImageSlot.failed.reservesPhotoHeight)
+    }
+
+    func testCoverIsScaledDownNeverUp() {
+        XCTAssertEqual(KmoCoverPolicy.targetLongSide(width: 4000, height: 3000), 1600)
+        XCTAssertEqual(KmoCoverPolicy.targetLongSide(width: 800, height: 600), 800)
+    }
+
+    func testPublishConfirmNamesTheSpaceAndKeepsTheOriginalPrivate() {
+        let t = KmoTourText.publishConfirm(title: "우리 매장")
+        XCTAssertTrue(t.contains("우리 매장"))
+        XCTAssertTrue(t.contains("비공개"))
+        XCTAssertFalse(t.contains("·"))
+        XCTAssertEqual(KmoTourText.statusLabel("PUBLISHED"), "공개 중")
+        XCTAssertEqual(KmoTourText.statusLabel("DRAFT"), "초안")
+        XCTAssertEqual(KmoTourText.statusLabel("UNPUBLISHED"), "비공개")
+    }
+
+    func testPendingLinkIsKeptPerAccountAndLinksOnlyWhenTheSpaceIsReady() {
+        let store = KmoPendingStoreLinkStore(storage: MemoryStorage())
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        store.add(KmoPendingStoreLink(storeId: "st", sessionId: "sess-1", createdAt: t0), account: "u1")
+        XCTAssertTrue(store.load(account: "u2", now: t0).isEmpty)
+        let pending = store.load(account: "u1", now: t0)
+        XCTAssertEqual(pending.count, 1)
+
+        let busy = [KmoLibrarySpaceRef(id: "sp1", sessionId: "sess-1", isReady: false)]
+        XCTAssertTrue(KmoPendingLinkReconciler.ready(pending: pending, spaces: busy).isEmpty)
+        let done = [KmoLibrarySpaceRef(id: "sp1", sessionId: "sess-1", isReady: true),
+                    KmoLibrarySpaceRef(id: "other", sessionId: "sess-9", isReady: true)]
+        let r = KmoPendingLinkReconciler.ready(pending: pending, spaces: done)
+        XCTAssertEqual(r.map(\.spaceId), ["sp1"])
+        XCTAssertEqual(r.first?.link.storeId, "st")
+
+        store.remove(id: pending[0].id, account: "u1")
+        XCTAssertTrue(store.load(account: "u1", now: t0).isEmpty)
+    }
+
+    func testStalePendingLinksExpire() {
+        let store = KmoPendingStoreLinkStore(storage: MemoryStorage())
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        store.add(KmoPendingStoreLink(storeId: "st", sessionId: "s", createdAt: t0), account: "u1")
+        XCTAssertTrue(store.load(account: "u1", now: t0.addingTimeInterval(15 * 24 * 3600)).isEmpty)
+    }
+}

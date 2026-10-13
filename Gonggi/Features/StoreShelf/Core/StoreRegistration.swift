@@ -945,7 +945,7 @@ enum ShelfDataUpdater {
                       let ib = out.products.firstIndex(where: { $0.id == idB }) else { continue }
                 if !out.products[ia].similarProductIds.contains(idB) { out.products[ia].similarProductIds.append(idB) }
                 if !out.products[ib].similarProductIds.contains(idA) { out.products[ib].similarProductIds.append(idA) }
-                let note = "비슷한 포장의 다른 제품이 있어요 (맛·용량 확인)"
+                let note = "비슷한 포장의 다른 제품이 있어요 (맛/용량 확인)"
                 for index in [ia, ib] {
                     // Two products whose names were both read are already told apart by their names.
                     let a = out.products[index]

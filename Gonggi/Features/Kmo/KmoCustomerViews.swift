@@ -5,6 +5,7 @@ import UIKit
 // 커모 고객 화면: 홈, 검색 결과, 매장 상세, 내 공간에서 보기.
 // 이름 검색, 카메라 검색, 최근 본 제품은 모두 같은 결과 화면으로 이어진다. 결과 화면과 매장 목록에는
 // 공간 복원, 게시본 버전, 검증, 진단 항목이 없다. AR 안내는 매장 상세의 버튼을 눌렀을 때만 시작한다.
+// 사진은 실제로 연결된 자료만 쓰고, 없으면 큰 빈 상자 대신 작은 구성을 쓴다.
 
 // MARK: - 최근 본 제품
 
@@ -44,6 +45,7 @@ enum KmoRoute: Hashable {
     case results
     case store(String)
     case mySpace
+    case browse
 }
 
 // MARK: - 고객 홈
@@ -55,8 +57,9 @@ struct KmoCustomerHomeView: View {
     @StateObject private var recent: KmoRecentModel
     @State private var path: [KmoRoute] = []
     @State private var showCamera = false
-    @State private var showBrowse = false
-    @State private var browseThumb: String?
+    @State private var showPublicSpaces = false
+    @State private var browsePhoto: String?
+    @State private var browseCount: Int?
     @State private var notice: String?
     @FocusState private var fieldFocused: Bool
 
@@ -67,7 +70,7 @@ struct KmoCustomerHomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 22) {
                     header
                     findCard
                     browseSection
@@ -77,8 +80,8 @@ struct KmoCustomerHomeView: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 32)
+                .padding(.top, 4)
+                .padding(.bottom, 28)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(KmoBackground())
@@ -92,6 +95,8 @@ struct KmoCustomerHomeView: View {
                 case .mySpace:
                     KmoMySpaceView(path: $path)
                         .environmentObject(appState)
+                case .browse:
+                    KmoStoreBrowseView()
                 }
             }
         }
@@ -113,37 +118,37 @@ struct KmoCustomerHomeView: View {
                     fieldFocused = true
                 })
         }
-        .fullScreenCover(isPresented: $showBrowse) {
-            HomeView(embeddedClose: { showBrowse = false })
+        .fullScreenCover(isPresented: $showPublicSpaces) {
+            HomeView(embeddedClose: { showPublicSpaces = false })
                 .environmentObject(appState)
         }
         .task(id: KmoRecentModel.accountId) {
             recent.reload()
         }
         .task {
-            await loadBrowseThumb()
+            await loadBrowseSummary()
         }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(KmoCopy.brand)
-                .font(.largeTitle.weight(.bold))
+                .font(.title.weight(.bold))
                 .foregroundStyle(KmoColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
             Text(KmoCopy.tagline)
-                .font(.subheadline)
+                .font(.footnote)
                 .foregroundStyle(KmoColors.textSecondary)
         }
     }
 
     private var findCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(KmoCopy.findProduct)
-                .font(.title2.weight(.bold))
+                .font(.title3.weight(.bold))
                 .foregroundStyle(KmoColors.textPrimary)
             HStack(spacing: 8) {
-                TextField(KmoCopy.namePlaceholder, text: $model.query)
+                TextField("", text: $model.query, prompt: Text(KmoCopy.namePlaceholder).foregroundColor(KmoColors.textSecondary))
                     .font(.body)
                     .foregroundStyle(KmoColors.textPrimary)
                     .submitLabel(.search)
@@ -152,7 +157,7 @@ struct KmoCustomerHomeView: View {
                     .frame(minHeight: 44)
                 Button(action: submitSearch) {
                     Text(KmoCopy.search)
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(KmoColors.accent)
                         .frame(minWidth: 44, minHeight: 44)
                 }
@@ -167,7 +172,7 @@ struct KmoCustomerHomeView: View {
                 showCamera = true
             }
         }
-        .kmoCard(padding: 18)
+        .kmoCard(padding: 16)
     }
 
     private func submitSearch() {
@@ -181,57 +186,79 @@ struct KmoCustomerHomeView: View {
         path.append(.results)
     }
 
+    // MARK: 둘러보기
+
     private var browseSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             KmoSectionTitle(text: KmoCopy.browse)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                Button { showBrowse = true } label: {
-                    KmoPhotoCard(title: KmoCopy.browseStores) {
-                        KmoBannerImage(urlString: browseThumb)
-                    }
+                Button { path.append(.browse) } label: {
+                    KmoBrowseCard(
+                        title: KmoCopy.browseStores,
+                        subtitle: browseCount.map { $0 > 0 ? "게시된 매장 \($0)곳" : "준비 중" },
+                        photoURL: browsePhoto)
                 }
                 .buttonStyle(.plain)
                 Button { path.append(.mySpace) } label: {
-                    KmoPhotoCard(title: KmoCopy.mySpace) {
-                        if let space = ownSpace, space.remoteImageURL != nil || space.localLatLongPath != nil {
-                            SpaceThumbnailView(space: space, height: 120, cornerRadius: 0, showsActivityOverlay: false)
-                        } else {
-                            KmoColors.field
-                        }
-                    }
+                    KmoBrowseCard(title: KmoCopy.mySpace, subtitle: nil, photoURL: nil, space: ownSpaceWithPhoto)
                 }
                 .buttonStyle(.plain)
+            }
+            Button { showPublicSpaces = true } label: {
+                Text("공개 공간 보기")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(KmoColors.textSecondary)
+                    .frame(minHeight: 44, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// 내 공간 사진은 본인 화면에서만 쓴다. 사진 자료가 없으면 작은 카드가 된다.
+    private var ownSpaceWithPhoto: SpaceRecord? {
+        let candidates = appState.spaces.filter { $0.status == .ready }
+        return candidates.first(where: { $0.remoteImageURL != nil || $0.localLatLongPath != nil })
+    }
+
+    private var recentSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            KmoSectionTitle(text: KmoCopy.recent)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(recent.items) { item in
+                        Button { openRecent(item) } label: { recentCard(item) }
+                            .buttonStyle(.plain)
+                    }
+                }
             }
         }
     }
 
-    /// 내 공간 사진은 본인 화면에서만 쓴다.
-    private var ownSpace: SpaceRecord? {
-        appState.spaces.first(where: { $0.status == .ready }) ?? appState.spaces.first
-    }
-
-    private var recentSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            KmoSectionTitle(text: KmoCopy.recent)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(recent.items) { item in
-                        Button { openRecent(item) } label: {
-                            VStack(spacing: 8) {
-                                KmoRemoteImage(urlString: item.imageUrl, size: CGSize(width: 104, height: 104))
-                                    .background(KmoColors.card)
-                                Text(item.name)
-                                    .font(.subheadline)
-                                    .foregroundStyle(KmoColors.textPrimary)
-                                    .lineLimit(2)
-                                    .multilineTextAlignment(.center)
-                                    .frame(width: 104)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
+    @ViewBuilder
+    private func recentCard(_ item: KmoRecentProduct) -> some View {
+        if KmoImageSlot.initial(urlString: item.imageUrl).reservesPhotoHeight {
+            VStack(spacing: 6) {
+                KmoProductThumb(urlString: item.imageUrl, size: 88)
+                Text(item.name)
+                    .font(.footnote)
+                    .foregroundStyle(KmoColors.textPrimary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(width: 88)
             }
+        } else {
+            // 사진이 없으면 이름 중심의 작은 카드
+            Text(item.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(KmoColors.textPrimary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(minWidth: 88, maxWidth: 160, minHeight: 48, alignment: .leading)
+                .background(KmoColors.card)
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
@@ -252,31 +279,48 @@ struct KmoCustomerHomeView: View {
         }
     }
 
-    private func loadBrowseThumb() async {
-        guard browseThumb == nil else { return }
-        let token = MobileAuthTokenStore.shared.getAccessToken()
-        if let page = try? await MobilePublicSpacesAPIClient().listPublicSpaces(accessToken: token, limit: 1, cursor: nil) {
-            browseThumb = page.spaces.first?.thumbnailUrl
+    /// 게시된 매장 수와, 매장이 직접 등록한 대표 사진 하나(있을 때만).
+    private func loadBrowseSummary() async {
+        guard browseCount == nil else { return }
+        if let stores = try? await StoreShelfAPIClient().browseStores(latitude: nil, longitude: nil) {
+            browseCount = stores.count
+            browsePhoto = stores.first(where: { $0.coverUrl != nil })?.coverUrl
         }
     }
 }
 
-struct KmoPhotoCard<Photo: View>: View {
+/// 둘러보기 카드. 사진이 있을 때만 사진 높이를 쓰고, 없으면 제목만 있는 작은 카드.
+struct KmoBrowseCard: View {
     let title: String
-    @ViewBuilder var photo: () -> Photo
+    var subtitle: String?
+    var photoURL: String?
+    var space: SpaceRecord?
+
+    private var hasPhoto: Bool {
+        space != nil || KmoImageSlot.initial(urlString: photoURL).reservesPhotoHeight
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            photo()
-                .frame(maxWidth: .infinity)
-                .frame(height: 120)
-                .clipped()
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(KmoColors.textPrimary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-                .padding(.horizontal, 12)
+            if let space {
+                SpaceThumbnailView(space: space, height: 96, cornerRadius: 0, showsActivityOverlay: false)
+            } else if KmoImageSlot.initial(urlString: photoURL).reservesPhotoHeight {
+                KmoPhotoView(urlString: photoURL, height: 96, cornerRadius: 0)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(KmoColors.textPrimary)
+                    .multilineTextAlignment(.leading)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.footnote)
+                        .foregroundStyle(KmoColors.textSecondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, hasPhoto ? 10 : 14)
+            .frame(maxWidth: .infinity, minHeight: hasPhoto ? 0 : 64, alignment: .leading)
         }
         .background(KmoColors.card)
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
@@ -304,7 +348,7 @@ struct KmoResultsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 topBar
                 searchField
                 if model.searching { ProgressView().frame(maxWidth: .infinity) }
@@ -356,7 +400,7 @@ struct KmoResultsView: View {
     private var topBar: some View {
         ZStack {
             Text("검색 결과")
-                .font(.title3.weight(.bold))
+                .font(.headline)
                 .foregroundStyle(KmoColors.textPrimary)
                 .accessibilityAddTraits(.isHeader)
             HStack {
@@ -367,18 +411,17 @@ struct KmoResultsView: View {
                 Spacer()
             }
         }
-        .padding(.top, 4)
     }
 
     private var searchField: some View {
         HStack(spacing: 8) {
-            TextField(KmoCopy.namePlaceholder, text: $model.query)
+            TextField("", text: $model.query, prompt: Text(KmoCopy.namePlaceholder).foregroundColor(KmoColors.textSecondary))
                 .font(.body)
                 .foregroundStyle(KmoColors.textPrimary)
                 .submitLabel(.search)
                 .frame(minHeight: 44)
             Text(KmoCopy.search)
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(KmoColors.accent)
         }
         .padding(.horizontal, 14)
@@ -392,7 +435,9 @@ struct KmoResultsView: View {
             ForEach(model.results) { r in
                 Button { model.selected = r } label: {
                     HStack(spacing: 12) {
-                        KmoRemoteImage(urlString: r.imageUrl, size: CGSize(width: 64, height: 64))
+                        if KmoImageSlot.initial(urlString: r.imageUrl).reservesPhotoHeight {
+                            KmoProductThumb(urlString: r.imageUrl, size: 56)
+                        }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(r.name).font(.headline).foregroundStyle(KmoColors.textPrimary).multilineTextAlignment(.leading)
                             if !r.subtitle.isEmpty {
@@ -402,7 +447,7 @@ struct KmoResultsView: View {
                         Spacer(minLength: 0)
                     }
                     .padding(12)
-                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                    .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
                     .background(KmoColors.card)
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -416,8 +461,10 @@ struct KmoResultsView: View {
     }
 
     private func productHeader(_ r: RemoteProductSearchResult) -> some View {
-        HStack(spacing: 16) {
-            KmoRemoteImage(urlString: r.imageUrl, size: CGSize(width: 96, height: 96))
+        HStack(spacing: 14) {
+            if KmoImageSlot.initial(urlString: r.imageUrl).reservesPhotoHeight {
+                KmoProductThumb(urlString: r.imageUrl, size: 88)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(r.name).font(.title3.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
                 if !r.subtitle.isEmpty {
@@ -435,7 +482,7 @@ struct KmoResultsView: View {
             KmoSectionTitle(text: KmoCopy.confirmedStores)
             Spacer()
             if model.coordinate != nil {
-                Text(KmoCopy.nearestFirst).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
+                Text(KmoCopy.nearestFirst).font(.footnote).foregroundStyle(KmoColors.textSecondary)
             }
         }
         if r.stores.isEmpty {
@@ -445,7 +492,8 @@ struct KmoResultsView: View {
             Button { path.append(.store(s.storeId)) } label: { KmoStoreRow(store: s) }
                 .buttonStyle(.plain)
         }
-        Text(ProductAvailabilityText.disclaimer)
+        // 재고 안내는 이 화면에서 한 번만 짧게 둔다.
+        Text(ProductAvailabilityText.short)
             .font(.footnote)
             .foregroundStyle(KmoColors.textSecondary)
     }
@@ -462,36 +510,33 @@ struct KmoResultsView: View {
 struct KmoStoreRow: View {
     let store: RemoteProductStoreEntry
 
+    private var hasPhoto: Bool { KmoImageSlot.initial(urlString: store.coverUrl).reservesPhotoHeight }
+
     var body: some View {
-        HStack(spacing: 14) {
-            // 매장 사진 자료가 아직 없다. 가상의 사진을 쓰지 않고 기본 상태를 보여 준다.
-            ZStack {
-                KmoColors.field
-                Text(String(store.displayName.prefix(1)))
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(KmoColors.textSecondary)
+        VStack(alignment: .leading, spacing: 0) {
+            if hasPhoto {
+                KmoPhotoView(urlString: store.coverUrl, height: 110, cornerRadius: 0)
             }
-            .frame(width: 84, height: 84)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(store.displayName).font(.headline).foregroundStyle(KmoColors.textPrimary).multilineTextAlignment(.leading)
-                if let d = ProductAvailabilityText.distance(store.distanceM) {
-                    Text(d).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(store.displayName).font(.headline).foregroundStyle(KmoColors.textPrimary).multilineTextAlignment(.leading)
+                    Spacer(minLength: 8)
+                    if let d = ProductAvailabilityText.distance(store.distanceM) {
+                        Text(d).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
+                    }
                 }
                 Text(KmoConfirmedText.line(iso: store.lastConfirmedAt)).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
             }
-            Spacer(minLength: 0)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 100, alignment: .leading)
         .background(KmoColors.card)
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
-// MARK: - 매장 상세
+// MARK: - 매장 상세 (제품 결과에서 들어온 매장)
 
 struct KmoStoreDetailView: View {
     @ObservedObject var model: StoreProductSearchModel
@@ -507,14 +552,14 @@ struct KmoStoreDetailView: View {
         return nil
     }
 
-    private var syncing: String? {
-        if case .syncing = model.arState { return KmoCopy.slowlyAround }
-        return nil
+    private var syncing: Bool {
+        if case .syncing = model.arState { return true }
+        return false
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Button { dismiss() } label: {
                         Text("뒤로").font(.body).foregroundStyle(KmoColors.textSecondary).frame(minWidth: 44, minHeight: 44, alignment: .leading)
@@ -548,15 +593,18 @@ struct KmoStoreDetailView: View {
 
     @ViewBuilder
     private func content(_ s: RemoteProductStoreEntry) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(s.displayName).font(.title.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
-            Text(s.address).font(.body).foregroundStyle(KmoColors.textSecondary)
+        if KmoImageSlot.initial(urlString: s.coverUrl).reservesPhotoHeight {
+            KmoPhotoView(urlString: s.coverUrl, height: 150, cornerRadius: 14)
+        }
+        VStack(alignment: .leading, spacing: 4) {
+            Text(s.displayName).font(.title2.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
+            Text(s.address).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
             if let d = ProductAvailabilityText.distance(s.distanceM) {
                 Text(d).font(.subheadline.weight(.semibold)).foregroundStyle(KmoColors.accent)
             }
         }
-        mapBlock(s)
-        VStack(alignment: .leading, spacing: 6) {
+        KmoMapBlock(name: s.displayName, latitude: s.latitude, longitude: s.longitude)
+        VStack(alignment: .leading, spacing: 4) {
             Text(KmoConfirmedText.line(iso: s.lastConfirmedAt)).font(.headline).foregroundStyle(KmoColors.textPrimary)
             Text(ProductAvailabilityText.quantityLine(quantity: s.recordedQuantity, verifiedIso: s.quantityVerifiedAt))
                 .font(.subheadline)
@@ -564,41 +612,48 @@ struct KmoStoreDetailView: View {
             if !s.shelves.isEmpty {
                 Text(s.shelves.joined(separator: ", ")).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
             }
-            Text(ProductAvailabilityText.disclaimer).font(.footnote).foregroundStyle(KmoColors.textSecondary)
         }
         .kmoCard()
-        KmoPrimaryButton(title: KmoCopy.findInStore, isBusy: syncing != nil) {
+        KmoPrimaryButton(title: KmoCopy.findInStore, isBusy: syncing) {
             Task { await model.startAR(store: s) }
         }
-        if let text = syncing {
-            Text(text).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
+        if syncing {
+            Text(KmoCopy.slowlyAround).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
         }
         if case .failed(let text) = model.arState {
             Text(text).font(.subheadline).foregroundStyle(KmoColors.warning)
         }
+        KmoTourEntry(storeId: s.storeId, hasTour: s.hasTour ?? false)
+        Text(ProductAvailabilityText.short).font(.footnote).foregroundStyle(KmoColors.textSecondary)
     }
+}
 
-    @ViewBuilder
-    private func mapBlock(_ s: RemoteProductStoreEntry) -> some View {
-        if let lat = s.latitude, let lng = s.longitude {
-            let c = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+/// 지도 위치. 좌표가 없으면 작은 안내 한 줄.
+struct KmoMapBlock: View {
+    let name: String
+    let latitude: Double?
+    let longitude: Double?
+
+    var body: some View {
+        if let latitude, let longitude {
+            let c = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
             VStack(spacing: 10) {
                 Map(initialPosition: .region(MKCoordinateRegion(center: c, span: MKCoordinateSpan(latitudeDelta: 0.004, longitudeDelta: 0.004)))) {
-                    Marker(s.displayName, coordinate: c)
+                    Marker(name, coordinate: c)
                 }
-                .frame(height: 190)
+                .frame(height: 170)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                KmoSecondaryButton(title: "지도에서 매장 위치 보기") { openMaps(s, lat: lat, lng: lng) }
+                KmoSecondaryButton(title: "지도에서 매장 위치 보기") { open(c) }
             }
         } else {
-            Text("지도 위치 정보가 아직 없어요").font(.subheadline).foregroundStyle(KmoColors.textSecondary).kmoCard()
+            Text("지도 위치 정보가 아직 없어요").font(.subheadline).foregroundStyle(KmoColors.textSecondary)
         }
     }
 
-    private func openMaps(_ s: RemoteProductStoreEntry, lat: Double, lng: Double) {
-        var c = URLComponents(string: "https://maps.apple.com/")
-        c?.queryItems = [URLQueryItem(name: "ll", value: "\(lat),\(lng)"), URLQueryItem(name: "q", value: s.displayName)]
-        if let url = c?.url { UIApplication.shared.open(url) }
+    private func open(_ c: CLLocationCoordinate2D) {
+        var comps = URLComponents(string: "https://maps.apple.com/")
+        comps?.queryItems = [URLQueryItem(name: "ll", value: "\(c.latitude),\(c.longitude)"), URLQueryItem(name: "q", value: name)]
+        if let url = comps?.url { UIApplication.shared.open(url) }
     }
 }
 
@@ -612,7 +667,7 @@ struct KmoMySpaceView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 16) {
                 HStack {
                     Button { dismiss() } label: {
                         Text("뒤로").font(.body).foregroundStyle(KmoColors.textSecondary).frame(minWidth: 44, minHeight: 44, alignment: .leading)
@@ -621,7 +676,7 @@ struct KmoMySpaceView: View {
                     Spacer()
                 }
                 Text(KmoCopy.mySpace)
-                    .font(.largeTitle.weight(.bold))
+                    .font(.title.weight(.bold))
                     .foregroundStyle(KmoColors.textPrimary)
                     .accessibilityAddTraits(.isHeader)
                 Text("가구와 커튼처럼 놓아 볼 수 있는 제품을 내 공간에 배치해 보세요")

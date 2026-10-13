@@ -102,6 +102,8 @@ struct RemoteProductStoreEntry: Codable, Equatable, Identifiable, Sendable {
     var quantityVerifiedAt: String?
     var shelves: [String]
     var productIds: [String]
+    var coverUrl: String? = nil
+    var hasTour: Bool? = nil
 
     var id: String { storeId }
     var displayName: String {
@@ -167,6 +169,8 @@ enum CameraIndexGallery {
 /// What a customer reads about availability: the recorded confirmation, never "in stock".
 enum ProductAvailabilityText {
     static let disclaimer = "매장에서 마지막으로 확인한 기록이에요. 지금 재고는 확인되지 않아요."
+    /// The one short line used on lists and details (not repeated on every card).
+    static let short = "마지막으로 확인한 기록이에요. 지금 재고는 아니에요."
 
     private static let formatter: DateFormatter = {
         let f = DateFormatter()

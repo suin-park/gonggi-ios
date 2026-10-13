@@ -12,7 +12,7 @@ struct SpaceCleanupSelectionBanner: View {
     var body: some View {
         VStack(spacing: GonggiSpacing.sm) {
             if poleWarning {
-                Text("위·아래 극점에 가까워요. 가구가 잘 보이도록 시점을 조금 내려 주세요.")
+                Text("위/아래 극점에 가까워요. 가구가 잘 보이도록 시점을 조금 내려 주세요.")
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(.yellow)
                     .multilineTextAlignment(.center)
@@ -149,7 +149,7 @@ struct SpaceCleanupSelectionBanner: View {
         if session.points.isEmpty {
             return "화면 중앙을 가구에 맞춘 뒤 「선택 추가」를 누르거나 탭하세요"
         }
-        return "선택 \(session.points.count)개 · 계속 추가하거나 「이 가구 비우기」"
+        return "선택 \(session.points.count)개, 계속 추가하거나 「이 가구 비우기」"
     }
 }
 

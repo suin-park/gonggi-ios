@@ -1138,7 +1138,7 @@ struct VRSphereSpaceView: View {
                         let w = entry.catalogWidthMm ?? 0
                         let d = entry.catalogDepthMm ?? 0
                         let h = entry.catalogHeightMm ?? 0
-                        Text("상품 규격 W \(CatalogDimensionRuler.formatMm(w)) · D \(CatalogDimensionRuler.formatMm(d)) · H \(CatalogDimensionRuler.formatMm(h)) · 크기 잠금")
+                        Text("상품 규격 W \(CatalogDimensionRuler.formatMm(w)), D \(CatalogDimensionRuler.formatMm(d)), H \(CatalogDimensionRuler.formatMm(h)), 크기 잠금")
                             .font(.caption2)
                             .foregroundStyle(.white.opacity(0.85))
                             .padding(.horizontal, 4)

@@ -32,6 +32,9 @@ struct RemoteManagedStore: Codable, Equatable, Identifiable, Sendable {
     var status: String
     var latestVersion: Int?
     var latestStatus: String?
+    /// Representative photo (short-lived link), nil when none was registered.
+    var coverUrl: String? = nil
+    var tourCount: Int? = nil
 
     var displayName: String {
         if let b = branchName, !b.isEmpty { return name + " " + b }
