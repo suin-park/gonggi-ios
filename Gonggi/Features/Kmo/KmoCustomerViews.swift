@@ -257,11 +257,21 @@ struct KmoCustomerHomeView: View {
                         }
                     }
                 }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 10) {
+                if typeSize.isAccessibilitySize {
+                    // 글씨가 아주 크면 이름이 잘리지 않게 세로로 늘어놓는다.
+                    VStack(alignment: .leading, spacing: 10) {
                         ForEach(categoryProducts) { p in
-                            Button { path.append(.product(p.id)) } label: { productCard(p) }
+                            Button { path.append(.product(p.id)) } label: { productCard(p, fullWidth: true) }
                                 .buttonStyle(.plain)
+                        }
+                    }
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 10) {
+                            ForEach(categoryProducts) { p in
+                                Button { path.append(.product(p.id)) } label: { productCard(p) }
+                                    .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
@@ -277,7 +287,7 @@ struct KmoCustomerHomeView: View {
         }
     }
 
-    private func productCard(_ p: CatalogProduct) -> some View {
+    private func productCard(_ p: CatalogProduct, fullWidth: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if KmoImageSlot.initial(urlString: p.resolvedThumbnailURL).reservesPhotoHeight {
                 KmoProductThumb(urlString: p.resolvedThumbnailURL, size: 96)
@@ -293,7 +303,8 @@ struct KmoCustomerHomeView: View {
                 .lineLimit(1)
         }
         .padding(10)
-        .frame(width: 124, alignment: .leading)
+        .frame(width: fullWidth ? nil : 124, alignment: .leading)
+        .frame(maxWidth: fullWidth ? .infinity : nil, alignment: .leading)
         .background(KmoColors.card)
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
