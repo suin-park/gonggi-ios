@@ -86,3 +86,6 @@ struct StoreCaptureFailure: Equatable, Sendable {
 
     static let network = StoreCaptureFailure(kind: .network, message: "네트워크에 연결하지 못했어요")
 }
+
+/// A failure can be carried in a `Result`.
+extension StoreCaptureFailure: Error {}
