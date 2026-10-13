@@ -177,7 +177,7 @@ struct StoreShelfFlowView: View {
     private func storeRow(_ store: StoreRecord) -> some View {
         let data = repository.shelfData(storeId: store.id)
         let recorded = hasData(store)
-        let summary = recorded ? "제품 \(data?.products.count ?? 0)개 · 매대 \(data?.shelves.count ?? 0)곳" : "매대 기록 전"
+        let summary = recorded ? "제품 \(data?.products.count ?? 0)개, 매대 \(data?.shelves.count ?? 0)곳" : "매대 기록 전"
         let last = StoreShelfSelection.lastStoreId == store.id
         return Button {
             GonggiHaptics.medium()
@@ -188,7 +188,7 @@ struct StoreShelfFlowView: View {
                     Text(store.name)
                         .font(.headline)
                         .foregroundStyle(GonggiColors.textPrimary)
-                    Text(summary + (last ? " · 마지막 사용" : ""))
+                    Text(summary + (last ? ", 마지막 사용" : ""))
                         .font(.subheadline)
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
@@ -268,7 +268,7 @@ struct StoreShelfStoreDetailView: View {
                     .font(.largeTitle.weight(.bold))
                     .foregroundStyle(GonggiColors.textPrimary)
                 if let summary {
-                    Text("매대 \(summary.shelves)곳 · 제품 \(summary.products)개")
+                    Text("매대 \(summary.shelves)곳, 제품 \(summary.products)개")
                         .font(.headline)
                         .foregroundStyle(GonggiColors.textSecondary)
                 }

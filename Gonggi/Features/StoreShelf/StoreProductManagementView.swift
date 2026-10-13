@@ -150,15 +150,19 @@ struct StoreProductManagementView: View {
     @State private var adding = false
     @State private var confirmPublish = false
 
-    init(store: StoreRecord, onClose: @escaping () -> Void) {
+    var showsClose = true
+
+    init(store: StoreRecord, showsClose: Bool = true, startAdding: Bool = false, onClose: @escaping () -> Void) {
         self.store = store
+        self.showsClose = showsClose
         self.onClose = onClose
+        _adding = State(initialValue: startAdding)
         _model = StateObject(wrappedValue: StoreProductManagementModel(store: store))
     }
 
     var body: some View {
         ZStack {
-            GonggiAmbientBackground()
+            KmoBackground()
             VStack(spacing: 0) {
                 topBar
                 content
@@ -173,7 +177,12 @@ struct StoreProductManagementView: View {
         }
     }
 
+    @ViewBuilder
     private var topBar: some View {
+        if showsClose { closeBar }
+    }
+
+    private var closeBar: some View {
         HStack {
             Button(action: onClose) {
                 HStack(spacing: 6) { Image(systemName: "chevron.left"); Text("닫기") }
@@ -191,7 +200,7 @@ struct StoreProductManagementView: View {
         } else if let error = model.error, model.catalog == nil {
             VStack(alignment: .leading, spacing: GonggiSpacing.md) {
                 Text(error).font(.headline).foregroundStyle(GonggiColors.warningCritical)
-                SecondaryButton(title: "다시 불러오기", icon: "arrow.clockwise") { Task { await model.load() } }
+                KmoSecondaryButton(title: "다시 불러오기", icon: "arrow.clockwise") { Task { await model.load() } }
                 Spacer()
             }
             .padding(20)
@@ -213,7 +222,7 @@ struct StoreProductManagementView: View {
                     Text(e).font(.subheadline).foregroundStyle(GonggiColors.warningCritical)
                 }
                 publishCard(c)
-                PrimaryButton(title: "새 제품 추가", icon: "plus") { adding = true }
+                KmoPrimaryButton(title: "새 제품 추가", icon: "plus") { adding = true }
                     .disabled(c.shelves.isEmpty)
                 if c.shelves.isEmpty {
                     Text("매대가 게시된 뒤에 제품을 추가할 수 있어요.").font(.footnote).foregroundStyle(GonggiColors.textSecondary)
@@ -242,7 +251,7 @@ struct StoreProductManagementView: View {
             if let at = ProductAvailabilityText.day(c.publishedAt) {
                 Text("마지막 게시 \(at)").font(.footnote).foregroundStyle(GonggiColors.textTertiary)
             }
-            PrimaryButton(title: "고객에게 게시", icon: "paperplane") { confirmPublish = true }
+            KmoPrimaryButton(title: "고객에게 게시", icon: "paperplane") { confirmPublish = true }
                 .disabled(pending == 0 || model.busy)
         }
         .padding(GonggiSpacing.md)
@@ -260,7 +269,7 @@ struct StoreProductManagementView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.name.isEmpty ? "이름 없음" : item.name).font(.headline)
                     .foregroundStyle(item.name.isEmpty ? GonggiColors.warningCritical : GonggiColors.textPrimary)
-                let detail = [item.brand, item.variant, item.volumeText].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+                let detail = [item.brand, item.variant, item.volumeText].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
                 if !detail.isEmpty { Text(detail).font(.subheadline).foregroundStyle(GonggiColors.textSecondary) }
                 Text(ProductAvailabilityText.quantityLine(quantity: item.quantity, verifiedIso: item.quantityVerifiedAt))
                     .font(.footnote).foregroundStyle(GonggiColors.textTertiary)

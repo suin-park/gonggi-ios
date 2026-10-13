@@ -906,16 +906,16 @@ struct StoreShelfSearchView: View {
             Image(systemName: chosen ? "largecircle.fill.circle" : "circle").foregroundStyle(.white)
             VStack(alignment: .leading, spacing: 1) {
                 if measured {
-                    Text((shelf?.name ?? "매대") + " · " + VisibleQuantityText.line(visibleCount: p.visibleCount, basis: p.countBasis))
+                    Text((shelf?.name ?? "매대") + ", " + VisibleQuantityText.line(visibleCount: p.visibleCount, basis: p.countBasis))
                         .font(.footnote).foregroundStyle(.white)
                     if shelf?.locationStatus == "unknown" {
                         Text("매대 위치 확인 필요").font(.caption).foregroundStyle(GonggiColors.warningCritical)
                     }
                 } else {
-                    Text("\(shelf?.name ?? "매대") · \(shelf?.tierLabel(forV: p.v) ?? "") · 왼쪽에서 \(String(format: "%.1f", max(0, p.u)))m")
+                    Text("\(shelf?.name ?? "매대"), \(shelf?.tierLabel(forV: p.v) ?? ""), 왼쪽에서 \(String(format: "%.1f", max(0, p.u)))m")
                         .font(.footnote).foregroundStyle(.white)
                 }
-                Text(StoreShelfTimeText.lastConfirmed(p.lastObservedAt) + (p.status == .notObservedOnRescan ? " · 최근 촬영에서는 보이지 않았어요" : ""))
+                Text(StoreShelfTimeText.lastConfirmed(p.lastObservedAt) + (p.status == .notObservedOnRescan ? ", 최근 촬영에서는 보이지 않았어요" : ""))
                     .font(.caption).foregroundStyle(.white.opacity(0.7))
             }
             Spacer()

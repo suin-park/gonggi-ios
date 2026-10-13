@@ -67,7 +67,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Gonggi/Capture/Quick360/Engine/OpenCV/Gonggi-Bridging-Header.h
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleIconName: AppIcon
-        INFOPLIST_KEY_CFBundleDisplayName: 공기
+        INFOPLIST_KEY_CFBundleDisplayName: 커모
         INFOPLIST_KEY_NSCameraUsageDescription: 파노라마·공간 기록과 AR로 3D 어셋을 배치하기 위해 카메라가 필요합니다.
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: 촬영한 공간의 위치를 기록하고 주변 매장을 찾기 위해 사용합니다.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.

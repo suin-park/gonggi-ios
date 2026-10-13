@@ -564,7 +564,7 @@ final class StoreShelfProductSearchTests: XCTestCase {
         """
         let body = try JSONDecoder().decode(RemoteProductSearchBody.self, from: Data(json.utf8))
         XCTAssertEqual(body.results.first?.stores.first?.displayName, "공기마트 강남점")
-        XCTAssertEqual(body.results.first?.subtitle, "코카콜라 · 제로 · 355ml")
+        XCTAssertEqual(body.results.first?.subtitle, "코카콜라 제로 355ml")
         XCTAssertEqual(body.results.first?.stores.first?.productIds, ["p1"])
     }
 

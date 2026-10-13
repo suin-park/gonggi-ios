@@ -17,6 +17,8 @@ struct HomeView: View {
     @State private var isPreparingViewer = false
     @State private var viewerError: String?
     @State private var showStoreFind = false
+    /// Set when this screen is opened from 커모 홈 「매장 둘러보기」: only the public feed, with a close button.
+    var embeddedClose: (() -> Void)? = nil
 
     private let publicAPI = MobilePublicSpacesAPIClient()
 
@@ -24,12 +26,14 @@ struct HomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    feedHeader
-                        .padding(.horizontal, GonggiSpacing.lg)
-                        .padding(.top, GonggiSpacing.md)
-                        .padding(.bottom, GonggiSpacing.sm)
+                    if embeddedClose == nil {
+                        feedHeader
+                            .padding(.horizontal, GonggiSpacing.lg)
+                            .padding(.top, GonggiSpacing.md)
+                            .padding(.bottom, GonggiSpacing.sm)
+                    }
 
-                    if StoreShelfAccess.findMenuVisible(flag: StoreShelfFeatureFlags.menuVisible) {
+                    if embeddedClose == nil, StoreShelfAccess.findMenuVisible(flag: StoreShelfFeatureFlags.menuVisible) {
                         RecordSection(title: RecordHomeCopy.storeSection) {
                             RecordChoiceRow(choice: RecordHomeCopy.findProduct) {
                                 GonggiHaptics.medium()
@@ -51,8 +55,10 @@ struct HomeView: View {
 
                     exploreFeed
 
-                    CatalogHomeSectionView(isMockMode: appState.isMockMode)
-                        .environmentObject(appState)
+                    if embeddedClose == nil {
+                        CatalogHomeSectionView(isMockMode: appState.isMockMode)
+                            .environmentObject(appState)
+                    }
                 }
                 // Token clearance (SpaceDetailView parity) + measured tab-bar/safe-area padding.
                 .padding(.bottom, GonggiTabBarLayout.homeScrollContentPadding)
@@ -72,6 +78,11 @@ struct HomeView: View {
             .background(GonggiAmbientBackground())
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if let close = embeddedClose {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("닫기", action: close)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
                         NotificationsListView()

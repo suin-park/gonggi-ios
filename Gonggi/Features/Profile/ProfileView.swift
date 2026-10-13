@@ -4,6 +4,8 @@ import SafariServices
 struct ProfileView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var auth = AuthSessionController.shared
+    @ObservedObject private var role = StoreShelfRoleModel.shared
+    @ObservedObject private var kmoSession = KmoSession.shared
     @State private var showLogoutConfirm = false
     @State private var safariURL: SpaceLinkIdentifiedURL?
 
@@ -22,7 +24,31 @@ struct ProfileView: View {
                     profileHeader
                     accountUnifiedNote
 
+                    if switchVisible {
+                        sectionCard(title: "화면") {
+                            Button {
+                                GonggiHaptics.light()
+                                kmoSession.setOwner(!kmoSession.ownerRequested)
+                                appState.selectedTab = .home
+                            } label: {
+                                settingsRow(
+                                    title: kmoSession.ownerRequested ? "고객 화면으로 돌아가기" : "사장님 화면으로 전환",
+                                    icon: "arrow.left.arrow.right"
+                                )
+                            }
+                            .buttonStyle(GonggiPressableStyle())
+                        }
+                    }
+
                     sectionCard(title: "계정") {
+                        NavigationLink {
+                            NotificationsListView()
+                                .environmentObject(appState)
+                        } label: {
+                            settingsRow(title: "알림", icon: "bell")
+                        }
+                        .buttonStyle(GonggiPressableStyle())
+
                         NavigationLink {
                             ProfileEditNameView()
                         } label: {
@@ -166,7 +192,7 @@ struct ProfileView: View {
                 .padding(GonggiSpacing.lg)
                 .padding(.bottom, GonggiSpacing.xxl)
             }
-            .background(GonggiAmbientBackground(showGlow: false))
+            .background(KmoBackground())
             .navigationTitle("내 정보")
             .navigationBarTitleDisplayMode(.large)
             .task {
@@ -185,6 +211,10 @@ struct ProfileView: View {
                 }
             }
         }
+    }
+
+    private var switchVisible: Bool {
+        KmoAppMode.switchVisible(menuFlag: StoreShelfFeatureFlags.menuVisible, isManager: role.access.isManager, mockMode: appState.isMockMode)
     }
 
     private var showPasswordChange: Bool {
@@ -260,7 +290,7 @@ struct ProfileView: View {
     }
 
     private var accountUnifiedNote: some View {
-        Text("이 계정은 공기와 3D Locker에서 함께 사용됩니다.")
+        Text("이 계정은 커모와 3D Locker에서 함께 사용됩니다.")
             .font(GonggiTypography.caption(12))
             .foregroundStyle(GonggiColors.textTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)

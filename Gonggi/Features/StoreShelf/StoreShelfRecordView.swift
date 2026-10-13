@@ -457,7 +457,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
                 diagnostics: diagnostics)
             try repository.appendRegistration(metric)
             StoreShelfSelection.lastStoreId = store.id
-            savedSummary = "매대 \(data.shelves.count)곳 · 제품 \(data.products.count)개"
+            savedSummary = "매대 \(data.shelves.count)곳, 제품 \(data.products.count)개"
             step = .saved
             onSavedHook?()
         } catch {
@@ -776,7 +776,7 @@ struct StoreShelfReviewView: View {
             Text("기록 확인")
                 .font(.largeTitle.weight(.bold))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("매대 \(summary.shelves)곳 · 제품 \(summary.products)개")
+            Text("매대 \(summary.shelves)곳, 제품 \(summary.products)개")
                 .font(.headline)
                 .foregroundStyle(GonggiColors.textSecondary)
             Text(attention > 0 ? "확인이 필요한 제품 \(attention)개" : "확인이 필요한 제품이 없어요")
@@ -843,7 +843,7 @@ struct StoreShelfReviewView: View {
                     .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
                     .accessibilityHidden(true)
             }
-            Text("\(shelf.name) · 제품 \(products.count)개")
+            Text("\(shelf.name), 제품 \(products.count)개")
                 .font(.headline)
                 .foregroundStyle(GonggiColors.textPrimary)
             // Only what the person can act on.

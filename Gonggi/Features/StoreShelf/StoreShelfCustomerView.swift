@@ -159,8 +159,8 @@ struct StoreShelfCustomerView: View {
                 .font(.title3)
                 .foregroundStyle(GonggiColors.textSecondary)
             Spacer(minLength: GonggiSpacing.md)
-            PrimaryButton(title: "카메라로 제품 찾기", icon: "camera.viewfinder") { model.screen = .camera }
-            SecondaryButton(title: "이름으로 제품 찾기", icon: "magnifyingglass") {
+            KmoPrimaryButton(title: "카메라로 제품 찾기", icon: "camera.viewfinder") { model.screen = .camera }
+            KmoSecondaryButton(title: "이름으로 제품 찾기", icon: "magnifyingglass") {
                 model.screen = .name
                 nameFocused = true
             }
@@ -293,7 +293,7 @@ struct StoreShelfCustomerView: View {
     private var locationRow: some View {
         switch location.state {
         case .idle, .failed:
-            SecondaryButton(title: "가까운 매장 순으로 보기", icon: "location") { location.request() }
+            KmoSecondaryButton(title: "가까운 매장 순으로 보기", icon: "location") { location.request() }
         case .requesting:
             HStack(spacing: 8) { ProgressView(); Text("위치를 확인하고 있어요").font(.footnote).foregroundStyle(GonggiColors.textSecondary) }
         case .located:
@@ -321,9 +321,9 @@ struct StoreShelfCustomerView: View {
                 Text(s.shelves.joined(separator: ", ")).font(.footnote).foregroundStyle(GonggiColors.textTertiary)
             }
             if s.latitude != nil, s.longitude != nil {
-                SecondaryButton(title: "지도에서 매장 위치 보기", icon: "map") { openMap(s) }
+                KmoSecondaryButton(title: "지도에서 매장 위치 보기", icon: "map") { openMap(s) }
             }
-            PrimaryButton(title: "매장 안에서 AR로 찾기", icon: "arkit") {
+            KmoPrimaryButton(title: "매장 안에서 AR로 찾기", icon: "arkit") {
                 Task { await model.startAR(store: s) }
             }
             if case .syncing(let text) = model.arState {
@@ -467,8 +467,8 @@ struct StoreProductCameraSearchView: View {
             case .unavailable(let text):
                 VStack(alignment: .leading, spacing: GonggiSpacing.md) {
                     Text(text).font(.title3).foregroundStyle(GonggiColors.textPrimary)
-                    PrimaryButton(title: "이름으로 제품 찾기", icon: "magnifyingglass", action: onName)
-                    SecondaryButton(title: "뒤로", icon: "chevron.left", action: onBack)
+                    KmoPrimaryButton(title: "이름으로 제품 찾기", icon: "magnifyingglass", action: onName)
+                    KmoSecondaryButton(title: "뒤로", icon: "chevron.left", action: onBack)
                 }
                 .padding(20)
             case .ready:
@@ -509,7 +509,7 @@ struct StoreProductCameraSearchView: View {
                 Text("비슷한 제품이 있어요. 맞는 제품을 눌러 주세요").font(.headline).foregroundStyle(.white)
                 ForEach(model.candidates, id: \.identity) { c in
                     Button { model.choose(c.identity) } label: {
-                        Text([c.name, c.volumeText].compactMap { $0 }.joined(separator: " · "))
+                        Text([c.name, c.volumeText].compactMap { $0 }.joined(separator: ", "))
                             .font(.title3).foregroundStyle(.white)
                             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                             .padding(.horizontal, 12)
@@ -518,11 +518,11 @@ struct StoreProductCameraSearchView: View {
                 }
             } else if model.unregistered {
                 Text("게시된 제품에서 찾지 못했어요").font(.headline).foregroundStyle(.white)
-                PrimaryButton(title: "이름으로 제품 찾기", icon: "magnifyingglass", action: onName)
-                SecondaryButton(title: "다시 비추기", icon: "arrow.clockwise") { model.again() }
+                KmoPrimaryButton(title: "이름으로 제품 찾기", icon: "magnifyingglass", action: onName)
+                KmoSecondaryButton(title: "다시 비추기", icon: "arrow.clockwise") { model.again() }
             } else {
                 Text("찾을 제품을 화면 가운데에 비춰 주세요").font(.title3.weight(.semibold)).foregroundStyle(.white)
-                SecondaryButton(title: "이름으로 제품 찾기", icon: "magnifyingglass", action: onName)
+                KmoSecondaryButton(title: "이름으로 제품 찾기", icon: "magnifyingglass", action: onName)
             }
         }
         .padding(GonggiSpacing.md)

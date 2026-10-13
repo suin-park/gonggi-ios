@@ -123,7 +123,7 @@ struct RemoteProductSearchResult: Codable, Equatable, Identifiable, Sendable {
 
     /// "코카콜라 제로 · 355ml"
     var subtitle: String {
-        [brand, variant, volumeText].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        [brand, variant, volumeText].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ")
     }
 }
 

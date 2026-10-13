@@ -12,6 +12,14 @@ final class StoreShelfRoleModel: ObservableObject {
     private let api = StoreShelfAPIClient()
     private var lastToken: String?
 
+    /// Called when the signed-in account changes: nothing of the previous account's rights may remain.
+    @MainActor
+    func reset() {
+        access = .customer
+        managedStores = []
+        lastToken = nil
+    }
+
     @MainActor
     func refresh() async {
         let token = MobileAuthTokenStore.shared.getAccessToken()

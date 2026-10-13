@@ -13,7 +13,7 @@ struct AuthUserShell: Equatable {
     var creditsLabel: String?
 
     static let placeholder = AuthUserShell(
-        displayName: "공기 사용자",
+        displayName: "커모 사용자",
         email: "계정 연동 전",
         photoSystemImage: "person.fill"
     )
