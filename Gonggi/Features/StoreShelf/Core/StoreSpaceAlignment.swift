@@ -143,20 +143,49 @@ enum StoreGuidanceKind: Equatable, Sendable {
 
 // MARK: - Alignment coordinator
 
+/// What is known about a restore attempt. Kept separate on purpose: a fresh session that tracks normally, a session that
+/// was restored from the saved map, and a reference sign that was actually seen are three different things.
+struct StoreRestoreEvidence: Equatable, Sendable {
+    /// ARKit went through "relocalizing" before tracking became normal in THIS session (the map was applied).
+    var relocalizedSeen = false
+    var anchorsObserved = 0
+    /// The middle one of the observed reference anchors lies at its saved place. This confirms that the anchors of the
+    /// published package came back; it is not an independent measurement of the real room.
+    var anchorsAgree = false
+    var anchorsDisagree = false
+    /// A physical reference sign was recognised and agrees with the map (an independent check).
+    var signSeen = false
+    var stableSeconds: Double = 0
+    /// The AR session was restarted, interrupted or reset while restoring: nothing observed before counts.
+    var sessionReset = false
+
+    var note: String {
+        "reloc=\(relocalizedSeen ? 1 : 0) anchors=\(anchorsObserved)\(anchorsAgree ? "+" : anchorsDisagree ? "!" : "")"
+            + " sign=\(signSeen ? 1 : 0) stable=\(String(format: "%.1f", stableSeconds))s reset=\(sessionReset ? 1 : 0)"
+    }
+}
+
 /// Collects the restore result and any reference-sign sighting and keeps the current `StoreAlignmentState`.
 /// A timeout without a map and without a sign is a failure; a map that restores later still wins over the failure.
+///
+/// `configureEvidence` switches on the strict policy used by the app: a restored world map counts only after the session
+/// really relocalised against it, tracking stayed normal for a while, the AR session was not reset, and no reference
+/// anchor of the package disagrees. A missing anchor event never waits forever: after `anchorWaitSeconds` the other
+/// evidence decides, and the timeout ends the attempt.
 struct StoreAlignmentCoordinator {
     let timeoutSeconds: Double
     let policy: StoreSpaceAlignment.Policy
     private(set) var state: StoreAlignmentState = .notStarted
+    private(set) var evidence = StoreRestoreEvidence()
     private var startedAt: Double?
     private var mapRestored = false
+    private var restoredAt: Double?
     private var sign: StoreReferenceImageObservation?
-    /// Saved poses of the capture's reference anchors, by anchor id. When set, a restored world map counts only if the
-    /// anchors it holds really show up in the live session at the saved places: normal tracking alone is not a restore.
     private var savedReferences: [String: Rigid] = [:]
-    private var requiresReferences = false
+    private var strict = false
     private var referenceDiscrepancies: [String: Float] = [:]
+    var stabilitySeconds: Double = 1.5
+    var anchorWaitSeconds: Double = 6
 
     init(timeoutSeconds: Double = 45, policy: StoreSpaceAlignment.Policy = StoreSpaceAlignment.Policy()) {
         self.timeoutSeconds = timeoutSeconds
@@ -166,46 +195,60 @@ struct StoreAlignmentCoordinator {
     mutating func start(at time: Double) {
         startedAt = time
         mapRestored = false
+        restoredAt = nil
         sign = nil
         referenceDiscrepancies = [:]
+        evidence = StoreRestoreEvidence()
         state = .restoring
     }
 
-    /// `saved`: anchor id -> pose in the saved world. Call before `start`. An empty set with `required` means a world map
-    /// alone cannot be trusted (a reference sign still can).
-    mutating func configureReferences(_ saved: [String: Rigid], required: Bool = true) {
+    /// Strict policy. `saved`: reference anchor id -> pose in the saved world (may be empty for older records).
+    mutating func configureEvidence(savedReferences saved: [String: Rigid]) {
         savedReferences = saved
-        requiresReferences = required
+        strict = true
     }
 
-    /// A reference anchor of the saved map appeared in the live session.
-    mutating func anchorObserved(id: String, livePose: Rigid) {
-        guard let saved = savedReferences[id] else { return }
-        referenceDiscrepancies[id] = (livePose.translationPart - saved.translationPart).length
-        evaluate()
-    }
-
-    /// At least one saved anchor is present and the middle one of them lies at its saved place.
-    var anchorsAgree: Bool {
-        guard !referenceDiscrepancies.isEmpty else { return false }
-        let sorted = referenceDiscrepancies.values.sorted()
-        return sorted[sorted.count / 2] <= policy.agreeTranslationM
-    }
-
-    var observedReferenceCount: Int { referenceDiscrepancies.count }
-    var lacksReferencePoints: Bool { requiresReferences && savedReferences.isEmpty }
-
-    mutating func worldMapRestored() {
+    /// The tracker reported normal tracking after the saved map was loaded. `sawRelocalizing`: ARKit reported the
+    /// "relocalizing" state on the way (the map was applied). `time`: the same clock as `tick`.
+    mutating func worldMapRestored(sawRelocalizing: Bool = true, at time: Double = 0) {
         mapRestored = true
-        evaluate()
+        if restoredAt == nil { restoredAt = time }
+        evidence.relocalizedSeen = evidence.relocalizedSeen || sawRelocalizing
+        evaluate(at: time)
     }
 
     mutating func signObserved(savedPose: Rigid, livePose: Rigid) {
         sign = StoreReferenceImageObservation(savedPose: savedPose, livePose: livePose)
-        evaluate()
+        evidence.signSeen = StoreSpaceAlignment.discrepancy(sign!).translation <= policy.agreeTranslationM
+        evaluate(at: restoredAt ?? 0)
     }
 
+    /// A reference anchor of the saved map appeared in the live session.
+    mutating func anchorObserved(id: String, livePose: Rigid, at time: Double = 0) {
+        guard let saved = savedReferences[id] else { return }
+        referenceDiscrepancies[id] = (livePose.translationPart - saved.translationPart).length
+        let sorted = referenceDiscrepancies.values.sorted()
+        evidence.anchorsObserved = sorted.count
+        let median = sorted[sorted.count / 2]
+        evidence.anchorsAgree = median <= policy.agreeTranslationM
+        evidence.anchorsDisagree = !evidence.anchorsAgree
+        // Anchors that came back prove the map was applied, also when the relocalizing state was not reported.
+        if evidence.anchorsAgree { evidence.relocalizedSeen = true }
+        evaluate(at: time)
+    }
+
+    /// The AR session was restarted / interrupted / reset: this attempt is over (retry starts a new one).
+    mutating func sessionWasReset() {
+        evidence.sessionReset = true
+        if strict, state == .restoring { state = .failed(.notRestored) }
+    }
+
+    var observedReferenceCount: Int { referenceDiscrepancies.count }
+    var lacksReferencePoints: Bool { strict && savedReferences.isEmpty }
+
     mutating func tick(at time: Double) {
+        if let r = restoredAt { evidence.stableSeconds = max(0, time - r) }
+        if strict, case .restoring = state { evaluate(at: time) }
         guard case .restoring = state, let startedAt else { return }
         if time - startedAt > timeoutSeconds { state = .failed(.notRestored) }
     }
@@ -213,12 +256,16 @@ struct StoreAlignmentCoordinator {
     /// Back to restoring (a retry), keeping nothing from the failed attempt.
     mutating func retry(at time: Double) { start(at: time) }
 
-    private mutating func evaluate() {
-        let mapCounts = mapRestored && (!requiresReferences || anchorsAgree)
-        var decided = StoreSpaceAlignment.decide(worldMapRestored: mapCounts, imageObservation: sign, policy: policy)
-        if case .aligned(let method, let t, let verified, let disagrees) = decided, method == .worldMap, !verified, requiresReferences {
-            decided = .aligned(method: method, transform: t, verifiedByReferenceImage: true, worldMapDisagrees: disagrees)
+    private mutating func evaluate(at time: Double) {
+        if let r = restoredAt { evidence.stableSeconds = max(0, time - r) }
+        var mapCounts = mapRestored
+        if strict, mapRestored {
+            let waited = time - (restoredAt ?? time)
+            let anchorsOK = evidence.anchorsAgree || (evidence.anchorsObserved == 0 && waited >= anchorWaitSeconds)
+            mapCounts = evidence.relocalizedSeen && !evidence.sessionReset && !evidence.anchorsDisagree
+                && waited >= stabilitySeconds && anchorsOK
         }
+        let decided = StoreSpaceAlignment.decide(worldMapRestored: mapCounts, imageObservation: sign, policy: policy)
         if decided.isAligned { state = decided }
     }
 }

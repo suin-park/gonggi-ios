@@ -26,14 +26,17 @@ final class StoreCaptureCoordinator: ObservableObject {
     private let store: StoreCaptureStore
     private let repository: StoreShelfRepository
     private var task: Task<Void, Never>?
+    /// false for a probe that works on a copy of the manifest: the capture's own file is written by the camera only.
+    private var persistsManifest = true
 
     /// Polling of the analysis: every `pollSeconds` for at most `maxPollSeconds`.
     var pollSeconds: UInt64 = 3
     var maxPollSeconds = 360
 
-    init(manifest: CaptureSessionManifest, api: StoreShelfAPIClient = StoreShelfAPIClient(), store: StoreCaptureStore = .shared,
-         repository: StoreShelfRepository = .shared) {
+    init(manifest: CaptureSessionManifest, persistsManifest: Bool = true, api: StoreShelfAPIClient = StoreShelfAPIClient(),
+         store: StoreCaptureStore = .shared, repository: StoreShelfRepository = .shared) {
         self.manifest = manifest
+        self.persistsManifest = persistsManifest
         self.api = api
         self.store = store
         self.repository = repository
@@ -55,6 +58,7 @@ final class StoreCaptureCoordinator: ObservableObject {
     }
 
     private func persist() {
+        guard persistsManifest else { return }
         try? store.save(manifest)
     }
 
@@ -141,6 +145,40 @@ final class StoreCaptureCoordinator: ObservableObject {
             phase = .idle
         } catch {
             fail(failure(for: error))
+        }
+    }
+
+    /// Analyses the photos taken so far and returns what the server answered (draft and where a closer photo helps).
+    /// Nothing is imported and the capture's manifest is not written. nil when it could not be done: the caller goes on
+    /// with what it has and the final analysis reports the real problem.
+    func probe(maxSeconds: Int = 150) async -> RemoteCaptureView? {
+        do {
+            if manifest.serverSessionId == nil {
+                let started = try await api.startCapture(
+                    storeId: manifest.storeId,
+                    body: StartCaptureBody(clientSessionId: manifest.clientSessionId, storeContext: manifest.storeContext,
+                                           contextLabel: manifest.contextLabel,
+                                           device: ["model": manifest.device, "build": manifest.appBuild, "os": UIDevice.current.systemVersion]))
+                manifest.serverSessionId = started.sessionId
+                for id in started.uploadedPhotoIds {
+                    if let i = manifest.photos.firstIndex(where: { $0.id == id }) { manifest.photos[i].uploaded = true }
+                }
+            }
+            guard let sid = manifest.serverSessionId else { return nil }
+            try await uploadPending(sessionId: sid)
+            _ = try await api.startAnalysis(storeId: manifest.storeId, sessionId: sid, force: false)
+            var waited = 0
+            while waited <= maxSeconds {
+                try Task.checkCancellation()
+                let view = try await api.capture(storeId: manifest.storeId, sessionId: sid)
+                if view.session.status == "DRAFT", view.draft != nil { return view }
+                if view.session.status == "FAILED" || view.run?.status == "FAILED" { return nil }
+                try await Task.sleep(nanoseconds: pollSeconds * 1_000_000_000)
+                waited += Int(pollSeconds)
+            }
+            return nil
+        } catch {
+            return nil
         }
     }
 

@@ -206,7 +206,7 @@ final class StoreShelfSearchViewModel: ObservableObject {
             id: UUID().uuidString, startedAt: started, outcome: outcome,
             secondsToRelocalize: outcome == "failed_timeout" ? nil : Date().timeIntervalSince(started),
             markersExpected: 0, markersPresentAfterRestore: 0, trackingReasonsSeen: controller.trackerReasons,
-            observedOffset: "not_checked", note: nil)
+            observedOffset: "not_checked", note: alignment.evidenceNote)
         try? repository.appendRestoreAttempt(storeId: source.storeId, attempt: attempt)
     }
 

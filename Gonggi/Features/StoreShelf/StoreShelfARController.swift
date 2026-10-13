@@ -137,6 +137,7 @@ final class StoreShelfARController: NSObject, ObservableObject, ARSessionDelegat
 
     var saveReadiness: StoreSaveReadiness { StoreSaveReadiness.from(mappingStatusName: mappingName) }
     var trackerReasons: [String] { tracker.reasonsSeen }
+    var trackerSawRelocalizing: Bool { tracker.sawRelocalizingState }
     var secondsToRelocalize: Double? { tracker.secondsToRelocalize }
     var outcomeName: String { tracker.outcomeName }
     var startedAt: Date? { restoreStartedAt }

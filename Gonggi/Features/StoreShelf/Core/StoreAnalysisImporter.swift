@@ -188,7 +188,14 @@ enum AnalysisImporter {
             } else if p.nameReadStatus == "partial" {
                 reasons.append(ShelfNameReview.confirm)
             }
-            for r in p.reviewReasons where !reasons.contains(r) && r != "이름을 읽지 못했어요" && !r.hasPrefix("이름이 일부만") { reasons.append(r) }
+            for raw in p.reviewReasons {
+                let r = StoreUserText.scrub(raw)
+                // The same sentence twice (up to spacing and punctuation) is one warning.
+                let key = ShelfProductNameExtractor.key(r)
+                if r.isEmpty || r == "이름을 읽지 못했어요" || r.hasPrefix("이름이 일부만") { continue }
+                if reasons.contains(where: { ShelfProductNameExtractor.key($0) == key }) { continue }
+                reasons.append(r)
+            }
             if product.nameIsProtected { reasons.removeAll { ShelfNameReview.all.contains($0) } }
             product.reviewReasons = reasons
 

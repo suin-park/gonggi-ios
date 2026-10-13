@@ -23,21 +23,23 @@ struct StoreCaptureFailure: Equatable, Sendable {
 
     var kind: Kind
     var message: String
+    /// Technical reason for logs and diagnostics only; never shown on a screen.
+    var detail: String? = nil
 
     /// Whether "다시 시도" can help without changing anything.
     var canRetry: Bool { kind != .unavailable && kind != .tooManyPhotos && kind != .tooLarge }
 
-    /// What to tell the person to do next.
+    /// What to do next: one short, kind-specific action. Where the photos are is said by the screen that has the button.
     var guidance: String {
         switch kind {
-        case .network: return "촬영한 사진은 이 기기에 보존되어 있어요. 연결이 되면 이어서 진행할 수 있어요."
-        case .tooManyPhotos: return "저장한 사진이 한 번에 보낼 수 있는 수를 넘었어요. 사진은 그대로 보존되어 있어요. 촬영을 나누어 다시 찍어 주세요."
-        case .tooLarge: return "사진 용량이 서버 한도를 넘었어요. 사진은 그대로 보존되어 있어요. 더 가까이, 적은 장수로 다시 촬영해 주세요."
-        case .rateLimited: return "분석 요청이 많거나 한도에 도달했어요. 잠시 후 다시 시도해 주세요. 사진은 보존되어 있어요."
-        case .partialAnalysis: return "일부 사진의 분석만 실패했어요. 다시 시도하면 실패한 부분만 다시 분석하고, 성공한 결과는 그대로 써요."
-        case .analysisFailed: return "분석이 끝나지 않았어요. 사진은 보존되어 있어요. 다시 시도해 주세요."
-        case .unavailable: return "지금은 이 계정에서 사진 분석을 사용할 수 없어요."
-        case .other: return "사진은 이 기기에 보존되어 있어요. 다시 시도해 주세요."
+        case .network: return "연결되면 이어서 진행해 주세요."
+        case .tooManyPhotos: return "다시 촬영해 주세요."
+        case .tooLarge: return "더 가까이에서 다시 촬영해 주세요."
+        case .rateLimited: return "잠시 후 다시 시도해 주세요."
+        case .partialAnalysis: return "다시 시도하면 실패한 부분만 이어서 분석해요."
+        case .analysisFailed: return "다시 시도해 주세요."
+        case .unavailable: return "지금은 이 계정에서 사용할 수 없어요."
+        case .other: return "다시 시도해 주세요."
         }
     }
 
@@ -61,7 +63,7 @@ struct StoreCaptureFailure: Equatable, Sendable {
         if status == 413 { return StoreCaptureFailure(kind: .tooLarge, message: "요청이 너무 커요") }
         if status == 401 { return StoreCaptureFailure(kind: .unavailable, message: "로그인이 필요해요") }
         if status == 403 { return StoreCaptureFailure(kind: .unavailable, message: "이 매장의 담당자가 아니에요") }
-        return StoreCaptureFailure(kind: .other, message: "서버 오류가 발생했어요 (\(status))")
+        return StoreCaptureFailure(kind: .other, message: "서버에 문제가 있어요", detail: "http_\(status)")
     }
 
     /// From the error code of a failed analysis run.
@@ -77,10 +79,9 @@ struct StoreCaptureFailure: Equatable, Sendable {
         case "photo_missing": kind = .network; message = "업로드된 사진을 찾지 못했어요"
         case "invalid_structure": kind = .analysisFailed; message = "분석 결과를 읽지 못했어요"
         case "request_limit": kind = .rateLimited; message = "한 번의 분석 요청 수 한도에 도달했어요"
-        default: kind = partial ? .partialAnalysis : .analysisFailed; message = "분석에 실패했어요" + (code.isEmpty ? "" : " (\(code))")
+        default: kind = partial ? .partialAnalysis : .analysisFailed; message = "분석을 끝내지 못했어요"
         }
-        if partial, kind == .rateLimited { message += " (일부만 실패)" }
-        return StoreCaptureFailure(kind: kind, message: message)
+        return StoreCaptureFailure(kind: kind, message: message, detail: errorCode)
     }
 
     static let network = StoreCaptureFailure(kind: .network, message: "네트워크에 연결하지 못했어요")

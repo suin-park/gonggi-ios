@@ -39,6 +39,8 @@ struct StoreShelfFlowView: View {
     @State private var newName = ""
     @State private var errorText: String?
     @State private var didAutoSelect = false
+    /// Set when a capture was finished (saved or left on purpose): the store's shelf list is shown instead of the camera.
+    @State private var detailStore: StoreRecord?
     private let repository = StoreShelfRepository.shared
 
     init(mode: StoreShelfFlowMode, onClose: @escaping () -> Void) {
@@ -49,11 +51,17 @@ struct StoreShelfFlowView: View {
     var body: some View {
         ZStack {
             GonggiAmbientBackground()
-            if let store = selected {
+            if let done = detailStore {
+                StoreShelfStoreDetailView(
+                    store: done,
+                    onRecordAgain: { detailStore = nil },
+                    onClose: { detailStore = nil; selected = nil; reload() })
+            } else if let store = selected {
                 switch mode {
                 case .record:
                     if StoreShelfFeatureFlags.autoCaptureEnabled {
-                        StoreShelfAutoCaptureView(store: store, onBack: { selected = nil; reload() })
+                        StoreShelfAutoCaptureView(store: store, onBack: { selected = nil; reload() },
+                                                  onFinished: { detailStore = store })
                     } else {
                         StoreShelfRecordView(store: store, onBack: { selected = nil; reload() })
                     }
@@ -209,6 +217,78 @@ struct StoreShelfFlowView: View {
             selected = store
         } catch {
             errorText = "매장 이름을 입력해 주세요."
+        }
+    }
+}
+
+// MARK: - Store detail (after a capture): the shelves, what was saved and what customers can see
+
+struct StoreShelfStoreDetailView: View {
+    let store: StoreRecord
+    let onRecordAgain: () -> Void
+    let onClose: () -> Void
+
+    @State private var publishedAt: Date? = nil
+    @State private var showPublish = false
+
+    private var data: StoreShelfData? { StoreShelfRepository.shared.shelfData(storeId: store.id) }
+
+    var body: some View {
+        let d = data
+        let summary = d.map { StoreSpaceSummary(data: $0) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                HStack {
+                    Button(action: onClose) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left")
+                            Text("닫기")
+                        }
+                        .font(.headline)
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .frame(minHeight: 48)
+                    }
+                    Spacer()
+                }
+                Text(store.name)
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                if let summary {
+                    Text("매대 \(summary.shelves)곳 · 제품 \(summary.products)개")
+                        .font(.headline)
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+                Text(StoreReviewPresentation.publicationLine(dataUpdatedAt: d?.updatedAt, publishedAt: publishedAt ?? StoreShelfPublishLog.date(storeId: store.id)))
+                    .font(.subheadline)
+                    .foregroundStyle(GonggiColors.textSecondary)
+                if let d {
+                    ForEach(d.shelves) { shelf in
+                        let n = Set(d.placements.filter { $0.shelfId == shelf.id }.map(\.productId)).count
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(shelf.name).font(.headline).foregroundStyle(GonggiColors.textPrimary)
+                                Text("제품 \(n)개").font(.subheadline).foregroundStyle(GonggiColors.textSecondary)
+                            }
+                            Spacer()
+                            if !shelf.isGuidable {
+                                Text("AR 안내 불가").font(.footnote).foregroundStyle(GonggiColors.warningCritical)
+                            }
+                        }
+                        .padding(GonggiSpacing.md)
+                        .background(GonggiColors.surfaceElevated)
+                        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                    }
+                }
+                if showPublish {
+                    StoreShelfPublishView(store: store, onPublished: { _ in publishedAt = Date() })
+                } else {
+                    SecondaryButton(title: "고객에게 게시하기", icon: "paperplane") { showPublish = true }
+                }
+                SecondaryButton(title: "다시 촬영하기", icon: "camera", action: onRecordAgain)
+                PrimaryButton(title: "닫기", icon: "checkmark", action: onClose)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, GonggiSpacing.xxl)
         }
     }
 }

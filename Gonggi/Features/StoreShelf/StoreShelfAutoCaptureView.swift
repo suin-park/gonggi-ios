@@ -7,6 +7,14 @@ import UIKit
 // the server analyses them, the result is a draft to review and publish. There is no two-end baseline step: the shelf
 // position comes from what ARKit measured during the sweep.
 
+/// Where the short capture flow is: the whole-shelf photo, the check of it, closer photos, the end.
+enum StoreShotStep: Equatable {
+    case overview
+    case checking
+    case closer(index: Int)
+    case finishing
+}
+
 enum StoreShelfAutoPhase: Equatable {
     case intro
     case capturing
@@ -32,6 +40,12 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
     @Published private(set) var importNote: String?
     @Published var waitingForMap = false
     @Published private(set) var mapWaitSeconds = 0
+    @Published private(set) var shotStep: StoreShotStep = .overview
+    @Published private(set) var detailTargets: [RemoteDetailTarget] = []
+    @Published private(set) var overviewImage: UIImage?
+    private var overviewPhoto: CapturedPhoto?
+    private var detailsTaken = 0
+    private var probe: StoreCaptureCoordinator?
 
     private var cancellables = Set<AnyCancellable>()
     private var lastFrame: StoreShelfFrame?
@@ -75,7 +89,93 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
             self?.lastFrame = frame
             self?.engine?.consider(frame)
         }
+        shotStep = .overview
+        detailTargets = []
+        detailsTaken = 0
+        overviewImage = nil
+        e.shotMode = .overview
+        e.onSaved = { [weak self] photo in self?.photoSaved(photo) }
         phase = .capturing
+    }
+
+    // MARK: Short flow: one overview photo, closer photos only where it helps
+
+    /// The big button.
+    func captureNow() {
+        guard let f = lastFrame, let e = engine else { return }
+        switch shotStep {
+        case .overview: e.captureNow(frame: f, reason: "overview")
+        case .closer: e.captureNow(frame: f, reason: "detail")
+        default: break
+        }
+    }
+
+    private func photoSaved(_ photo: CapturedPhoto) {
+        guard phase == .capturing else { return }
+        switch shotStep {
+        case .overview:
+            overviewPhoto = photo
+            if let d = captures.readPhoto(sessionId: engine?.manifest.clientSessionId ?? "", fileName: photo.fileName) {
+                overviewImage = UIImage(data: d)
+            }
+            shotStep = .checking
+            engine?.shotMode = .paused
+            startProbe()
+        case .closer:
+            detailsTaken += 1
+            if detailsTaken >= detailTargets.count {
+                shotStep = .finishing
+                finishCapture()
+            } else {
+                shotStep = .closer(index: detailsTaken)
+                armCloser()
+            }
+        default:
+            break
+        }
+    }
+
+    private func armCloser() {
+        guard let o = overviewPhoto, let pose = Rigid(floats: o.pose) else {
+            engine?.closerReference = nil
+            engine?.shotMode = .detail
+            return
+        }
+        engine?.closerReference = (pose: pose, distance: o.surfaceHit?.distance)
+        engine?.shotMode = .detail
+    }
+
+    /// The first analysis of the overview photo decides whether a closer photo is needed at all.
+    private func startProbe() {
+        guard let e = engine else { return }
+        let c = StoreCaptureCoordinator(manifest: e.manifest, persistsManifest: false)
+        probe = c
+        Task { [weak self] in
+            let view = await c.probe()
+            await MainActor.run { self?.probeFinished(view) }
+        }
+    }
+
+    private func probeFinished(_ view: RemoteCaptureView?) {
+        probe = nil
+        guard phase == .capturing, shotStep == .checking else { return }
+        let targets = Array((view?.detailTargets ?? []).prefix(2))
+        detailTargets = targets
+        if targets.isEmpty {
+            shotStep = .finishing
+            finishCapture()
+        } else {
+            shotStep = .closer(index: 0)
+            armCloser()
+        }
+    }
+
+    /// "여기까지 할게요": no more closer photos.
+    func skipDetails() {
+        guard case .closer = shotStep else { return }
+        shotStep = .finishing
+        engine?.shotMode = .paused
+        finishCapture()
     }
 
     /// Called when the AR view exists: a fresh session (new world frame) for every capture.
@@ -105,7 +205,7 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
     func finishCapture(skipMap: Bool = false) {
         guard let engine, phase == .capturing else { return }
         guard engine.savedCount > 0 else {
-            engine.notice = "아직 저장된 사진이 없어요. 매대를 천천히 비춰 주세요"
+            engine.notice = StoreShotCopy.overview
             return
         }
         phase = .finishing
@@ -214,6 +314,8 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
     }
 
     func stop() {
+        probe?.cancel()
+        probe = nil
         mapTimer?.invalidate()
         coordinator?.cancel()
         controller.stop()
@@ -226,12 +328,15 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
 struct StoreShelfAutoCaptureView: View {
     let store: StoreRecord
     let onBack: () -> Void
+    /// A capture was finished (saved, or left on purpose after the review): the caller shows the store's shelf list.
+    var onFinished: () -> Void = {}
 
     @StateObject private var model: StoreShelfAutoCaptureViewModel
 
-    init(store: StoreRecord, onBack: @escaping () -> Void) {
+    init(store: StoreRecord, onBack: @escaping () -> Void, onFinished: @escaping () -> Void = {}) {
         self.store = store
         self.onBack = onBack
+        self.onFinished = onFinished
         _model = StateObject(wrappedValue: StoreShelfAutoCaptureViewModel(store: store))
     }
 
@@ -253,7 +358,10 @@ struct StoreShelfAutoCaptureView: View {
                                 .padding(.horizontal, 20)
                                 .padding(.top, 8)
                         }
-                        StoreShelfReviewView(model: review, onDone: { model.stop(); onBack() })
+                        StoreShelfReviewView(
+                            model: review,
+                            onDone: { model.stop(); onFinished() },
+                            onClose: { model.stop(); onBack() })
                     }
                 }
             case .failed(let failure): failed(failure)
@@ -268,31 +376,38 @@ struct StoreShelfAutoCaptureView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: GonggiSpacing.md) {
                 HStack {
-                    Button("뒤로") { model.stop(); onBack() }.foregroundStyle(GonggiColors.textSecondary)
+                    Button {
+                        model.stop()
+                        onBack()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left")
+                            Text("닫기")
+                        }
+                        .font(.headline)
+                        .foregroundStyle(GonggiColors.textPrimary)
+                        .frame(minHeight: 48)
+                    }
                     Spacer()
                 }
                 Text(StoreShelfCopy.recordTitle)
                     .font(.largeTitle.weight(.bold))
                     .foregroundStyle(GonggiColors.textPrimary)
                 Text(store.name)
-                    .font(.headline)
+                    .font(.title3.weight(.semibold))
                     .foregroundStyle(GonggiColors.textSecondary)
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("촬영을 시작하고 매대를 천천히 훑어 주세요", systemImage: "viewfinder")
-                    Label("필요한 사진은 자동으로 찍혀요", systemImage: "camera.aperture")
-                    Label("제품 이름과 매대 위치는 사진을 분석해 채워요", systemImage: "text.viewfinder")
-                    Label("확인이 필요한 것만 검토하고 게시해요", systemImage: "checkmark.seal")
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("매대 전체를 한 장 찍어요", systemImage: "viewfinder")
+                    Label("작은 글씨는 가까이서 몇 장 더 찍어요", systemImage: "plus.magnifyingglass")
+                    Label("확인하고 저장해요", systemImage: "checkmark.circle")
                 }
-                .font(.subheadline)
+                .font(.title3)
                 .foregroundStyle(GonggiColors.textPrimary)
                 .padding(GonggiSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(GonggiColors.surfaceElevated)
                 .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
 
-                Text("촬영 대상")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(GonggiColors.textSecondary)
                 Picker("촬영 대상", selection: Binding(get: { model.context }, set: { model.setContext($0) })) {
                     Text("편의점").tag("convenience_store")
                     Text("가정용 냉장고").tag("home_refrigerator")
@@ -301,16 +416,18 @@ struct StoreShelfAutoCaptureView: View {
                 .pickerStyle(.segmented)
 
                 if let u = model.unfinished {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 8) {
                         Text("끝내지 못한 촬영이 있어요")
                             .font(.headline)
                             .foregroundStyle(GonggiColors.textPrimary)
-                        Text("사진 \(u.photos.count)장 · \(statusText(u.status))" + (u.lastError.map { " · \($0)" } ?? ""))
-                            .font(.footnote)
+                        Text(statusText(u.status))
+                            .font(.subheadline)
                             .foregroundStyle(GonggiColors.textSecondary)
                         HStack(spacing: GonggiSpacing.sm) {
-                            SecondaryButton(title: "이어서 분석하기", icon: "arrow.clockwise") { model.resume() }
-                            Button("버리기", role: .destructive) { model.discardUnfinished() }.font(.footnote)
+                            SecondaryButton(title: "이어서 하기", icon: "arrow.clockwise") { model.resume() }
+                            Button("버리기", role: .destructive) { model.discardUnfinished() }
+                                .font(.subheadline)
+                                .frame(minHeight: 44)
                         }
                     }
                     .padding(GonggiSpacing.md)
@@ -318,9 +435,6 @@ struct StoreShelfAutoCaptureView: View {
                     .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
                 }
 
-                Text("새로 촬영한 결과는 이 매장의 기존 매대 기록을 바꿔요. 직접 입력한 제품 이름은 유지돼요.")
-                    .font(.caption)
-                    .foregroundStyle(GonggiColors.textTertiary)
                 PrimaryButton(title: "촬영 시작", icon: "camera") { model.begin() }
             }
             .padding(.horizontal, 20)
@@ -330,38 +444,57 @@ struct StoreShelfAutoCaptureView: View {
 
     private func statusText(_ s: CaptureSessionStatus) -> String {
         switch s {
-        case .capturing: return "촬영 중 종료됨"
-        case .captured: return "분석 전"
-        case .uploading: return "업로드 중"
-        case .analyzing: return "분석 중"
-        case .draftReady: return "검토 전"
-        case .imported: return "완료"
-        case .failed: return "실패"
+        case .capturing: return "촬영하던 사진이 있어요"
+        case .captured: return "확인하기 전이에요"
+        case .uploading, .analyzing: return "사진을 확인하던 중이었어요"
+        case .draftReady: return "결과를 확인하고 저장할 수 있어요"
+        case .imported: return "완료했어요"
+        case .failed: return "끝내지 못했어요"
         }
     }
 
     // MARK: Capture
 
+    private var guide: (title: String, subtitle: String?, icon: String) {
+        switch model.shotStep {
+        case .overview:
+            if let hint = model.engine?.steadyHint { return (StoreShotCopy.text(for: hint), nil, "hand.raised") }
+            return (StoreShotCopy.overview, nil, "viewfinder")
+        case .checking:
+            return (StoreShotCopy.checking, StoreShotCopy.sweepForMap, "text.viewfinder")
+        case .closer:
+            if let hint = model.engine?.steadyHint, hint != .tooFar { return (StoreShotCopy.text(for: hint), nil, "hand.raised") }
+            return (StoreShotCopy.closer, nil, "plus.magnifyingglass")
+        case .finishing:
+            if model.waitingForMap { return (StoreShotCopy.done, StoreShotCopy.sweepForMap, "checkmark.circle") }
+            return (StoreShotCopy.done, nil, "checkmark.circle")
+        }
+    }
+
     private var capture: some View {
         ZStack {
             StoreShelfARViewHost(controller: model.controller, role: .record, showsMarkers: false) { model.cameraReady() }
                 .ignoresSafeArea()
-            VStack(spacing: 0) {
+            VStack(spacing: 8) {
                 HStack {
                     Button {
                         model.stop()
                         onBack()
                     } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(.black.opacity(0.4), in: Circle())
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left")
+                            Text("닫기")
+                        }
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 48)
+                        .background(.black.opacity(0.5), in: Capsule())
                     }
-                    .accessibilityLabel("뒤로")
+                    .accessibilityLabel("닫기")
                     Spacer()
-                    if let e = model.engine {
-                        Label("사진 \(e.savedCount)장", systemImage: "photo.stack")
+                    if case .closer(let i) = model.shotStep {
+                        Text("가까운 사진 \(i + 1)/\(max(1, model.detailTargets.count))")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 12).padding(.vertical, 8)
@@ -370,59 +503,71 @@ struct StoreShelfAutoCaptureView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
+                if case .closer(let i) = model.shotStep, i < model.detailTargets.count, let image = model.overviewImage {
+                    closerGuide(image: image, target: model.detailTargets[i])
+                }
                 Spacer()
                 bottomPanel
             }
         }
     }
 
+    /// The overview photo with the part to go closer to, highlighted.
+    private func closerGuide(image: UIImage, target: RemoteDetailTarget) -> some View {
+        let aspect = image.size.height > 0 ? image.size.width / image.size.height : 0.75
+        return Image(uiImage: image)
+            .resizable()
+            .scaledToFit()
+            .overlay(
+                GeometryReader { g in
+                    let b = target.box
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.yellow, lineWidth: 4)
+                        .background(Color.yellow.opacity(0.18))
+                        .frame(width: CGFloat(b.x1 - b.x0) * g.size.width, height: CGFloat(b.y1 - b.y0) * g.size.height)
+                        .position(x: CGFloat(b.x0 + b.x1) / 2 * g.size.width, y: CGFloat(b.y0 + b.y1) / 2 * g.size.height)
+                }
+            )
+            .aspectRatio(aspect, contentMode: .fit)
+            .frame(maxHeight: 220)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.7), lineWidth: 1))
+            .padding(.horizontal, 16)
+            .accessibilityLabel("가까이 비출 부분이 노란 상자로 표시돼 있어요")
+    }
+
     private var bottomPanel: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            if model.phase == .finishing {
+        let g = guide
+        return VStack(spacing: GonggiSpacing.sm) {
+            CaptureCoachBubble(presentation: CaptureCoachPresentation(title: g.title, subtitle: g.subtitle, severity: .guidance,
+                                                                       icon: g.icon, warning: nil))
+            if let n = model.engine?.notice {
+                Text(n).font(.subheadline).foregroundStyle(.white)
+            }
+            switch model.shotStep {
+            case .overview:
+                PrimaryButton(title: "사진 찍기", icon: "camera.fill") { model.captureNow() }
+            case .checking:
+                ProgressView().tint(.white)
+            case .closer:
+                PrimaryButton(title: "사진 찍기", icon: "camera.fill") { model.captureNow() }
+                SecondaryButton(title: "여기까지 할게요", icon: "checkmark") { model.skipDetails() }
+            case .finishing:
                 if model.waitingForMap {
-                    Text("공간 지도를 만드는 중이에요. 매대 주변을 조금 더 비춰 주세요 (\(model.mapWaitSeconds)초)")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.white)
-                    SecondaryButton(title: "지도 없이 계속", icon: "forward") { model.continueWithoutMap() }
+                    if model.mapWaitSeconds >= 15 {
+                        SecondaryButton(title: "그대로 계속하기", icon: "forward") { model.continueWithoutMap() }
+                    }
                 } else {
                     ProgressView().tint(.white)
                 }
-            } else {
-                let text = model.engine?.hint.text ?? model.controller.trackingText
-                Text(text)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white)
-                if let n = model.engine?.notice {
-                    Text(n).font(.caption).foregroundStyle(.white.opacity(0.85))
-                }
-                Text("매대를 왼쪽에서 오른쪽으로 천천히 한 번 훑어 주세요. 사진은 자동으로 찍혀요.")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.8))
-                HStack(spacing: GonggiSpacing.sm) {
-                    PrimaryButton(title: "촬영 끝내기", icon: "checkmark") { model.finishCapture() }
-                        .disabled((model.engine?.savedCount ?? 0) == 0)
-                    Button {
-                        model.markSurface()
-                    } label: {
-                        Label("매대 앞면 확인", systemImage: "scope")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12).padding(.vertical, 12)
-                            .background(.white.opacity(0.18), in: Capsule())
-                    }
-                }
-                if StoreShelfFeatureFlags.testMarkersEnabled, let e = model.engine {
-                    Text(String(format: "진단 · 선명도 %.0f · 건너뜀 %@", e.lastSharpness, e.lastSkip?.rawValue ?? "-"))
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.6))
-                }
+            }
+            if StoreShelfFeatureFlags.testMarkersEnabled, let e = model.engine {
+                Text(String(format: "진단 · 선명도 %.0f", e.lastSharpness))
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.6))
             }
         }
-        .padding(GonggiSpacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.black.opacity(0.6))
-        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
         .padding(.bottom, 12)
     }
 
@@ -430,20 +575,19 @@ struct StoreShelfAutoCaptureView: View {
 
     private var processing: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-            Text("사진을 분석하고 있어요")
+            Text("사진을 확인하고 있어요")
                 .font(.largeTitle.weight(.bold))
                 .foregroundStyle(GonggiColors.textPrimary)
             if let c = model.coordinator {
-                step("사진 업로드", state: uploadState(c.phase), detail: uploadDetail(c.phase))
-                step("제품과 매대 분석", state: analyzeState(c.phase), detail: c.run.map { AnalysisRunText.detail($0) })
-                step("검토 자료 만들기", state: importState(c.phase), detail: nil)
-                if case .analyzing = c.phase {
-                    Text("보통 수십 초가 걸려요. 앱을 닫아도 촬영한 사진은 보존돼요. (\(c.elapsedAnalysisSeconds)초)")
-                        .font(.footnote)
-                        .foregroundStyle(GonggiColors.textSecondary)
-                }
+                step("사진 올리기", state: uploadState(c.phase), detail: uploadDetail(c.phase))
+                step("제품과 매대 확인", state: analyzeState(c.phase), detail: nil)
+                step("결과 정리", state: importState(c.phase), detail: nil)
             }
+            Text("닫아도 이어서 확인할 수 있어요.")
+                .font(.subheadline)
+                .foregroundStyle(GonggiColors.textSecondary)
             Spacer()
+            SecondaryButton(title: "닫기", icon: "xmark") { model.stop(); onBack() }
         }
         .padding(20)
     }
@@ -501,19 +645,17 @@ struct StoreShelfAutoCaptureView: View {
 
     private func failed(_ failure: StoreCaptureFailure) -> some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-            Text("분석을 끝내지 못했어요")
+            Text(StoreUserText.scrub(failure.message))
                 .font(.title2.weight(.bold))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text(failure.message)
-                .font(.subheadline)
-                .foregroundStyle(GonggiColors.warningCritical)
             Text(failure.guidance)
-                .font(.footnote)
+                .font(.headline)
                 .foregroundStyle(GonggiColors.textSecondary)
+            Spacer()
             if failure.canRetry {
-                PrimaryButton(title: failure.kind == .network ? "이어서 진행" : "다시 시도", icon: "arrow.clockwise") { model.retry() }
+                PrimaryButton(title: failure.kind == .network ? "이어서 하기" : "다시 시도", icon: "arrow.clockwise") { model.retry() }
             }
-            SecondaryButton(title: "처음으로", icon: "chevron.left") { model.stop(); onBack() }
+            SecondaryButton(title: "닫기", icon: "xmark") { model.stop(); onBack() }
         }
         .padding(20)
     }

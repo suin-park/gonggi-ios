@@ -230,6 +230,15 @@ struct RemoteCaptureSessionInfo: Codable, Equatable, Sendable {
     var status: String
 }
 
+/// A part of the overview photo where the first analysis could not read the packages: a closer photo helps there.
+struct RemoteDetailTarget: Codable, Equatable, Sendable {
+    var photoId: String
+    var box: RemoteBox
+    /// "unreadable" | "partial" | "cut_off"
+    var reason: String
+    var productKeys: [String]
+}
+
 struct RemoteCaptureView: Codable, Equatable, Sendable {
     var session: RemoteCaptureSessionInfo
     var photoCount: Int
@@ -237,6 +246,7 @@ struct RemoteCaptureView: Codable, Equatable, Sendable {
     var run: RemoteAnalysisRun?
     var runsUsed: Int
     var draft: RemoteAnalysisDraft?
+    var detailTargets: [RemoteDetailTarget]? = nil
 }
 
 struct RemoteStartedCapture: Codable, Equatable, Sendable {

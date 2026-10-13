@@ -441,7 +441,7 @@ final class StoreShelfRecordViewModel: ObservableObject {
                 diagnostics: diagnostics)
             try repository.appendRegistration(metric)
             StoreShelfSelection.lastStoreId = store.id
-            savedSummary = "제품 \(data.products.count)개, 매대 \(data.shelves.count)곳을 저장했어요"
+            savedSummary = "매대 \(data.shelves.count)곳 · 제품 \(data.products.count)개"
             step = .saved
             onSavedHook?()
         } catch {
@@ -666,28 +666,44 @@ struct StoreShelfRecordView: View {
 
 struct StoreShelfReviewView: View {
     @ObservedObject var model: StoreShelfRecordViewModel
+    /// Finished (saved, or left on purpose): the caller goes back to the store.
     let onDone: () -> Void
+    /// The close / back button. nil: the same as `onDone`.
+    var onClose: (() -> Void)? = nil
 
     @State private var mergeSource: String?
     @State private var renameText: [String: String] = [:]
     @State private var showDiagnosticsShare = false
+    @State private var confirmClose = false
+    @State private var publishedVersion: Int?
 
     private var data: StoreShelfData { model.draft ?? StoreShelfData.empty(storeId: model.store.id) }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            topBar
             if model.step == .saved {
                 savedView
             } else {
+                header
                 list
-                footer
             }
         }
         .background(GonggiAmbientBackground())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.step != .saved { footer }
+        }
         .onChange(of: model.diagnosticsZipURL) { _, url in showDiagnosticsShare = url != nil }
         .sheet(isPresented: $showDiagnosticsShare, onDismiss: { model.diagnosticsZipURL = nil }) {
             if let url = model.diagnosticsZipURL { CaptureExportShareSheet(items: [url]) }
+        }
+        .confirmationDialog("변경한 내용을 저장할까요?", isPresented: $confirmClose, titleVisibility: .visible) {
+            Button("저장하고 닫기") {
+                model.save()
+                close()
+            }
+            Button("저장하지 않고 닫기", role: .destructive) { close() }
+            Button("계속 검토", role: .cancel) {}
         }
         .confirmationDialog("어느 제품과 합칠까요?", isPresented: Binding(
             get: { mergeSource != nil }, set: { if !$0 { mergeSource = nil } }
@@ -702,14 +718,51 @@ struct StoreShelfReviewView: View {
         }
     }
 
+    private func close() {
+        (onClose ?? onDone)()
+    }
+
+    /// Nothing to ask when nothing changed or everything is saved.
+    private func requestClose() {
+        if model.step == .saved || !StoreReviewPresentation.closeNeedsConfirmation(saved: false, corrections: model.corrections) {
+            close()
+        } else {
+            confirmClose = true
+        }
+    }
+
+    private var topBar: some View {
+        HStack {
+            Button(action: requestClose) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.left")
+                    Text("닫기")
+                }
+                .font(.headline)
+                .foregroundStyle(GonggiColors.textPrimary)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 48)
+            }
+            .accessibilityLabel("닫기")
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+    }
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("기록 검토")
+        let summary = StoreSpaceSummary(data: data)
+        let attention = StoreReviewPresentation.attentionCount(data.products)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("기록 확인")
                 .font(.largeTitle.weight(.bold))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text(StoreSpaceSummary(data: data).headline + " · 저장하지 못한 영역 \(model.rejected.count)곳")
-                .font(.subheadline)
+            Text("매대 \(summary.shelves)곳 · 제품 \(summary.products)개")
+                .font(.headline)
                 .foregroundStyle(GonggiColors.textSecondary)
+            Text(attention > 0 ? "확인이 필요한 제품 \(attention)개" : "확인이 필요한 제품이 없어요")
+                .font(.subheadline)
+                .foregroundStyle(attention > 0 ? GonggiColors.warningCritical : GonggiColors.textSecondary)
             if StoreShelfFeatureFlags.testMarkersEnabled, let line = model.diagnosticsLine {
                 Text(line)
                     .font(.caption2)
@@ -718,66 +771,81 @@ struct StoreShelfReviewView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
-        .padding(.top, 16)
+        .padding(.top, 8)
         .padding(.bottom, 8)
     }
 
     private var list: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-                shelfSection
-                let sorted = data.products.sorted { ($0.needsReview ? 0 : 1, $0.name) < ($1.needsReview ? 0 : 1, $1.name) }
-                ForEach(sorted) { product in
-                    productCard(product)
+        let placedIds = Set(data.placements.map(\.productId))
+        let unplaced = data.products.filter { !placedIds.contains($0.id) }
+        return ScrollView {
+            LazyVStack(alignment: .leading, spacing: GonggiSpacing.md) {
+                ForEach(data.shelves) { shelf in
+                    shelfBlock(shelf)
                 }
-                if !model.rejected.isEmpty { rejectedSection }
+                if !unplaced.isEmpty {
+                    VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+                        Text("어느 매대인지 확인되지 않은 제품")
+                            .font(.headline)
+                            .foregroundStyle(GonggiColors.textPrimary)
+                        ForEach(unplaced) { productRow($0, shelfId: nil) }
+                    }
+                }
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, GonggiSpacing.lg)
+            .padding(.top, 4)
+            .padding(.bottom, GonggiSpacing.xl)
         }
     }
 
-    /// One row per shelf: how its position was obtained, the products linked to it and whether guidance was verified.
-    private var shelfSection: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("매대").font(.headline).foregroundStyle(GonggiColors.textPrimary)
-            ForEach(data.shelves) { shelf in
-                let linked = Set(data.placements.filter { $0.shelfId == shelf.id }.map(\.productId)).count
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("\(shelf.name) · 제품 \(linked)개").font(.subheadline.weight(.semibold)).foregroundStyle(GonggiColors.textPrimary)
-                    Text(ShelfPositionText.method(shelf)).font(.caption).foregroundStyle(GonggiColors.textSecondary)
-                    if let g = shelf.guidance, !g.ambiguousWithShelfIds.isEmpty {
-                        Text("같은 지점에서 여러 매대가 찍혔어요. 안내 지점이 매대를 구분하지 못해요")
-                            .font(.caption).foregroundStyle(GonggiColors.warningCritical)
-                    }
-                    HStack {
-                        Text(ShelfPositionText.verification(shelf)).font(.caption).foregroundStyle(GonggiColors.textTertiary)
-                        Spacer()
-                        if shelf.isGuidable, shelf.deviceVerifiedAt == nil {
-                            Button("기기에서 안내 확인했어요") { model.markShelfVerified(shelf.id) }.font(.caption)
-                        }
-                    }
-                }
-                .padding(GonggiSpacing.sm)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(GonggiColors.surfaceElevated)
-                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+    private func shelfBlock(_ shelf: ShelfLayout) -> some View {
+        let ids = data.placements.filter { $0.shelfId == shelf.id }.map(\.productId)
+        let products = data.products.filter { ids.contains($0.id) }
+        return VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+            if let name = shelf.photoFileName, let d = model.imageData(name), let img = UIImage(data: d) {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 150)
+                    .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                    .accessibilityHidden(true)
             }
+            Text("\(shelf.name) · 제품 \(products.count)개")
+                .font(.headline)
+                .foregroundStyle(GonggiColors.textPrimary)
+            // Only what the person can act on.
+            if !shelf.isGuidable {
+                Text("AR로 안내하려면 매대 앞에서 다시 촬영해 주세요.")
+                    .font(.footnote)
+                    .foregroundStyle(GonggiColors.warningCritical)
+            } else if !shelf.hasMeasuredPosition {
+                Text("이 매대는 촬영했던 자리까지 안내해요.")
+                    .font(.footnote)
+                    .foregroundStyle(GonggiColors.textSecondary)
+            }
+            ForEach(products) { productRow($0, shelfId: shelf.id) }
         }
+        .padding(GonggiSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GonggiColors.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
     }
 
-    private func productCard(_ product: ShelfProduct) -> some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
+    private func productRow(_ product: ShelfProduct, shelfId: String?) -> some View {
+        let need = StoreReviewPresentation.need(for: product)
+        let placement = data.placements(ofProduct: product.id).first { shelfId == nil || $0.shelfId == shelfId }
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 12) {
                 if let name = product.imageFileNames.first, let d = model.imageData(name), let img = UIImage(data: d) {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 64, height: 64)
+                        .frame(width: 56, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .accessibilityHidden(true)
                 } else {
-                    RoundedRectangle(cornerRadius: 8).fill(GonggiColors.surfaceElevated).frame(width: 64, height: 64)
+                    RoundedRectangle(cornerRadius: 8).fill(GonggiColors.surfaceElevated).frame(width: 56, height: 56)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     TextField("제품 이름", text: Binding(
@@ -788,104 +856,45 @@ struct StoreShelfReviewView: View {
                     })
                     .font(.headline)
                     .foregroundStyle(GonggiColors.textPrimary)
-                    if product.nameSource == ShelfNameSource.auto, !product.reviewReasons.contains(ShelfNameReview.confirm) {
-                        Label("제품에 적힌 이름을 자동으로 읽었어요", systemImage: "text.viewfinder")
-                            .font(.caption)
-                            .foregroundStyle(GonggiColors.textTertiary)
-                    }
                     if let volume = product.volumeText {
                         Text(volume).font(.caption).foregroundStyle(GonggiColors.textSecondary)
                     }
-                    if product.needsReview {
-                        ForEach(product.reviewReasons, id: \.self) { r in
-                            Label(r, systemImage: "exclamationmark.triangle")
-                                .font(.footnote)
-                                .foregroundStyle(GonggiColors.warningCritical)
-                        }
-                    }
-                }
-                Spacer()
-            }
-            ForEach(data.placements(ofProduct: product.id)) { placement in
-                placementRow(placement)
-            }
-            HStack(spacing: GonggiSpacing.sm) {
-                if product.reviewReasons.contains(ShelfNameReview.confirm) {
-                    Button("이름이 맞아요") { model.confirmName(productId: product.id) }
-                }
-                if product.reviewReasons.contains(where: { !ShelfNameReview.all.contains($0) }) {
-                    Button("다른 제품이 맞아요") { model.confirmDistinct(productId: product.id) }
-                }
-                Button("다른 제품과 합치기") { mergeSource = product.id }
-                Spacer()
-                Button("삭제", role: .destructive) { model.deleteProduct(product.id) }
-            }
-            .font(.footnote)
-        }
-        .padding(GonggiSpacing.md)
-        .background(GonggiColors.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
-    }
-
-    private func placementRow(_ p: ShelfPlacement) -> some View {
-        let shelf = data.shelf(p.shelfId)
-        let measured = shelf?.locationStatus != nil
-        return HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                if measured {
-                    Text((shelf?.name ?? "매대") + " · " + VisibleQuantityText.line(visibleCount: p.visibleCount, basis: p.countBasis))
-                        .font(.footnote)
-                        .foregroundStyle(GonggiColors.textSecondary)
-                    if shelf?.locationStatus == "unknown" {
-                        Text("매대 위치 확인 필요")
-                            .font(.caption)
-                            .foregroundStyle(GonggiColors.warningCritical)
-                    } else if shelf?.locationStatus == "needs_confirmation" {
-                        Text("매대 위치가 한 번만 확인됐어요")
+                    if let p = placement, let n = p.visibleCount, p.countBasis != "cannot_count" {
+                        Text(VisibleQuantityText.line(visibleCount: n, basis: p.countBasis))
                             .font(.caption)
                             .foregroundStyle(GonggiColors.textTertiary)
                     }
-                } else {
-                    Text("\(shelf?.name ?? "매대") · \(shelf?.tierLabel(forV: p.v) ?? "") · 왼쪽에서 \(String(format: "%.1f", max(0, p.u)))m")
-                        .font(.footnote)
+                    if let line = need.line {
+                        Text(line)
+                            .font(.footnote)
+                            .foregroundStyle(GonggiColors.warningCritical)
+                    }
+                }
+                Spacer()
+                Menu {
+                    Button("다른 제품과 합치기") { mergeSource = product.id }
+                    Button("삭제", role: .destructive) { model.deleteProduct(product.id) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.title3)
                         .foregroundStyle(GonggiColors.textSecondary)
+                        .frame(width: 44, height: 44)
                 }
-                if p.needsReview, !measured {
-                    Text("위치가 불확실해요 (±\(Int(p.uncertaintyM * 100))cm)")
-                        .font(.caption)
-                        .foregroundStyle(GonggiColors.warningCritical)
-                }
-                if p.status == .notObservedOnRescan {
-                    Text("이번 촬영에서는 보이지 않았어요")
-                        .font(.caption)
-                        .foregroundStyle(GonggiColors.textTertiary)
-                }
+                .accessibilityLabel("더 보기")
             }
-            Spacer()
-            if p.needsReview {
-                Button("맞아요") { model.confirmPlacement(p.id) }.font(.footnote)
+            switch need {
+            case .confirmName:
+                Button("이름이 맞아요") { model.confirmName(productId: product.id) }.font(.subheadline.weight(.semibold))
+            case .sameOrDifferent:
+                HStack(spacing: GonggiSpacing.md) {
+                    Button("다른 제품이에요") { model.confirmDistinct(productId: product.id) }
+                    Button("합치기") { mergeSource = product.id }
+                }
+                .font(.subheadline.weight(.semibold))
+            case .none, .enterName:
+                EmptyView()
             }
-            Button("이 위치 삭제", role: .destructive) { model.deletePlacement(p.id) }.font(.footnote)
         }
-    }
-
-    private var rejectedSection: some View {
-        VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("저장하지 못한 영역")
-                .font(.headline)
-                .foregroundStyle(GonggiColors.textPrimary)
-            let blurry = model.rejected.filter { $0.reason == .blurry }.count
-            let few = model.rejected.filter { $0.reason == .tooFewObservations }.count
-            if blurry > 0 { Text("흐리거나 가려져 등록하지 못한 영역 \(blurry)곳").font(.footnote).foregroundStyle(GonggiColors.textSecondary) }
-            if few > 0 { Text("한두 번만 보여 확신할 수 없던 영역 \(few)곳").font(.footnote).foregroundStyle(GonggiColors.textSecondary) }
-            Text("다시 촬영해 더 가까이, 천천히 비추면 등록될 수 있어요.")
-                .font(.footnote)
-                .foregroundStyle(GonggiColors.textTertiary)
-        }
-        .padding(GonggiSpacing.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(GonggiColors.surfaceElevated)
-        .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
     }
 
     private var footer: some View {
@@ -893,11 +902,11 @@ struct StoreShelfReviewView: View {
             if model.step == .saving { ProgressView() }
             PrimaryButton(title: "저장하기", icon: "square.and.arrow.down") { model.save() }
                 .disabled(model.step == .saving || data.products.isEmpty)
-            SecondaryButton(title: "더 촬영하기", icon: "camera") { model.returnToScanning() }
             diagnosticsButton
         }
         .padding(.horizontal, 20)
         .padding(.vertical, GonggiSpacing.sm)
+        .background(.ultraThinMaterial)
     }
 
     /// Test builds only.
@@ -919,24 +928,33 @@ struct StoreShelfReviewView: View {
         }
     }
 
+    /// Saved on this device; "고객이 조회할 수 있어요" appears only after a release was really published.
     private var savedView: some View {
-        VStack(spacing: GonggiSpacing.md) {
-            Spacer()
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(GonggiColors.accentTeal)
-            Text(model.savedSummary ?? "저장했어요")
-                .font(.headline)
-                .foregroundStyle(GonggiColors.textPrimary)
-            Text("이 기기에 저장했어요. 고객이 보려면 게시가 필요해요.")
-                .font(.subheadline)
-                .foregroundStyle(GonggiColors.textSecondary)
-            StoreShelfPublishView(store: model.store)
-                .padding(.horizontal, 24)
-            SecondaryButton(title: "나중에 게시하기", icon: "clock") { onDone() }
-                .padding(.horizontal, 40)
-            diagnosticsButton
-            Spacer()
+        ScrollView {
+            VStack(spacing: GonggiSpacing.md) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 64))
+                    .foregroundStyle(GonggiColors.accentTeal)
+                    .padding(.top, GonggiSpacing.xl)
+                Text(publishedVersion == nil ? "기록을 저장했어요." : "고객이 조회할 수 있어요.")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(GonggiColors.textPrimary)
+                    .multilineTextAlignment(.center)
+                if let line = model.savedSummary {
+                    Text(line)
+                        .font(.subheadline)
+                        .foregroundStyle(GonggiColors.textSecondary)
+                }
+                if publishedVersion == nil {
+                    StoreShelfPublishView(store: model.store, onPublished: { publishedVersion = $0 })
+                        .padding(.horizontal, 12)
+                }
+                PrimaryButton(title: publishedVersion == nil ? "닫기" : "완료", icon: "checkmark") { onDone() }
+                    .padding(.horizontal, 20)
+                diagnosticsButton
+            }
+            .padding(.bottom, GonggiSpacing.xxl)
+            .frame(maxWidth: .infinity)
         }
     }
 }

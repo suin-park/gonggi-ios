@@ -15,6 +15,7 @@ final class StoreAlignmentSession: ObservableObject {
     private var signs: [String: ShelfReferenceSign] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var timer: Timer?
+    private var startEpoch = 0
 
     init(controller: StoreShelfARController, timeoutSeconds: Double = 45) {
         self.controller = controller
@@ -40,9 +41,10 @@ final class StoreAlignmentSession: ObservableObject {
                references: [ShelfReferencePoint] = []) {
         self.signs = Dictionary(signs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         cancellables.removeAll()
-        coordinator.configureReferences(Dictionary(references.map { ($0.id, $0.pose) }, uniquingKeysWith: { first, _ in first }))
+        // Strict evidence policy: normal tracking alone, or one anchor event, is not a restore.
+        coordinator.configureEvidence(savedReferences: Dictionary(references.map { ($0.id, $0.pose) }, uniquingKeysWith: { first, _ in first }))
         controller.onReferenceAnchor = { [weak self] id, live in
-            self?.coordinator.anchorObserved(id: id, livePose: live)
+            self?.coordinator.anchorObserved(id: id, livePose: live, at: ProcessInfo.processInfo.systemUptime)
             self?.publish()
         }
         coordinator.start(at: ProcessInfo.processInfo.systemUptime)
@@ -56,7 +58,8 @@ final class StoreAlignmentSession: ObservableObject {
             .sink { [weak self] phase in
                 guard let self else { return }
                 if case .restored = phase {
-                    self.coordinator.worldMapRestored()
+                    self.coordinator.worldMapRestored(sawRelocalizing: self.controller.trackerSawRelocalizing,
+                                                      at: ProcessInfo.processInfo.systemUptime)
                     self.publish()
                 }
             }
@@ -66,9 +69,12 @@ final class StoreAlignmentSession: ObservableObject {
         } else {
             controller.startFresh()
         }
+        // Counted after the session was (re)started on purpose: any later change is a reset of this attempt.
+        startEpoch = controller.worldEpoch
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
+            if self.controller.worldEpoch != self.startEpoch { self.coordinator.sessionWasReset() }
             self.coordinator.tick(at: ProcessInfo.processInfo.systemUptime)
             self.publish()
         }
@@ -82,6 +88,8 @@ final class StoreAlignmentSession: ObservableObject {
     /// Why the saved space could not be confirmed: the record has no reference points (made before they were kept).
     var recordLacksReferencePoints: Bool { coordinator.lacksReferencePoints }
     var referencePointsSeen: Int { coordinator.observedReferenceCount }
+    /// What the last attempt rested on (for the restore log; never shown as a status on a screen).
+    var evidenceNote: String { coordinator.evidence.note }
 
     func stop() {
         timer?.invalidate()

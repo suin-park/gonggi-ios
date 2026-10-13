@@ -15,6 +15,16 @@ final class AutoShelfCaptureEngine: ObservableObject {
     @Published private(set) var lastSkip: AutoCaptureSkip?
     @Published private(set) var writing = false
     @Published var notice: String?
+    /// What the camera is waiting for: the whole-shelf photo, a closer photo, or nothing (sweep = the older continuous mode).
+    enum ShotMode: Equatable { case sweep, overview, detail, paused }
+    @Published var shotMode: ShotMode = .sweep
+    /// Why the camera does not take the photo yet (nil while steady).
+    @Published private(set) var steadyHint: StoreStillnessGate.Hint?
+    /// Reference for a closer photo: the overview's camera pose and surface distance.
+    var closerReference: (pose: Rigid, distance: Float?)?
+    /// Called on the main queue for every photo that was saved.
+    var onSaved: ((CapturedPhoto) -> Void)?
+    private var gate = StoreStillnessGate()
 
     private(set) var manifest: CaptureSessionManifest
     private var selector: AutoCaptureSelector
@@ -56,6 +66,10 @@ final class AutoShelfCaptureEngine: ObservableObject {
         let sharp = StoreImageStats.laplacianVariance(luma: luma.analysis, width: luma.analysisWidth, height: luma.analysisHeight)
         lastSharpness = sharp
         let hit = controller?.centreSurfaceHit()
+        if shotMode != .sweep {
+            considerShot(frame: frame, sharpness: sharp, hit: hit)
+            return
+        }
         let decision = selector.consider(AutoCaptureFrame(
             time: frame.time, pose: frame.camera.cameraToWorld, trackingNormal: frame.trackingNormal, sharpness: sharp,
             thumbnail: luma.thumbnail, centreDistance: hit?.distance))
@@ -66,11 +80,48 @@ final class AutoShelfCaptureEngine: ObservableObject {
         save(frame: frame, sharpness: sharp, hit: hit, reason: decision.reason ?? "moved", lowOverlap: decision.lowOverlap)
     }
 
+    /// One photo of the short flow: taken when the view has been steady long enough (and, for a closer photo, is closer).
+    private func considerShot(frame: StoreShelfFrame, sharpness: Float, hit: CapturedSurfaceHit?) {
+        guard shotMode == .overview || shotMode == .detail else {
+            steadyHint = nil
+            return
+        }
+        let verdict = gate.consider(time: frame.time, pose: frame.camera.cameraToWorld, trackingNormal: frame.trackingNormal,
+                                    sharpness: sharpness, centreDistance: hit?.distance)
+        switch verdict {
+        case .waiting(let hint):
+            if steadyHint != hint { steadyHint = hint }
+        case .ready:
+            if shotMode == .detail, let ref = closerReference,
+               !StoreCloserCheck.isCloser(overviewDistance: ref.distance, currentDistance: hit?.distance, overviewPose: ref.pose,
+                                          currentPose: frame.camera.cameraToWorld) {
+                if steadyHint != .tooFar { steadyHint = .tooFar }
+                return
+            }
+            steadyHint = nil
+            takeShot(frame: frame, sharpness: sharpness, hit: hit, reason: shotMode == .overview ? "overview" : "detail")
+        }
+    }
+
+    private func takeShot(frame: StoreShelfFrame, sharpness: Float, hit: CapturedSurfaceHit?, reason: String) {
+        shotMode = .paused
+        gate.reset()
+        save(frame: frame, sharpness: sharpness, hit: hit, reason: reason, lowOverlap: false)
+    }
+
+    /// The big button: a photo now, whatever the steadiness (tracking state is recorded with the photo).
+    func captureNow(frame: StoreShelfFrame, reason: String) {
+        guard !writing, shotMode == .overview || shotMode == .detail else { return }
+        guard let luma = Self.lumaSamples(frame.pixelBuffer) else { return }
+        let sharp = StoreImageStats.laplacianVariance(luma: luma.analysis, width: luma.analysisWidth, height: luma.analysisHeight)
+        takeShot(frame: frame, sharpness: sharp, hit: controller?.centreSurfaceHit(), reason: reason)
+    }
+
     /// The person points at the shelf front and taps: a photo is taken now with the measured surface as its position
     /// evidence (the helper when the automatic position was not found).
     func saveManualSurface(frame: StoreShelfFrame) {
         guard frame.trackingNormal else {
-            notice = "카메라가 아직 위치를 잡는 중이에요. 잠시 후 다시 눌러 주세요"
+            notice = "잠시 후 다시 눌러 주세요."
             return
         }
         guard let hit = controller?.centreSurfaceHit() else {
@@ -111,7 +162,9 @@ final class AutoShelfCaptureEngine: ObservableObject {
             DispatchQueue.main.async {
                 self.writing = false
                 guard let photo else {
-                    self.notice = "사진을 저장하지 못했어요. 저장 공간을 확인해 주세요"
+                    self.notice = "저장하지 못했어요. 다시 시도해 주세요."
+                    // the camera waits for a new photo again
+                    if self.shotMode == .paused { self.shotMode = .overview }
                     return
                 }
                 self.manifest.photos.append(photo)
@@ -125,6 +178,7 @@ final class AutoShelfCaptureEngine: ObservableObject {
                 self.manifest.walkTrail = self.trail.samples
                 self.savedCount = self.manifest.photos.count
                 try? self.store.save(self.manifest)
+                self.onSaved?(photo)
             }
         }
     }

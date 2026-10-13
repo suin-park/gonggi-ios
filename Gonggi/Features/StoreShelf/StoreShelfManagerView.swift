@@ -22,6 +22,7 @@ final class StoreShelfPublishModel: ObservableObject {
                 Task { @MainActor in self?.state = .working(text) }
             }
             state = .published(version: version)
+            StoreShelfPublishLog.record(storeId: storeId)
         } catch let e as StoreShelfAPIError {
             state = .failed(e.userMessage)
         } catch StoreShelfPublishError.noMap {
@@ -41,6 +42,7 @@ final class StoreShelfPublishModel: ObservableObject {
 
 struct StoreShelfPublishView: View {
     let store: StoreRecord
+    var onPublished: ((Int) -> Void)? = nil
     @StateObject private var model = StoreShelfPublishModel()
     @State private var showLinks = false
 
@@ -48,7 +50,7 @@ struct StoreShelfPublishView: View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
             switch model.state {
             case .idle:
-                Text("게시하면 고객이 이 매장에서 제품을 찾을 수 있어요. 검토를 마친 기록만 게시해 주세요.")
+                Text("게시하면 고객이 이 매장에서 제품을 찾을 수 있어요.")
                     .font(.footnote)
                     .foregroundStyle(GonggiColors.textSecondary)
                 PrimaryButton(title: "고객에게 게시하기", icon: "paperplane") {
@@ -59,8 +61,8 @@ struct StoreShelfPublishView: View {
                     ProgressView()
                     Text(text).font(.footnote).foregroundStyle(GonggiColors.textSecondary)
                 }
-            case .published(let version):
-                Label("게시했어요 (v\(version))", systemImage: "checkmark.seal.fill")
+            case .published:
+                Label("고객이 조회할 수 있어요", systemImage: "checkmark.seal.fill")
                     .font(.headline)
                     .foregroundStyle(GonggiColors.accentTeal)
                 SecondaryButton(title: "제품에 3D 자산 연결하기", icon: "cube") { showLinks = true }
@@ -72,6 +74,24 @@ struct StoreShelfPublishView: View {
             }
         }
         .sheet(isPresented: $showLinks) { StoreShelfLinkView(store: store) }
+        .onChange(of: model.state) { _, state in
+            if case .published(let v) = state { onPublished?(v) }
+        }
+    }
+}
+
+/// When a release of a store was last published from this device (the customer-facing state is only what the server
+/// accepted; nothing is shown as published before that).
+enum StoreShelfPublishLog {
+    private static func key(_ storeId: String) -> String { "GonggiStorePublishedAt." + storeId }
+
+    static func record(storeId: String, at date: Date = Date()) {
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: key(storeId))
+    }
+
+    static func date(storeId: String) -> Date? {
+        let t = UserDefaults.standard.double(forKey: key(storeId))
+        return t > 0 ? Date(timeIntervalSince1970: t) : nil
     }
 }
 
