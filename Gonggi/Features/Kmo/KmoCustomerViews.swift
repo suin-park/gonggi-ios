@@ -12,16 +12,25 @@ import UIKit
 final class KmoRecentModel: ObservableObject {
     @Published private(set) var items: [KmoRecentProduct] = []
     private let store = KmoRecentStore(storage: UserDefaults.standard)
+    /// 화면 확인용 고정 목록. 실제 기록 저장소는 건드리지 않는다.
+    private let previewItems: [KmoRecentProduct]?
+
+    init(preview: [KmoRecentProduct]? = nil) {
+        previewItems = preview
+        if let preview { items = preview }
+    }
 
     static var accountId: String? {
         AuthSessionController.shared.profile?.id ?? AuthSessionController.shared.currentUser?.userId
     }
 
     func reload() {
+        if previewItems != nil { return }
         items = store.load(account: Self.accountId)
     }
 
     func record(_ r: RemoteProductSearchResult) {
+        if previewItems != nil { return }
         let item = KmoRecentProduct(identity: r.identity, name: r.name, subtitle: r.subtitle, imageUrl: r.imageUrl, viewedAt: Date())
         items = store.record(item, account: Self.accountId)
     }
@@ -43,13 +52,17 @@ struct KmoCustomerHomeView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var auth = AuthSessionController.shared
     @StateObject private var model = StoreProductSearchModel()
-    @StateObject private var recent = KmoRecentModel()
+    @StateObject private var recent: KmoRecentModel
     @State private var path: [KmoRoute] = []
     @State private var showCamera = false
     @State private var showBrowse = false
     @State private var browseThumb: String?
     @State private var notice: String?
     @FocusState private var fieldFocused: Bool
+
+    init(previewRecent: [KmoRecentProduct]? = nil) {
+        _recent = StateObject(wrappedValue: KmoRecentModel(preview: previewRecent))
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -104,7 +117,7 @@ struct KmoCustomerHomeView: View {
             HomeView(embeddedClose: { showBrowse = false })
                 .environmentObject(appState)
         }
-        .task(id: auth.currentUser?.userId) {
+        .task(id: KmoRecentModel.accountId) {
             recent.reload()
         }
         .task {
@@ -277,6 +290,8 @@ struct KmoResultsView: View {
     @ObservedObject var model: StoreProductSearchModel
     @ObservedObject var recent: KmoRecentModel
     @Binding var path: [KmoRoute]
+    /// 화면 확인용: false면 서버 검색과 위치 요청을 하지 않는다.
+    var autoSearch = true
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var location = StoreShelfLocationProvider()
@@ -309,6 +324,7 @@ struct KmoResultsView: View {
         .background(KmoBackground())
         .toolbar(.hidden, for: .navigationBar)
         .task(id: model.query) {
+            guard autoSearch else { searchedOnce = true; return }
             // 입력을 멈췄을 때 한 번만 검색한다. 처음 들어온 경우에는 바로 검색한다.
             if searchedOnce { try? await Task.sleep(nanoseconds: 450_000_000) }
             if Task.isCancelled { return }
@@ -325,7 +341,7 @@ struct KmoResultsView: View {
         }
         .onAppear {
             if let current { recent.record(current) }
-            if case .idle = location.state { location.request() }
+            if autoSearch, case .idle = location.state { location.request() }
         }
         .onChange(of: location.state) { _, state in
             if case .located(let lat, let lng) = state {
