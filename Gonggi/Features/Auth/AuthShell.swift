@@ -487,7 +487,7 @@ struct AuthShellView: View {
                         Spacer(minLength: welcomeTopMin(for: usableHeight))
 
                         // Independent centered logo header (does not force form centering).
-                        GonggiLogoView(variant: .white, width: welcomeLogoWidth)
+                        KmoWordmark()
                             .frame(maxWidth: .infinity)
                             .padding(.bottom, GonggiSpacing.xs)
 
@@ -682,7 +682,7 @@ struct EmailContinueView: View {
                 GonggiAmbientBackground(showGlow: false)
                 ScrollView {
                     VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-                        GonggiLogoView(variant: .white, width: emailLogoWidth)
+                        KmoWordmark()
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.top, GonggiSpacing.xs)
                             .padding(.bottom, GonggiSpacing.xs)
@@ -721,7 +721,7 @@ struct EmailContinueView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
-                        Text("공기와 3D Locker는 같은 계정을 사용합니다.")
+                        Text("커모와 3D Locker는 같은 계정을 사용합니다.")
                             .font(GonggiTypography.caption(12))
                             .foregroundStyle(GonggiColors.textTertiary)
                             .padding(.top, GonggiSpacing.sm)

@@ -447,7 +447,7 @@ struct AssetDetailView: View {
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("3D Locker와 공기 앱에서 함께 삭제되며, 공간에 배치된 경우 배치도 제거돼요. 되돌릴 수 없어요.")
+            Text("3D Locker와 커모 앱에서 함께 삭제되며, 공간에 배치된 경우 배치도 제거돼요. 되돌릴 수 없어요.")
         }
         .alert("삭제하지 못했어요", isPresented: Binding(
             get: { deleteError != nil },

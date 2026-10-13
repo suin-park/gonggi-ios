@@ -770,11 +770,11 @@ struct ProfileDeleteAccountView: View {
     var body: some View {
         List {
             Section {
-                Text("공기와 3D Locker 계정이 함께 삭제됩니다. 저장한 공간과 3D 자산, 공유 링크와 남은 크레딧을 더 이상 이용할 수 없습니다.")
+                Text("커모와 3D Locker 계정이 함께 삭제됩니다. 저장한 공간과 3D 자산, 공유 링크와 남은 크레딧을 더 이상 이용할 수 없습니다.")
                     .font(.footnote)
             }
             Section("삭제 대상") {
-                Text("통합 사용자 계정, 공기 공간, 원본 촬영, 파노라마, 오디오, 핫스팟 연결, 공유 링크, 3D Locker 자산, 세션과 인증 토큰")
+                Text("통합 사용자 계정, 커모 공간, 원본 촬영, 파노라마, 오디오, 핫스팟 연결, 공유 링크, 3D Locker 자산, 세션과 인증 토큰")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

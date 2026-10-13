@@ -75,8 +75,7 @@ struct GonggiBrandMark: View {
     }
 
     var body: some View {
-        // Official wordmark includes “공간을 기록하다” — do not re-typeset beside it.
-        GonggiLogoView(variant: .white, width: size.logoWidth)
+        KmoWordmark(alignment: .leading, showsTagline: false)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

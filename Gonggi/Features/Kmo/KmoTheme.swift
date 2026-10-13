@@ -140,6 +140,27 @@ struct KmoRemoteImage: View {
     }
 }
 
+/// 로그인과 홈 위쪽의 이름 표시. 새 장식 로고 없이 고딕체 「커모」와 한 줄 설명만 쓴다.
+struct KmoWordmark: View {
+    var alignment: HorizontalAlignment = .center
+    var showsTagline = true
+
+    var body: some View {
+        VStack(alignment: alignment, spacing: 2) {
+            Text(KmoCopy.brand)
+                .font(.largeTitle.weight(.bold))
+                .foregroundStyle(KmoColors.textPrimary)
+            if showsTagline {
+                Text(KmoCopy.tagline)
+                    .font(.subheadline)
+                    .foregroundStyle(KmoColors.textSecondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(KmoCopy.brand), \(KmoCopy.tagline)")
+    }
+}
+
 /// 카드 윗부분을 채우는 사진. 폭은 카드에 맞추고, 사진이 없으면 단색.
 struct KmoBannerImage: View {
     let urlString: String?
