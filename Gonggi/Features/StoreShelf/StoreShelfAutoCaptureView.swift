@@ -13,7 +13,7 @@ enum StoreShelfAutoPhase: Equatable {
     case finishing
     case processing
     case review
-    case failed(String)
+    case failed(StoreCaptureFailure)
 }
 
 @MainActor
@@ -64,7 +64,7 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
         do {
             try captures.create(manifest)
         } catch {
-            phase = .failed("촬영 자료를 저장할 공간을 만들지 못했어요")
+            phase = .failed(StoreCaptureFailure(kind: .other, message: "촬영 자료를 저장할 공간을 만들지 못했어요"))
             return
         }
         let e = AutoShelfCaptureEngine(manifest: manifest)
@@ -184,8 +184,8 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
         case .ready:
             guard reviewModel == nil, let result = c.imported else { return }
             openReview(result: result, coordinator: c)
-        case .failed(let m):
-            if phase == .processing { phase = .failed(m) }
+        case .failed(let f):
+            if phase == .processing { phase = .failed(f) }
         default:
             break
         }
@@ -256,7 +256,7 @@ struct StoreShelfAutoCaptureView: View {
                         StoreShelfReviewView(model: review, onDone: { model.stop(); onBack() })
                     }
                 }
-            case .failed(let text): failed(text)
+            case .failed(let failure): failed(failure)
             }
         }
         .onDisappear { model.stop() }
@@ -499,18 +499,20 @@ struct StoreShelfAutoCaptureView: View {
 
     // MARK: Failed
 
-    private func failed(_ text: String) -> some View {
+    private func failed(_ failure: StoreCaptureFailure) -> some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.md) {
             Text("분석을 끝내지 못했어요")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text(text)
+            Text(failure.message)
                 .font(.subheadline)
                 .foregroundStyle(GonggiColors.warningCritical)
-            Text("촬영한 사진은 이 기기에 보존되어 있어요. 연결이 되면 이어서 진행할 수 있어요.")
+            Text(failure.guidance)
                 .font(.footnote)
                 .foregroundStyle(GonggiColors.textSecondary)
-            PrimaryButton(title: "이어서 진행", icon: "arrow.clockwise") { model.retry() }
+            if failure.canRetry {
+                PrimaryButton(title: failure.kind == .network ? "이어서 진행" : "다시 시도", icon: "arrow.clockwise") { model.retry() }
+            }
             SecondaryButton(title: "처음으로", icon: "chevron.left") { model.stop(); onBack() }
         }
         .padding(20)

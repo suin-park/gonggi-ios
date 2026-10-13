@@ -25,8 +25,8 @@ enum StoreShelfAPIError: Error, Equatable {
             case "NOT_STORE_MANAGER": return "이 매장의 담당자가 아니에요"
             case "ANALYSIS_DISABLED": return "사진 분석을 지금은 사용할 수 없어요"
             case "ANALYSIS_LIMIT_REACHED": return "이 촬영의 분석 횟수 한도에 도달했어요. 새로 촬영해 주세요"
-            case "TOO_MANY_PHOTOS", "TOO_MANY_PHOTOS_FOR_ANALYSIS": return "사진이 너무 많아요"
-            case "PHOTO_TOO_LARGE", "PHOTOS_TOO_LARGE_FOR_ANALYSIS": return "사진 용량이 너무 커요"
+            case "TOO_MANY_PHOTOS", "TOO_MANY_PHOTOS_FOR_ANALYSIS": return "한 번에 보낼 수 있는 사진 수를 넘었어요"
+            case "PHOTO_TOO_LARGE", "PHOTOS_TOO_LARGE_FOR_ANALYSIS", "SESSION_TOO_LARGE": return "사진 용량이 서버 한도를 넘었어요"
             case "UPLOAD_INCOMPLETE": return "사진 업로드가 끝나지 않았어요. 다시 시도해 주세요"
             default: return "서버 오류가 발생했어요. 잠시 후 다시 시도해 주세요"
             }

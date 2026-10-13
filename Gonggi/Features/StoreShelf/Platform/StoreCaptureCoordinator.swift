@@ -12,7 +12,7 @@ final class StoreCaptureCoordinator: ObservableObject {
         case analyzing
         case importing
         case ready
-        case failed(String)
+        case failed(StoreCaptureFailure)
     }
 
     @Published private(set) var phase: Phase = .idle
@@ -58,15 +58,22 @@ final class StoreCaptureCoordinator: ObservableObject {
         try? store.save(manifest)
     }
 
-    private func fail(_ message: String) {
-        manifest.lastError = message
+    private func fail(_ failure: StoreCaptureFailure) {
+        manifest.lastError = failure.message
         manifest.status = .failed
         persist()
-        phase = .failed(message)
+        phase = .failed(failure)
     }
 
-    private func message(for error: Error) -> String {
-        (error as? StoreShelfAPIError)?.userMessage ?? "알 수 없는 오류가 발생했어요"
+    private func failure(for error: Error) -> StoreCaptureFailure {
+        switch error as? StoreShelfAPIError {
+        case .transport?: return .network
+        case .server(let status, let code)?: return StoreCaptureFailure.fromServer(status: status, code: code)
+        case .notSignedIn?: return StoreCaptureFailure(kind: .unavailable, message: "로그인이 필요해요")
+        case .forbidden?: return StoreCaptureFailure(kind: .unavailable, message: "이 매장의 담당자가 아니에요")
+        case .notFound?, .invalidResponse?: return StoreCaptureFailure(kind: .other, message: "서버 응답을 확인하지 못했어요")
+        case nil: return StoreCaptureFailure(kind: .other, message: "알 수 없는 오류가 발생했어요")
+        }
     }
 
     func process(force: Bool) async {
@@ -92,7 +99,7 @@ final class StoreCaptureCoordinator: ObservableObject {
                 }
                 persist()
             }
-            guard let sid = manifest.serverSessionId else { return fail("서버 세션을 만들지 못했어요") }
+            guard let sid = manifest.serverSessionId else { return fail(StoreCaptureFailure(kind: .other, message: "서버 세션을 만들지 못했어요")) }
 
             // 2. Photos: register, upload, confirm.
             manifest.status = .uploading
@@ -124,29 +131,16 @@ final class StoreCaptureCoordinator: ObservableObject {
                     return
                 }
                 if view.session.status == "FAILED" || view.run?.status == "FAILED" {
-                    return fail(analysisErrorText(view.run?.errorCode))
+                    return fail(StoreCaptureFailure.fromRun(errorCode: view.run?.errorCode))
                 }
                 try await Task.sleep(nanoseconds: pollSeconds * 1_000_000_000)
                 waited += Int(pollSeconds)
             }
-            fail("분석이 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요")
+            fail(StoreCaptureFailure(kind: .analysisFailed, message: "분석이 오래 걸리고 있어요. 잠시 후 다시 확인해 주세요"))
         } catch is CancellationError {
             phase = .idle
         } catch {
-            fail(message(for: error))
-        }
-    }
-
-    private func analysisErrorText(_ code: String?) -> String {
-        switch code {
-        case "photo_missing": return "업로드된 사진을 찾지 못했어요. 다시 시도해 주세요"
-        case "invalid_structure": return "분석 결과를 읽지 못했어요. 다시 분석해 주세요"
-        case "model_rate_limited": return "분석 요청이 많아요. 잠시 후 다시 시도해 주세요"
-        case "model_timeout": return "분석 시간이 초과됐어요. 다시 시도해 주세요"
-        case "model_auth": return "분석 서비스 설정에 문제가 있어요"
-        case "model_disabled": return "사진 분석을 지금은 사용할 수 없어요"
-        case let c?: return "분석에 실패했어요 (\(c))"
-        default: return "분석에 실패했어요"
+            fail(failure(for: error))
         }
     }
 

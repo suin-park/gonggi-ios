@@ -127,6 +127,7 @@ jobs:
             -only-testing:GonggiTests/StoreShelfCoreTests6 \
             -only-testing:GonggiTests/StoreShelfCoreTests7 \
             -only-testing:GonggiTests/StoreShelfCoreTests8 \
+            -only-testing:GonggiTests/StoreShelfCoreTests9 \
             -only-testing:GonggiTests/StoreShelfServerSplitTests \
             -only-testing:GonggiTests/StoreShelfAutoCaptureTests \
             -only-testing:GonggiTests/ShelfRecognitionFixtureTests \

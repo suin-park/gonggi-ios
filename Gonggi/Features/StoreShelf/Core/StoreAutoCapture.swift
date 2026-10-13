@@ -25,7 +25,8 @@ struct AutoCaptureConfig: Equatable, Codable, Sendable {
     var relativeSharpness: Float = 0.85
     /// Previous frames compared for relative sharpness.
     var sharpnessHistory: Int = 6
-    var maxPhotos: Int = 16
+    /// Photos kept per capture. The server accepts up to 40 and chooses the sharp, different ones itself.
+    var maxPhotos: Int = 24
     /// Distance of the surface at the image centre (metres): outside, the hint asks to move, the frame is not saved.
     var minCentreDistanceM: Float = 0.3
     var maxCentreDistanceM: Float = 3.2
