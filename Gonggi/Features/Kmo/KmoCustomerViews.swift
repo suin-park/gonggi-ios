@@ -62,6 +62,7 @@ struct KmoCustomerHomeView: View {
     @State private var browseCount: Int?
     @State private var notice: String?
     @FocusState private var fieldFocused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     init(previewRecent: [KmoRecentProduct]? = nil) {
         _recent = StateObject(wrappedValue: KmoRecentModel(preview: previewRecent))
@@ -147,21 +148,27 @@ struct KmoCustomerHomeView: View {
             Text(KmoCopy.findProduct)
                 .font(.title3.weight(.bold))
                 .foregroundStyle(KmoColors.textPrimary)
-            HStack(spacing: 8) {
-                TextField("", text: $model.query, prompt: Text(KmoCopy.namePlaceholder).foregroundColor(KmoColors.textSecondary))
-                    .font(.body)
-                    .foregroundStyle(KmoColors.textPrimary)
-                    .submitLabel(.search)
-                    .focused($fieldFocused)
-                    .onSubmit(submitSearch)
-                    .frame(minHeight: 44)
-                Button(action: submitSearch) {
-                    Text(KmoCopy.search)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(KmoColors.accent)
-                        .frame(minWidth: 44, minHeight: 44)
+            let field = TextField("", text: $model.query,
+                                  prompt: Text(KmoCopy.namePlaceholder).font(.body).foregroundColor(KmoColors.textSecondary))
+                .font(.body)
+                .foregroundStyle(KmoColors.textPrimary)
+                .submitLabel(.search)
+                .focused($fieldFocused)
+                .onSubmit(submitSearch)
+                .frame(minHeight: 44)
+            let searchButton = Button(action: submitSearch) {
+                Text(KmoCopy.search)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(KmoColors.accent)
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .buttonStyle(.plain)
+            Group {
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 0) { field; searchButton }
+                } else {
+                    HStack(spacing: 8) { field; searchButton }
                 }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
             .background(KmoColors.field)
@@ -191,7 +198,9 @@ struct KmoCustomerHomeView: View {
     private var browseSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             KmoSectionTitle(text: KmoCopy.browse)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+            LazyVGrid(columns: typeSize.isAccessibilitySize
+                      ? [GridItem(.flexible())]
+                      : [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                 Button { path.append(.browse) } label: {
                     KmoBrowseCard(
                         title: KmoCopy.browseStores,
@@ -223,11 +232,21 @@ struct KmoCustomerHomeView: View {
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             KmoSectionTitle(text: KmoCopy.recent)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 10) {
+            if typeSize.isAccessibilitySize {
+                // 글씨가 아주 크면 가로로 넘기지 않고 세로로 늘어놓는다.
+                VStack(alignment: .leading, spacing: 10) {
                     ForEach(recent.items) { item in
                         Button { openRecent(item) } label: { recentCard(item) }
                             .buttonStyle(.plain)
+                    }
+                }
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(recent.items) { item in
+                            Button { openRecent(item) } label: { recentCard(item) }
+                                .buttonStyle(.plain)
+                        }
                     }
                 }
             }
@@ -415,7 +434,8 @@ struct KmoResultsView: View {
 
     private var searchField: some View {
         HStack(spacing: 8) {
-            TextField("", text: $model.query, prompt: Text(KmoCopy.namePlaceholder).foregroundColor(KmoColors.textSecondary))
+            TextField("", text: $model.query,
+                      prompt: Text(KmoCopy.namePlaceholder).font(.body).foregroundColor(KmoColors.textSecondary))
                 .font(.body)
                 .foregroundStyle(KmoColors.textPrimary)
                 .submitLabel(.search)

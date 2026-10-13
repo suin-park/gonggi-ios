@@ -51,6 +51,7 @@ struct KmoOwnerHomeView: View {
     @State private var showStorePicker = false
     @State private var showInfo = false
     @State private var toast: String?
+    @Environment(\.dynamicTypeSize) private var typeSize
     private let pendingStore = KmoPendingStoreLinkStore(storage: UserDefaults.standard)
 
     private var stores: [StoreRecord] {
@@ -73,7 +74,9 @@ struct KmoOwnerHomeView: View {
                         showManage = true
                     }
                     KmoSectionTitle(text: "매장 관리")
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                    LazyVGrid(columns: typeSize.isAccessibilitySize
+                              ? [GridItem(.flexible())]
+                              : [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                         tile("상품 관리") { startAdding = false; showManage = true }
                         tile("매대 등록") { prepareStore(store); showShelfRegister = true }
                         tile("매장 촬영") { prepareStore(store); showStoreCapture = true }
