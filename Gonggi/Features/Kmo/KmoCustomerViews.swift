@@ -187,16 +187,16 @@ struct KmoCustomerHomeView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                 Button { showBrowse = true } label: {
                     KmoPhotoCard(title: KmoCopy.browseStores) {
-                        KmoRemoteImage(urlString: browseThumb, size: CGSize(width: 400, height: 120), fit: false)
+                        KmoBannerImage(urlString: browseThumb)
                     }
                 }
                 .buttonStyle(.plain)
                 Button { path.append(.mySpace) } label: {
                     KmoPhotoCard(title: KmoCopy.mySpace) {
-                        if let space = ownSpace {
-                            SpaceThumbnailView(space: space, height: 120, cornerRadius: 12, showsActivityOverlay: false)
+                        if let space = ownSpace, space.remoteImageURL != nil || space.localLatLongPath != nil {
+                            SpaceThumbnailView(space: space, height: 120, cornerRadius: 0, showsActivityOverlay: false)
                         } else {
-                            KmoColors.field.frame(height: 120).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            KmoColors.field
                         }
                     }
                 }

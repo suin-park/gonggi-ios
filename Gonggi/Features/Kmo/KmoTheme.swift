@@ -139,3 +139,25 @@ struct KmoRemoteImage: View {
         .accessibilityHidden(true)
     }
 }
+
+/// 카드 윗부분을 채우는 사진. 폭은 카드에 맞추고, 사진이 없으면 단색.
+struct KmoBannerImage: View {
+    let urlString: String?
+
+    var body: some View {
+        ZStack {
+            KmoColors.field
+            if let urlString, let url = URL(string: urlString), url.scheme == "https" {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 120)
+        .clipped()
+        .accessibilityHidden(true)
+    }
+}
