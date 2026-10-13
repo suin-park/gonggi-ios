@@ -6,10 +6,15 @@ name: Gonggi iOS store-shelf check
 on:
   workflow_dispatch:
   push:
-    branches: [feat/store-shelf-record-entry]
+    branches: [feat/store-shelf-record-entry, feat/kmo-ui-v1]
     paths:
       - ".github/workflows/gonggi-ios-store-shelf-check.yml"
       - "Gonggi/Features/StoreShelf/**"
+      - "Gonggi/Features/Kmo/**"
+      - "Gonggi/App/**"
+      - "Gonggi/Features/Home/**"
+      - "Gonggi/Features/Library/**"
+      - "Gonggi/Features/Profile/**"
       - "Gonggi/Features/Capture/RecordHomeView.swift"
       - "Gonggi/Features/Capture/CaptureContainerView.swift"
       - "GonggiTests/StoreShelf*.swift"
