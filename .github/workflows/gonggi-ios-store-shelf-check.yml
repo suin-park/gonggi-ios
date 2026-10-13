@@ -13,6 +13,7 @@ on:
       - "Gonggi/Features/Capture/RecordHomeView.swift"
       - "Gonggi/Features/Capture/CaptureContainerView.swift"
       - "GonggiTests/StoreShelf*.swift"
+      - "project.yml"
       - "Tools/StoreShelfLogicCheck/**"
 
 permissions:
@@ -123,6 +124,11 @@ jobs:
             -only-testing:GonggiTests/StoreShelfCoreTests3 \
             -only-testing:GonggiTests/StoreShelfCoreTests4 \
             -only-testing:GonggiTests/StoreShelfCoreTests5 \
+            -only-testing:GonggiTests/StoreShelfCoreTests6 \
+            -only-testing:GonggiTests/StoreShelfCoreTests7 \
+            -only-testing:GonggiTests/StoreShelfCoreTests8 \
+            -only-testing:GonggiTests/StoreShelfServerSplitTests \
+            -only-testing:GonggiTests/StoreShelfAutoCaptureTests \
             -only-testing:GonggiTests/ShelfRecognitionFixtureTests \
             -only-testing:GonggiTests/RecordHomeTests \
             CODE_SIGNING_ALLOWED=NO \
