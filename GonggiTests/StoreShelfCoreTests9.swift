@@ -452,3 +452,88 @@ final class StoreShelfShortFlowTests: XCTestCase {
         XCTAssertFalse(StoreBlurCheck.isObviouslyBlurred(sharpness: 25), "a soft photo goes to the analysis: names are not judged here")
     }
 }
+
+final class StoreShelfSupplementTests: XCTestCase {
+    private func product(_ id: String, _ name: String, source: String? = nil, reasons: [String] = []) -> ShelfProduct {
+        var p = ShelfProduct(id: id, name: name, createdAt: Date(), imageFileNames: [], embeddings: [], colorDescriptors: [],
+                             similarProductIds: [], needsReview: !reasons.isEmpty, reviewReasons: reasons)
+        p.nameSource = source
+        return p
+    }
+
+    private func data() -> StoreShelfData {
+        var d = StoreShelfData.empty(storeId: "st")
+        d.products = [product("p1", "제품 1", reasons: [ShelfNameReview.unread]), product("p2", "손으로 쓴 이름", source: "manual"), product("p3", "새우깡", source: "auto")]
+        d.placements = [
+            ShelfPlacement(id: "a", productId: "p1", shelfId: "s1", u: 0, v: 0, tier: 0, world: .zero, widthM: 0.1, heightM: 0.2, uncertaintyM: 0.1,
+                           observationCount: 2, firstObservedAt: Date(), lastObservedAt: Date(), status: .present, needsReview: false,
+                           visibleCount: 3, countBasis: "lower_bound"),
+        ]
+        return d
+    }
+
+    private func update(_ key: String, name: String?) -> RemoteSupplementUpdate {
+        RemoteSupplementUpdate(key: key, nameOriginal: name, brand: "오리온", variant: nil, volumeText: "67g", volumeValue: 67, volumeUnit: "g",
+                               nameReadStatus: "read")
+    }
+
+    func testOnlyTheNamedProductIsCompletedAndQuantitiesStay() {
+        var d = data()
+        let before = d.placements
+        let r = RemoteSupplementResult(status: "updated", updates: [update("n1", name: "꼬깔콘")], added: [], unchanged: [])
+        let applied = SupplementApplier.apply(r, to: &d, keyToProductId: ["n1": "p1", "n2": "p2", "n3": "p3"], newId: { "new" })
+        XCTAssertEqual(applied.updatedProductIds, ["p1"])
+        XCTAssertEqual(d.products[0].name, "꼬깔콘")
+        XCTAssertEqual(d.products[0].brand, "오리온")
+        XCTAssertEqual(d.products[0].id, "p1", "same product id")
+        XCTAssertFalse(d.products[0].reviewReasons.contains(ShelfNameReview.unread))
+        XCTAssertEqual(d.placements, before, "shelf link and visible count are untouched")
+        XCTAssertEqual(d.products[2].name, "새우깡")
+    }
+
+    func testAManagersNameIsNeverReplaced() {
+        var d = data()
+        let r = RemoteSupplementResult(status: "updated", updates: [update("n2", name: "다른이름")], added: [], unchanged: [])
+        let applied = SupplementApplier.apply(r, to: &d, keyToProductId: ["n2": "p2"], newId: { "new" })
+        XCTAssertEqual(d.products[1].name, "손으로 쓴 이름")
+        XCTAssertEqual(applied.keptManualNames, 1)
+        XCTAssertTrue(applied.updatedProductIds.isEmpty)
+    }
+
+    func testAMismatchChangesNothing() {
+        var d = data()
+        let copy = d
+        let r = RemoteSupplementResult(status: "mismatch", updates: [update("n1", name: "꼬깔콘")], added: [], unchanged: [])
+        _ = SupplementApplier.apply(r, to: &d, keyToProductId: ["n1": "p1"], newId: { "new" })
+        XCTAssertEqual(d, copy)
+    }
+
+    func testNewProductsHaveNoShelfLinkAndNoQuantity() {
+        var d = data()
+        let r = RemoteSupplementResult(status: "updated", updates: [],
+                                       added: [RemoteSupplementUpdate(key: "n9", nameOriginal: "홈런볼", brand: "해태", variant: nil, volumeText: nil,
+                                                                      volumeValue: nil, volumeUnit: nil, nameReadStatus: "read")], unchanged: [])
+        let applied = SupplementApplier.apply(r, to: &d, keyToProductId: [:], newId: { "p9" })
+        XCTAssertEqual(applied.addedProductIds, ["p9"])
+        XCTAssertTrue(d.placements.filter { $0.productId == "p9" }.isEmpty)
+        XCTAssertTrue(d.products.last!.needsReview)
+    }
+
+    func testResultAndTargetDecodeAndPhotosCarryTheirTarget() throws {
+        let json = """
+        {"status":"updated","updates":[{"key":"n1","nameOriginal":"꼬깔콘","brand":null,"variant":null,"volumeText":"67g","volumeValue":67,
+         "volumeUnit":"g","nameReadStatus":"read"}],"added":[],"unchanged":[{"key":"n2","reason":"not_found"}]}
+        """
+        let r = try JSONDecoder().decode(RemoteSupplementResult.self, from: Data(json.utf8))
+        XCTAssertEqual(r.updates.first?.nameOriginal, "꼬깔콘")
+        XCTAssertEqual(r.unchanged.first?.reason, "not_found")
+        let p = CapturedPhoto(id: "a", seq: 0, takenAt: Date(), width: 10, height: 10, sensorWidth: 10, sensorHeight: 10, fx: 1, fy: 1, cx: 1, cy: 1,
+                              pose: Array(repeating: 0, count: 16), trackingState: "normal", sharpness: 1, bytes: 1, sha256: "x",
+                              surfaceHit: nil, fileName: "a.jpg", epoch: "xe3", purpose: "supplement", targetShelfKey: "s1",
+                              targetProductKeys: ["n4"])
+        let b = p.registerBody(iso: { _ in "t" })
+        XCTAssertEqual(b.purpose, "supplement")
+        XCTAssertEqual(b.targetShelfKey, "s1")
+        XCTAssertEqual(b.targetProductKeys, ["n4"])
+    }
+}

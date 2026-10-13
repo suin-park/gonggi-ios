@@ -39,6 +39,10 @@ struct CapturedPhoto: Codable, Equatable, Identifiable, Sendable {
     /// Identifier of the AR coordinate system the pose belongs to ("e1", "e2", ...). The device changes it whenever the
     /// AR session is restarted, interrupted or relocalised, so poses of different systems are never mixed.
     var epoch: String? = nil
+    /// "supplement": a closer photo for named products of a finished draft (never part of a whole-shelf analysis).
+    var purpose: String? = nil
+    var targetShelfKey: String? = nil
+    var targetProductKeys: [String]? = nil
 }
 
 struct CapturedPlane: Codable, Equatable, Sendable {
@@ -237,6 +241,34 @@ struct RemoteDetailTarget: Codable, Equatable, Sendable {
     /// "unreadable" | "partial" | "cut_off"
     var reason: String
     var productKeys: [String]
+    /// The shelf of the draft the products are on; the app names it, the model never chooses it.
+    var shelfKey: String? = nil
+}
+
+/// What a closer photo added to products that were already in the draft.
+struct RemoteSupplementUpdate: Codable, Equatable, Sendable {
+    var key: String
+    var nameOriginal: String?
+    var brand: String?
+    var variant: String?
+    var volumeText: String?
+    var volumeValue: Double?
+    var volumeUnit: String?
+    var nameReadStatus: String
+}
+
+struct RemoteSupplementUnchanged: Codable, Equatable, Sendable {
+    var key: String
+    /// "not_found" | "still_unreadable" | "already_read"
+    var reason: String
+}
+
+struct RemoteSupplementResult: Codable, Equatable, Sendable {
+    /// "updated" | "nothing_new" | "mismatch"
+    var status: String
+    var updates: [RemoteSupplementUpdate]
+    var added: [RemoteSupplementUpdate]
+    var unchanged: [RemoteSupplementUnchanged]
 }
 
 struct RemoteCaptureView: Codable, Equatable, Sendable {
@@ -310,6 +342,9 @@ struct RegisterPhotoBody: Codable, Equatable, Sendable {
     var sharpness: Float
     var surfaceHit: CapturedSurfaceHit?
     var epoch: String?
+    var purpose: String? = nil
+    var targetShelfKey: String? = nil
+    var targetProductKeys: [String]? = nil
 }
 
 struct RegisterPhotosBody: Codable, Equatable, Sendable {
@@ -322,6 +357,7 @@ extension CapturedPhoto {
         RegisterPhotoBody(
             id: id, seq: seq, takenAt: iso(takenAt), width: width, height: height, bytes: bytes, sha256: sha256, orientation: orientation,
             pose: pose, intrinsics: .init(fx: fx, fy: fy, cx: cx, cy: cy, sensorWidth: sensorWidth, sensorHeight: sensorHeight),
-            trackingState: trackingState, sharpness: sharpness, surfaceHit: surfaceHit, epoch: epoch)
+            trackingState: trackingState, sharpness: sharpness, surfaceHit: surfaceHit, epoch: epoch, purpose: purpose,
+            targetShelfKey: targetShelfKey, targetProductKeys: targetProductKeys)
     }
 }

@@ -43,6 +43,8 @@ struct AnalysisImportResult {
     var data: StoreShelfData
     var images: [String: Data]
     var summary: AnalysisImportSummary
+    /// Server draft product key -> the id of the product made from it (kept so a closer photo can complete THAT product).
+    var productIdByKey: [String: String] = [:]
 }
 
 /// Which captured photos go to the server. The app keeps at most `StoreAutoCaptureConfig.maxPhotos`, the server accepts
@@ -262,7 +264,7 @@ enum AnalysisImporter {
         data.walkTrail = Array(walkTrail.suffix(4000))
         data.updatedAt = now
         summary.products = data.products.count
-        return AnalysisImportResult(data: data, images: images, summary: summary)
+        return AnalysisImportResult(data: data, images: images, summary: summary, productIdByKey: productIdByKey)
     }
 
     static func volumeText(value: Double?, unit: String?) -> String? {
@@ -351,5 +353,63 @@ enum ShelfPositionText {
     /// "계산됨" never means "실기기 검증됨".
     static func verification(_ s: ShelfLayout) -> String {
         s.deviceVerifiedAt != nil ? "실기기 안내 확인됨" : "실기기 안내 검증 전"
+    }
+}
+
+/// Applies the answer of a supplement to the data under review. Only names, brand, flavour and volume of the products the
+/// answer is about change: ids, shelf links, positions and quantities stay, and a name a person typed is never replaced.
+enum SupplementApplier {
+    struct Applied: Equatable, Sendable {
+        var updatedProductIds: [String] = []
+        var addedProductIds: [String] = []
+        var keptManualNames = 0
+    }
+
+    static func apply(_ result: RemoteSupplementResult, to data: inout StoreShelfData, keyToProductId: [String: String],
+                      newId: () -> String, now: Date = Date()) -> Applied {
+        var applied = Applied()
+        guard result.status != "mismatch" else { return applied }
+        for u in result.updates {
+            guard let id = keyToProductId[u.key], let i = data.products.firstIndex(where: { $0.id == id }) else { continue }
+            if data.products[i].nameIsProtected {
+                // The manager's own name stays; what was read is not applied over it.
+                applied.keptManualNames += 1
+                continue
+            }
+            if let name = u.nameOriginal, !name.trimmingCharacters(in: .whitespaces).isEmpty {
+                data.products[i].name = String(name.prefix(40))
+                data.products[i].nameSource = ShelfNameSource.auto
+            }
+            data.products[i].brand = u.brand ?? data.products[i].brand
+            data.products[i].variantText = u.variant ?? data.products[i].variantText
+            data.products[i].volumeText = u.volumeText ?? AnalysisImporter.volumeText(value: u.volumeValue, unit: u.volumeUnit)
+                ?? data.products[i].volumeText
+            var tokens = Set(data.products[i].ocrTokens ?? [])
+            for t in [u.nameOriginal, u.brand, u.variant] {
+                if let t { let k = ShelfProductNameExtractor.key(t); if k.count >= 2 { tokens.insert(k) } }
+            }
+            data.products[i].ocrTokens = Array(tokens.sorted().prefix(24))
+            data.products[i].reviewReasons.removeAll { ShelfNameReview.all.contains($0) || $0.hasPrefix("브랜드만") }
+            if u.nameReadStatus == "partial" { data.products[i].reviewReasons.append(ShelfNameReview.confirm) }
+            data.products[i].needsReview = !data.products[i].reviewReasons.isEmpty
+            applied.updatedProductIds.append(id)
+        }
+        // Products that were new in the closer photos: in the list, linked to no shelf, never counted.
+        for a in result.added {
+            let read = !(a.nameOriginal ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+            let count = data.products.count + 1
+            var p = ShelfProduct(
+                id: newId(), name: read ? a.nameOriginal! : "제품 \(count)", createdAt: now, imageFileNames: [], embeddings: [],
+                colorDescriptors: [], similarProductIds: [], needsReview: true,
+                reviewReasons: ["추가 촬영에서 새로 보였어요. 어느 매대인지 확인해 주세요"])
+            p.nameSource = read ? ShelfNameSource.auto : nil
+            p.brand = a.brand
+            p.variantText = a.variant
+            p.volumeText = a.volumeText
+            data.products.append(p)
+            applied.addedProductIds.append(p.id)
+        }
+        data.updatedAt = now
+        return applied
     }
 }

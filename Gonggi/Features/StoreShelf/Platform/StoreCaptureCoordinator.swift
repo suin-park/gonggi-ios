@@ -152,6 +152,38 @@ final class StoreCaptureCoordinator: ObservableObject {
         }
     }
 
+    /// Sends the closer photos of the current manifest to the server and completes the names of `productKeys` with them.
+    /// The shelf is not analysed again; the result is applied by the caller to the data under review.
+    func supplement(shelfKey: String, productKeys: [String]) async -> Result<RemoteSupplementResult, StoreCaptureFailure> {
+        do {
+            if manifest.serverSessionId == nil {
+                let started = try await api.startCapture(
+                    storeId: manifest.storeId,
+                    body: StartCaptureBody(clientSessionId: manifest.clientSessionId, storeContext: manifest.storeContext,
+                                           contextLabel: manifest.contextLabel,
+                                           device: ["model": manifest.device, "build": manifest.appBuild, "os": UIDevice.current.systemVersion]))
+                manifest.serverSessionId = started.sessionId
+                for id in started.uploadedPhotoIds {
+                    if let i = manifest.photos.firstIndex(where: { $0.id == id }) { manifest.photos[i].uploaded = true }
+                }
+            }
+            guard let sid = manifest.serverSessionId else { return .failure(StoreCaptureFailure(kind: .other, message: "서버에 문제가 있어요")) }
+            phase = .uploading(done: 0, total: manifest.photos.count)
+            try await uploadPending(sessionId: sid)
+            phase = .analyzing
+            let ids = manifest.photos.filter { $0.purpose == "supplement" && $0.targetShelfKey == shelfKey }.map(\.id)
+            guard !ids.isEmpty else { return .failure(StoreCaptureFailure(kind: .other, message: "사진을 찾지 못했어요")) }
+            let result = try await api.supplement(storeId: manifest.storeId, sessionId: sid, shelfKey: shelfKey, productKeys: productKeys, photoIds: ids)
+            persist()
+            phase = .ready
+            return .success(result)
+        } catch {
+            let f = failure(for: error)
+            phase = .failed(f)
+            return .failure(f)
+        }
+    }
+
     private func uploadPending(sessionId: String) async throws {
         for _ in 0..<2 {
             let eligible = StoreUploadPlan.subset(manifest.photos, max: StoreUploadPlan.serverMaxPhotos)

@@ -27,6 +27,8 @@ final class AutoShelfCaptureEngine: ObservableObject {
     private var gate = StoreStillnessGate()
     /// "x" for photos taken after the world map was saved (supplement): they help names and counts, never positions.
     var epochPrefix = ""
+    /// Set for closer photos of named products: written into every photo taken (the server checks it).
+    var supplementTarget: (shelfKey: String, productKeys: [String])?
 
     private(set) var manifest: CaptureSessionManifest
     private var selector: AutoCaptureSelector
@@ -153,6 +155,7 @@ final class AutoShelfCaptureEngine: ObservableObject {
         let maxSide = exportMaxSide, quality = exportQuality
         let state = frame.trackingNormal ? "normal" : "limited"
         let epoch = controller.map { epochPrefix + $0.epochId }
+        let target = supplementTarget
         let takenAt = Date()
         queue.async { [weak self] in
             guard let self else { return }
@@ -165,7 +168,8 @@ final class AutoShelfCaptureEngine: ObservableObject {
                     sensorWidth: Int(camera.width), sensorHeight: Int(camera.height), fx: camera.fx, fy: camera.fy, cx: camera.cx,
                     cy: camera.cy, pose: camera.cameraToWorld.m, trackingState: state, sharpness: sharpness, bytes: jpeg.count,
                     sha256: SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined(), surfaceHit: hit,
-                    lowOverlap: lowOverlap, selectionReason: reason, fileName: name, uploaded: false, epoch: epoch)
+                    lowOverlap: lowOverlap, selectionReason: reason, fileName: name, uploaded: false, epoch: epoch,
+                    purpose: target == nil ? nil : "supplement", targetShelfKey: target?.shelfKey, targetProductKeys: target?.productKeys)
             }
             DispatchQueue.main.async {
                 self.writing = false

@@ -170,6 +170,14 @@ final class StoreShelfAPIClient: @unchecked Sendable {
                               as: RemoteStartedAnalysis.self)
     }
 
+    /// Closer photos (already registered and uploaded as "supplement" of `shelfKey`) complete the names of `productKeys`.
+    func supplement(storeId: String, sessionId: String, shelfKey: String, productKeys: [String], photoIds: [String]) async throws -> RemoteSupplementResult {
+        struct Body: Encodable { var shelfKey: String; var productKeys: [String]; var photoIds: [String] }
+        let body = try JSONEncoder().encode(Body(shelfKey: shelfKey, productKeys: productKeys, photoIds: photoIds))
+        return try await send(try request("POST", url(["stores", storeId, "captures", sessionId, "supplement"]), body: body, auth: true),
+                              as: RemoteSupplementResult.self)
+    }
+
     func capture(storeId: String, sessionId: String) async throws -> RemoteCaptureView {
         try await send(try request("GET", url(["stores", storeId, "captures", sessionId]), auth: true), as: RemoteCaptureView.self)
     }

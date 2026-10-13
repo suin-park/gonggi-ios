@@ -49,6 +49,8 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
     /// Closer photos asked for after the final analysis (the world map was saved before: no new map, no positions).
     private var isSupplement = false
     @Published private(set) var reviewDetailTargets: [RemoteDetailTarget] = []
+    /// The target of the closer photos being taken: named by the app from the server's answer, never chosen by the model.
+    private var supplementInfo: (shelfKey: String, productKeys: [String])?
 
     private var cancellables = Set<AnyCancellable>()
     private var lastFrame: StoreShelfFrame?
@@ -168,15 +170,17 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
 
     /// After the final analysis: take closer photos of the parts that could not be read.
     func beginSupplement() {
-        guard let c = coordinator, !reviewDetailTargets.isEmpty else { return }
+        guard let c = coordinator, let first = reviewDetailTargets.first, let shelfKey = first.shelfKey else { return }
         let manifest = c.manifest
+        supplementInfo = (shelfKey: shelfKey, productKeys: first.productKeys)
         let e = AutoShelfCaptureEngine(manifest: manifest)
         e.attach(controller: controller)
         e.epochPrefix = "x"
+        e.supplementTarget = supplementInfo
         e.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         engine = e
         isSupplement = true
-        detailTargets = Array(reviewDetailTargets.prefix(2))
+        detailTargets = [first]
         detailsTaken = 0
         // the photo the first target lies in is the picture shown with the highlight
         overviewPhoto = manifest.photos.first { $0.id == detailTargets[0].photoId } ?? manifest.photos.first
@@ -188,8 +192,7 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
             self?.engine?.consider(frame)
         }
         e.onSaved = { [weak self] photo in self?.photoSaved(photo) }
-        reviewModel = nil
-        coordinator = nil
+        // The review (with the manager's edits) stays; the closer photos only complete names.
         shotStep = .closer(index: 0)
         phase = .capturing
         armCloser()
@@ -271,7 +274,11 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
         waitingForMap = false
         engine.finish(worldMapData: mapData)
         controller.onFrame = nil
-        startProcessing(manifest: engine.manifest)
+        if isSupplement {
+            startSupplement(manifest: engine.manifest)
+        } else {
+            startProcessing(manifest: engine.manifest)
+        }
     }
 
     // MARK: Analysis and review
@@ -290,7 +297,51 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
         c.start()
     }
 
+    /// Sends the closer photos for the named products; the shelf is not analysed again.
+    private func startSupplement(manifest: CaptureSessionManifest) {
+        controller.stop()
+        let c = StoreCaptureCoordinator(manifest: manifest)
+        c.objectWillChange.sink { [weak self] _ in Task { @MainActor in self?.objectWillChange.send() } }.store(in: &cancellables)
+        coordinator = c
+        phase = .processing
+        runSupplement(on: c)
+    }
+
+    private func runSupplement(on c: StoreCaptureCoordinator) {
+        guard let info = supplementInfo else { return }
+        Task { [weak self] in
+            let r = await c.supplement(shelfKey: info.shelfKey, productKeys: info.productKeys)
+            await MainActor.run { self?.supplementFinished(r) }
+        }
+    }
+
+    private func supplementFinished(_ r: Result<RemoteSupplementResult, StoreCaptureFailure>) {
+        switch r {
+        case .success(let result):
+            if let model = reviewModel { model.applySupplement(result) }
+            let handled = Set(result.updates.map(\.key))
+            if result.status != "mismatch" {
+                reviewDetailTargets = reviewDetailTargets.filter { t in !t.productKeys.allSatisfy { handled.contains($0) } }
+            }
+            switch result.status {
+            case "mismatch": importNote = "다른 곳을 찍은 것 같아요. 표시된 부분을 다시 찍어 주세요."
+            case "nothing_new": importNote = "이 사진으로는 이름을 읽지 못했어요. 이름을 입력해 주세요."
+            default: importNote = nil
+            }
+            isSupplement = false
+            supplementInfo = nil
+            phase = reviewModel == nil ? .intro : .review
+        case .failure(let f):
+            phase = .failed(f)
+        }
+    }
+
     func retry(forceAnalysis: Bool = false) {
+        if isSupplement, let c = coordinator {
+            phase = .processing
+            runSupplement(on: c)
+            return
+        }
         guard let c = coordinator else { return }
         phase = .processing
         c.start(force: forceAnalysis)
@@ -301,7 +352,8 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
         switch c.phase {
         case .ready:
             guard reviewModel == nil, let result = c.imported else { return }
-            reviewDetailTargets = c.detailTargets
+            // Only targets whose shelf the server named: the closer photo is bound to that shelf and those products.
+            reviewDetailTargets = c.detailTargets.filter { $0.shelfKey != nil }
             openReview(result: result, coordinator: c)
         case .failed(let f):
             if phase == .processing { phase = .failed(f) }

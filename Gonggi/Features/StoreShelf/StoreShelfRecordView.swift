@@ -306,12 +306,28 @@ final class StoreShelfRecordViewModel: ObservableObject {
     func loadImported(result: AnalysisImportResult, mapData: Data?, mapInfo: StoreWorldMapInfo?, onSaved: @escaping () -> Void) {
         draft = result.data
         draftImages = result.images
+        keyToProductId = result.productIdByKey
         self.mapData = mapData
         self.mapInfo = mapInfo
         onSavedHook = onSaved
         existingMap = false
         startedAt = Date()
         step = .review
+    }
+
+    /// Server draft key -> product id of the draft under review (a closer photo completes THAT product).
+    private(set) var keyToProductId: [String: String] = [:]
+
+    /// A closer photo completed names of products of the draft. Ids, shelf links and quantities stay; a name a person
+    /// typed is not replaced.
+    @discardableResult
+    func applySupplement(_ result: RemoteSupplementResult) -> SupplementApplier.Applied {
+        guard var d = draft else { return SupplementApplier.Applied() }
+        let applied = SupplementApplier.apply(result, to: &d, keyToProductId: keyToProductId, newId: { UUID().uuidString })
+        draft = d
+        for (a, id) in zip(result.added, applied.addedProductIds) { keyToProductId[a.key] = id }
+        if !applied.updatedProductIds.isEmpty || !applied.addedProductIds.isEmpty { note("supplement") }
+        return applied
     }
 
     // MARK: Review edits (each counts as one manual correction)
