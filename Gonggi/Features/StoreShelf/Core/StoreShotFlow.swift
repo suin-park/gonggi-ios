@@ -127,6 +127,13 @@ enum StoreUserText {
     }
 }
 
+/// A packaged item that is too small in every photo to read: kept as a product, grouped apart in the review.
+enum SmallItemReason {
+    static let text = "작아서 이름을 읽지 못했어요"
+
+    static func isSmall(_ p: ShelfProduct) -> Bool { p.reviewReasons.contains(text) }
+}
+
 /// What a reviewed product needs from the person, in one short line (never several similar warnings).
 enum ProductReviewNeed: Equatable, Sendable {
     case none
@@ -161,9 +168,9 @@ enum StoreReviewPresentation {
         r.contains("같은 제품일 수") || r.contains("비슷해요") || r.contains("이름이 다르게 읽혔어요")
     }
 
-    /// Products that need something from the person.
+    /// Products that need something from the person (the small unreadable ones are counted apart).
     static func attentionCount(_ products: [ShelfProduct]) -> Int {
-        products.filter { need(for: $0) != .none }.count
+        products.filter { need(for: $0) != .none && !SmallItemReason.isSmall($0) }.count
     }
 
     /// Closing needs a question only when there are changes that were not saved.

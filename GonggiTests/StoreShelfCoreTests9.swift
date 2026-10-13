@@ -537,3 +537,119 @@ final class StoreShelfSupplementTests: XCTestCase {
         XCTAssertEqual(b.targetProductKeys, ["n4"])
     }
 }
+
+final class StoreShelfProductSearchTests: XCTestCase {
+    func testAvailabilityTextNeverSaysInStock() {
+        XCTAssertEqual(ProductAvailabilityText.quantityLine(quantity: nil, verifiedIso: nil), "수량은 확인되지 않았어요")
+        XCTAssertTrue(ProductAvailabilityText.quantityLine(quantity: 0, verifiedIso: "2026-10-12T05:00:00.000Z").contains("0개"))
+        XCTAssertTrue(ProductAvailabilityText.quantityLine(quantity: 3, verifiedIso: "2026-10-12T05:00:00.000Z").contains("확인했을 때 3개"))
+        XCTAssertNotEqual(ProductAvailabilityText.quantityLine(quantity: 0, verifiedIso: nil), ProductAvailabilityText.quantityLine(quantity: nil, verifiedIso: nil))
+        for q in [nil, 0, 5] as [Int?] {
+            let t = ProductAvailabilityText.quantityLine(quantity: q, verifiedIso: nil)
+            XCTAssertFalse(t.contains("재고 있음"))
+        }
+        XCTAssertTrue(ProductAvailabilityText.disclaimer.contains("재고는 확인되지 않아요"))
+        XCTAssertEqual(ProductAvailabilityText.confirmedLine(nil), "확인한 날짜가 없어요")
+        XCTAssertEqual(ProductAvailabilityText.distance(450), "450m")
+        XCTAssertEqual(ProductAvailabilityText.distance(1500), "1.5km")
+        XCTAssertNil(ProductAvailabilityText.distance(nil))
+    }
+
+    func testSearchBodyAndStoreEntryDecode() throws {
+        let json = """
+        {"ok":true,"results":[{"identity":"코카콜라제로#355ml","name":"코카콜라 제로","brand":"코카콜라","variant":"제로","volumeText":"355ml",
+         "imageUrl":null,"stores":[{"storeId":"s1","name":"공기마트","branchName":"강남점","address":"서울","latitude":37.5,"longitude":127.0,
+         "distanceM":420,"lastConfirmedAt":"2026-10-12T05:00:00.000Z","recordedQuantity":null,"quantityVerifiedAt":null,"shelves":["음료 매대"],
+         "productIds":["p1"]}]}]}
+        """
+        let body = try JSONDecoder().decode(RemoteProductSearchBody.self, from: Data(json.utf8))
+        XCTAssertEqual(body.results.first?.stores.first?.displayName, "공기마트 강남점")
+        XCTAssertEqual(body.results.first?.subtitle, "코카콜라 · 제로 · 355ml")
+        XCTAssertEqual(body.results.first?.stores.first?.productIds, ["p1"])
+    }
+
+    func testCameraIndexBecomesTheGalleryOfTheRecognitionEngine() {
+        let d = CameraIndexGallery.makeData([
+            RemoteCameraIndexItem(identity: "id-a", name: "A", brand: nil, variant: nil, volumeText: nil, featureModel: "m", embedding: "AAAA", storeCount: 2),
+        ])
+        XCTAssertEqual(d.products.map(\.id), ["id-a"])
+        XCTAssertEqual(d.products.first?.embeddings.count, 1)
+        XCTAssertTrue(d.placements.isEmpty, "the index has no shelf, no position and no map")
+    }
+
+    private func release() -> StoreShelfData {
+        var d = StoreShelfData.empty(storeId: "st")
+        let plane = ShelfPlane(origin: Vec3(1, 0, -2), uAxis: Vec3(1, 0, 0), normal: Vec3(0, 0, 1))
+        d.shelves = [ShelfLayout(id: "sh1", name: "음료 매대", plane: plane, tierBoundaries: [], createdAt: Date(), updatedAt: Date(), photoFileName: nil)]
+        d.products = [
+            ShelfProduct(id: "p1", name: "제품 1", createdAt: Date(), imageFileNames: ["a.jpg"], embeddings: [], colorDescriptors: [], similarProductIds: [],
+                         needsReview: false, reviewReasons: []),
+            ShelfProduct(id: "p2", name: "새우깡", createdAt: Date(), imageFileNames: [], embeddings: [], colorDescriptors: [], similarProductIds: [],
+                         needsReview: false, reviewReasons: []),
+        ]
+        d.placements = ["p1", "p2"].map { id in
+            ShelfPlacement(id: "pl-\(id)", productId: id, shelfId: "sh1", u: 0, v: 1, tier: 0, world: plane.origin, widthM: 0.1, heightM: 0.2,
+                           uncertaintyM: 0.1, observationCount: 2, firstObservedAt: Date(), lastObservedAt: Date(), status: .present, needsReview: false)
+        }
+        return d
+    }
+
+    func testOverlayRenamesRemovesAndAddsWithoutTouchingTheMap() {
+        var d = release()
+        let shelfBefore = d.shelves
+        let overlay = RemoteCatalogOverlay(catalogVersion: 3, items: [
+            RemoteCatalogOverlayItem(productId: "p1", shelfId: "sh1", origin: "release", name: "코카콜라 제로", brand: "코카콜라", variant: nil, volumeText: "355ml",
+                                     status: "ACTIVE", quantity: 2, quantityVerifiedAt: nil, lastConfirmedAt: nil, imageUrl: nil),
+            RemoteCatalogOverlayItem(productId: "p2", shelfId: "sh1", origin: "release", name: "새우깡", brand: nil, variant: nil, volumeText: nil,
+                                     status: "DISCONTINUED", quantity: nil, quantityVerifiedAt: nil, lastConfirmedAt: nil, imageUrl: nil),
+            RemoteCatalogOverlayItem(productId: "m1", shelfId: "sh1", origin: "admin", name: "홈런볼", brand: "해태", variant: nil, volumeText: nil,
+                                     status: "ACTIVE", quantity: 4, quantityVerifiedAt: nil, lastConfirmedAt: nil, imageUrl: nil),
+        ])
+        let s = CatalogOverlayApplier.apply(overlay, to: &d, newPlacementId: { "pl-new" })
+        XCTAssertEqual(s, CatalogOverlayApplier.Summary(renamed: 1, removed: 1, added: 1))
+        XCTAssertEqual(d.product("p1")?.name, "코카콜라 제로")
+        XCTAssertNil(d.product("p2"), "a discontinued product is not offered")
+        XCTAssertTrue(d.placements(ofProduct: "p2").isEmpty)
+        XCTAssertEqual(d.product("m1")?.name, "홈런볼")
+        XCTAssertEqual(d.placements(ofProduct: "m1").first?.shelfId, "sh1")
+        XCTAssertEqual(d.shelves, shelfBefore, "shelves, positions and guidance stay as published")
+    }
+
+    func testAnAddedProductOnAShelfThatIsNotInTheReleaseIsIgnored() {
+        var d = release()
+        let overlay = RemoteCatalogOverlay(catalogVersion: 1, items: [
+            RemoteCatalogOverlayItem(productId: "m9", shelfId: "nope", origin: "admin", name: "X", brand: nil, variant: nil, volumeText: nil,
+                                     status: "ACTIVE", quantity: nil, quantityVerifiedAt: nil, lastConfirmedAt: nil, imageUrl: nil),
+        ])
+        XCTAssertEqual(CatalogOverlayApplier.apply(overlay, to: &d).added, 0)
+    }
+
+    func testEditBodySendsOnlyWhatChangedAndKeepsUnknownDistinctFromZero() {
+        let old = RemoteCatalogItem(productId: "p", shelfId: "s", shelfName: "매대", name: "코카콜라", brand: nil, variant: nil, volumeText: nil, status: "ACTIVE",
+                                    quantity: nil, quantityBasis: nil, quantityVerifiedAt: nil, lastConfirmedAt: nil, infoUpdatedAt: "2026-10-01T00:00:00Z",
+                                    nameLocked: false, origin: "release", imageUrl: nil, unpublishedChange: false)
+        var b = CatalogEditBody.make(old: old, name: "코카콜라", brand: "", variant: "", volume: "", quantity: nil, quantityKnown: false, confirmNow: false, baseVersion: 4)
+        XCTAssertFalse(CatalogEditBody.hasChanges(b))
+        XCTAssertEqual(b["baseVersion"], .int(4))
+        b = CatalogEditBody.make(old: old, name: "코카콜라 제로", brand: "", variant: "", volume: "", quantity: 0, quantityKnown: true, confirmNow: false, baseVersion: 4)
+        XCTAssertEqual(b["name"], .string("코카콜라 제로"))
+        XCTAssertEqual(b["quantity"], .int(0), "zero is a recorded count")
+        XCTAssertNil(b["brand"])
+        var known = old
+        known.quantity = 3
+        b = CatalogEditBody.make(old: known, name: "코카콜라", brand: "", variant: "", volume: "", quantity: nil, quantityKnown: false, confirmNow: false, baseVersion: 4)
+        XCTAssertEqual(b["quantity"], .null, "back to not counted")
+        b = CatalogEditBody.make(old: old, name: "코카콜라", brand: "", variant: "", volume: "", quantity: nil, quantityKnown: false, confirmNow: true, baseVersion: 4)
+        XCTAssertEqual(b["confirm"], .bool(true))
+        XCTAssertNil(b["name"], "a confirmation is not a rename")
+    }
+
+    func testSmallItemsAreCountedApartInTheReview() {
+        func p(_ id: String, small: Bool) -> ShelfProduct {
+            ShelfProduct(id: id, name: "제품 \(id)", createdAt: Date(), imageFileNames: [], embeddings: [], colorDescriptors: [], similarProductIds: [],
+                         needsReview: true, reviewReasons: [ShelfNameReview.unread] + (small ? [SmallItemReason.text] : []))
+        }
+        XCTAssertEqual(StoreReviewPresentation.attentionCount([p("1", small: false), p("2", small: true), p("3", small: true)]), 1)
+        XCTAssertTrue(SmallItemReason.isSmall(p("2", small: true)))
+    }
+}

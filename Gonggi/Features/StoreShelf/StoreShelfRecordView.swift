@@ -856,7 +856,15 @@ struct StoreShelfReviewView: View {
                     .font(.footnote)
                     .foregroundStyle(GonggiColors.textSecondary)
             }
-            ForEach(products) { productRow($0, shelfId: shelf.id) }
+            let small = products.filter(SmallItemReason.isSmall)
+            ForEach(products.filter { !SmallItemReason.isSmall($0) }) { productRow($0, shelfId: shelf.id) }
+            if !small.isEmpty {
+                DisclosureGroup("작아서 읽지 못한 물건 \(small.count)개") {
+                    ForEach(small) { productRow($0, shelfId: shelf.id) }
+                }
+                .font(.subheadline)
+                .foregroundStyle(GonggiColors.textSecondary)
+            }
         }
         .padding(GonggiSpacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)

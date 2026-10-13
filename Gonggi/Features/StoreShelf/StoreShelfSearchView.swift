@@ -123,8 +123,12 @@ final class StoreShelfSearchViewModel: ObservableObject {
     private var started = false
     private var catalogClient: CatalogAPIClient?
 
-    init(source: StoreShelfSearchSource) {
+    /// Products (ids of this release) the customer already chose in the product search; the first one present is locked.
+    var initialProductIds: [String] = []
+
+    init(source: StoreShelfSearchSource, initialProductIds: [String] = []) {
         self.source = source
+        self.initialProductIds = initialProductIds
         if source.data.products.isEmpty || source.data.placements.isEmpty || source.worldMap == nil {
             phase = .noData(StoreShelfCopy.noWorldMapLine)
         } else {
@@ -168,6 +172,9 @@ final class StoreShelfSearchViewModel: ObservableObject {
         }
         beginAlignment()
         StoreShelfSelection.lastStoreId = source.storeId
+        if let id = initialProductIds.first(where: { data.product($0) != nil }) {
+            apply(session.lock(productId: id, source: .name))
+        }
     }
 
     private func beginAlignment() {
@@ -496,11 +503,11 @@ struct StoreShelfSearchView: View {
     @State private var detailProductId: String?
     @State private var showDiagnosticsShare = false
 
-    init(source: StoreShelfSearchSource, onBack: @escaping () -> Void, onRecordFirst: (() -> Void)? = nil) {
+    init(source: StoreShelfSearchSource, initialProductIds: [String] = [], onBack: @escaping () -> Void, onRecordFirst: (() -> Void)? = nil) {
         self.source = source
         self.onBack = onBack
         self.onRecordFirst = onRecordFirst
-        _model = StateObject(wrappedValue: StoreShelfSearchViewModel(source: source))
+        _model = StateObject(wrappedValue: StoreShelfSearchViewModel(source: source, initialProductIds: initialProductIds))
     }
 
     var body: some View {
@@ -610,21 +617,20 @@ struct StoreShelfSearchView: View {
     @ViewBuilder
     private var alignmentBadge: some View {
         switch model.alignment.state {
-        case .aligned(let method, _, let verified, let disagrees):
-            let label = method == .worldMap ? "공간 맞춤" : "표지로 맞춤"
-            Label(disagrees ? label + " (지도와 차이)" : (verified ? label + " ✓" : label), systemImage: "checkmark.circle")
+        case .aligned:
+            Label("위치를 맞췄어요", systemImage: "checkmark.circle")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(.green.opacity(0.7), in: Capsule())
         case .failed:
-            Label("공간 맞춤 실패", systemImage: "exclamationmark.triangle")
+            Label("위치를 맞추지 못했어요", systemImage: "exclamationmark.triangle")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(.red.opacity(0.7), in: Capsule())
         default:
-            Label("공간 불러오는 중", systemImage: "hourglass")
+            Label("주변을 천천히 비춰 주세요", systemImage: "hourglass")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 10).padding(.vertical, 6)
@@ -650,14 +656,16 @@ struct StoreShelfSearchView: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            if case .published(let version, let fromCache) = source.origin {
-                Text("게시본 v\(version)" + (fromCache ? " · 저장된 사본 (오프라인)" : ""))
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.6))
-            } else {
-                Text("이 기기의 기록 (게시 전)")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.6))
+            if StoreShelfFeatureFlags.testMarkersEnabled {
+                if case .published(let version, let fromCache) = source.origin {
+                    Text("게시본 v\(version)" + (fromCache ? " · 저장된 사본 (오프라인)" : ""))
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.6))
+                } else {
+                    Text("이 기기의 기록 (게시 전)")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
             }
             alignmentStatus
             Divider().background(.white.opacity(0.2))
@@ -691,10 +699,10 @@ struct StoreShelfSearchView: View {
         switch model.alignment.state {
         case .failed:
             VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-                Text("저장한 공간을 맞추지 못했어요. 맞지 않는 위치에는 안내를 표시하지 않아요.")
+                Text("위치를 맞추지 못했어요. 맞지 않는 곳에는 안내를 표시하지 않아요.")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
-                Text("기록할 때 비춘 매대 쪽으로 가서 천천히 둘러본 뒤 다시 시도해 주세요.")
+                Text("매장 안에서 주변을 천천히 비춘 뒤 다시 시도해 주세요. 아래 매대 사진도 참고해 주세요.")
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.85))
                 SecondaryButton(title: "다시 맞추기", icon: "arrow.clockwise") { model.retryAlignment() }
@@ -830,7 +838,7 @@ struct StoreShelfSearchView: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.displayName(product)).font(.headline).foregroundStyle(.white)
-                    Text("기록된 진열 위치 \(placements.count)곳").font(.footnote).foregroundStyle(.white.opacity(0.85))
+                    Text("이 제품이 있는 매대 \(Set(placements.map(\.shelfId)).count)곳").font(.footnote).foregroundStyle(.white.opacity(0.85))
                 }
                 Spacer()
             }

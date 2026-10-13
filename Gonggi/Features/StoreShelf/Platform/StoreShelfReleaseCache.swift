@@ -19,6 +19,8 @@ struct StoreShelfPublishedSource {
     var productLinks: [RemoteProductLink]
     /// True when the server could not be reached and the last downloaded copy is used.
     var fromCache: Bool
+    /// The published catalog read together with the release (nil from the cache: the release data is used as it is).
+    var catalog: RemoteCatalogOverlay? = nil
 }
 
 enum StoreShelfHash {
@@ -100,6 +102,7 @@ final class StoreShelfReleaseCache {
         if let p = pointer(storeId), p.releaseId == view.releaseId,
            var cached = try? read(storeId: storeId, pointer: p, fromCache: false) {
             cached.productLinks = view.productLinks
+            cached.catalog = view.catalog
             try? write(pointer: Pointer(releaseId: view.releaseId, version: view.version, featureModel: view.featureModel, links: view.productLinks),
                        storeId: storeId)
             return cached
@@ -128,8 +131,10 @@ final class StoreShelfReleaseCache {
         try write(pointer: Pointer(releaseId: view.releaseId, version: view.version, featureModel: view.featureModel, links: view.productLinks),
                   storeId: storeId)
         prune(storeId: storeId, keep: view.releaseId)
-        return try read(storeId: storeId, pointer: Pointer(releaseId: view.releaseId, version: view.version, featureModel: view.featureModel,
-                                                           links: view.productLinks), fromCache: false)
+        var fresh = try read(storeId: storeId, pointer: Pointer(releaseId: view.releaseId, version: view.version, featureModel: view.featureModel,
+                                                                links: view.productLinks), fromCache: false)
+        fresh.catalog = view.catalog
+        return fresh
     }
 
     private func write(pointer: Pointer, storeId: String) throws {

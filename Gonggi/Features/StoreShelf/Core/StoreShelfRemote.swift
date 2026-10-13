@@ -62,6 +62,8 @@ struct RemoteReleaseView: Codable, Equatable, Sendable {
     var files: [RemoteReleaseFile]
     var productLinks: [RemoteProductLink]
     var expiresInSec: Int
+    /// The published catalog next to the release (names a manager corrected, products added without a capture).
+    var catalog: RemoteCatalogOverlay? = nil
 }
 
 struct ReleaseDeclarationFile: Codable, Equatable, Sendable {

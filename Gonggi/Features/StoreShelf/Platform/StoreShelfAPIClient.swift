@@ -23,6 +23,9 @@ enum StoreShelfAPIError: Error, Equatable {
             switch code {
             case "UPLOAD_INCOMPLETE", "UPLOAD_SIZE_MISMATCH": return "업로드가 완료되지 않았어요. 다시 시도해 주세요"
             case "NOT_STORE_MANAGER": return "이 매장의 담당자가 아니에요"
+            case "STALE_CATALOG": return "다른 곳에서 먼저 바뀌었어요. 새로 불러올게요"
+            case "NAME_REQUIRED": return "이름을 입력해 주세요"
+            case "SHELF_NOT_FOUND": return "매대를 찾지 못했어요"
             case "ANALYSIS_DISABLED": return "사진 분석을 지금은 사용할 수 없어요"
             case "ANALYSIS_LIMIT_REACHED": return "이 촬영의 분석 횟수 한도에 도달했어요. 새로 촬영해 주세요"
             case "TOO_MANY_PHOTOS", "TOO_MANY_PHOTOS_FOR_ANALYSIS": return "한 번에 보낼 수 있는 사진 수를 넘었어요"
@@ -118,6 +121,63 @@ final class StoreShelfAPIClient: @unchecked Sendable {
 
     func publishedRelease(storeId: String) async throws -> RemoteReleaseView {
         try await send(try request("GET", url(["stores", storeId, "release"]), auth: false), as: ReleaseBody.self).release
+    }
+
+    // MARK: Product search across stores (public)
+
+    private struct SearchBody: Decodable { var results: [RemoteProductSearchResult] }
+
+    func searchProducts(query: String?, identity: String?, latitude: Double?, longitude: Double?) async throws -> [RemoteProductSearchResult] {
+        var q: [URLQueryItem] = []
+        if let query, !query.trimmingCharacters(in: .whitespaces).isEmpty { q.append(URLQueryItem(name: "q", value: query)) }
+        if let identity { q.append(URLQueryItem(name: "identity", value: identity)) }
+        if let latitude, let longitude {
+            q.append(URLQueryItem(name: "lat", value: String(latitude)))
+            q.append(URLQueryItem(name: "lng", value: String(longitude)))
+        }
+        return try await send(try request("GET", url(["products", "search"], query: q), auth: false), as: SearchBody.self).results
+    }
+
+    func productIndex(featureModel: String, offset: Int = 0) async throws -> RemoteCameraIndexPage {
+        let q = [URLQueryItem(name: "featureModel", value: featureModel), URLQueryItem(name: "offset", value: String(offset))]
+        return try await send(try request("GET", url(["products", "index"], query: q), auth: false), as: RemoteCameraIndexPage.self)
+    }
+
+    // MARK: Manager catalog (store manager only)
+
+    func catalog(storeId: String) async throws -> RemoteCatalogView {
+        try await send(try request("GET", url(["stores", storeId, "catalog"]), auth: true), as: RemoteCatalogView.self)
+    }
+
+    func catalogUpdate(storeId: String, productId: String, shelfId: String, body: [String: StoreJSONValue]) async throws -> RemoteCatalogMutation {
+        let data = try JSONEncoder().encode(body)
+        return try await send(try request("PATCH", url(["stores", storeId, "catalog", "items", productId], query: [URLQueryItem(name: "shelfId", value: shelfId)]),
+                                          body: data, auth: true), as: RemoteCatalogMutation.self)
+    }
+
+    func catalogAdd(storeId: String, body: [String: StoreJSONValue]) async throws -> RemoteCatalogNewItem {
+        let data = try JSONEncoder().encode(body)
+        return try await send(try request("POST", url(["stores", storeId, "catalog", "items"]), body: data, auth: true), as: RemoteCatalogNewItem.self)
+    }
+
+    func catalogRelink(storeId: String, productId: String, fromShelfId: String, toShelfId: String, baseVersion: Int) async throws -> RemoteCatalogMutation {
+        let body: [String: StoreJSONValue] = ["action": .string("relink"), "baseVersion": .int(baseVersion), "fromShelfId": .string(fromShelfId),
+                                              "shelfId": .string(toShelfId)]
+        return try await send(try request("POST", url(["stores", storeId, "catalog", "items", productId]), body: try JSONEncoder().encode(body), auth: true),
+                              as: RemoteCatalogMutation.self)
+    }
+
+    func catalogImage(storeId: String, productId: String, baseVersion: Int, imageBytes: Int, embedding: String?, featureModel: String?) async throws -> RemoteCatalogImage {
+        var body: [String: StoreJSONValue] = ["action": .string("image"), "baseVersion": .int(baseVersion), "imageBytes": .int(imageBytes)]
+        if let embedding { body["embedding"] = .string(embedding) }
+        if let featureModel { body["featureModel"] = .string(featureModel) }
+        return try await send(try request("POST", url(["stores", storeId, "catalog", "items", productId]), body: try JSONEncoder().encode(body), auth: true),
+                              as: RemoteCatalogImage.self)
+    }
+
+    func catalogPublish(storeId: String, baseVersion: Int) async throws -> RemoteCatalogPublished {
+        let body = try JSONEncoder().encode(["baseVersion": baseVersion])
+        return try await send(try request("POST", url(["stores", storeId, "catalog", "publish"]), body: body, auth: true), as: RemoteCatalogPublished.self)
     }
 
     // MARK: Manager
