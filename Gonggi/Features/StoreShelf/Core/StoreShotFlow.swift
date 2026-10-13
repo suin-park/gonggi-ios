@@ -68,6 +68,14 @@ struct StoreStillnessGate: Sendable {
     }
 }
 
+enum StoreBlurCheck {
+    /// Below this the picture is plainly unusable (shaken or covered): taken again on the spot. Anything above it goes to
+    /// the analysis; whether a name can be read is decided there, never guessed on the device.
+    static let obviousBlurFloor: Float = 15
+
+    static func isObviouslyBlurred(sharpness: Float) -> Bool { sharpness < obviousBlurFloor }
+}
+
 enum StoreCloserCheck {
     /// A detail photo has to be a closer look: the surface in the middle of the picture is clearly nearer than in the
     /// overview, or - when no surface distance is known - the camera is clearly nearer the shelf than it was.
@@ -83,6 +91,9 @@ enum StoreShotCopy {
     static let hold = "잠깐 멈춰 주세요."
     static let checking = "사진을 확인하고 있어요."
     static let closer = "표시된 부분을 가까이 비춰 주세요."
+    static let closerFree = "찍을 부분을 가까이 비춰 주세요."
+    static let taken = "사진을 찍었어요."
+    static let retake = "흔들렸어요. 다시 찍어 주세요."
     static let done = "촬영이 끝났어요."
     static let sweepForMap = "주변을 천천히 비춰 주세요."
 

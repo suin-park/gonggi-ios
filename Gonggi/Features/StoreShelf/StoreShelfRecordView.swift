@@ -670,6 +670,9 @@ struct StoreShelfReviewView: View {
     let onDone: () -> Void
     /// The close / back button. nil: the same as `onDone`.
     var onClose: (() -> Void)? = nil
+    /// Parts the final analysis could not read, and the action that goes to take closer photos of them.
+    var closerTargets: [RemoteDetailTarget] = []
+    var onCloser: (() -> Void)? = nil
 
     @State private var mergeSource: String?
     @State private var renameText: [String: String] = [:]
@@ -767,6 +770,19 @@ struct StoreShelfReviewView: View {
                 Text(line)
                     .font(.caption2)
                     .foregroundStyle(GonggiColors.textTertiary)
+            }
+            if !closerTargets.isEmpty, model.corrections == 0, let onCloser {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("읽지 못한 부분이 있어요. 가까이 찍으면 이름을 읽을 수 있어요.")
+                        .font(.subheadline)
+                        .foregroundStyle(GonggiColors.textPrimary)
+                    SecondaryButton(title: "가까이 더 찍기", icon: "plus.magnifyingglass", action: onCloser)
+                }
+                .padding(GonggiSpacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GonggiColors.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
+                .padding(.top, 6)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

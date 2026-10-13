@@ -379,8 +379,8 @@ final class StoreShelfShortFlowTests: XCTestCase {
     }
 
     func testGuidanceLinesAreShortAndFreeOfDeveloperTerms() {
-        let lines = [StoreShotCopy.overview, StoreShotCopy.hold, StoreShotCopy.checking, StoreShotCopy.closer, StoreShotCopy.done,
-                     StoreShotCopy.sweepForMap] + [StoreStillnessGate.Hint.moving, .blurry, .tooFar, .tooClose, .trackingLost].map(StoreShotCopy.text)
+        let lines = [StoreShotCopy.overview, StoreShotCopy.hold, StoreShotCopy.closer, StoreShotCopy.closerFree, StoreShotCopy.taken,
+                     StoreShotCopy.retake, StoreShotCopy.done, StoreShotCopy.sweepForMap] + [StoreStillnessGate.Hint.moving, .blurry, .tooFar, .tooClose, .trackingLost].map(StoreShotCopy.text)
         for l in lines {
             XCTAssertLessThanOrEqual(l.count, 24, l)
             XCTAssertFalse(StoreUserText.containsDeveloperTerm(l), l)
@@ -445,5 +445,10 @@ final class StoreShelfShortFlowTests: XCTestCase {
         {"session":{"id":"s","status":"DRAFT"},"photoCount":1,"uploadedCount":1,"run":null,"runsUsed":1,"draft":null}
         """
         XCTAssertNil(try JSONDecoder().decode(RemoteCaptureView.self, from: Data(without.utf8)).detailTargets)
+    }
+
+    func testOnlyAPlainlyBlurredPhotoIsRetakenOnTheDevice() {
+        XCTAssertTrue(StoreBlurCheck.isObviouslyBlurred(sharpness: 3))
+        XCTAssertFalse(StoreBlurCheck.isObviouslyBlurred(sharpness: 25), "a soft photo goes to the analysis: names are not judged here")
     }
 }

@@ -10,7 +10,8 @@ import UIKit
 /// Where the short capture flow is: the whole-shelf photo, the check of it, closer photos, the end.
 enum StoreShotStep: Equatable {
     case overview
-    case checking
+    /// A photo was taken: finish, or take a closer one (at most two).
+    case choose
     case closer(index: Int)
     case finishing
 }
@@ -45,7 +46,9 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
     @Published private(set) var overviewImage: UIImage?
     private var overviewPhoto: CapturedPhoto?
     private var detailsTaken = 0
-    private var probe: StoreCaptureCoordinator?
+    /// Closer photos asked for after the final analysis (the world map was saved before: no new map, no positions).
+    private var isSupplement = false
+    @Published private(set) var reviewDetailTargets: [RemoteDetailTarget] = []
 
     private var cancellables = Set<AnyCancellable>()
     private var lastFrame: StoreShelfFrame?
@@ -118,17 +121,20 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
             if let d = captures.readPhoto(sessionId: engine?.manifest.clientSessionId ?? "", fileName: photo.fileName) {
                 overviewImage = UIImage(data: d)
             }
-            shotStep = .checking
+            shotStep = .choose
             engine?.shotMode = .paused
-            startProbe()
         case .closer:
             detailsTaken += 1
-            if detailsTaken >= detailTargets.count {
+            engine?.shotMode = .paused
+            let limit = isSupplement ? min(2, max(1, detailTargets.count)) : 2
+            if detailsTaken >= limit {
                 shotStep = .finishing
                 finishCapture()
-            } else {
+            } else if isSupplement {
                 shotStep = .closer(index: detailsTaken)
                 armCloser()
+            } else {
+                shotStep = .choose
             }
         default:
             break
@@ -145,37 +151,48 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
         engine?.shotMode = .detail
     }
 
-    /// The first analysis of the overview photo decides whether a closer photo is needed at all.
-    private func startProbe() {
-        guard let e = engine else { return }
-        let c = StoreCaptureCoordinator(manifest: e.manifest, persistsManifest: false)
-        probe = c
-        Task { [weak self] in
-            let view = await c.probe()
-            await MainActor.run { self?.probeFinished(view) }
-        }
+    /// "가까이 더 찍기": a closer photo of a part the person picks (nothing was analysed yet, nothing is waited for).
+    func moreCloser() {
+        guard shotStep == .choose, detailsTaken < 2 else { return }
+        shotStep = .closer(index: detailsTaken)
+        armCloser()
     }
 
-    private func probeFinished(_ view: RemoteCaptureView?) {
-        probe = nil
-        guard phase == .capturing, shotStep == .checking else { return }
-        let targets = Array((view?.detailTargets ?? []).prefix(2))
-        detailTargets = targets
-        if targets.isEmpty {
-            shotStep = .finishing
-            finishCapture()
-        } else {
-            shotStep = .closer(index: 0)
-            armCloser()
-        }
-    }
-
-    /// "여기까지 할게요": no more closer photos.
-    func skipDetails() {
-        guard case .closer = shotStep else { return }
+    /// "촬영 완료": the photos taken go to ONE analysis.
+    func finishNow() {
+        guard shotStep == .choose || { if case .closer = shotStep { return true } else { return false } }() else { return }
         shotStep = .finishing
         engine?.shotMode = .paused
         finishCapture()
+    }
+
+    /// After the final analysis: take closer photos of the parts that could not be read.
+    func beginSupplement() {
+        guard let c = coordinator, !reviewDetailTargets.isEmpty else { return }
+        let manifest = c.manifest
+        let e = AutoShelfCaptureEngine(manifest: manifest)
+        e.attach(controller: controller)
+        e.epochPrefix = "x"
+        e.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        engine = e
+        isSupplement = true
+        detailTargets = Array(reviewDetailTargets.prefix(2))
+        detailsTaken = 0
+        // the photo the first target lies in is the picture shown with the highlight
+        overviewPhoto = manifest.photos.first { $0.id == detailTargets[0].photoId } ?? manifest.photos.first
+        if let o = overviewPhoto, let d = captures.readPhoto(sessionId: manifest.clientSessionId, fileName: o.fileName) {
+            overviewImage = UIImage(data: d)
+        }
+        controller.onFrame = { [weak self] frame in
+            self?.lastFrame = frame
+            self?.engine?.consider(frame)
+        }
+        e.onSaved = { [weak self] photo in self?.photoSaved(photo) }
+        reviewModel = nil
+        coordinator = nil
+        shotStep = .closer(index: 0)
+        phase = .capturing
+        armCloser()
     }
 
     /// Called when the AR view exists: a fresh session (new world frame) for every capture.
@@ -210,7 +227,8 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
         }
         phase = .finishing
         waitingForMap = false
-        if skipMap {
+        if skipMap || isSupplement {
+            // A supplement is taken in a new AR session: it keeps the map saved by the first capture.
             complete(mapData: nil)
             return
         }
@@ -283,6 +301,7 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
         switch c.phase {
         case .ready:
             guard reviewModel == nil, let result = c.imported else { return }
+            reviewDetailTargets = c.detailTargets
             openReview(result: result, coordinator: c)
         case .failed(let f):
             if phase == .processing { phase = .failed(f) }
@@ -314,8 +333,6 @@ final class StoreShelfAutoCaptureViewModel: ObservableObject {
     }
 
     func stop() {
-        probe?.cancel()
-        probe = nil
         mapTimer?.invalidate()
         coordinator?.cancel()
         controller.stop()
@@ -361,7 +378,9 @@ struct StoreShelfAutoCaptureView: View {
                         StoreShelfReviewView(
                             model: review,
                             onDone: { model.stop(); onFinished() },
-                            onClose: { model.stop(); onBack() })
+                            onClose: { model.stop(); onBack() },
+                            closerTargets: model.reviewDetailTargets,
+                            onCloser: { model.beginSupplement() })
                     }
                 }
             case .failed(let failure): failed(failure)
@@ -458,13 +477,15 @@ struct StoreShelfAutoCaptureView: View {
     private var guide: (title: String, subtitle: String?, icon: String) {
         switch model.shotStep {
         case .overview:
+            if let n = model.engine?.notice, n == StoreShotCopy.retake { return (n, nil, "hand.raised") }
             if let hint = model.engine?.steadyHint { return (StoreShotCopy.text(for: hint), nil, "hand.raised") }
             return (StoreShotCopy.overview, nil, "viewfinder")
-        case .checking:
-            return (StoreShotCopy.checking, StoreShotCopy.sweepForMap, "text.viewfinder")
+        case .choose:
+            return (StoreShotCopy.taken, nil, "checkmark.circle")
         case .closer:
+            if let n = model.engine?.notice, n == StoreShotCopy.retake { return (n, nil, "hand.raised") }
             if let hint = model.engine?.steadyHint, hint != .tooFar { return (StoreShotCopy.text(for: hint), nil, "hand.raised") }
-            return (StoreShotCopy.closer, nil, "plus.magnifyingglass")
+            return (model.detailTargets.isEmpty ? StoreShotCopy.closerFree : StoreShotCopy.closer, nil, "plus.magnifyingglass")
         case .finishing:
             if model.waitingForMap { return (StoreShotCopy.done, StoreShotCopy.sweepForMap, "checkmark.circle") }
             return (StoreShotCopy.done, nil, "checkmark.circle")
@@ -541,17 +562,15 @@ struct StoreShelfAutoCaptureView: View {
         return VStack(spacing: GonggiSpacing.sm) {
             CaptureCoachBubble(presentation: CaptureCoachPresentation(title: g.title, subtitle: g.subtitle, severity: .guidance,
                                                                        icon: g.icon, warning: nil))
-            if let n = model.engine?.notice {
-                Text(n).font(.subheadline).foregroundStyle(.white)
-            }
             switch model.shotStep {
             case .overview:
                 PrimaryButton(title: "사진 찍기", icon: "camera.fill") { model.captureNow() }
-            case .checking:
-                ProgressView().tint(.white)
+            case .choose:
+                PrimaryButton(title: "촬영 완료", icon: "checkmark") { model.finishNow() }
+                SecondaryButton(title: "가까이 더 찍기", icon: "plus.magnifyingglass") { model.moreCloser() }
             case .closer:
                 PrimaryButton(title: "사진 찍기", icon: "camera.fill") { model.captureNow() }
-                SecondaryButton(title: "여기까지 할게요", icon: "checkmark") { model.skipDetails() }
+                SecondaryButton(title: "촬영 완료", icon: "checkmark") { model.finishNow() }
             case .finishing:
                 if model.waitingForMap {
                     if model.mapWaitSeconds >= 15 {

@@ -21,6 +21,8 @@ final class StoreCaptureCoordinator: ObservableObject {
     private(set) var manifest: CaptureSessionManifest
     private(set) var imported: AnalysisImportResult?
     private(set) var remoteDraft: RemoteAnalysisDraft?
+    /// Where a closer photo would help, from the FINAL analysis of what was taken (empty when nothing is missing).
+    private(set) var detailTargets: [RemoteDetailTarget] = []
 
     private let api: StoreShelfAPIClient
     private let store: StoreCaptureStore
@@ -86,6 +88,7 @@ final class StoreCaptureCoordinator: ObservableObject {
         if manifest.status == .draftReady, let data = store.readDraft(sessionId: manifest.clientSessionId),
            let view = try? JSONDecoder().decode(RemoteCaptureView.self, from: data), let draft = view.draft {
             run = view.run
+            detailTargets = view.detailTargets ?? []
             await importDraft(draft)
             return
         }
@@ -126,6 +129,7 @@ final class StoreCaptureCoordinator: ObservableObject {
                 try Task.checkCancellation()
                 let view = try await api.capture(storeId: manifest.storeId, sessionId: sid)
                 run = view.run
+                detailTargets = view.detailTargets ?? []
                 elapsedAnalysisSeconds = waited
                 if view.session.status == "DRAFT", let draft = view.draft {
                     if let data = try? JSONEncoder().encode(view) { try? store.writeDraft(sessionId: manifest.clientSessionId, data: data) }
@@ -145,40 +149,6 @@ final class StoreCaptureCoordinator: ObservableObject {
             phase = .idle
         } catch {
             fail(failure(for: error))
-        }
-    }
-
-    /// Analyses the photos taken so far and returns what the server answered (draft and where a closer photo helps).
-    /// Nothing is imported and the capture's manifest is not written. nil when it could not be done: the caller goes on
-    /// with what it has and the final analysis reports the real problem.
-    func probe(maxSeconds: Int = 150) async -> RemoteCaptureView? {
-        do {
-            if manifest.serverSessionId == nil {
-                let started = try await api.startCapture(
-                    storeId: manifest.storeId,
-                    body: StartCaptureBody(clientSessionId: manifest.clientSessionId, storeContext: manifest.storeContext,
-                                           contextLabel: manifest.contextLabel,
-                                           device: ["model": manifest.device, "build": manifest.appBuild, "os": UIDevice.current.systemVersion]))
-                manifest.serverSessionId = started.sessionId
-                for id in started.uploadedPhotoIds {
-                    if let i = manifest.photos.firstIndex(where: { $0.id == id }) { manifest.photos[i].uploaded = true }
-                }
-            }
-            guard let sid = manifest.serverSessionId else { return nil }
-            try await uploadPending(sessionId: sid)
-            _ = try await api.startAnalysis(storeId: manifest.storeId, sessionId: sid, force: false)
-            var waited = 0
-            while waited <= maxSeconds {
-                try Task.checkCancellation()
-                let view = try await api.capture(storeId: manifest.storeId, sessionId: sid)
-                if view.session.status == "DRAFT", view.draft != nil { return view }
-                if view.session.status == "FAILED" || view.run?.status == "FAILED" { return nil }
-                try await Task.sleep(nanoseconds: pollSeconds * 1_000_000_000)
-                waited += Int(pollSeconds)
-            }
-            return nil
-        } catch {
-            return nil
         }
     }
 
@@ -237,7 +207,7 @@ final class StoreCaptureCoordinator: ObservableObject {
         let capturedAt = manifest.createdAt
         // Camera poses of the photos of the final AR coordinate system: the anchors the world map holds, used to check a
         // restore later. Photos of another coordinate system are not part of it.
-        let finalEpoch = manifest.photos.last?.epoch
+        let finalEpoch = manifest.photos.last { !($0.epoch ?? "").hasPrefix("x") }?.epoch
         let referencePoints: [ShelfReferencePoint] = manifest.photos
             .filter { $0.trackingState == "normal" && (finalEpoch == nil || $0.epoch == finalEpoch) }
             .compactMap { p in Rigid(floats: p.pose).map { ShelfReferencePoint(id: p.id, pose: $0) } }

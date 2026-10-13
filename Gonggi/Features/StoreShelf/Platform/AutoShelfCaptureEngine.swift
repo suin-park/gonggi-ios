@@ -25,6 +25,8 @@ final class AutoShelfCaptureEngine: ObservableObject {
     /// Called on the main queue for every photo that was saved.
     var onSaved: ((CapturedPhoto) -> Void)?
     private var gate = StoreStillnessGate()
+    /// "x" for photos taken after the world map was saved (supplement): they help names and counts, never positions.
+    var epochPrefix = ""
 
     private(set) var manifest: CaptureSessionManifest
     private var selector: AutoCaptureSelector
@@ -114,6 +116,12 @@ final class AutoShelfCaptureEngine: ObservableObject {
         guard !writing, shotMode == .overview || shotMode == .detail else { return }
         guard let luma = Self.lumaSamples(frame.pixelBuffer) else { return }
         let sharp = StoreImageStats.laplacianVariance(luma: luma.analysis, width: luma.analysisWidth, height: luma.analysisHeight)
+        if StoreBlurCheck.isObviouslyBlurred(sharpness: sharp) {
+            // Plainly unusable: asked again at once, nothing is saved or sent.
+            notice = StoreShotCopy.retake
+            return
+        }
+        notice = nil
         takeShot(frame: frame, sharpness: sharp, hit: controller?.centreSurfaceHit(), reason: reason)
     }
 
@@ -144,7 +152,7 @@ final class AutoShelfCaptureEngine: ObservableObject {
         let sessionId = manifest.clientSessionId
         let maxSide = exportMaxSide, quality = exportQuality
         let state = frame.trackingNormal ? "normal" : "limited"
-        let epoch = controller?.epochId
+        let epoch = controller.map { epochPrefix + $0.epochId }
         let takenAt = Date()
         queue.async { [weak self] in
             guard let self else { return }
