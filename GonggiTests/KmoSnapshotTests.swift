@@ -1,3 +1,4 @@
+import SceneKit
 import SwiftUI
 import XCTest
 @testable import Gonggi
@@ -62,9 +63,9 @@ final class KmoSnapshotTests: XCTestCase {
     }
 
     func testCustomerHome() throws {
-        try render(KmoCustomerHomeView(previewRecent: recents), name: "01-customer-home")
-        try render(KmoCustomerHomeView(previewRecent: []), name: "01b-customer-home-no-recent")
-        try render(KmoCustomerHomeView(previewRecent: recents), name: "01c-customer-home-small-large-text",
+        try render(KmoCustomerHomeView(previewRecent: recents, isMockMode: true), name: "01-customer-home")
+        try render(KmoCustomerHomeView(previewRecent: [], isMockMode: true), name: "01b-customer-home-no-recent")
+        try render(KmoCustomerHomeView(previewRecent: recents, isMockMode: true), name: "01c-customer-home-small-large-text",
                    size: CGSize(width: 375, height: 667), dynamic: .accessibility3)
         try render(MainTabView(), name: "01d-main-tab-customer")
     }
@@ -111,7 +112,7 @@ final class KmoSnapshotTests: XCTestCase {
     // 큰 글씨에서도 마지막 카드와 버튼까지 닿는지: 화면 높이를 내용 전체로 늘려 한 장에 담는다.
     func testLargeTextFullContent() throws {
         let small = CGSize(width: 375, height: 2600)
-        try render(KmoCustomerHomeView(previewRecent: recents), name: "05-home-large-text-full", size: small, dynamic: .accessibility3)
+        try render(KmoCustomerHomeView(previewRecent: recents, isMockMode: true), name: "05-home-large-text-full", size: small, dynamic: .accessibility3)
         let model = StoreProductSearchModel()
         model.query = "코카콜라"
         model.results = [sample]
@@ -133,5 +134,121 @@ final class KmoSnapshotTests: XCTestCase {
                             imageUrl: "https://invalid.kmo-test.invalid/t2.jpg", linkedAt: nil, publishedAt: nil),
         ]
         try render(KmoStoreInfoView(store: store, coverUrl: nil, previewTours: tours, onClose: {}), name: "06-store-info")
+    }
+
+    // 고정 시험 모델: 도형으로 만든 의자. 실제 상품이 아니다. 무대, 웨이브, 버튼 배치와 회전을 확인한다.
+    static func testScene() -> SCNScene {
+        let scene = SCNScene()
+        func box(_ w: CGFloat, _ h: CGFloat, _ l: CGFloat, _ x: Float, _ y: Float, _ z: Float, _ color: UIColor) {
+            let g = SCNBox(width: w, height: h, length: l, chamferRadius: 0.02)
+            g.firstMaterial?.diffuse.contents = color
+            let n = SCNNode(geometry: g)
+            n.position = SCNVector3(x, y, z)
+            scene.rootNode.addChildNode(n)
+        }
+        let fabric = UIColor(red: 0.45, green: 0.52, blue: 0.47, alpha: 1)
+        let wood = UIColor(red: 0.78, green: 0.58, blue: 0.36, alpha: 1)
+        box(0.8, 0.18, 0.8, 0, 0.45, 0, fabric)
+        box(0.8, 0.7, 0.14, 0, 0.85, -0.33, fabric)
+        for (x, z) in [(-0.34, -0.34), (0.34, -0.34), (-0.34, 0.34), (0.34, 0.34)] {
+            box(0.06, 0.4, 0.06, Float(x), 0.2, Float(z), wood)
+        }
+        _ = KmoModelLoader.normalize(scene)
+        return scene
+    }
+
+    func testHeroStageAndOfferButtons() throws {
+        let scene = Self.testScene()
+        let view = ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(KmoCopy.brand).font(.title.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
+                        Text(KmoCopy.tagline).font(.footnote).foregroundStyle(KmoColors.textSecondary)
+                    }
+                    .padding(.horizontal, 20)
+                    KmoProductStage(phase: .ready(KmoModelSceneBox(scene)), thumbnailUrl: nil, height: 280, onRetry: {})
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("시험용 의자").font(.title2.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
+                        Text("시험 판매자").font(.subheadline).foregroundStyle(KmoColors.textSecondary)
+                        Text("80,000원").font(.headline).foregroundStyle(KmoColors.textPrimary)
+                    }
+                    .padding(.horizontal, 20)
+                    KmoOfferButtons(actions: [.ar, .buy("https://example.test/buy")], isLoadingAR: false, onAR: {}, onOpen: { _, _ in })
+                        .padding(.horizontal, 20)
+                }
+                .padding(.vertical, 6)
+                .background(KmoSurface.hero)
+                KmoWaveTop(amplitude: 12).fill(KmoSurface.panel).frame(height: 26).background(KmoSurface.hero)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("제품 찾기").font(.title3.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
+                    KmoSecondaryButton(title: KmoCopy.camera) {}
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(KmoSurface.panel)
+            }
+        }
+        .background(KmoSurface.hero)
+        try render(view, name: "07-hero-stage-test-model")
+        try render(view, name: "07b-hero-stage-large-text", size: CGSize(width: 375, height: 1800), dynamic: .accessibility3)
+    }
+
+    func testStageLoadingAndFailureStates() throws {
+        let view = VStack(spacing: 12) {
+            KmoProductStage(phase: .loading, thumbnailUrl: nil, height: 160, onRetry: {})
+            KmoProductStage(phase: .failed("3D 모델을 불러오지 못했어요"), thumbnailUrl: nil, height: 160, onRetry: {})
+        }
+        .background(KmoSurface.hero)
+        try render(view, name: "07c-stage-loading-failed")
+    }
+
+    func testCustomTabBar() throws {
+        let items = [KmoTabItem(tab: .home, title: "홈"), KmoTabItem(tab: .library, title: "보관함"), KmoTabItem(tab: .profile, title: "내 정보")]
+        let bar = VStack {
+            Spacer()
+            KmoTabBar(items: items, selection: .constant(.home))
+        }
+        .background(KmoBackground())
+        try render(bar, name: "08-tab-bar-customer")
+        try render(bar, name: "08b-tab-bar-large-text", size: CGSize(width: 375, height: 300), dynamic: .accessibility3)
+    }
+}
+
+@MainActor
+final class KmoModelTests: XCTestCase {
+    func testUsdzFileOpensIsCenteredAndRotatesByHand() async throws {
+        let source = KmoSnapshotTests.testScene()
+        // 파일로 내보낸 USDZ를 다시 열어 같은 경로(파일 열기, 크기 맞춤)를 확인한다.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("kmo-test-\(UUID().uuidString).usdz")
+        let raw = SCNScene()
+        if let pivot = source.rootNode.childNode(withName: KmoModelLoader.pivotName, recursively: false) {
+            raw.rootNode.addChildNode(pivot.clone())
+        }
+        XCTAssertTrue(raw.write(to: url, options: nil, delegate: nil, progressHandler: nil))
+        defer { try? FileManager.default.removeItem(at: url) }
+        let box = await KmoModelLoader.load(url: url)
+        let loaded = try XCTUnwrap(box).scene
+        let pivot = try XCTUnwrap(loaded.rootNode.childNode(withName: KmoModelLoader.pivotName, recursively: false))
+        let (lo, hi) = pivot.boundingBox
+        let extent = max(hi.x - lo.x, max(hi.y - lo.y, hi.z - lo.z)) * pivot.scale.x
+        XCTAssertGreaterThan(extent, 0.5)
+        XCTAssertLessThan(extent, 3.0)
+        let before = pivot.eulerAngles.y
+        let delta = KmoModelLoader.rotate(scene: loaded, byDx: 100)
+        XCTAssertGreaterThan(delta, 0)
+        XCTAssertEqual(pivot.eulerAngles.y, before + delta, accuracy: 0.0001)
+        let back = KmoModelLoader.rotate(scene: loaded, byDx: -100)
+        XCTAssertEqual(pivot.eulerAngles.y, before, accuracy: 0.0001)
+        XCTAssertEqual(back, -delta, accuracy: 0.0001)
+    }
+
+    func testMissingFileIsAFailureNotAnEmptyScene() async {
+        let box = await KmoModelLoader.load(url: URL(fileURLWithPath: "/nonexistent/none.usdz"))
+        XCTAssertNil(box)
+    }
+
+    func testEmptySceneIsRejected() {
+        XCTAssertFalse(KmoModelLoader.normalize(SCNScene()))
     }
 }

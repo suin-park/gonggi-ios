@@ -198,6 +198,12 @@ final class StoreShelfAPIClient: @unchecked Sendable {
         try await send(try request("GET", url(["stores", storeId, "products"]), auth: false), as: RemotePublicProductsBody.self).items
     }
 
+    /// 매장 담당자가 이 카탈로그 상품과 직접 연결한 매장만.
+    func catalogProductStores(productId: String) async throws -> [RemoteBrowsableStore] {
+        try await send(try request("GET", url(["catalog-products", productId, "stores"]), auth: false),
+                       as: RemoteBrowsableStoresBody.self).items
+    }
+
     func publicTour(storeId: String) async throws -> [RemotePublicTourSpace] {
         try await send(try request("GET", url(["stores", storeId, "tour"]), auth: false), as: RemotePublicTourBody.self).spaces
     }

@@ -46,6 +46,7 @@ enum KmoRoute: Hashable {
     case store(String)
     case mySpace
     case browse
+    case product(String)
 }
 
 // MARK: - 고객 홈
@@ -55,37 +56,61 @@ struct KmoCustomerHomeView: View {
     @ObservedObject private var auth = AuthSessionController.shared
     @StateObject private var model = StoreProductSearchModel()
     @StateObject private var recent: KmoRecentModel
+    @StateObject private var hero: KmoHeroModel
     @State private var path: [KmoRoute] = []
     @State private var showCamera = false
     @State private var showPublicSpaces = false
     @State private var browsePhoto: String?
     @State private var browseCount: Int?
     @State private var notice: String?
+    @State private var categoryKey = "all"
     @FocusState private var fieldFocused: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.kmoTabActive) private var tabActive
 
-    init(previewRecent: [KmoRecentProduct]? = nil) {
+    init(previewRecent: [KmoRecentProduct]? = nil, isMockMode: Bool = false) {
         _recent = StateObject(wrappedValue: KmoRecentModel(preview: previewRecent))
+        _hero = StateObject(wrappedValue: KmoHeroModel(isMockMode: isMockMode))
     }
 
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    header
-                    findCard
-                    browseSection
-                    if !recent.items.isEmpty { recentSection }
-                    if let notice {
-                        Text(notice).font(.subheadline).foregroundStyle(KmoColors.warning)
+                VStack(spacing: 0) {
+                    // 위: 대표 상품 체험 영역
+                    VStack(alignment: .leading, spacing: 12) {
+                        header.padding(.horizontal, 20)
+                        KmoHeroSection(model: hero, onOpenDetail: { path.append(.product($0.id)) })
                     }
+                    .padding(.top, 4)
+                    .padding(.bottom, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(KmoSurface.hero)
+                    // 완만한 웨이브 한 번
+                    KmoWaveTop(amplitude: 12)
+                        .fill(KmoSurface.panel)
+                        .frame(height: 26)
+                        .background(KmoSurface.hero)
+                        .accessibilityHidden(true)
+                    // 아래: 검색과 탐색
+                    VStack(alignment: .leading, spacing: 18) {
+                        findCard
+                        categorySection
+                        browseSection
+                        if !recent.items.isEmpty { recentSection }
+                        if let notice {
+                            Text(notice).font(.subheadline).foregroundStyle(KmoColors.warning)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(KmoSurface.panel)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 4)
-                .padding(.bottom, 28)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(KmoBackground())
+            .background(VStack(spacing: 0) { KmoSurface.hero; KmoSurface.panel }.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: KmoRoute.self) { route in
                 switch route {
@@ -98,6 +123,13 @@ struct KmoCustomerHomeView: View {
                         .environmentObject(appState)
                 case .browse:
                     KmoStoreBrowseView()
+                case .product(let id):
+                    if let p = hero.allProducts.first(where: { $0.id == id }) {
+                        KmoProductExperienceView(product: p, isMockMode: appState.isMockMode)
+                            .environmentObject(appState)
+                    } else {
+                        Text("상품을 찾지 못했어요").foregroundStyle(KmoColors.textPrimary)
+                    }
                 }
             }
         }
@@ -127,7 +159,17 @@ struct KmoCustomerHomeView: View {
             recent.reload()
         }
         .task {
+            await hero.start()
+        }
+        .task {
             await loadBrowseSummary()
+        }
+        // 화면을 벗어나거나 다른 탭이 선택되면 3D 장면을 놓아 둔다.
+        .onChange(of: tabActive) { _, active in
+            if active { hero.resume() } else { hero.release() }
+        }
+        .onChange(of: path) { _, newPath in
+            if newPath.isEmpty { hero.resume() } else { hero.release() }
         }
     }
 
@@ -145,9 +187,6 @@ struct KmoCustomerHomeView: View {
 
     private var findCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(KmoCopy.findProduct)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(KmoColors.textPrimary)
             let field = TextField("", text: $model.query,
                                   prompt: Text(KmoCopy.namePlaceholder).font(.body).foregroundColor(KmoColors.textSecondary))
                 .font(.body)
@@ -174,12 +213,11 @@ struct KmoCustomerHomeView: View {
             .background(KmoColors.field)
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            KmoPrimaryButton(title: KmoCopy.camera) {
+            KmoSecondaryButton(title: KmoCopy.camera) {
                 fieldFocused = false
                 showCamera = true
             }
         }
-        .kmoCard(padding: 16)
     }
 
     private func submitSearch() {
@@ -191,6 +229,74 @@ struct KmoCustomerHomeView: View {
         model.selected = nil
         model.searchError = nil
         path.append(.results)
+    }
+
+    // MARK: 카테고리 (실제 상품이 있는 종류만)
+
+    @ViewBuilder
+    private var categorySection: some View {
+        let chips = hero.chips
+        if !chips.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(chips, id: \.key) { chip in
+                            let selected = chip.key == categoryKey
+                            Button { categoryKey = chip.key } label: {
+                                Text(chip.title)
+                                    .font(.subheadline.weight(selected ? .semibold : .regular))
+                                    .foregroundStyle(selected ? KmoColors.onAccent : KmoColors.textPrimary)
+                                    .padding(.horizontal, 16)
+                                    .frame(minHeight: 40)
+                                    .background(selected ? KmoColors.accent : KmoColors.card)
+                                    .overlay(Capsule().stroke(KmoColors.stroke, lineWidth: 1))
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        }
+                    }
+                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(categoryProducts) { p in
+                            Button { path.append(.product(p.id)) } label: { productCard(p) }
+                                .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var categoryProducts: [CatalogProduct] {
+        switch categoryKey {
+        case "furniture": return hero.allProducts.filter { $0.placementType == .furniture3D }
+        case "curtain": return hero.allProducts.filter { $0.placementType == .curtain2D }
+        default: return hero.allProducts
+        }
+    }
+
+    private func productCard(_ p: CatalogProduct) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if KmoImageSlot.initial(urlString: p.resolvedThumbnailURL).reservesPhotoHeight {
+                KmoProductThumb(urlString: p.resolvedThumbnailURL, size: 96)
+            }
+            Text(p.productName)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(KmoColors.textPrimary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Text(p.partnerDisplayName)
+                .font(.caption)
+                .foregroundStyle(KmoColors.textSecondary)
+                .lineLimit(1)
+        }
+        .padding(10)
+        .frame(width: 124, alignment: .leading)
+        .background(KmoColors.card)
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     // MARK: 둘러보기
@@ -205,11 +311,13 @@ struct KmoCustomerHomeView: View {
                     KmoBrowseCard(
                         title: KmoCopy.browseStores,
                         subtitle: browseCount.map { $0 > 0 ? "게시된 매장 \($0)곳" : "준비 중" },
-                        photoURL: browsePhoto)
+                        photoURL: browsePhoto,
+                        introAsset: KmoIntroImages.storeAssetName)
                 }
                 .buttonStyle(.plain)
                 Button { path.append(.mySpace) } label: {
-                    KmoBrowseCard(title: KmoCopy.mySpace, subtitle: nil, photoURL: nil, space: ownSpaceWithPhoto)
+                    KmoBrowseCard(title: KmoCopy.mySpace, subtitle: nil, photoURL: nil, space: ownSpaceWithPhoto,
+                                  introAsset: KmoIntroImages.spaceAssetName)
                 }
                 .buttonStyle(.plain)
             }
@@ -308,15 +416,33 @@ struct KmoCustomerHomeView: View {
     }
 }
 
+/// 홈의 기능 소개 카드에 쓰는 이미지 이름. 이미지가 앱에 들어 있을 때만 쓴다(없으면 작은 카드).
+enum KmoIntroImages {
+    static let storeAssetName = "kmo_intro_store"
+    static let spaceAssetName = "kmo_intro_space"
+
+    static func exists(_ name: String) -> Bool {
+        UIImage(named: name) != nil
+    }
+}
+
 /// 둘러보기 카드. 사진이 있을 때만 사진 높이를 쓰고, 없으면 제목만 있는 작은 카드.
 struct KmoBrowseCard: View {
     let title: String
     var subtitle: String?
     var photoURL: String?
     var space: SpaceRecord?
+    /// 기능 소개용 기본 이미지 이름. 실제 사진이 없을 때만 쓰고, 앱에 이미지가 없으면 작은 카드가 된다.
+    var introAsset: String?
+
+    private var intro: String? {
+        guard space == nil, !KmoImageSlot.initial(urlString: photoURL).reservesPhotoHeight,
+              let introAsset, KmoIntroImages.exists(introAsset) else { return nil }
+        return introAsset
+    }
 
     private var hasPhoto: Bool {
-        space != nil || KmoImageSlot.initial(urlString: photoURL).reservesPhotoHeight
+        space != nil || KmoImageSlot.initial(urlString: photoURL).reservesPhotoHeight || intro != nil
     }
 
     var body: some View {
@@ -325,6 +451,14 @@ struct KmoBrowseCard: View {
                 SpaceThumbnailView(space: space, height: 96, cornerRadius: 0, showsActivityOverlay: false)
             } else if KmoImageSlot.initial(urlString: photoURL).reservesPhotoHeight {
                 KmoPhotoView(urlString: photoURL, height: 96, cornerRadius: 0)
+            } else if let intro {
+                Image(intro)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 96)
+                    .clipped()
+                    .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)

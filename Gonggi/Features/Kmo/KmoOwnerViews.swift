@@ -51,6 +51,7 @@ struct KmoOwnerHomeView: View {
     @State private var showStorePicker = false
     @State private var showInfo = false
     @State private var toast: String?
+    @State private var registered: [RemoteCatalogItem] = []
     @Environment(\.dynamicTypeSize) private var typeSize
     private let pendingStore = KmoPendingStoreLinkStore(storage: UserDefaults.standard)
 
@@ -65,42 +66,58 @@ struct KmoOwnerHomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                if let store = current {
-                    storePanel(store)
-                    KmoPrimaryButton(title: "상품 추가") {
-                        startAdding = true
-                        showManage = true
+            VStack(spacing: 0) {
+                // 위: 매장 대표 사진(있을 때만)과 이름 표시
+                heroArea
+                KmoWaveTop(amplitude: 12)
+                    .fill(KmoSurface.panel)
+                    .frame(height: 26)
+                    .background(KmoSurface.hero)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 18) {
+                    if let store = current {
+                        storePanel(store)
+                        KmoPrimaryButton(title: "상품 추가") {
+                            startAdding = true
+                            showManage = true
+                        }
+                        LazyVGrid(columns: typeSize.isAccessibilitySize
+                                  ? [GridItem(.flexible())]
+                                  : [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                            tile("상품 관리") { startAdding = false; showManage = true }
+                            tile("매대 등록") { prepareStore(store); showShelfRegister = true }
+                            tile("매장 촬영") { prepareStore(store); showStoreCapture = true }
+                            tile("입체 보기 만들기") { showSolid = true }
+                        }
+                        registeredProducts
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("담당 매장이 없어요").font(.title3.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
+                            Text("매장 담당자 권한은 관리자가 지정해요").font(.body).foregroundStyle(KmoColors.textSecondary)
+                        }
+                        .kmoCard()
                     }
-                    KmoSectionTitle(text: "매장 관리")
-                    LazyVGrid(columns: typeSize.isAccessibilitySize
-                              ? [GridItem(.flexible())]
-                              : [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                        tile("상품 관리") { startAdding = false; showManage = true }
-                        tile("매대 등록") { prepareStore(store); showShelfRegister = true }
-                        tile("매장 촬영") { prepareStore(store); showStoreCapture = true }
-                        tile("입체 보기 만들기") { showSolid = true }
+                    if let toast {
+                        Text(toast).font(.subheadline).foregroundStyle(KmoColors.accent)
                     }
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("담당 매장이 없어요").font(.title3.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
-                        Text("매장 담당자 권한은 관리자가 지정해요").font(.body).foregroundStyle(KmoColors.textSecondary)
-                    }
-                    .kmoCard()
                 }
-                if let toast {
-                    Text(toast).font(.subheadline).foregroundStyle(KmoColors.accent)
-                }
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(KmoSurface.panel)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 32)
         }
-        .background(KmoBackground())
+        .background(VStack(spacing: 0) { KmoSurface.hero; KmoSurface.panel }.ignoresSafeArea())
         .task {
             await role.refresh()
             await reconcilePendingLinks()
+        }
+        .task(id: current?.id) {
+            await loadRegistered()
+        }
+        .onChange(of: showManage) { _, open in
+            if !open { Task { await loadRegistered() } }
         }
         // 매장 촬영 결과가 완성되면 선택했던 매장의 둘러보기 초안으로 연결한다.
         .onChange(of: appState.spaces) { _, _ in
@@ -184,6 +201,66 @@ struct KmoOwnerHomeView: View {
         }
     }
 
+    /// 사장님이 등록한 대표 사진 위에 이름을 올린다. 사진이 없으면 큰 빈 상자 없이 이름 줄만 둔다.
+    @ViewBuilder
+    private var heroArea: some View {
+        let cover = current.flatMap { coverUrl(of: $0) }
+        let hasCover = KmoImageSlot.initial(urlString: cover).reservesPhotoHeight
+        ZStack(alignment: .top) {
+            if hasCover {
+                KmoPhotoView(urlString: cover, height: 210, cornerRadius: 0)
+                    .overlay(
+                        LinearGradient(colors: [KmoSurface.hero.opacity(0.85), KmoSurface.hero.opacity(0)],
+                                       startPoint: .top, endPoint: .center)
+                    )
+            }
+            header
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, hasCover ? 0 : 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity)
+        .background(KmoSurface.hero)
+    }
+
+    /// 등록한 상품 일부. 수정은 상품 관리로 이어진다.
+    @ViewBuilder
+    private var registeredProducts: some View {
+        let active = registered.filter { $0.status == "ACTIVE" }.prefix(3)
+        if !active.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                KmoSectionTitle(text: "등록한 상품")
+                ForEach(Array(active)) { item in
+                    Button { startAdding = false; showManage = true } label: {
+                        HStack(spacing: 12) {
+                            if KmoImageSlot.initial(urlString: item.imageUrl).reservesPhotoHeight {
+                                KmoProductThumb(urlString: item.imageUrl, size: 52)
+                            }
+                            Text(item.name.isEmpty ? "이름 없음" : item.name)
+                                .font(.headline)
+                                .foregroundStyle(KmoColors.textPrimary)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 8)
+                            Text("수정").font(.subheadline.weight(.semibold)).foregroundStyle(KmoColors.accent)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .background(KmoColors.card)
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private func loadRegistered() async {
+        guard let store = current, !appState.isMockMode else { registered = []; return }
+        registered = (try? await StoreShelfAPIClient().catalog(storeId: store.id).items) ?? []
+    }
+
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
@@ -202,10 +279,6 @@ struct KmoOwnerHomeView: View {
 
     private func storePanel(_ store: StoreRecord) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            // 사장님이 등록한 대표 사진만 쓴다. 없으면 큰 빈 상자 대신 작은 안내 한 줄.
-            if KmoImageSlot.initial(urlString: coverUrl(of: store)).reservesPhotoHeight {
-                KmoPhotoView(urlString: coverUrl(of: store), height: 150, cornerRadius: 16)
-            }
             Text("우리 매장").font(.footnote).foregroundStyle(KmoColors.textSecondary)
             HStack(alignment: .firstTextBaseline) {
                 Text(store.name).font(.title2.weight(.bold)).foregroundStyle(KmoColors.textPrimary)

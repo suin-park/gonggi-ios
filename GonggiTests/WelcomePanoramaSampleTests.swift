@@ -3,9 +3,9 @@ import XCTest
 
 final class WelcomePanoramaSampleTests: XCTestCase {
     func testWelcomeCopyIsExact() {
-        XCTAssertEqual(WelcomePanoramaSampleAsset.headline, "공간을 360°로 기록하고 공유하세요.")
-        XCTAssertEqual(WelcomePanoramaSampleAsset.subtitle, "스마트폰으로 촬영하고 필요한 정보까지 담아보세요.")
-        XCTAssertEqual(WelcomePanoramaSampleAsset.accountFootnote, "공간과 3D 자산을 하나의 계정으로 관리하세요.")
+        XCTAssertEqual(WelcomePanoramaSampleAsset.headline, "제품을 찾고, 매장을 둘러보세요.")
+        XCTAssertEqual(WelcomePanoramaSampleAsset.subtitle, "내 공간에서 미리 체험하세요.")
+        XCTAssertEqual(WelcomePanoramaSampleAsset.accountFootnote, "제품과 공간을 하나의 계정으로 관리하세요.")
         XCTAssertFalse(WelcomePanoramaSampleAsset.headline.contains("·"))
         XCTAssertFalse(WelcomePanoramaSampleAsset.subtitle.contains("·"))
     }

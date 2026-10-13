@@ -140,6 +140,8 @@ jobs:
             -only-testing:GonggiTests/StoreShelfProductSearchTests \
             -only-testing:GonggiTests/KmoCoreTests \
             -only-testing:GonggiTests/KmoStoreContentTests \
+            -only-testing:GonggiTests/KmoProductExperienceTests \
+            -only-testing:GonggiTests/KmoModelTests \
             -only-testing:GonggiTests/StoreShelfServerSplitTests \
             -only-testing:GonggiTests/StoreShelfAutoCaptureTests \
             -only-testing:GonggiTests/ShelfRecognitionFixtureTests \

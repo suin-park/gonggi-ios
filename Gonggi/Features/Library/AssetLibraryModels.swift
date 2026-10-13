@@ -5,6 +5,7 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
     case spaces
     case assets
     case placementResults
+    case savedProducts
 
     var id: String { rawValue }
 
@@ -13,6 +14,7 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
         case .spaces: return "공간"
         case .assets: return "3D 자산"
         case .placementResults: return "작업 결과"
+        case .savedProducts: return "저장한 상품"
         }
     }
 }

@@ -28,6 +28,9 @@ struct LibraryView: View {
                             productSection: AnyView(productContent),
                             hasProductEntries: !productRecords.isEmpty || hasUnsentProducts
                         )
+                    case .savedProducts:
+                        KmoSavedProductsView()
+                            .environmentObject(appState)
                     case .placementResults:
                         PlacementResultsView(
                             isMockMode: appState.isMockMode,

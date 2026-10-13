@@ -23,9 +23,9 @@ enum WelcomePanoramaSampleAsset {
     }
 
     /// Welcome-only product copy.
-    static let headline = "공간을 360°로 기록하고 공유하세요."
-    static let subtitle = "스마트폰으로 촬영하고 필요한 정보까지 담아보세요."
-    static let accountFootnote = "공간과 3D 자산을 하나의 계정으로 관리하세요."
+    static let headline = "제품을 찾고, 매장을 둘러보세요."
+    static let subtitle = "내 공간에서 미리 체험하세요."
+    static let accountFootnote = "제품과 공간을 하나의 계정으로 관리하세요."
 }
 
 /// Welcome-only equirect sample card (inline only — no fullscreen presentation).
