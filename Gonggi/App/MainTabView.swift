@@ -37,25 +37,29 @@ struct MainTabView: View {
     private var current: AppTab { appState.selectedTab }
 
     var body: some View {
-        ZStack {
-            KmoColors.background.ignoresSafeArea()
-            ForEach([AppTab.home, .record, .library, .profile], id: \.self) { tab in
-                if visited.contains(tab) || current == tab {
-                    content(for: tab)
-                        .environment(\.kmoTabActive, current == tab)
-                        .opacity(current == tab ? 1 : 0)
-                        .allowsHitTesting(current == tab)
-                        .accessibilityHidden(current != tab)
-                        .zIndex(current == tab ? 1 : 0)
+        // 내용과 메뉴를 위아래로 나눠 놓는다: 내용은 메뉴 위쪽 공간만 쓰므로 가장 아래 버튼도 가려지지 않는다.
+        // 키보드가 올라오면 메뉴를 숨긴다.
+        VStack(spacing: 0) {
+            ZStack {
+                KmoColors.background.ignoresSafeArea(edges: .top)
+                ForEach([AppTab.home, .record, .library, .profile], id: \.self) { tab in
+                    if visited.contains(tab) || current == tab {
+                        content(for: tab)
+                            .environment(\.kmoTabActive, current == tab)
+                            .opacity(current == tab ? 1 : 0)
+                            .allowsHitTesting(current == tab)
+                            .accessibilityHidden(current != tab)
+                            .zIndex(current == tab ? 1 : 0)
+                    }
                 }
             }
-        }
-        // 메뉴는 내용 아래에 놓이고, 내용은 메뉴 위쪽 공간만 쓴다. 키보드가 올라오면 메뉴를 숨긴다.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
             if !keyboard.isVisible {
                 KmoTabBar(items: tabs, selection: Binding(get: { current }, set: { select($0) }))
             }
         }
+        .background(KmoColors.background.ignoresSafeArea())
         .tint(KmoColors.accent)
         .onAppear {
             appState.ensureSpaceGenerationPolling()
