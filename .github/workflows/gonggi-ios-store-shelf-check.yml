@@ -158,6 +158,7 @@ jobs:
         continue-on-error: true
         env:
           TEST_RUNNER_KMO_SHOT_DIR: ${{ github.workspace }}/kmo-shots
+          TEST_RUNNER_KMO_REAL_USDZ_URLS: ${{ secrets.KMO_REAL_USDZ_URLS }}
         run: |
           set +e
           mkdir -p kmo-shots

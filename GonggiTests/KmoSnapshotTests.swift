@@ -241,7 +241,8 @@ final class KmoSnapshotTests: XCTestCase {
     }
 
     func testCustomTabBar() throws {
-        let items = [KmoTabItem(tab: .home, title: "홈"), KmoTabItem(tab: .library, title: "보관함"), KmoTabItem(tab: .profile, title: "내 정보")]
+        let items = [KmoTabItem(id: "h", tab: .home, title: "홈"), KmoTabItem(id: "r", tab: nil, title: "기록하기"),
+                     KmoTabItem(id: "l", tab: .library, title: "보관함"), KmoTabItem(id: "p", tab: .profile, title: "내 정보")]
         let bar = VStack {
             Spacer()
             KmoTabBar(items: items, selection: .constant(.home))
@@ -249,6 +250,39 @@ final class KmoSnapshotTests: XCTestCase {
         .background(KmoBackground())
         try render(bar, name: "08-tab-bar-customer")
         try render(bar, name: "08b-tab-bar-large-text", size: CGSize(width: 375, height: 300), dynamic: .accessibility3)
+    }
+
+    // 홈만이 아니라 보관함, 내 정보, 기록 선택, 상품 관리와 편집, 로그인까지 같은 톤인지 확인하는 캡처.
+    func testToneUnifiedScreens() throws {
+        try render(LibraryView(), name: "10-library")
+        try render(ProfileView(), name: "11-profile")
+        try render(KmoRecordChooserCover(onClose: {}), name: "12-record-chooser")
+        try render(KmoOwnerRecordSheet(onClose: {}, onPick: { _ in }), name: "12b-owner-record-chooser")
+        try render(AuthShellView(session: AuthSessionController.shared, decoration: .wireframeSphere), name: "13-sign-in")
+
+        let store = StoreRecord(id: "kmo-shot-store", name: "커모 테스트 편의점", createdAt: Date())
+        let item = RemoteCatalogItem(
+            productId: "p1", shelfId: "sh1", shelfName: "음료 매대", name: "코카콜라 오리지널", brand: "코카콜라", variant: nil,
+            volumeText: "355ml", status: "ACTIVE", quantity: 6, quantityBasis: "admin_confirmed", quantityVerifiedAt: nil,
+            lastConfirmedAt: nil, infoUpdatedAt: "2026-10-14T00:00:00Z", nameLocked: true, origin: "release", imageUrl: nil, unpublishedChange: true)
+        let catalog = RemoteCatalogView(
+            editVersion: 3, publishedEditVersion: 2, publishedAt: nil,
+            shelves: [RemoteCatalogShelf(id: "sh1", name: "음료 매대")],
+            items: [item, RemoteCatalogItem(
+                productId: "p2", shelfId: "sh1", shelfName: "음료 매대", name: "사이다", brand: nil, variant: nil, volumeText: "500ml",
+                status: "ACTIVE", quantity: nil, quantityBasis: nil, quantityVerifiedAt: nil, lastConfirmedAt: nil,
+                infoUpdatedAt: "2026-10-14T00:00:00Z", nameLocked: false, origin: "release", imageUrl: nil, unpublishedChange: false)])
+        try render(StoreProductManagementView(store: store, showsClose: true, previewCatalog: catalog, onClose: {}), name: "14-product-management")
+        let model = StoreProductManagementModel(store: store, previewCatalog: catalog)
+        try render(NavigationStack {
+            StoreProductEditSheet(item: item, shelves: catalog.shelves, model: model, onDone: {})
+        }, name: "15-product-edit")
+        try render(NavigationStack {
+            StoreProductEditSheet(item: item, shelves: catalog.shelves, model: model, onDone: {})
+        }, name: "15b-product-edit-large-text", size: CGSize(width: 375, height: 1400), dynamic: .accessibility3)
+        try render(KmoTabBar(items: [KmoTabItem(id: "h", tab: .home, title: "우리 매장"), KmoTabItem(id: "r", tab: nil, title: "기록하기"),
+                                     KmoTabItem(id: "l", tab: .library, title: "상품"), KmoTabItem(id: "p", tab: .profile, title: "내 정보")],
+                             selection: .constant(.home)), name: "16-tab-bar-owner", size: CGSize(width: 320, height: 120))
     }
 }
 
@@ -286,6 +320,102 @@ final class KmoModelTests: XCTestCase {
     }
 
     func testEmptySceneIsRejected() {
-        XCTAssertFalse(KmoModelLoader.normalize(SCNScene()))
+        XCTAssertNil(KmoModelLoader.normalize(SCNScene()))
+    }
+}
+
+/// 현재 공개 카탈로그의 실제 가구 USDZ로 확인한다. 파일 주소는 CI 비밀값(KMO_REAL_USDZ_URLS, 줄바꿈으로 구분)에서만
+/// 받고, 없으면 건너뛴다. 주소와 서명은 어디에도 출력하지 않는다.
+@MainActor
+final class KmoRealAssetTests: XCTestCase {
+    private func urls() -> [URL] {
+        (ProcessInfo.processInfo.environment["KMO_REAL_USDZ_URLS"] ?? "")
+            .split(whereSeparator: \.isNewline)
+            .compactMap { URL(string: String($0).trimmingCharacters(in: .whitespaces)) }
+    }
+
+    private func outDir() throws -> URL {
+        let dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["KMO_SHOT_DIR"] ?? NSTemporaryDirectory())
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func png(_ renderer: SCNRenderer, _ size: CGSize) -> (UIImage, Data) {
+        let image = renderer.snapshot(atTime: 0, with: size, antialiasingMode: .multisampling4X)
+        return (image, image.pngData() ?? Data())
+    }
+
+    func testRealFurnitureAssets() async throws {
+        let list = urls()
+        if list.isEmpty { throw XCTSkip("실제 자산 주소가 없어 건너뜀") }
+        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("Metal을 쓸 수 없는 환경") }
+        let dir = try outDir()
+        var report = ["실제 공개 카탈로그 가구 자산 검증 (파일 주소와 서명은 기록하지 않음)"]
+        for (i, url) in list.enumerated() {
+            let (tmp, response) = try await URLSession.shared.download(from: url)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("kmo-real-\(i).usdz")
+            try? FileManager.default.removeItem(at: file)
+            try FileManager.default.moveItem(at: tmp, to: file)
+            defer { try? FileManager.default.removeItem(at: file) }
+            let bytes = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? 0
+
+            let scene = try SCNScene(url: file, options: [.checkConsistency: false])
+            let diag = try XCTUnwrap(KmoModelLoader.normalize(scene), "자산 \(i + 1)을 열 수 없음")
+            report.append("자산 \(i + 1): \(bytes) 바이트, 파일 위쪽 축=\(diag.upAxis ?? "미기재"), 모델에 걸린 회전 최대=\(diag.maxAuthoredRotation) 라디안, 크기(장면 단위)=\(diag.extents), 처음 자세 좌우=\(diag.initialYaw) 위아래=\(diag.initialPitch)")
+
+            // 모델 자체에 기울어짐이 없고, 처음 자세에도 위아래 기울기를 더하지 않는다.
+            let pivot = try XCTUnwrap(scene.rootNode.childNode(withName: KmoModelLoader.pivotName, recursively: false))
+            XCTAssertEqual(pivot.eulerAngles.x, 0, accuracy: 0.0001)
+            XCTAssertEqual(pivot.eulerAngles.z, 0, accuracy: 0.0001)
+            XCTAssertEqual(try XCTUnwrap(scene.rootNode.childNode(withName: KmoModelLoader.cameraName, recursively: false)).position.y, 0, accuracy: 0.0001)
+
+            let renderer = SCNRenderer(device: device, options: nil)
+            renderer.scene = scene
+            renderer.pointOfView = scene.rootNode.childNode(withName: KmoModelLoader.cameraName, recursively: false)
+            renderer.autoenablesDefaultLighting = true
+            let size = CGSize(width: 480, height: 640)
+            let (_, initial) = png(renderer, size)
+            try initial.write(to: dir.appendingPathComponent("real-\(i + 1)-a-initial.png"))
+
+            KmoModelLoader.rotate(scene: scene, byDx: 130)
+            let (_, rotated) = png(renderer, size)
+            try rotated.write(to: dir.appendingPathComponent("real-\(i + 1)-b-rotated.png"))
+            XCTAssertNotEqual(initial, rotated)
+
+            let zoomedIn = KmoModelLoader.zoom(scene: scene, by: 1.5)
+            let (_, zin) = png(renderer, size)
+            try zin.write(to: dir.appendingPathComponent("real-\(i + 1)-c-zoom-in.png"))
+            let clampedIn = KmoModelLoader.zoom(scene: scene, by: 10)
+            XCTAssertEqual(clampedIn, KmoModelLoader.zoomRange.upperBound, accuracy: 0.001, "확대는 범위에서 멈춘다")
+            let clampedOut = KmoModelLoader.zoom(scene: scene, by: 0.01)
+            XCTAssertEqual(clampedOut, KmoModelLoader.zoomRange.lowerBound, accuracy: 0.001, "축소는 범위에서 멈춘다")
+            let (_, zout) = png(renderer, size)
+            try zout.write(to: dir.appendingPathComponent("real-\(i + 1)-d-zoom-out.png"))
+            XCTAssertTrue(KmoModelLoader.isChanged(scene: scene))
+
+            KmoModelLoader.reset(scene: scene)
+            let (_, back) = png(renderer, size)
+            try back.write(to: dir.appendingPathComponent("real-\(i + 1)-e-reset.png"))
+            XCTAssertEqual(initial, back, "처음 모습으로 돌아온다")
+            XCTAssertFalse(KmoModelLoader.isChanged(scene: scene))
+            report.append("  확대 \(zoomedIn)배, 확대 한계 \(clampedIn), 축소 한계 \(clampedOut), 처음 모습 복원 일치")
+
+            // 짧은 회전 영상(GIF): 24프레임, 한 바퀴 반
+            let gif = dir.appendingPathComponent("real-\(i + 1)-rotate.gif") as CFURL
+            if let dest = CGImageDestinationCreateWithURL(gif, "com.compuserve.gif" as CFString, 24, nil) {
+                CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFLoopCount as String: 0]] as CFDictionary)
+                KmoModelLoader.reset(scene: scene)
+                for _ in 0..<24 {
+                    KmoModelLoader.rotate(scene: scene, byDx: 22)
+                    let frame = renderer.snapshot(atTime: 0, with: CGSize(width: 240, height: 320), antialiasingMode: .multisampling4X)
+                    if let cg = frame.cgImage {
+                        CGImageDestinationAddImage(dest, cg, [kCGImagePropertyGIFDictionary as String: [kCGImagePropertyGIFDelayTime as String: 0.08]] as CFDictionary)
+                    }
+                }
+                CGImageDestinationFinalize(dest)
+            }
+        }
+        try report.joined(separator: "\n").write(to: dir.appendingPathComponent("real-asset-report.txt"), atomically: true, encoding: .utf8)
     }
 }

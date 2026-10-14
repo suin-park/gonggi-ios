@@ -12,6 +12,7 @@ struct MainTabView: View {
     @StateObject private var keyboard = KmoKeyboardObserver()
     /// 한 번 열린 탭은 상태를 보존한다(스크롤 위치, 입력, 쌓인 화면).
     @State private var visited: Set<AppTab> = [.home]
+    @State private var showRecord = false
 
     private var accountId: String? {
         auth.profile?.id ?? auth.currentUser?.userId
@@ -25,10 +26,13 @@ struct MainTabView: View {
         KmoAppMode.isOwner(stored: session.ownerRequested, switchVisible: switchVisible)
     }
 
+    /// 고객: 홈, 기록하기, 보관함, 내 정보. 사장님: 우리 매장, 기록하기, 상품, 내 정보.
     private var tabs: [KmoTabItem] {
         isOwner
-            ? [KmoTabItem(tab: .home, title: "우리 매장"), KmoTabItem(tab: .library, title: "상품"), KmoTabItem(tab: .profile, title: "내 정보")]
-            : [KmoTabItem(tab: .home, title: "홈"), KmoTabItem(tab: .library, title: "보관함"), KmoTabItem(tab: .profile, title: "내 정보")]
+            ? [KmoTabItem(id: "home", tab: .home, title: "우리 매장"), KmoTabItem(id: "record", tab: nil, title: "기록하기"),
+               KmoTabItem(id: "library", tab: .library, title: "상품"), KmoTabItem(id: "profile", tab: .profile, title: "내 정보")]
+            : [KmoTabItem(id: "home", tab: .home, title: "홈"), KmoTabItem(id: "record", tab: nil, title: "기록하기"),
+               KmoTabItem(id: "library", tab: .library, title: "보관함"), KmoTabItem(id: "profile", tab: .profile, title: "내 정보")]
     }
 
     private var current: AppTab {
@@ -56,10 +60,26 @@ struct MainTabView: View {
         // 메뉴는 내용 아래에 놓이고, 내용은 메뉴 위쪽 공간만 쓴다. 키보드가 올라오면 메뉴를 숨긴다.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !keyboard.isVisible {
-                KmoTabBar(items: tabs, selection: Binding(get: { current }, set: { select($0) }))
+                KmoTabBar(items: tabs, selection: Binding(get: { current }, set: { select($0) }), onRecord: { showRecord = true })
             }
         }
         .tint(KmoColors.accent)
+        // 기록 방식 선택: 이전 탭은 그대로 두고, 닫으면 원래 화면으로 돌아온다.
+        .fullScreenCover(isPresented: $showRecord) {
+            if isOwner {
+                KmoOwnerRecordSheet(onClose: { showRecord = false },
+                                    onPick: { action in
+                                        showRecord = false
+                                        visited.insert(.home)
+                                        appState.selectedTab = .home
+                                        appState.kmoOwnerAction = action
+                                    })
+                    .environmentObject(appState)
+            } else {
+                KmoRecordChooserCover(onClose: { showRecord = false })
+                    .environmentObject(appState)
+            }
+        }
         .onAppear {
             appState.ensureSpaceGenerationPolling()
             // A push tap that launched the app (or arrived before sign-in finished).
@@ -105,40 +125,51 @@ struct MainTabView: View {
 }
 
 struct KmoTabItem: Identifiable, Equatable {
-    var tab: AppTab
+    var id: String
+    /// nil이면 화면을 바꾸지 않고 기록 선택을 여는 항목이다.
+    var tab: AppTab?
     var title: String
-    var id: Int { tab.rawValue }
 }
 
-/// 세 항목이 같은 폭과 높이를 가지고, 글자는 세로 중앙에 놓인다. 선택 항목은 청록색 바탕으로 표시한다.
+/// 모든 항목이 같은 폭과 높이를 가지고, 글자는 세로 중앙에 놓인다. 선택 항목은 청록색 배경으로 표시한다.
 struct KmoTabBar: View {
     let items: [KmoTabItem]
     @Binding var selection: AppTab
+    var onRecord: () -> Void = {}
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ForEach(items) { item in
-                let selected = item.tab == selection
-                Button { selection = item.tab } label: {
+                let selected = item.tab != nil && item.tab == selection
+                Button {
+                    if let tab = item.tab {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { selection = tab }
+                    } else {
+                        GonggiHaptics.light()
+                        onRecord()
+                    }
+                } label: {
                     Text(item.title)
                         .font(.subheadline.weight(selected ? .semibold : .regular))
                         .foregroundStyle(selected ? KmoColors.onAccent : KmoColors.textSecondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
                         .background(selected ? KmoColors.accent : Color.clear)
                         .clipShape(Capsule())
                         .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(KmoPressStyle())
                 .accessibilityLabel(item.title)
                 .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        // 메뉴 글씨는 아주 큰 글씨 설정에서도 이 범위까지만 커져 메뉴가 화면을 차지하지 않는다.
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        // 메뉴 글씨는 아주 큰 글씨 설정에서도 이 범위까지만 커져 네 항목이 한 줄에 들어간다.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
         .frame(maxWidth: .infinity)
         // 배경은 홈 인디케이터 영역까지 이어지고, 글자는 그 위쪽 메뉴 영역에만 있다.
         .background(

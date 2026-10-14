@@ -75,8 +75,7 @@ struct KmoProductExperienceView: View {
                     .frame(height: 26)
                     .background(KmoSurface.hero)
                 info
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 32)
+                    .kmoPageInsets()
                     .background(KmoSurface.panel)
             }
         }

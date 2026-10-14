@@ -82,7 +82,7 @@ struct KmoCustomerHomeView: View {
                         header.padding(.horizontal, 20)
                         KmoHeroSection(model: hero, onOpenDetail: { path.append(.product($0.id)) })
                     }
-                    .padding(.top, 4)
+                    .padding(.top, KmoLayout.topGap)
                     .padding(.bottom, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(KmoSurface.hero)
@@ -93,7 +93,7 @@ struct KmoCustomerHomeView: View {
                         .background(KmoSurface.hero)
                         .accessibilityHidden(true)
                     // 아래: 검색과 탐색
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: KmoLayout.sectionGap) {
                         findCard
                         categorySection
                         browseSection
@@ -104,7 +104,7 @@ struct KmoCustomerHomeView: View {
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 4)
-                    .padding(.bottom, 28)
+                    .padding(.bottom, KmoLayout.bottomGap)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(KmoSurface.panel)
                 }
@@ -174,15 +174,8 @@ struct KmoCustomerHomeView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(KmoCopy.brand)
-                .font(.title.weight(.bold))
-                .foregroundStyle(KmoColors.textPrimary)
-                .accessibilityAddTraits(.isHeader)
-            Text(KmoCopy.tagline)
-                .font(.footnote)
-                .foregroundStyle(KmoColors.textSecondary)
-        }
+        KmoLogo()
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var findCard: some View {
@@ -512,7 +505,7 @@ struct KmoResultsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 24) {
                 topBar
                 searchField
                 if model.searching { ProgressView().frame(maxWidth: .infinity) }
@@ -526,8 +519,7 @@ struct KmoResultsView: View {
                     emptyState
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 32)
+            .kmoPageInsets()
         }
         .background(KmoBackground())
         .toolbar(.hidden, for: .navigationBar)
@@ -724,7 +716,7 @@ struct KmoStoreDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 24) {
                 HStack {
                     Button { dismiss() } label: {
                         Text("뒤로").font(.body).foregroundStyle(KmoColors.textSecondary).frame(minWidth: 44, minHeight: 44, alignment: .leading)
@@ -738,8 +730,7 @@ struct KmoStoreDetailView: View {
                     Text("매장 정보를 찾지 못했어요").font(.headline).foregroundStyle(KmoColors.textPrimary)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 32)
+            .kmoPageInsets()
         }
         .background(KmoBackground())
         .toolbar(.hidden, for: .navigationBar)
@@ -832,7 +823,7 @@ struct KmoMySpaceView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 24) {
                 HStack {
                     Button { dismiss() } label: {
                         Text("뒤로").font(.body).foregroundStyle(KmoColors.textSecondary).frame(minWidth: 44, minHeight: 44, alignment: .leading)
@@ -858,8 +849,7 @@ struct KmoMySpaceView: View {
                     .font(.footnote)
                     .foregroundStyle(KmoColors.textSecondary)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 32)
+            .kmoPageInsets()
         }
         .background(KmoBackground())
         .toolbar(.hidden, for: .navigationBar)

@@ -39,7 +39,7 @@ struct KmoStoreBrowseView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 24) {
                 HStack {
                     Button { dismiss() } label: {
                         Text("뒤로").font(.body).foregroundStyle(KmoColors.textSecondary).frame(minWidth: 44, minHeight: 44, alignment: .leading)
@@ -53,8 +53,7 @@ struct KmoStoreBrowseView: View {
                     .accessibilityAddTraits(.isHeader)
                 content
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 32)
+            .kmoPageInsets()
         }
         .background(KmoBackground())
         .toolbar(.hidden, for: .navigationBar)
@@ -143,7 +142,7 @@ struct KmoStoreHomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 24) {
                 HStack {
                     Button { dismiss() } label: {
                         Text("뒤로").font(.body).foregroundStyle(KmoColors.textSecondary).frame(minWidth: 44, minHeight: 44, alignment: .leading)
@@ -165,8 +164,7 @@ struct KmoStoreHomeView: View {
                 KmoMapBlock(name: store.displayName, latitude: store.latitude, longitude: store.longitude)
                 productsSection
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 32)
+            .kmoPageInsets()
         }
         .background(KmoBackground())
         .toolbar(.hidden, for: .navigationBar)

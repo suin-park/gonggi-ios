@@ -24,7 +24,6 @@ struct PrimaryButton: View {
             .foregroundStyle(GonggiColors.textOnAccent)
             .background(GonggiColors.primaryButtonGradient)
             .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.sm, style: .continuous))
-            .shadow(color: GonggiColors.brandCyan.opacity(0.28), radius: 14, y: 5)
         }
         .buttonStyle(GonggiPressableStyle())
         .accessibilityLabel(title)

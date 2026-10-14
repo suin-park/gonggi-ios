@@ -12,12 +12,12 @@ struct LibraryView: View {
     @State private var showImportSheet = false
     @State private var gaussianViewer: GaussianViewerPresentation?
     @State private var placementHighlightId: String?
-    @State private var showRecordChooser = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
+                VStack(alignment: .leading, spacing: KmoLayout.sectionGap) {
+                    KmoPageTitle(text: "보관함")
                     categoryPicker
                     switch category {
                     case .spaces:
@@ -39,16 +39,12 @@ struct LibraryView: View {
                         .environmentObject(appState)
                     }
                 }
-                .padding(GonggiSpacing.lg)
-                .padding(.bottom, GonggiSpacing.xxl)
+                .kmoPageInsets()
             }
             .background(KmoBackground())
-            .navigationTitle("보관함")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("기록하기") { showRecordChooser = true }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     if category == .spaces {
                         Button {
@@ -59,10 +55,6 @@ struct LibraryView: View {
                         .accessibilityLabel("외부에서 가져오기")
                     }
                 }
-            }
-            .fullScreenCover(isPresented: $showRecordChooser) {
-                KmoRecordChooserCover(onClose: { showRecordChooser = false })
-                    .environmentObject(appState)
             }
             .sheet(isPresented: $showImportSheet) {
                 SpaceImportSheet(

@@ -487,7 +487,7 @@ struct AuthShellView: View {
                         Spacer(minLength: welcomeTopMin(for: usableHeight))
 
                         // Independent centered logo header (does not force form centering).
-                        KmoWordmark()
+                        KmoWordmark(width: 150)
                             .frame(maxWidth: .infinity)
                             .padding(.bottom, GonggiSpacing.xs)
 
@@ -682,7 +682,7 @@ struct EmailContinueView: View {
                 GonggiAmbientBackground(showGlow: false)
                 ScrollView {
                     VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-                        KmoWordmark()
+                        KmoWordmark(width: 150)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.top, GonggiSpacing.xs)
                             .padding(.bottom, GonggiSpacing.xs)

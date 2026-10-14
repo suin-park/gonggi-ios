@@ -38,6 +38,71 @@ final class KmoSession: ObservableObject {
     }
 }
 
+/// 사장님 하단 「기록하기」에서 고르는 작업.
+enum KmoOwnerAction: Equatable {
+    case shelfRegister
+    case storeCapture
+    case solid
+}
+
+/// 사장님의 기록 방식 선택: 선택된 지점과 이어지는 큰 버튼 세 개.
+struct KmoOwnerRecordSheet: View {
+    let onClose: () -> Void
+    let onPick: (KmoOwnerAction) -> Void
+
+    @EnvironmentObject private var appState: AppState
+    @ObservedObject private var role = StoreShelfRoleModel.shared
+    @ObservedObject private var session = KmoSession.shared
+
+    private var storeName: String? {
+        let list = appState.isMockMode ? StoreShelfRepository.shared.stores().map(\.name) : role.managedStores.map(\.displayName)
+        if let id = session.storeId, let s = role.managedStores.first(where: { $0.id == id }) { return s.displayName }
+        return list.first
+    }
+
+    var body: some View {
+        ZStack {
+            KmoBackground()
+            ScrollView {
+                VStack(alignment: .leading, spacing: KmoLayout.sectionGap) {
+                    HStack {
+                        KmoPageTitle(text: "기록하기")
+                        Button(action: onClose) {
+                            Text("닫기").font(.headline).foregroundStyle(KmoColors.textPrimary)
+                                .frame(minWidth: KmoLayout.minTouch, minHeight: KmoLayout.minTouch)
+                        }
+                        .buttonStyle(KmoPressStyle())
+                    }
+                    if let storeName {
+                        Text("\(storeName)에 연결돼요").font(.subheadline).foregroundStyle(KmoColors.textSecondary)
+                    }
+                    VStack(spacing: 12) {
+                        choice("매장 촬영", detail: "매장 안을 360으로 찍어 둘러보기용 공간을 만들어요", action: .storeCapture)
+                        choice("매대 등록", detail: "매대를 찍어 제품 위치를 등록해요", action: .shelfRegister)
+                        choice("입체 보기 만들기", detail: "제품 사진으로 3D 상품 체험을 만들어요", action: .solid)
+                    }
+                }
+                .kmoPageInsets()
+            }
+        }
+    }
+
+    private func choice(_ title: String, detail: String, action: KmoOwnerAction) -> some View {
+        Button { onPick(action) } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline).foregroundStyle(KmoColors.textPrimary)
+                Text(detail).font(.subheadline).foregroundStyle(KmoColors.textSecondary).multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+            .padding(KmoLayout.cardPadding)
+            .background(KmoColors.card)
+            .overlay(RoundedRectangle(cornerRadius: KmoLayout.cornerRadius, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: KmoLayout.cornerRadius, style: .continuous))
+        }
+        .buttonStyle(KmoPressStyle())
+    }
+}
+
 struct KmoOwnerHomeView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var role = StoreShelfRoleModel.shared
@@ -116,6 +181,11 @@ struct KmoOwnerHomeView: View {
         .task(id: current?.id) {
             await loadRegistered()
         }
+        // 하단 「기록하기」에서 고른 작업
+        .onChange(of: appState.kmoOwnerAction) { _, action in
+            handleOwnerAction(action)
+        }
+        .onAppear { handleOwnerAction(appState.kmoOwnerAction) }
         .onChange(of: showManage) { _, open in
             if !open { Task { await loadRegistered() } }
         }
@@ -175,6 +245,17 @@ struct KmoOwnerHomeView: View {
         StoreShelfSelection.lastStoreId = s.id
     }
 
+    private func handleOwnerAction(_ action: KmoOwnerAction?) {
+        guard let action, let store = current else { return }
+        appState.kmoOwnerAction = nil
+        prepareStore(store)
+        switch action {
+        case .shelfRegister: showShelfRegister = true
+        case .storeCapture: showStoreCapture = true
+        case .solid: showSolid = true
+        }
+    }
+
     private func coverUrl(of store: StoreRecord) -> String? {
         role.managedStores.first(where: { $0.id == store.id })?.coverUrl
     }
@@ -216,8 +297,8 @@ struct KmoOwnerHomeView: View {
             }
             header
                 .padding(.horizontal, 20)
-                .padding(.top, 4)
-                .padding(.bottom, hasCover ? 0 : 4)
+                .padding(.top, KmoLayout.topGap)
+                .padding(.bottom, hasCover ? 0 : 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity)
@@ -263,11 +344,7 @@ struct KmoOwnerHomeView: View {
 
     private var header: some View {
         HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(KmoCopy.brand).font(.largeTitle.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
-                    .accessibilityAddTraits(.isHeader)
-                Text(KmoCopy.tagline).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
-            }
+            KmoLogo()
             Spacer()
             Button { session.setOwner(false) } label: {
                 Text("고객 화면").font(.subheadline.weight(.semibold)).foregroundStyle(KmoColors.textSecondary)

@@ -26,6 +26,13 @@ struct KmoWaveTop: Shape {
     }
 }
 
+enum KmoHeroLayout {
+    /// 대표 상품 3D 영역의 높이: 화면 높이에 맞추되 너무 크거나 작지 않게.
+    static func stageHeight(screenHeight: CGFloat = UIScreen.main.bounds.height) -> CGFloat {
+        min(max(screenHeight * 0.30, 200), 300)
+    }
+}
+
 enum KmoSurface {
     /// 대표 상품 영역의 바탕과, 웨이브 아래 콘텐츠 영역의 바탕.
     static let hero = Color(red: 0.045, green: 0.100, blue: 0.125)
@@ -37,7 +44,7 @@ enum KmoSurface {
 struct KmoProductStage: View {
     let phase: KmoHeroModel.ModelPhase
     let thumbnailUrl: String?
-    /// 불러오는 동안 함께 보여 줄 짧은 설명(예: 파일 크기).
+    /// 불러오는 동안 함께 보여 줄 짧은 설명.
     var loadingDetail: String? = nil
     var height: CGFloat = 280
     /// 화면 확인용: 장면 단계와 상관없이 그린다.
@@ -46,9 +53,27 @@ struct KmoProductStage: View {
 
     @Environment(\.kmoTabActive) private var tabActive
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var interacted = false
+    @State private var resetToken = 0
+    @State private var changed = false
 
     private var active: Bool { forceActive || (tabActive && scenePhase == .active) }
+
+    /// 불러오지 못했을 때는 큰 빈 공간을 남기지 않고 대표 사진과 다시 시도만 둔다.
+    private var effectiveHeight: CGFloat {
+        if case .failed = phase { return min(height, 190) }
+        return height
+    }
+
+    private var phaseKey: Int {
+        switch phase {
+        case .idle: return 0
+        case .loading: return 1
+        case .ready: return 2
+        case .failed: return 3
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -56,7 +81,7 @@ struct KmoProductStage: View {
             case .idle, .loading:
                 // 3D가 열리는 동안 같은 상품의 사진을 흐리게 보여 주고 불러오는 중임을 알린다.
                 if KmoImageSlot.initial(urlString: thumbnailUrl).reservesPhotoHeight {
-                    KmoPhotoView(urlString: thumbnailUrl, height: height, cornerRadius: 0, fill: false)
+                    KmoPhotoView(urlString: thumbnailUrl, height: effectiveHeight, cornerRadius: 0, fill: false)
                         .opacity(0.45)
                 }
                 VStack(spacing: 8) {
@@ -67,8 +92,34 @@ struct KmoProductStage: View {
                     }
                 }
             case .ready(let box):
-                KmoModelView(scene: box.scene, isActive: active, onInteract: { interacted = true })
+                KmoModelView(
+                    scene: box.scene, isActive: active, resetToken: resetToken,
+                    onTransformChange: { changed = $0 },
+                    onInteract: { interacted = true })
+                    .transition(.opacity)
                 VStack {
+                    HStack {
+                        Spacer()
+                        if changed {
+                            Button {
+                                resetToken += 1
+                                changed = false
+                            } label: {
+                                Text("처음 모습")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(KmoColors.textPrimary)
+                                    .padding(.horizontal, 14)
+                                    .frame(minHeight: 36)
+                                    .background(KmoColors.card.opacity(0.9))
+                                    .overlay(Capsule().stroke(KmoColors.stroke, lineWidth: 1))
+                                    .clipShape(Capsule())
+                                    .frame(minWidth: KmoLayout.minTouch, minHeight: KmoLayout.minTouch)
+                            }
+                            .buttonStyle(KmoPressStyle())
+                            .transition(.opacity)
+                        }
+                    }
+                    .padding(.trailing, 12)
                     Spacer()
                     if !interacted {
                         Text("손으로 돌려보세요")
@@ -77,24 +128,29 @@ struct KmoProductStage: View {
                             .padding(.bottom, 8)
                     }
                 }
-                .allowsHitTesting(false)
             case .failed(let text):
                 VStack(spacing: 8) {
                     if KmoImageSlot.initial(urlString: thumbnailUrl).reservesPhotoHeight {
-                        KmoPhotoView(urlString: thumbnailUrl, height: height * 0.55, cornerRadius: 12, fill: false)
+                        KmoPhotoView(urlString: thumbnailUrl, height: effectiveHeight * 0.6, cornerRadius: 12, fill: false)
                     }
                     Text(text).font(.subheadline).foregroundStyle(KmoColors.textSecondary)
                     Button(action: onRetry) {
                         Text("다시 시도").font(.subheadline.weight(.semibold)).foregroundStyle(KmoColors.accent)
-                            .frame(minWidth: 88, minHeight: 44)
+                            .frame(minWidth: 88, minHeight: KmoLayout.minTouch)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(KmoPressStyle())
                 }
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(height: height)
+        .frame(height: effectiveHeight)
         .clipped()
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: phaseKey)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: changed)
+        .onChange(of: phaseKey) { _, _ in
+            interacted = false
+            changed = false
+        }
     }
 }
 
@@ -238,7 +294,7 @@ struct KmoHeroSection: View {
                 phase: model.modelPhase,
                 thumbnailUrl: product.heroThumbnailURL(selectedVariantId: model.variantId),
                 loadingDetail: model.modelSizeText,
-                height: 280,
+                height: KmoHeroLayout.stageHeight(),
                 onRetry: { model.retryModel() })
             VStack(alignment: .leading, spacing: 4) {
                 Button { onOpenDetail(product) } label: {

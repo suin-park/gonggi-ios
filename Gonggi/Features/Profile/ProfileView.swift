@@ -20,7 +20,8 @@ struct ProfileView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: GonggiSpacing.lg) {
+                VStack(spacing: KmoLayout.sectionGap) {
+                    KmoPageTitle(text: "내 정보")
                     profileHeader
                     accountUnifiedNote
 
@@ -189,12 +190,11 @@ struct ProfileView: View {
                         mockBadge
                     }
                 }
-                .padding(GonggiSpacing.lg)
-                .padding(.bottom, GonggiSpacing.xxl)
+                .kmoPageInsets()
             }
             .background(KmoBackground())
-            .navigationTitle("내 정보")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .task {
                 await auth.refreshProfile()
             }

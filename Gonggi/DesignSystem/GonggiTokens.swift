@@ -5,9 +5,9 @@ import SwiftUI
 enum GonggiColors {
     // Brand originals
     /// Gonggi Cyan #3FCFE4 — emphasis / brand fill
-    static let brandCyan = Color(red: 63 / 255, green: 207 / 255, blue: 228 / 255)
+    static let brandCyan = KmoColors.accent
     /// Gonggi Navy #0E233E — text on cyan / deep surfaces
-    static let brandNavy = Color(red: 14 / 255, green: 35 / 255, blue: 62 / 255)
+    static let brandNavy = KmoColors.onAccent
     /// Paper #F5F7F9 — rare light surfaces
     static let brandPaper = Color(red: 245 / 255, green: 247 / 255, blue: 249 / 255)
     /// Slate #536477 — secondary on light
@@ -16,23 +16,24 @@ enum GonggiColors {
     static let brandDeepTeal = Color(red: 8 / 255, green: 124 / 255, blue: 143 / 255)
 
     // App chrome — deep navy (dark-first product UI)
-    static let backgroundPrimary = Color(red: 0.04, green: 0.07, blue: 0.12)
-    static let backgroundElevated = Color(red: 0.06, green: 0.10, blue: 0.18)
-    static let surface = Color(red: 0.08, green: 0.12, blue: 0.20)
-    static let surfaceElevated = Color(red: 0.10, green: 0.15, blue: 0.26)
+    // 커모 공통 팔레트(KmoColors)를 앱 전체의 기준으로 쓴다. 이전의 파란 카드 색은 쓰지 않는다.
+    static let backgroundPrimary = KmoColors.background
+    static let backgroundElevated = Color(red: 0.070, green: 0.140, blue: 0.165)
+    static let surface = KmoColors.card
+    static let surfaceElevated = Color(red: 0.105, green: 0.190, blue: 0.215)
     static let border = Color.white.opacity(0.12)
     static let borderSubtle = Color.white.opacity(0.07)
 
     // Text — white hierarchy on dark
     static let textPrimary = Color.white
     static let textSecondary = Color.white.opacity(0.72)
-    static let textTertiary = Color.white.opacity(0.48)
+    static let textTertiary = Color.white.opacity(0.60)
     /// Text on brand cyan CTA (navy — Brand Book §17 contrast 8.47:1)
     static let textOnAccent = brandNavy
 
     // Accent aliases used across the app
     static let accentCyan = brandCyan
-    static let accentTeal = Color(red: 0.12, green: 0.55, blue: 0.58)
+    static let accentTeal = Color(red: 0.33, green: 0.70, blue: 0.66)
     // Status — Brand Book §17 suggestions (kept distinct from brand cyan)
     static let successGreen = Color(red: 24 / 255, green: 121 / 255, blue: 78 / 255)
     static let warning = Color(red: 161 / 255, green: 92 / 255, blue: 0 / 255)
@@ -42,7 +43,7 @@ enum GonggiColors {
 
     static let heroGradient = LinearGradient(
         colors: [
-            Color(red: 0.07, green: 0.12, blue: 0.22),
+            backgroundElevated,
             backgroundPrimary,
         ],
         startPoint: .topLeading,
@@ -51,9 +52,9 @@ enum GonggiColors {
 
     static let ambianceGradient = LinearGradient(
         colors: [
-            Color(red: 0.08, green: 0.14, blue: 0.28).opacity(0.95),
             backgroundPrimary,
-            Color(red: 0.05, green: 0.08, blue: 0.14),
+            backgroundPrimary,
+            backgroundPrimary,
         ],
         startPoint: .topLeading,
         endPoint: .bottomTrailing
@@ -61,8 +62,8 @@ enum GonggiColors {
 
     static let lightGlow = RadialGradient(
         colors: [
-            brandCyan.opacity(0.20),
-            accentTeal.opacity(0.06),
+            Color.clear,
+            Color.clear,
             .clear,
         ],
         center: .topTrailing,

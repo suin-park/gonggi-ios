@@ -17,12 +17,17 @@ final class StoreProductManagementModel: ObservableObject {
     @Published var error: String?
 
     private let api = StoreShelfAPIClient()
+    /// 화면 확인용 고정 목록. 서버를 부르지 않는다.
+    private let previewCatalog: RemoteCatalogView?
 
-    init(store: StoreRecord) {
+    init(store: StoreRecord, previewCatalog: RemoteCatalogView? = nil) {
         self.store = store
+        self.previewCatalog = previewCatalog
+        if let previewCatalog { catalog = previewCatalog }
     }
 
     func load() async {
+        if previewCatalog != nil { return }
         loading = true
         defer { loading = false }
         do {
@@ -152,12 +157,13 @@ struct StoreProductManagementView: View {
 
     var showsClose = true
 
-    init(store: StoreRecord, showsClose: Bool = true, startAdding: Bool = false, onClose: @escaping () -> Void) {
+    init(store: StoreRecord, showsClose: Bool = true, startAdding: Bool = false, previewCatalog: RemoteCatalogView? = nil,
+         onClose: @escaping () -> Void) {
         self.store = store
         self.showsClose = showsClose
         self.onClose = onClose
         _adding = State(initialValue: startAdding)
-        _model = StateObject(wrappedValue: StoreProductManagementModel(store: store))
+        _model = StateObject(wrappedValue: StoreProductManagementModel(store: store, previewCatalog: previewCatalog))
     }
 
     var body: some View {
@@ -212,8 +218,8 @@ struct StoreProductManagementView: View {
     private func list(_ c: RemoteCatalogView) -> some View {
         let groups = Dictionary(grouping: c.items, by: { $0.shelfName ?? "매대 없음" })
         return ScrollView {
-            VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-                Text("제품 관리").font(.largeTitle.weight(.bold)).foregroundStyle(GonggiColors.textPrimary)
+            VStack(alignment: .leading, spacing: KmoLayout.sectionGap) {
+                KmoPageTitle(text: "제품 관리")
                 Text(store.name).font(.title3).foregroundStyle(GonggiColors.textSecondary)
                 if let m = model.message {
                     Text(m).font(.subheadline).foregroundStyle(GonggiColors.accentTeal)
@@ -236,8 +242,7 @@ struct StoreProductManagementView: View {
                     }
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, GonggiSpacing.xxl)
+            .kmoPageInsets()
         }
         .refreshable { await model.load() }
     }

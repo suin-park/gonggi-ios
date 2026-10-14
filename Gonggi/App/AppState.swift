@@ -30,6 +30,8 @@ final class AppState: ObservableObject {
     @Published private(set) var forceDismissViewerEpoch: UInt64 = 0
     /// One-shot Library segment preference after `exitVRToLibrary()` (consumed by LibraryView).
     @Published var preferredLibraryCategory: LibraryCategory?
+    /// 하단 「기록하기」에서 사장님이 고른 작업. 사장님 홈이 받아서 선택한 지점으로 연다.
+    @Published var kmoOwnerAction: KmoOwnerAction?
     /// Alias consumed by LibraryView when opening 배치 결과 after async curtain accept.
     @Published var pendingLibraryTab: LibraryCategory?
     /// Highlight a placement result card after navigation from VR accept.

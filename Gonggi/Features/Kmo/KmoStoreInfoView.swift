@@ -137,7 +137,7 @@ struct KmoStoreInfoView: View {
         ZStack {
             KmoBackground()
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 24) {
                     HStack {
                         Button(action: onClose) {
                             Text("닫기").font(.body).foregroundStyle(KmoColors.textSecondary).frame(minWidth: 44, minHeight: 44, alignment: .leading)
@@ -153,8 +153,7 @@ struct KmoStoreInfoView: View {
                     coverSection
                     toursSection
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 32)
+                .kmoPageInsets()
             }
         }
         .task { await model.load() }

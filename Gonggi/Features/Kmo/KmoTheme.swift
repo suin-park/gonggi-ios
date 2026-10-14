@@ -65,7 +65,7 @@ struct KmoPrimaryButton: View {
             .background(KmoColors.accent)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(KmoPressStyle())
         .disabled(isBusy)
     }
 }
@@ -98,7 +98,7 @@ struct KmoSecondaryButton: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(KmoPressStyle())
     }
 }
 
@@ -140,24 +140,85 @@ struct KmoRemoteImage: View {
     }
 }
 
-/// 로그인과 홈 위쪽의 이름 표시. 새 장식 로고 없이 고딕체 「커모」와 한 줄 설명만 쓴다.
+/// 커모 상단 로고(부제목 「커머스의 모든 것」이 로고에 들어 있다). 원본 비율 그대로, 너비만 정한다.
+/// 부제목을 따로 글자로 겹쳐 쓰지 않는다.
+struct KmoLogo: View {
+    var width: CGFloat = KmoLayout.logoWidth
+
+    var body: some View {
+        Image("KmoLogoHeader")
+            .resizable()
+            .scaledToFit()
+            .frame(width: width)
+            .accessibilityLabel("\(KmoCopy.brand), \(KmoCopy.tagline)")
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// 기존 호출 이름. 로고 이미지로 그린다.
 struct KmoWordmark: View {
     var alignment: HorizontalAlignment = .center
     var showsTagline = true
+    var width: CGFloat = KmoLayout.logoWidth
 
     var body: some View {
-        VStack(alignment: alignment, spacing: 2) {
-            Text(KmoCopy.brand)
-                .font(.largeTitle.weight(.bold))
-                .foregroundStyle(KmoColors.textPrimary)
-            if showsTagline {
-                Text(KmoCopy.tagline)
-                    .font(.subheadline)
-                    .foregroundStyle(KmoColors.textSecondary)
-            }
+        KmoLogo(width: width)
+            .frame(maxWidth: .infinity, alignment: alignment == .leading ? .leading : .center)
+    }
+}
+
+/// 공통 여백과 글자 규칙. 모든 일반 화면이 같은 값을 쓴다.
+enum KmoLayout {
+    static let pageHorizontal: CGFloat = 20
+    /// 안전 영역 또는 상단 막대 아래 첫 콘텐츠까지
+    static let topGap: CGFloat = 16
+    static let sectionGap: CGFloat = 24
+    static let cardPadding: CGFloat = 16
+    static let bottomGap: CGFloat = 32
+    static let logoWidth: CGFloat = 96
+    static let cornerRadius: CGFloat = 16
+    static let controlRadius: CGFloat = 12
+    static let minTouch: CGFloat = 44
+}
+
+/// 일반 화면의 제목(약 28pt, 글씨 크기 설정을 따른다).
+struct KmoPageTitle: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.title.weight(.bold))
+            .foregroundStyle(KmoColors.textPrimary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
+extension View {
+    /// 일반 화면의 스크롤 내용에 공통 좌우, 상단, 하단 여백을 준다.
+    func kmoPageInsets() -> some View {
+        self
+            .padding(.horizontal, KmoLayout.pageHorizontal)
+            .padding(.top, KmoLayout.topGap)
+            .padding(.bottom, KmoLayout.bottomGap)
+    }
+}
+
+/// 누르는 동안 살짝 작아지고 흐려진다. 동작 줄이기 설정이면 색 변화만 둔다.
+struct KmoPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        KmoPressBody(configuration: configuration)
+    }
+
+    private struct KmoPressBody: View {
+        let configuration: ButtonStyleConfiguration
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        var body: some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+                .opacity(configuration.isPressed ? 0.85 : 1)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(KmoCopy.brand), \(KmoCopy.tagline)")
     }
 }
 
