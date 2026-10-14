@@ -8,6 +8,8 @@ enum KmoColors {
     static let card = Color(red: 0.090, green: 0.165, blue: 0.190)
     static let field = Color(red: 0.070, green: 0.135, blue: 0.160)
     static let stroke = Color.white.opacity(0.10)
+    /// 영역 구분선: 배경보다 조금 밝은 청회색, 낮은 대비.
+    static let divider = Color(red: 0.17, green: 0.27, blue: 0.30)
     static let textPrimary = Color(red: 0.93, green: 0.95, blue: 0.95)
     static let textSecondary = Color(red: 0.70, green: 0.77, blue: 0.79)
     static let accent = Color(red: 0.49, green: 0.84, blue: 0.77)
@@ -241,5 +243,18 @@ struct KmoBannerImage: View {
         .frame(height: 120)
         .clipped()
         .accessibilityHidden(true)
+    }
+}
+
+
+/// 주요 영역 사이의 은은한 구분선. 위아래 간격을 함께 정한다(영역 사이 24pt 안에서 16pt씩).
+/// 웨이브 경계가 있는 곳, 개별 카드 사이에는 쓰지 않는다.
+struct KmoSectionDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(KmoColors.divider)
+            .frame(height: 1)
+            .padding(.vertical, -8)
+            .accessibilityHidden(true)
     }
 }

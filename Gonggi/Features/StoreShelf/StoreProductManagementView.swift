@@ -157,11 +157,16 @@ struct StoreProductManagementView: View {
 
     var showsClose = true
 
-    init(store: StoreRecord, showsClose: Bool = true, startAdding: Bool = false, previewCatalog: RemoteCatalogView? = nil,
-         onClose: @escaping () -> Void) {
+    /// 열리자마자 편집을 열 항목(`RemoteCatalogItem.id`). 불러온 목록에 있을 때만 연다.
+    private let startEditingId: String?
+    @State private var openedInitialEdit = false
+
+    init(store: StoreRecord, showsClose: Bool = true, startAdding: Bool = false, startEditingId: String? = nil,
+         previewCatalog: RemoteCatalogView? = nil, onClose: @escaping () -> Void) {
         self.store = store
         self.showsClose = showsClose
         self.onClose = onClose
+        self.startEditingId = startEditingId
         _adding = State(initialValue: startAdding)
         _model = StateObject(wrappedValue: StoreProductManagementModel(store: store, previewCatalog: previewCatalog))
     }
@@ -174,7 +179,14 @@ struct StoreProductManagementView: View {
                 content
             }
         }
-        .task { await model.load() }
+        .task {
+            await model.load()
+            if let id = startEditingId, !openedInitialEdit,
+               let item = model.catalog?.items.first(where: { $0.id == id }) {
+                openedInitialEdit = true
+                editing = item
+            }
+        }
         .sheet(item: $editing) { item in
             StoreProductEditSheet(item: item, shelves: model.catalog?.shelves ?? [], model: model) { editing = nil }
         }

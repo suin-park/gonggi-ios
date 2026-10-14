@@ -269,6 +269,7 @@ struct CaptureContainerView: View {
             storeOptions: RecordStoreOption.visible(
                 menuVisible: StoreShelfFeatureFlags.menuVisible,
                 isManager: StoreShelfAccess.recordMenuVisible(flag: true, mockMode: appState.isMockMode, access: storeRole.access)
+                    && KmoSession.shared.ownerRequested
             ),
             onStore: { option in
                 GonggiHaptics.medium()

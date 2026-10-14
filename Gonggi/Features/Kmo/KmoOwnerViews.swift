@@ -38,26 +38,26 @@ final class KmoSession: ObservableObject {
     }
 }
 
-/// 사장님 하단 「기록하기」에서 고르는 작업.
-enum KmoOwnerAction: Equatable {
-    case shelfRegister
-    case storeCapture
-    case solid
-}
-
-/// 사장님의 기록 방식 선택: 선택된 지점과 이어지는 큰 버튼 세 개.
-struct KmoOwnerRecordSheet: View {
-    let onClose: () -> Void
-    let onPick: (KmoOwnerAction) -> Void
-
+/// 하단 「기록하기」 탭의 사장님 화면. 선택된 지점에 연결되는 기록만 둔다(개인 공간 기록과 섞이지 않는다).
+/// 촬영이나 등록에 들어가면 그 화면이 전체를 덮고, 취소나 완료로 돌아오면 이 탭이 그대로 보인다. 닫기 버튼은 없다.
+struct KmoOwnerRecordTab: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var role = StoreShelfRoleModel.shared
     @ObservedObject private var session = KmoSession.shared
 
-    private var storeName: String? {
-        let list = appState.isMockMode ? StoreShelfRepository.shared.stores().map(\.name) : role.managedStores.map(\.displayName)
-        if let id = session.storeId, let s = role.managedStores.first(where: { $0.id == id }) { return s.displayName }
-        return list.first
+    @State private var showShelfRegister = false
+    @State private var showStoreCapture = false
+    @State private var showSolid = false
+    @State private var toast: String?
+    private let pendingStore = KmoPendingStoreLinkStore(storage: UserDefaults.standard)
+
+    private var stores: [StoreRecord] {
+        if appState.isMockMode { return StoreShelfRepository.shared.stores() }
+        return role.managedStores.map { StoreShelfRepository.shared.ensureStore(id: $0.id, name: $0.displayName) }
+    }
+
+    private var current: StoreRecord? {
+        stores.first(where: { $0.id == session.storeId }) ?? stores.first
     }
 
     var body: some View {
@@ -65,30 +65,73 @@ struct KmoOwnerRecordSheet: View {
             KmoBackground()
             ScrollView {
                 VStack(alignment: .leading, spacing: KmoLayout.sectionGap) {
-                    HStack {
-                        KmoPageTitle(text: "기록하기")
-                        Button(action: onClose) {
-                            Text("닫기").font(.headline).foregroundStyle(KmoColors.textPrimary)
-                                .frame(minWidth: KmoLayout.minTouch, minHeight: KmoLayout.minTouch)
+                    KmoPageTitle(text: "기록하기")
+                    if let store = current {
+                        Text("\(store.name)에 연결돼요").font(.subheadline).foregroundStyle(KmoColors.textSecondary)
+                        VStack(spacing: 12) {
+                            choice("매장 촬영", detail: "매장 안을 360으로 찍어 둘러보기용 공간을 만들어요") {
+                                prepare(store)
+                                showStoreCapture = true
+                            }
+                            choice("매대 등록", detail: "매대를 찍어 제품 위치를 등록해요") {
+                                prepare(store)
+                                showShelfRegister = true
+                            }
+                            choice("입체 보기 만들기", detail: "제품 사진으로 3D 상품 체험을 만들어요") {
+                                showSolid = true
+                            }
                         }
-                        .buttonStyle(KmoPressStyle())
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("담당 매장이 없어요").font(.title3.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
+                            Text("매장 담당자 권한은 관리자가 지정해요").font(.body).foregroundStyle(KmoColors.textSecondary)
+                        }
+                        .kmoCard()
                     }
-                    if let storeName {
-                        Text("\(storeName)에 연결돼요").font(.subheadline).foregroundStyle(KmoColors.textSecondary)
-                    }
-                    VStack(spacing: 12) {
-                        choice("매장 촬영", detail: "매장 안을 360으로 찍어 둘러보기용 공간을 만들어요", action: .storeCapture)
-                        choice("매대 등록", detail: "매대를 찍어 제품 위치를 등록해요", action: .shelfRegister)
-                        choice("입체 보기 만들기", detail: "제품 사진으로 3D 상품 체험을 만들어요", action: .solid)
+                    if let toast {
+                        Text(toast).font(.subheadline).foregroundStyle(KmoColors.accent)
                     }
                 }
                 .kmoPageInsets()
             }
         }
+        .task { await role.refresh() }
+        .fullScreenCover(isPresented: $showShelfRegister) {
+            StoreShelfFlowView(mode: .record, onClose: { showShelfRegister = false })
+                .environmentObject(appState)
+        }
+        .fullScreenCover(isPresented: $showStoreCapture) {
+            DirectionCaptureView(
+                onClose: { showStoreCapture = false },
+                onCaptureCompleted: { result in
+                    // 결과는 보관함에 저장하고, 선택한 매장 연결을 기억해 둔다. 공개는 사장님이 직접 한다.
+                    if let store = current {
+                        pendingStore.add(
+                            KmoPendingStoreLink(storeId: store.id, sessionId: result.sessionId, createdAt: Date()),
+                            account: KmoRecentModel.accountId)
+                    }
+                    appState.enqueueSpaceGeneration(from: result, switchToHome: false)
+                    toast = "촬영 결과가 완성되면 매장 둘러보기 초안으로 연결돼요"
+                })
+                .environmentObject(appState)
+        }
+        .sheet(isPresented: $showSolid) {
+            CreateAssetFlowView(
+                onClose: { showSolid = false },
+                onAccepted: {
+                    toast = "입체 보기 만들기를 시작했어요. 보관함의 3D 자산에서 확인해요"
+                    AssetLibraryStore.shared.refresh(force: true)
+                })
+            .presentationDetents([.large])
+        }
     }
 
-    private func choice(_ title: String, detail: String, action: KmoOwnerAction) -> some View {
-        Button { onPick(action) } label: {
+    private func prepare(_ s: StoreRecord) {
+        StoreShelfSelection.lastStoreId = s.id
+    }
+
+    private func choice(_ title: String, detail: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline).foregroundStyle(KmoColors.textPrimary)
                 Text(detail).font(.subheadline).foregroundStyle(KmoColors.textSecondary).multilineTextAlignment(.leading)
@@ -110,9 +153,8 @@ struct KmoOwnerHomeView: View {
 
     @State private var showManage = false
     @State private var startAdding = false
-    @State private var showShelfRegister = false
-    @State private var showStoreCapture = false
-    @State private var showSolid = false
+    /// 등록한 상품 미리보기의 「수정」: 상품 관리를 열면서 이 항목의 편집을 바로 연다.
+    @State private var editItemId: String?
     @State private var showStorePicker = false
     @State private var showInfo = false
     @State private var toast: String?
@@ -139,22 +181,22 @@ struct KmoOwnerHomeView: View {
                     .frame(height: 26)
                     .background(KmoSurface.hero)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: KmoLayout.sectionGap) {
                     if let store = current {
-                        storePanel(store)
-                        KmoPrimaryButton(title: "상품 추가") {
-                            startAdding = true
-                            showManage = true
+                        // 매장 정보와 상품 추가
+                        VStack(alignment: .leading, spacing: 16) {
+                            storePanel(store)
+                            KmoPrimaryButton(title: "상품 추가") {
+                                startAdding = true
+                                editItemId = nil
+                                showManage = true
+                            }
                         }
-                        LazyVGrid(columns: typeSize.isAccessibilitySize
-                                  ? [GridItem(.flexible())]
-                                  : [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                            tile("상품 관리") { startAdding = false; showManage = true }
-                            tile("매대 등록") { prepareStore(store); showShelfRegister = true }
-                            tile("매장 촬영") { prepareStore(store); showStoreCapture = true }
-                            tile("입체 보기 만들기") { showSolid = true }
+                        // 등록한 상품은 상품 추가 바로 아래에 이어진다(버튼을 뺀 빈 자리를 남기지 않는다).
+                        if !activeRegistered.isEmpty {
+                            KmoSectionDivider()
+                            registeredProducts
                         }
-                        registeredProducts
                     } else {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("담당 매장이 없어요").font(.title3.weight(.bold)).foregroundStyle(KmoColors.textPrimary)
@@ -181,11 +223,6 @@ struct KmoOwnerHomeView: View {
         .task(id: current?.id) {
             await loadRegistered()
         }
-        // 하단 「기록하기」에서 고른 작업
-        .onChange(of: appState.kmoOwnerAction) { _, action in
-            handleOwnerAction(action)
-        }
-        .onAppear { handleOwnerAction(appState.kmoOwnerAction) }
         .onChange(of: showManage) { _, open in
             if !open { Task { await loadRegistered() } }
         }
@@ -201,58 +238,16 @@ struct KmoOwnerHomeView: View {
         }
         .fullScreenCover(isPresented: $showManage) {
             if let store = current {
-                StoreProductManagementView(store: store, startAdding: startAdding, onClose: { showManage = false })
+                StoreProductManagementView(store: store, startAdding: startAdding, startEditingId: editItemId,
+                                           onClose: { showManage = false; editItemId = nil })
                     .environmentObject(appState)
             }
-        }
-        .fullScreenCover(isPresented: $showShelfRegister) {
-            StoreShelfFlowView(mode: .record, onClose: { showShelfRegister = false })
-                .environmentObject(appState)
-        }
-        .fullScreenCover(isPresented: $showStoreCapture) {
-            DirectionCaptureView(
-                onClose: { showStoreCapture = false },
-                onCaptureCompleted: { result in
-                    // 결과는 보관함에 저장하고, 선택한 매장 연결을 기억해 둔다. 공개는 사장님이 직접 한다.
-                    if let store = current {
-                        pendingStore.add(
-                            KmoPendingStoreLink(storeId: store.id, sessionId: result.sessionId, createdAt: Date()),
-                            account: KmoRecentModel.accountId)
-                    }
-                    appState.enqueueSpaceGeneration(from: result, switchToHome: false)
-                    toast = "촬영 결과가 완성되면 매장 둘러보기 초안으로 연결돼요"
-                })
-                .environmentObject(appState)
-        }
-        .sheet(isPresented: $showSolid) {
-            CreateAssetFlowView(
-                onClose: { showSolid = false },
-                onAccepted: {
-                    toast = "입체 보기 만들기를 시작했어요. 보관함의 3D 자산에서 확인해요."
-                    AssetLibraryStore.shared.refresh(force: true)
-                })
-            .presentationDetents([.large])
         }
         .confirmationDialog("지점 선택", isPresented: $showStorePicker, titleVisibility: .visible) {
             ForEach(stores) { s in
                 Button(s.name) { session.selectStore(s.id) }
             }
             Button("취소", role: .cancel) {}
-        }
-    }
-
-    private func prepareStore(_ s: StoreRecord) {
-        StoreShelfSelection.lastStoreId = s.id
-    }
-
-    private func handleOwnerAction(_ action: KmoOwnerAction?) {
-        guard let action, let store = current else { return }
-        appState.kmoOwnerAction = nil
-        prepareStore(store)
-        switch action {
-        case .shelfRegister: showShelfRegister = true
-        case .storeCapture: showStoreCapture = true
-        case .solid: showSolid = true
         }
     }
 
@@ -305,15 +300,19 @@ struct KmoOwnerHomeView: View {
         .background(KmoSurface.hero)
     }
 
-    /// 등록한 상품 일부. 수정은 상품 관리로 이어진다.
+    private var activeRegistered: [RemoteCatalogItem] {
+        Array(registered.filter { $0.status == "ACTIVE" }.prefix(3))
+    }
+
+    /// 등록한 상품 일부. 「수정」은 그 상품의 편집으로 이어진다.
     @ViewBuilder
     private var registeredProducts: some View {
-        let active = registered.filter { $0.status == "ACTIVE" }.prefix(3)
+        let active = activeRegistered
         if !active.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 KmoSectionTitle(text: "등록한 상품")
-                ForEach(Array(active)) { item in
-                    Button { startAdding = false; showManage = true } label: {
+                ForEach(active) { item in
+                    Button { startAdding = false; editItemId = item.id; showManage = true } label: {
                         HStack(spacing: 12) {
                             if KmoImageSlot.initial(urlString: item.imageUrl).reservesPhotoHeight {
                                 KmoProductThumb(urlString: item.imageUrl, size: 52)
@@ -376,21 +375,6 @@ struct KmoOwnerHomeView: View {
             }
             .buttonStyle(.plain)
         }
-    }
-
-    private func tile(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(KmoColors.textPrimary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
-                .padding(.horizontal, 14)
-                .background(KmoColors.card)
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(KmoColors.stroke, lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-        .buttonStyle(.plain)
     }
 }
 

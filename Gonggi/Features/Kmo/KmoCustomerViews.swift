@@ -95,9 +95,16 @@ struct KmoCustomerHomeView: View {
                     // 아래: 검색과 탐색
                     VStack(alignment: .leading, spacing: KmoLayout.sectionGap) {
                         findCard
-                        categorySection
+                        if !hero.chips.isEmpty {
+                            KmoSectionDivider()
+                            categorySection
+                        }
+                        KmoSectionDivider()
                         browseSection
-                        if !recent.items.isEmpty { recentSection }
+                        if !recent.items.isEmpty {
+                            KmoSectionDivider()
+                            recentSection
+                        }
                         if let notice {
                             Text(notice).font(.subheadline).foregroundStyle(KmoColors.warning)
                         }
@@ -819,7 +826,6 @@ struct KmoMySpaceView: View {
     @Binding var path: [KmoRoute]
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @State private var showRecord = false
 
     var body: some View {
         ScrollView {
@@ -838,7 +844,10 @@ struct KmoMySpaceView: View {
                 Text("가구와 커튼처럼 놓아 볼 수 있는 제품을 내 공간에 배치해 보세요")
                     .font(.body)
                     .foregroundStyle(KmoColors.textSecondary)
-                KmoPrimaryButton(title: "내 공간 기록하기") { showRecord = true }
+                KmoPrimaryButton(title: "내 공간 기록하기") {
+                    path = []
+                    appState.selectedTab = .record
+                }
                 KmoSecondaryButton(title: "보관함에서 내 공간 보기") {
                     path = []
                     appState.selectedTab = .library
@@ -853,35 +862,16 @@ struct KmoMySpaceView: View {
         }
         .background(KmoBackground())
         .toolbar(.hidden, for: .navigationBar)
-        .fullScreenCover(isPresented: $showRecord) {
-            KmoRecordChooserCover(onClose: { showRecord = false })
-                .environmentObject(appState)
-        }
     }
 }
 
-/// 기존 기록 선택 화면(공간 360 기록, 3D 자산 만들기 등)을 그대로 연다. 위쪽에 공통 제목과 닫기를 둔다.
-struct KmoRecordChooserCover: View {
-    let onClose: () -> Void
+/// 하단 「기록하기」 탭의 고객 화면: 기존 기록 선택 화면(3D 자산, 360 공간, 걸어보는 공간)이 기본 화면이다.
+/// 닫기 버튼은 없다. 촬영에 들어가면 그 화면이 전체를 덮고, 취소나 완료로 돌아오면 이 탭이 그대로 보인다.
+struct KmoCustomerRecordTab: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        ZStack {
-            KmoBackground()
-            VStack(spacing: 0) {
-                HStack(alignment: .center) {
-                    Spacer()
-                    Button(action: onClose) {
-                        Text("닫기").font(.headline).foregroundStyle(KmoColors.textPrimary)
-                            .frame(minWidth: KmoLayout.minTouch, minHeight: KmoLayout.minTouch)
-                    }
-                    .buttonStyle(KmoPressStyle())
-                }
-                .padding(.horizontal, KmoLayout.pageHorizontal)
-                .padding(.top, 8)
-                CaptureContainerView()
-                    .environmentObject(appState)
-            }
-        }
+        CaptureContainerView()
+            .environmentObject(appState)
     }
 }

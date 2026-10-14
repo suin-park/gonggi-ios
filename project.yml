@@ -88,6 +88,11 @@ targets:
       properties:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # 설치된 앱 이름. xcodegen이 이 속성으로 Info.plist를 새로 쓰므로 여기에 있어야 최종 아카이브에 들어간다.
+        CFBundleDisplayName: 커모
+        CFBundleLocalizations:
+          - ko
+          - en
         GonggiBuildSHA: $(GONGGI_BUILD_SHA)
         GonggiAPIBaseURL: $(GONGGI_API_BASE_URL)
         GonggiStoreAPIBaseURL: $(GONGGI_STORE_API_BASE_URL)

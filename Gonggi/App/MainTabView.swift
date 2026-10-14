@@ -12,7 +12,6 @@ struct MainTabView: View {
     @StateObject private var keyboard = KmoKeyboardObserver()
     /// 한 번 열린 탭은 상태를 보존한다(스크롤 위치, 입력, 쌓인 화면).
     @State private var visited: Set<AppTab> = [.home]
-    @State private var showRecord = false
 
     private var accountId: String? {
         auth.profile?.id ?? auth.currentUser?.userId
@@ -29,24 +28,18 @@ struct MainTabView: View {
     /// 고객: 홈, 기록하기, 보관함, 내 정보. 사장님: 우리 매장, 기록하기, 상품, 내 정보.
     private var tabs: [KmoTabItem] {
         isOwner
-            ? [KmoTabItem(id: "home", tab: .home, title: "우리 매장"), KmoTabItem(id: "record", tab: nil, title: "기록하기"),
+            ? [KmoTabItem(id: "home", tab: .home, title: "우리 매장"), KmoTabItem(id: "record", tab: .record, title: "기록하기"),
                KmoTabItem(id: "library", tab: .library, title: "상품"), KmoTabItem(id: "profile", tab: .profile, title: "내 정보")]
-            : [KmoTabItem(id: "home", tab: .home, title: "홈"), KmoTabItem(id: "record", tab: nil, title: "기록하기"),
+            : [KmoTabItem(id: "home", tab: .home, title: "홈"), KmoTabItem(id: "record", tab: .record, title: "기록하기"),
                KmoTabItem(id: "library", tab: .library, title: "보관함"), KmoTabItem(id: "profile", tab: .profile, title: "내 정보")]
     }
 
-    private var current: AppTab {
-        switch appState.selectedTab {
-        case .library: return .library
-        case .profile: return .profile
-        default: return .home
-        }
-    }
+    private var current: AppTab { appState.selectedTab }
 
     var body: some View {
         ZStack {
             KmoColors.background.ignoresSafeArea()
-            ForEach([AppTab.home, .library, .profile], id: \.self) { tab in
+            ForEach([AppTab.home, .record, .library, .profile], id: \.self) { tab in
                 if visited.contains(tab) || current == tab {
                     content(for: tab)
                         .environment(\.kmoTabActive, current == tab)
@@ -60,26 +53,10 @@ struct MainTabView: View {
         // 메뉴는 내용 아래에 놓이고, 내용은 메뉴 위쪽 공간만 쓴다. 키보드가 올라오면 메뉴를 숨긴다.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !keyboard.isVisible {
-                KmoTabBar(items: tabs, selection: Binding(get: { current }, set: { select($0) }), onRecord: { showRecord = true })
+                KmoTabBar(items: tabs, selection: Binding(get: { current }, set: { select($0) }))
             }
         }
         .tint(KmoColors.accent)
-        // 기록 방식 선택: 이전 탭은 그대로 두고, 닫으면 원래 화면으로 돌아온다.
-        .fullScreenCover(isPresented: $showRecord) {
-            if isOwner {
-                KmoOwnerRecordSheet(onClose: { showRecord = false },
-                                    onPick: { action in
-                                        showRecord = false
-                                        visited.insert(.home)
-                                        appState.selectedTab = .home
-                                        appState.kmoOwnerAction = action
-                                    })
-                    .environmentObject(appState)
-            } else {
-                KmoRecordChooserCover(onClose: { showRecord = false })
-                    .environmentObject(appState)
-            }
-        }
         .onAppear {
             appState.ensureSpaceGenerationPolling()
             // A push tap that launched the app (or arrived before sign-in finished).
@@ -100,7 +77,7 @@ struct MainTabView: View {
             appState.selectedTab = .home
         }
         .onChange(of: appState.selectedTab) { _, tab in
-            visited.insert(tab == .record ? .home : tab)
+            visited.insert(tab)
             GonggiHaptics.selection()
             appState.ensureSpaceGenerationPolling()
         }
@@ -116,6 +93,8 @@ struct MainTabView: View {
         switch tab {
         case .library:
             if isOwner { KmoOwnerProductsView() } else { LibraryView() }
+        case .record:
+            if isOwner { KmoOwnerRecordTab() } else { KmoCustomerRecordTab() }
         case .profile:
             ProfileView()
         default:
@@ -126,7 +105,6 @@ struct MainTabView: View {
 
 struct KmoTabItem: Identifiable, Equatable {
     var id: String
-    /// nil이면 화면을 바꾸지 않고 기록 선택을 여는 항목이다.
     var tab: AppTab?
     var title: String
 }
@@ -135,7 +113,6 @@ struct KmoTabItem: Identifiable, Equatable {
 struct KmoTabBar: View {
     let items: [KmoTabItem]
     @Binding var selection: AppTab
-    var onRecord: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -144,11 +121,8 @@ struct KmoTabBar: View {
             ForEach(items) { item in
                 let selected = item.tab != nil && item.tab == selection
                 Button {
-                    if let tab = item.tab {
+                    if let tab = item.tab, tab != selection {
                         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { selection = tab }
-                    } else {
-                        GonggiHaptics.light()
-                        onRecord()
                     }
                 } label: {
                     Text(item.title)
