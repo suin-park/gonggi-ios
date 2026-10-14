@@ -860,24 +860,28 @@ struct KmoMySpaceView: View {
     }
 }
 
-/// 기존 기록 선택 화면(공간 360 기록, 3D 자산 만들기 등)을 그대로 연다.
+/// 기존 기록 선택 화면(공간 360 기록, 3D 자산 만들기 등)을 그대로 연다. 위쪽에 공통 제목과 닫기를 둔다.
 struct KmoRecordChooserCover: View {
     let onClose: () -> Void
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        CaptureContainerView()
-            .environmentObject(appState)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                HStack {
+        ZStack {
+            KmoBackground()
+            VStack(spacing: 0) {
+                HStack(alignment: .center) {
                     Spacer()
                     Button(action: onClose) {
-                        Text("닫기").font(.headline).foregroundStyle(KmoColors.textPrimary).frame(minWidth: 44, minHeight: 44)
+                        Text("닫기").font(.headline).foregroundStyle(KmoColors.textPrimary)
+                            .frame(minWidth: KmoLayout.minTouch, minHeight: KmoLayout.minTouch)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(KmoPressStyle())
                 }
-                .padding(.horizontal, 16)
-                .background(KmoColors.background)
+                .padding(.horizontal, KmoLayout.pageHorizontal)
+                .padding(.top, 8)
+                CaptureContainerView()
+                    .environmentObject(appState)
             }
+        }
     }
 }

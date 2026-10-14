@@ -13,7 +13,7 @@ enum RecordHomeCopy {
         var icon: String
     }
 
-    static let title = "기록"
+    static let title = "기록하기"
     static let productSection = "3D 자산"
     static let spaceSection = "공간"
     static let storeSection = StoreShelfCopy.sectionTitle
@@ -209,12 +209,9 @@ struct RecordHomeScreen<Footer: View>: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(RecordHomeCopy.title)
-                            .font(.largeTitle.weight(.bold))
-                            .foregroundStyle(GonggiColors.textPrimary)
-                            .accessibilityAddTraits(.isHeader)
-                            .padding(.top, 16)
-                        Spacer(minLength: 24).frame(maxHeight: 56)
+                        KmoPageTitle(text: RecordHomeCopy.title)
+                            .padding(.top, KmoLayout.topGap)
+                        Spacer(minLength: 24).frame(maxHeight: 32)
                         RecordSection(title: RecordHomeCopy.productSection) {
                             ForEach(Array(productOptions.enumerated()), id: \.offset) { index, option in
                                 if index > 0 { RecordRowDivider() }

@@ -316,6 +316,7 @@ struct StoreProductEditSheet: View {
                     TextField("맛이나 종류", text: $variant)
                     TextField("용량", text: $volume)
                 }
+.listRowBackground(KmoColors.card)
                 Section("확인한 수량 (\(item.shelfName ?? "매대 없음"))") {
                     Toggle("수량을 확인했어요", isOn: $quantityKnown)
                     if quantityKnown {
@@ -323,6 +324,7 @@ struct StoreProductEditSheet: View {
                     }
                     Text("고객에게는 '확인했을 때 N개'로만 보여요. 지금 재고를 뜻하지 않아요.").font(.footnote).foregroundStyle(.secondary)
                 }
+.listRowBackground(KmoColors.card)
                 Section {
                     Button("이 매장에서 지금 확인했어요") { Task { await saveConfirm() } }
                     PhotosPicker(selection: $photoItem, matching: .images) { Text("제품 사진 바꾸기") }
@@ -338,8 +340,13 @@ struct StoreProductEditSheet: View {
                         Button("다시 취급 중으로 바꾸기") { Task { if await model.setStatus(item, status: "ACTIVE") { onDone() } } }
                     }
                 }
-                if let e = model.error { Section { Text(e).foregroundStyle(.red) } }
+.listRowBackground(KmoColors.card)
+                if let e = model.error { Section { Text(e).foregroundStyle(.red) }
+.listRowBackground(KmoColors.card) }
             }
+            .scrollContentBackground(.hidden)
+            .background(KmoColors.background)
+            .tint(KmoColors.accent)
             .navigationTitle(item.name.isEmpty ? "제품" : item.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -411,6 +418,7 @@ struct StoreProductAddSheet: View {
                         ForEach(shelves) { Text($0.name).tag($0.id) }
                     }
                 }
+.listRowBackground(KmoColors.card)
                 Section("제품 정보") {
                     TextField("제품 이름", text: $name)
                     TextField("브랜드", text: $brand)
@@ -418,13 +426,19 @@ struct StoreProductAddSheet: View {
                     TextField("용량", text: $volume)
                     TextField("확인한 수량 (모르면 비워 두세요)", text: $quantityText).keyboardType(.numberPad)
                 }
+.listRowBackground(KmoColors.card)
                 Section("제품 사진 (카메라로 찾을 때 쓰여요)") {
                     PhotosPicker(selection: $photoItem, matching: .images) {
                         Text(photo == nil ? "사진 고르기" : "사진을 골랐어요. 다시 고르기")
                     }
                 }
-                if let e = model.error { Section { Text(e).foregroundStyle(.red) } }
+.listRowBackground(KmoColors.card)
+                if let e = model.error { Section { Text(e).foregroundStyle(.red) }
+.listRowBackground(KmoColors.card) }
             }
+            .scrollContentBackground(.hidden)
+            .background(KmoColors.background)
+            .tint(KmoColors.accent)
             .navigationTitle("새 제품 추가")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
