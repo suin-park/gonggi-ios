@@ -1,0 +1,29 @@
+name: ASC app name
+
+# Shows the App Store Connect app name; with set_name=true changes it to 커모 (same app record, same bundle ID).
+on:
+  workflow_dispatch:
+    inputs:
+      set_name:
+        description: 'Change the app name to 커모'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  name:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install --quiet 'PyJWT[crypto]>=2.8'
+      - name: App name
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          BUNDLE_ID: com.whik.gonggi
+          SET_NAME: ${{ inputs.set_name && '1' || '0' }}
+        run: python3 scripts/asc-app-name.py

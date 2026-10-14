@@ -56,6 +56,11 @@ def main() -> None:
         icon_name = info.get("CFBundleIconName")
         if not icon_name:
             fail("CFBundleIconName missing from Info.plist")
+        if info.get("CFBundleDisplayName") != "커모":
+            fail(f"CFBundleDisplayName is {info.get('CFBundleDisplayName')!r}, expected '커모'")
+        ok(f"Installed app display name: {info.get('CFBundleDisplayName')} (CFBundleName={info.get('CFBundleName')})")
+        names = [n for n in zf.namelist() if n.startswith(app_prefix) and n.endswith("InfoPlist.strings")]
+        ok(f"InfoPlist.strings in IPA: {sorted(names)}")
         ok(f"CFBundleIconName == {icon_name}")
 
         icon_files = [
