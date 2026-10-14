@@ -3,6 +3,11 @@ name: ASC build list
 # Read-only: lists the builds App Store Connect already holds for the app, to choose a build number that is not used.
 on:
   workflow_dispatch:
+    inputs:
+      set_name:
+        description: 'Change the ASC app name to 커모'
+        type: boolean
+        default: false
   push:
     branches: [feat/store-shelf-record-entry]
     paths:
@@ -26,3 +31,11 @@ jobs:
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
           BUNDLE_ID: com.whik.gonggi
         run: python3 scripts/list-asc-builds.py
+      - name: App name
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          BUNDLE_ID: com.whik.gonggi
+          SET_NAME: ${{ inputs.set_name && '1' || '0' }}
+        run: python3 scripts/asc-app-name.py
