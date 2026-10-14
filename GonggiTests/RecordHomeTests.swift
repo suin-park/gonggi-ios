@@ -7,7 +7,7 @@ final class RecordHomeTests: XCTestCase {
                            RecordHomeCopy.space360, RecordHomeCopy.walkableSpace]
 
     func testCopy() {
-        XCTAssertEqual(RecordHomeCopy.title, "기록")
+        XCTAssertEqual(RecordHomeCopy.title, "기록하기")
         XCTAssertEqual(RecordHomeCopy.productSection, "3D 자산")
         XCTAssertEqual(RecordHomeCopy.spaceSection, "공간")
         XCTAssertEqual(RecordHomeCopy.photoTo3D.title, "사진으로 3D 만들기")

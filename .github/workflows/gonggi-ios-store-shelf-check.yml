@@ -162,7 +162,7 @@ jobs:
         run: |
           set +e
           mkdir -p kmo-shots
-          xcodebuild test-without-building             -project "${PROJECT}" -scheme "${SCHEME}" -sdk iphonesimulator             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}"             -only-testing:GonggiTests/KmoSnapshotTests             CODE_SIGNING_ALLOWED=NO 2>&1 | tee shots.log | grep -E "Executed|error:" | tail -n 10
+          xcodebuild test-without-building             -project "${PROJECT}" -scheme "${SCHEME}" -sdk iphonesimulator             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}"             -only-testing:GonggiTests/KmoSnapshotTests -only-testing:GonggiTests/KmoRealAssetTests             CODE_SIGNING_ALLOWED=NO 2>&1 | tee shots.log | grep -E "Executed|error:" | tail -n 10
           ls -la kmo-shots
 
       - name: Upload captures
