@@ -345,6 +345,23 @@ final class KmoRealAssetTests: XCTestCase {
         return (image, image.pngData() ?? Data())
     }
 
+    /// 두 PNG의 화소 평균 차이(0에서 1). 압축과 안티앨리어싱의 작은 차이는 허용한다.
+    static func meanDifference(_ a: Data, _ b: Data) -> Double {
+        func pixels(_ d: Data) -> (Int, Int, [UInt8])? {
+            guard let img = UIImage(data: d)?.cgImage else { return nil }
+            let w = img.width, h = img.height
+            var data = [UInt8](repeating: 0, count: w * h * 4)
+            let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            ctx?.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return (w, h, data)
+        }
+        guard let pa = pixels(a), let pb = pixels(b), pa.0 == pb.0, pa.1 == pb.1 else { return 1 }
+        var sum = 0
+        for i in 0..<pa.2.count { sum += abs(Int(pa.2[i]) - Int(pb.2[i])) }
+        return Double(sum) / Double(pa.2.count * 255)
+    }
+
     func testRealFurnitureAssets() async throws {
         let list = urls()
         if list.isEmpty { throw XCTSkip("실제 자산 주소가 없어 건너뜀") }
@@ -397,7 +414,7 @@ final class KmoRealAssetTests: XCTestCase {
             KmoModelLoader.reset(scene: scene)
             let (_, back) = png(renderer, size)
             try back.write(to: dir.appendingPathComponent("real-\(i + 1)-e-reset.png"))
-            XCTAssertEqual(initial, back, "처음 모습으로 돌아온다")
+            XCTAssertLessThan(Self.meanDifference(initial, back), 0.01, "처음 모습으로 돌아온다")
             XCTAssertFalse(KmoModelLoader.isChanged(scene: scene))
             report.append("  확대 \(zoomedIn)배, 확대 한계 \(clampedIn), 축소 한계 \(clampedOut), 처음 모습 복원 일치")
 

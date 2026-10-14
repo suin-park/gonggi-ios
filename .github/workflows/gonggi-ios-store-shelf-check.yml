@@ -170,7 +170,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kmo-shots
-          path: kmo-shots/*.png
+          path: |
+            kmo-shots/*.png
+            kmo-shots/*.gif
+            kmo-shots/*.txt
           if-no-files-found: warn
 
       - name: Full GonggiTests (informational)
