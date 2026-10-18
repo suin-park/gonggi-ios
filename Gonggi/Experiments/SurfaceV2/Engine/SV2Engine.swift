@@ -406,6 +406,14 @@ final class SV2Engine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
     // MARK: 처리 (procQueue)
 
+    /// 같은 ARFrame에서 복사한 작업(영상 버퍼·포즈·K·시각·추적·노출)을 처리 입력으로 바꾼다. ARKit 없이 테스트할 수 있다.
+    static func makeInput(job: Job, hiWidth: Int, clockDelta: Double) -> SV2Input? {
+        guard let hi = RTFrameConverter.downscale(job.pb, outWidth: hiWidth) else { return nil }
+        return SV2Input(id: job.id, segment: job.segment, timestamp: job.timestamp, captureHost: job.timestamp + clockDelta, pose: job.pose,
+                        kFull: job.K, rgbHi: hi.rgb, hiWidth: hi.width, hiHeight: hi.height, tracking: job.trackingText,
+                        trackingNormal: job.trackingNormal, exposureDuration: job.exposureDuration, exposureOffset: job.exposureOffset)
+    }
+
     private func finishJob() {
         arLock.lock()
         if let next = pending {
@@ -422,10 +430,7 @@ final class SV2Engine: NSObject, ARSessionDelegate, @unchecked Sendable {
         defer { finishJob() }
         let captureHost = job.timestamp + clockDelta
         let tStart = ExpSys.hostNow()
-        guard let hi = RTFrameConverter.downscale(job.pb, outWidth: config.hiWidth) else { return }
-        let input = SV2Input(id: job.id, segment: job.segment, timestamp: job.timestamp, captureHost: captureHost, pose: job.pose,
-                             kFull: job.K, rgbHi: hi.rgb, hiWidth: hi.width, hiHeight: hi.height, tracking: job.trackingText,
-                             trackingNormal: job.trackingNormal, exposureDuration: job.exposureDuration, exposureOffset: job.exposureOffset)
+        guard let input = SV2Engine.makeInput(job: job, hiWidth: config.hiWidth, clockDelta: clockDelta) else { return }
         let tConv = ExpSys.hostNow()
         recorder?.record(input)
         var rec = pipeline.process(input)

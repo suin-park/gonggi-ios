@@ -60,7 +60,7 @@ ARSession(하나) → ARFrame에서 한 번에 복사: RGB(960폭) · 포즈 · 
 
 ## 로그(측정 정의)
 
-- `toMap`: 캡처 시각 → 지도 반영 완료. `toPublish`: 캡처 → 렌더용 스냅샷 게시(0.25초 간격 영향). `toDisplay`: 캡처 → **drawable presentedTime**(실제 표시).
+- `toMap`: 캡처 시각 → 지도 반영 완료. `toPublish`: 캡처 → 렌더용 스냅샷 게시(0.25초 간격 영향). `toDisplay`: 캡처 → **drawable presentedTime**(실제 표시). SDK가 presentedTime 선언을 주지 않아 런타임에 getter가 있을 때만 KVC로 읽고, 읽지 못하면 GPU 완료 시각으로 근사한다. 로그에 시각 출처(`present`/`gpuEnd`)를 함께 남기므로 두 값을 섞어 해석하지 않는다.
 - 처음 도달 시각: 첫 입력, 첫 유효 시차(깊이 표본 존재), 첫 표면, 첫 표시.
 - 렌더러 GPU 계수(화소 1/16 표본): 질감 지원 / source 없음 / 가림으로 전부 거절 / 색 불일치 선택. 텍스처 상주 수·바이트, 가림 캐시 재생성 횟수.
 - 30fps 표시는 생성 속도·화질 지표가 아니다. 지연 p95 250ms, coverage·PSNR 목표는 **목표**이며 달성값이 아니다.

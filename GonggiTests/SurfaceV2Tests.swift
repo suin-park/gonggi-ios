@@ -1,4 +1,5 @@
 import XCTest
+import CoreVideo
 import Metal
 import simd
 @testable import Gonggi
@@ -895,6 +896,38 @@ final class SurfaceV2StoreTests: XCTestCase {
         XCTAssertNil(r.item)
         XCTAssertNotNil(r.error, "표면이 없으면 저장하지 않는다")
         XCTAssertEqual(ExperimentKind.surfaceV2.rawValue, "surface-v2")
+    }
+
+    func testARFrameJobBecomesInputWithPoseKTimeAndExposure() throws {
+        // 420f 버퍼(가로 방향 센서 영상): 왼쪽에서 오른쪽으로 밝아지는 회색조
+        var pb: CVPixelBuffer?
+        guard CVPixelBufferCreate(kCFAllocatorDefault, 128, 96, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, nil, &pb) == kCVReturnSuccess, let buf = pb else {
+            throw XCTSkip("420f 버퍼를 만들 수 없음")
+        }
+        CVPixelBufferLockBaseAddress(buf, [])
+        let yb = CVPixelBufferGetBaseAddressOfPlane(buf, 0)!.assumingMemoryBound(to: UInt8.self)
+        let ys = CVPixelBufferGetBytesPerRowOfPlane(buf, 0)
+        for y in 0..<96 { for x in 0..<128 { yb[y * ys + x] = UInt8(x * 2) } }
+        let cb = CVPixelBufferGetBaseAddressOfPlane(buf, 1)!.assumingMemoryBound(to: UInt8.self)
+        let cs = CVPixelBufferGetBytesPerRowOfPlane(buf, 1)
+        for y in 0..<48 { for x in 0..<64 { cb[y * cs + x * 2] = 128; cb[y * cs + x * 2 + 1] = 128 } }
+        CVPixelBufferUnlockBaseAddress(buf, [])
+        let K = RTIntrinsics(fx: 100, fy: 100, cx: 64, cy: 48, width: 128, height: 96)
+        let pose = RTPose(rot: simd_float3x3(simd_quatf(angle: 0.3, axis: SIMD3<Float>(0, 1, 0))), center: SIMD3<Float>(0.5, 1.2, -0.3))
+        let job = SV2Engine.Job(pb: buf, timestamp: 1234.5, pose: pose, K: K, segment: 2, id: 17, trackingText: "normal", trackingNormal: true,
+                                exposureDuration: 1.0 / 120, exposureOffset: -0.5)
+        let input = try XCTUnwrap(SV2Engine.makeInput(job: job, hiWidth: 64, clockDelta: 10))
+        XCTAssertEqual(input.id, 17); XCTAssertEqual(input.segment, 2)
+        XCTAssertEqual(input.timestamp, 1234.5); XCTAssertEqual(input.captureHost, 1244.5, accuracy: 1e-9, "uptime 시각을 host clock으로 바꾼다")
+        XCTAssertEqual(input.pose, pose); XCTAssertEqual(input.kFull, K, "K는 센서 해상도 기준 그대로")
+        XCTAssertEqual(input.hiWidth, 64); XCTAssertEqual(input.hiHeight, 48); XCTAssertEqual(input.rgbHi.count, 64 * 48 * 3)
+        XCTAssertEqual(input.exposureDuration ?? 0, 1.0 / 120, accuracy: 1e-12); XCTAssertEqual(input.exposureOffset ?? 0, -0.5, accuracy: 1e-9)
+        XCTAssertTrue(input.orientation.contains("sensorLandscapeRight"))
+        // 영상은 센서 방향 그대로(왼쪽이 어둡고 오른쪽이 밝다): 방향 변환은 렌더 쪽 매핑이 따로 맡는다.
+        XCTAssertLessThan(input.rgbHi[(24 * 64 + 4) * 3], input.rgbHi[(24 * 64 + 58) * 3])
+        // 텍스처 K는 영상 해상도에 맞게 줄어든다.
+        let kTex = input.kFull.scaled(toWidth: input.hiWidth, height: input.hiHeight)
+        XCTAssertEqual(kTex.fx, 50, accuracy: 1e-4)
     }
 
     func testReplayRecordReadAndDeterministicRerun() throws {
