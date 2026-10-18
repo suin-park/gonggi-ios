@@ -611,8 +611,12 @@ final class RealtimeGSTests: XCTestCase {
         var s = planeSamples(z: 2)
         for i in 0..<s.count { s[i].color = SIMD3<Float>(repeating: 0.25) }
         for i in 0..<s.count { s[i].pos = SIMD3<Float>(Float(i % 12) * 0.02 - 0.12, Float(i / 12) * 0.02 - 0.12, 2) }
-        settle(map, s, kfs: 3)
+        // 시선 각도 차이 없이 세 번 관측: 후보까지만 오르고 안정은 아니다(안정 표면의 색은 정밀화가 건드리지 않는다)
+        for k in 0..<3 {
+            _ = map.integrate(s, ctx: RTIntegrationContext(kf: Int32(1 + k), segment: 0, camCenter: SIMD3<Float>(0.05 * Float(k), 0, 0)))
+        }
         XCTAssertEqual(map.verifiedCount, 144)
+        XCTAssertEqual(map.stableCount, 0)
         // 같은 표면이 두 배 밝게 관측되면 갱신 전 저장 색과의 짝에서 노출 비가 나온다(방금 쓴 색에 되먹임되지 않음).
         var bright = s
         for i in 0..<bright.count { bright[i].color = SIMD3<Float>(repeating: 0.5) }
@@ -644,6 +648,16 @@ final class RealtimeGSTests: XCTestCase {
         XCTAssertEqual(r2.colorUpdated, 0)
         XCTAssertGreaterThan(r2.colorSkippedOcclusion, 0)
         XCTAssertEqual(map.col, c1)
+        // 안정 표면은 가까이서 정면으로 다시 보지 않는 한 색을 바꾸지 않는다
+        let stab = RTGaussianMap()
+        settle(stab, s, kfs: 6)
+        XCTAssertEqual(stab.stableCount, 144)
+        let sst = stab.integrate(bright, ctx: RTIntegrationContext(kf: 20, segment: 0, camCenter: SIMD3<Float>(0.3, 0, 0), prevGain: 1))
+        let c2 = stab.col
+        let r3 = RTRefiner.refine(frame: frame, map: stab, hits: sst.hits, depth: visible, gain: 1)
+        XCTAssertEqual(r3.colorUpdated, 0)
+        XCTAssertGreaterThan(r3.colorSkippedStable, 0)
+        XCTAssertEqual(stab.col, c2)
     }
 
     // MARK: 저장·불러오기
