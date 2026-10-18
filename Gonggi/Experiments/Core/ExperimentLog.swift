@@ -11,6 +11,7 @@ enum ExperimentKind: String, CaseIterable {
     case coexistARThenDepth = "coexist-ar-then-depth"
     case coexistDepthThenAR = "coexist-depth-then-ar"
     case realtimeGS = "realtime-gs"
+    case surfaceV2 = "surface-v2"
 
     var title: String {
         switch self {
@@ -23,6 +24,7 @@ enum ExperimentKind: String, CaseIterable {
         case .coexistARThenDepth: return "공존: ARKit → 후면 깊이"
         case .coexistDepthThenAR: return "공존: 후면 깊이 → ARKit"
         case .realtimeGS: return "실시간 공간 생성"
+        case .surfaceV2: return "실시간 공간 생성 V2"
         }
     }
 }
