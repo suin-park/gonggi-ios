@@ -15,6 +15,7 @@ final class RTSessionViewModel: ObservableObject {
     @Published var message = ""
     @Published var summaryText: String?
     @Published var shareItems: [URL] = []
+    @Published var shareMissing: [String] = []
     @Published var gaussianOnly = true { didSet { applyOptions() } }
     @Published var refine = true { didSet { applyOptions() } }
     @Published var useMono = true { didSet { applyOptions() } }
@@ -68,7 +69,7 @@ final class RTSessionViewModel: ObservableObject {
     func start() {
         guard state == .idle || state == .finished else { return }
         state = .starting
-        message = ""; summaryText = nil; shareItems = []; viewingTitle = nil
+        message = ""; summaryText = nil; shareItems = []; shareMissing = []; viewingTitle = nil
         Task { await self.runStart() }
     }
 
@@ -137,10 +138,13 @@ final class RTSessionViewModel: ObservableObject {
         dict["saveError"] = saved.error ?? NSNull()
         if let l = log {
             l.finish(summary: dict, summaryText: text)
-            var items = [URL]()
-            if let it = saved.item { items.append(it.url); if let m = it.metaURL { items.append(m) } }
-            items.append(l.url); items.append(l.summaryURL)
-            shareItems = items
+            // 같은 실행 ID의 PLY·상태·메타·요약·JSONL을 한 번에. 저장이 안 됐으면 이번 실행 로그만.
+            if let it = saved.item {
+                let b = RTStore.shareBundle(for: it)
+                shareItems = b.urls; shareMissing = b.missing
+            } else {
+                shareItems = [l.url, l.summaryURL]; shareMissing = []
+            }
         }
         summaryText = text
         renderer.mode = .explore
@@ -162,19 +166,27 @@ final class RTSessionViewModel: ObservableObject {
         guard state == .idle || state == .finished else { return }
         message = "여는 중…"
         Task {
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<(RTSplatSet, [Float]), Error> in
-                do { let set = try RTPLY.read(url: item.url); return .success((set, set.pack())) } catch { return .failure(error) }
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<(RTSplatSet, [Float], String), Error> in
+                do {
+                    let plyData = try Data(contentsOf: item.url, options: .mappedIfSafe)
+                    var set = try RTPLY.read(plyData)
+                    let stateData = item.stateURL.flatMap { try? Data(contentsOf: $0) }
+                    let note = RTStateFile.apply(to: &set, stateData: stateData, plyData: plyData)
+                    return .success((set, set.pack(), note))
+                } catch { return .failure(error) }
             }.value
             switch result {
-            case .success(let (set, packed)):
+            case .success(let (set, packed, note)):
                 engine.splats.publish(packed: packed, count: set.count)
                 RTViewerBounds.shared.bounds = set.bounds()
                 renderer.orbit = RTViewMath.fitOrbit(bounds: set.bounds())
                 renderer.mode = .explore
                 viewingTitle = item.url.lastPathComponent
-                message = "저장한 결과를 열었어요 (\(set.count)개 가우시안)"
+                let c = set.counts()
+                message = "저장한 결과를 열었어요 (\(set.count)개: 안정 \(c.stable) · 후보 \(c.candidate) · 임시 \(c.temporary) · 상태 미확인 \(c.unknown)). \(note)"
                 if let s = item.summaryURL, let t = try? String(contentsOf: s, encoding: .utf8) { summaryText = t }
-                shareItems = [item.url] + [item.metaURL, item.summaryURL].compactMap { $0 }
+                let b = RTStore.shareBundle(for: item)
+                shareItems = b.urls; shareMissing = b.missing
             case .failure(let error):
                 message = "열 수 없어요: \(error)"
             }
@@ -254,7 +266,7 @@ struct RealtimeGSView: View {
         return VStack(alignment: .leading, spacing: 2) {
             Text("ARKit \(f(l.arHz)) Hz · 키프레임 \(f(l.keyframeHz, 1)) Hz · 처리 \(l.processed)/\(l.keyframes) · 버림 \(l.droppedBusy) · 대기 \(l.queueLen)")
             Text("지연(캡처→지도) p50 \(f(l.latencyToMapP50)) / p95 \(f(l.latencyToMapP95)) ms · (→게시) p95 \(f(l.latencyToPublishP95)) ms")
-            Text("가우시안 \(l.gaussians) (확인 \(l.verified) · 임시 \(l.provisional)) · 방금 +\(l.lastInserted) 병합 \(l.lastMerged) · 재사용 \(f(l.reuseRatio.map { $0 * 100 }))%")
+            Text("가우시안 \(l.gaussians) (안정 \(l.stable) · 후보 \(l.candidate) · 임시 \(l.provisional)) · 방금 +\(l.lastInserted) 병합 \(l.lastMerged) · 재사용 \(f(l.reuseRatio.map { $0 * 100 }))%")
             Text("추적 \(l.tracking) · 세그먼트 \(l.segment) · 깊이 격자 유효 \(l.lastValidDepth) · 스테레오 \(f(l.stereoFraction.map { $0 * 100 }))%")
             Text("렌더 \(f(r.fps)) fps · CPU \(f(r.cpuMsP95, 1)) · GPU p95 \(f(r.gpuMsP95, 1)) ms · 그림 \(r.drawn)/\(r.total) · 정렬 \(f(r.sortMsP50, 1)) ms")
             Text("메모리 \(f(l.footprintMB)) MB · 열 \(l.thermal) · 거버너 \(l.governor) · 단안: \(l.monoStatus)")
@@ -315,13 +327,16 @@ struct RealtimeGSView: View {
             if vm.state == .finished || vm.viewingTitle != nil {
                 HStack(spacing: 10) {
                     if !vm.shareItems.isEmpty {
-                        ShareLink(items: vm.shareItems) { Label("결과 공유", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44) }
+                        ShareLink(items: vm.shareItems) { Label("결과 공유 (\(vm.shareItems.count)개 파일)", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity, minHeight: 44) }
                             .buttonStyle(.bordered).tint(.white)
                     }
                     if vm.summaryText != nil {
                         Button { showSummary = true } label: { Label("요약", systemImage: "doc.text").frame(maxWidth: .infinity, minHeight: 44) }
                             .buttonStyle(.bordered).tint(.white)
                     }
+                }
+                if !vm.shareMissing.isEmpty {
+                    Text("공유에서 빠진 것: " + vm.shareMissing.joined(separator: " · ")).font(.caption2).foregroundStyle(ExpTheme.warn).multilineTextAlignment(.center)
                 }
                 Text("두 손가락 이동 = 이동 · 한 손가락 = 회전 · 핀치 = 확대 · 두 번 탭 = 처음 시점").font(.caption2).foregroundStyle(.white.opacity(0.8))
             } else if vm.state == .paused {

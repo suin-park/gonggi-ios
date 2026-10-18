@@ -351,6 +351,249 @@ final class RealtimeGSTests: XCTestCase {
         XCTAssertEqual(map.aliveCount, 0)
     }
 
+    // MARK: 안정성 회귀 (3.0(19))
+
+    /// 같은 표면을 여러 키프레임·여러 시선에서 본 것으로 만든다(기선 0.05m씩, 시선 0.05rad씩).
+    private func settle(_ map: RTGaussianMap, _ base: [RTNewGaussian], kfs: Int, startKF: Int32 = 1) {
+        for k in 0..<kfs {
+            let a = 0.05 * Float(k)
+            var s = base
+            for i in 0..<s.count { s[i].viewDir = simd_normalize(SIMD3<Float>(sin(a), 0, cos(a))) }
+            _ = map.integrate(s, ctx: RTIntegrationContext(kf: startKF + Int32(k), segment: 0, camCenter: SIMD3<Float>(0.05 * Float(k), 0, 0)))
+        }
+    }
+
+    func testCellBoundaryCrossingKeepsSurfaceFindable() {
+        let map = RTGaussianMap()
+        var a = planeSamples(z: 2.039, n: 1)[0]; a.pos = SIMD3<Float>(0.01, 0.01, 2.039)
+        _ = map.integrate([a], ctx: RTIntegrationContext(kf: 1, segment: 0, camCenter: .zero))
+        XCTAssertTrue(map.validateIndex())
+        var b = a; b.pos.z = 2.059          // 같은 표면의 2cm 뒤 관측 → 병합으로 칸 경계(2.04)를 넘는다
+        let st = map.integrate([b], ctx: RTIntegrationContext(kf: 2, segment: 0, camCenter: .zero))
+        XCTAssertEqual(st.merged, 1)
+        XCTAssertGreaterThan(map.pos[0].z, 2.04, "병합 이동으로 옆 칸에 들어갔다")
+        XCTAssertTrue(map.validateIndex(), "중복 링크·순환·잘못된 칸 없음")
+        var c = a; c.pos.z = map.pos[0].z
+        let st3 = map.integrate([c], ctx: RTIntegrationContext(kf: 3, segment: 0, camCenter: .zero))
+        XCTAssertEqual(st3.merged, 1, "경계를 넘은 뒤에도 같은 표면을 찾아 병합")
+        XCTAssertEqual(st3.inserted, 0)
+        XCTAssertEqual(map.aliveCount, 1)
+        XCTAssertTrue(map.validateIndex())
+    }
+
+    func testSameKeyframeDuplicateSamplesUpdateOnce() {
+        let map = RTGaussianMap()
+        var a = planeSamples(z: 2, n: 1)[0]; a.pos = SIMD3<Float>(0.01, 0.01, 2)
+        _ = map.integrate([a], ctx: RTIntegrationContext(kf: 1, segment: 0, camCenter: .zero))
+        var d1 = a, d2 = a
+        d1.color = SIMD3<Float>(0.9, 0.1, 0.1); d2.color = SIMD3<Float>(0.9, 0.1, 0.1)
+        let st = map.integrate([d1, d2], ctx: RTIntegrationContext(kf: 2, segment: 0, camCenter: SIMD3<Float>(0.1, 0, 0)))
+        XCTAssertEqual(st.merged, 1, "가우시안당 한 번")
+        XCTAssertEqual(st.samplesMerged, 2)
+        XCTAssertEqual(Set(st.hits).count, st.hits.count, "RTRefiner에 넘기는 hits에 중복 없음")
+        XCTAssertEqual(map.obs[0], 2, "중복 표본이 관측 횟수를 부풀리지 않는다")
+        XCTAssertEqual(map.stereoObs[0], 2)
+        XCTAssertEqual(map.colorN[0], 2)
+    }
+
+    func testMonoObservationsCannotMoveOrRecolorStableGeometry() {
+        let map = RTGaussianMap()
+        var a = planeSamples(z: 2, n: 1)[0]; a.pos = SIMD3<Float>(0.01, 0.01, 2)
+        settle(map, [a], kfs: 6)
+        XCTAssertEqual(map.stableCount, 1)
+        let p0 = map.pos[0], c0 = map.col[0], n0 = map.nrm[0], s0 = map.scl[0]
+        var m = a
+        m.source = .mono; m.rank = 0; m.conf = 0.3; m.pos.z = 2.03
+        m.color = SIMD3<Float>(0.05, 0.9, 0.9); m.normal = simd_normalize(SIMD3<Float>(0.3, 0, -1)); m.scale = SIMD3<Float>(0.01, 0.01, 0.001)
+        for k in 0..<5 {
+            _ = map.integrate([m], ctx: RTIntegrationContext(kf: Int32(20 + k), segment: 0, camCenter: SIMD3<Float>(0.3, 0, 0)))
+        }
+        XCTAssertEqual(map.pos[0], p0)
+        XCTAssertEqual(map.col[0], c0)
+        XCTAssertEqual(map.nrm[0], n0)
+        XCTAssertEqual(map.scl[0], s0)
+        XCTAssertEqual(map.stableCount, 1)
+        XCTAssertEqual(map.aliveCount, 1, "단안 표본이 안정 표면 옆에 새 겹을 만들지 않는다")
+    }
+
+    func testOccludedOrOutOfViewStableRegionsArePreserved() {
+        let map = RTGaussianMap()
+        var a = planeSamples(z: 2, n: 1)[0]; a.pos = SIMD3<Float>(0.01, 0.01, 2)
+        settle(map, [a], kfs: 6)
+        var behind = a; behind.pos = SIMD3<Float>(0.01, 0.01, -3)
+        settle(map, [behind], kfs: 6, startKF: 30)
+        XCTAssertEqual(map.stableCount, 2)
+        let frame = planeFrame(id: 1, center: .zero) { self.noise($0, $1) }
+        // 앞쪽 1m에 물체가 있어 안정 표면(2m)이 가려진 깊이: 위반이 아니다
+        var near = RTDepthMap(gw: 160, gh: 120, step: 2)
+        for i in 0..<near.z.count { near.z[i] = 1.0; near.conf[i] = 0.9; near.reason[i] = 0; near.source[i] = 1 }
+        for k in 100..<110 { XCTAssertEqual(map.carve(frame: frame, depth: near, kf: Int32(k), segment: 0), 0) }
+        XCTAssertEqual(map.prune(currentKF: 5000), 0, "오래 관측되지 않았다는 이유로 안정 표면을 지우지 않는다")
+        XCTAssertEqual(map.stableCount, 2)
+        XCTAssertEqual(map.aliveCount, 2)
+    }
+
+    func testNewlyRevealedRegionsAreAddedWithoutTouchingStable() {
+        let map = RTGaussianMap()
+        var a = planeSamples(z: 2, n: 1)[0]; a.pos = SIMD3<Float>(0.01, 0.01, 2)
+        settle(map, [a], kfs: 6)
+        let p0 = map.pos[0]
+        var b = a; b.pos = SIMD3<Float>(1.5, 0.01, 2)
+        let st = map.integrate([a, b], ctx: RTIntegrationContext(kf: 40, segment: 0, camCenter: SIMD3<Float>(0.3, 0, 0)))
+        XCTAssertEqual(st.inserted, 1)
+        XCTAssertEqual(map.aliveCount, 2)
+        XCTAssertEqual(map.stableCount, 1)
+        XCTAssertEqual(map.pos[0], p0, "기존 안정 위치 유지")
+    }
+
+    func testContradictionNeedsRepeatedIndependentEvidenceBeforeReplacement() {
+        let map = RTGaussianMap()
+        var a = planeSamples(z: 2, n: 1)[0]; a.pos = SIMD3<Float>(0.01, 0.01, 2)
+        settle(map, [a], kfs: 6)
+        XCTAssertEqual(map.stableCount, 1)
+        var c = a; c.pos.z = 2.10; c.rank = 2; c.conf = 0.9
+        let p0 = map.pos[0]
+        let s1 = map.integrate([c], ctx: RTIntegrationContext(kf: 50, segment: 0, camCenter: SIMD3<Float>(0.2, 0, 0)))
+        XCTAssertEqual(s1.contradictionsRecorded, 1)
+        XCTAssertEqual(s1.contradictionsApplied, 0)
+        let s2 = map.integrate([c], ctx: RTIntegrationContext(kf: 51, segment: 0, camCenter: SIMD3<Float>(0.25, 0, 0)))
+        XCTAssertEqual(s2.contradictionsApplied, 0)
+        XCTAssertEqual(map.pos[0], p0, "두 번까지는 기존 안정 표면 유지")
+        XCTAssertEqual(map.stableCount, 1)
+        let s3 = map.integrate([c], ctx: RTIntegrationContext(kf: 52, segment: 0, camCenter: SIMD3<Float>(0.3, 0, 0)))
+        XCTAssertEqual(s3.contradictionsApplied, 1)
+        XCTAssertEqual(s3.demoted, 1)
+        XCTAssertEqual(map.stateOf(0), .candidate, "교체된 영역은 다시 검증받는다")
+        XCTAssertEqual(map.pos[0].z, 2.10, accuracy: 0.005)
+        XCTAssertEqual(map.aliveCount, 1)
+        XCTAssertTrue(map.validateIndex())
+        // 서로 다른 단안 표본은 증거가 아니다
+        let m2 = RTGaussianMap()
+        settle(m2, [a], kfs: 6)
+        var weak = c; weak.rank = 0; weak.source = .mono
+        for k in 0..<6 { _ = m2.integrate([weak], ctx: RTIntegrationContext(kf: Int32(60 + k), segment: 0, camCenter: SIMD3<Float>(0.4, 0, 0))) }
+        XCTAssertEqual(m2.stateOf(0), .stable)
+        XCTAssertEqual(m2.pos[0].z, 2.0, accuracy: 1e-5)
+    }
+
+    func testStateFileRoundTripLegacyPLYAndMismatch() throws {
+        let map = RTGaussianMap()
+        var a = planeSamples(z: 2, n: 1)[0]; a.pos = SIMD3<Float>(0.01, 0.01, 2)
+        settle(map, [a], kfs: 6)
+        var t = a; t.pos = SIMD3<Float>(1.5, 0.01, 2)
+        _ = map.integrate([t], ctx: RTIntegrationContext(kf: 40, segment: 0, camCenter: .zero))
+        let set = map.splatSet()
+        XCTAssertEqual(set.counts().stable, 1); XCTAssertEqual(set.counts().temporary, 1)
+        let ply = RTPLY.data(from: set)
+        let st = RTStateFile.data(records: set.records, plyData: ply)
+        var back = try RTPLY.read(ply)
+        XCTAssertEqual(back.counts().unknown, 2, "상태 파일이 없는 PLY는 전부 상태 미확인")
+        XCTAssertEqual(back.counts().stable + back.counts().candidate, 0, "기존 PLY를 전부 검증된 것으로 보지 않는다")
+        _ = RTStateFile.apply(to: &back, stateData: st, plyData: ply)
+        XCTAssertEqual(back.state, set.state)
+        XCTAssertEqual(back.gid, set.gid)
+        XCTAssertEqual(back.records, set.records)
+        // 다른 PLY의 상태 파일은 적용하지 않는다
+        var other = try RTPLY.read(ply)
+        var tampered = ply; tampered[tampered.count - 3] ^= 0x55
+        XCTAssertEqual(RTStateFile.read(st, plyData: tampered, expectedCount: 2), .checksumMismatch)
+        let note = RTStateFile.apply(to: &other, stateData: st, plyData: tampered)
+        XCTAssertTrue(note.contains("체크섬"))
+        XCTAssertEqual(other.counts().unknown, 2)
+        // 점 개수가 다르거나 깨진 파일
+        XCTAssertEqual(RTStateFile.read(st, plyData: ply, expectedCount: 3), .countMismatch)
+        XCTAssertEqual(RTStateFile.read(Data("xx".utf8), plyData: ply, expectedCount: 2), .invalid)
+        // 상태 미확인은 렌더에서 임시(주황)로 취급하지 않는다
+        XCTAssertEqual(back.pack()[7], 1)
+    }
+
+    func testShareBundleLinksOnlySameRunLogAndReportsMissing() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("rt-share-\(UUID().uuidString)", isDirectory: true)
+        let logs = dir.appendingPathComponent("logs", isDirectory: true)
+        try fm.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        func touch(_ u: URL, _ s: String = "x") { try? s.write(to: u, atomically: true, encoding: .utf8) }
+        touch(logs.appendingPathComponent("RUN1.jsonl")); touch(logs.appendingPathComponent("RUN1.summary.txt"))
+        touch(logs.appendingPathComponent("OTHER.jsonl"))
+        let ply = dir.appendingPathComponent("space-RUN1.ply"), st = dir.appendingPathComponent("space-RUN1.state")
+        let meta = dir.appendingPathComponent("space-RUN1.meta.json"), sum = dir.appendingPathComponent("space-RUN1.summary.txt")
+        touch(ply); touch(st); touch(sum); touch(meta, "{\"runId\":\"RUN1\"}")
+        let item = RTStore.Item(url: ply, date: nil, bytes: 1, summaryURL: sum, metaURL: meta, stateURL: st)
+        let b = RTStore.shareBundle(for: item, logsDirectory: logs)
+        let names = b.urls.map { $0.lastPathComponent }
+        XCTAssertTrue(names.contains("RUN1.jsonl"))
+        XCTAssertFalse(names.contains("OTHER.jsonl"), "다른 실행의 로그는 섞지 않는다")
+        XCTAssertTrue(names.contains("space-RUN1.ply") && names.contains("space-RUN1.state") && names.contains("space-RUN1.meta.json") && names.contains("space-RUN1.summary.txt"))
+        XCTAssertEqual(b.missing, [])
+        XCTAssertEqual(b.runId, "RUN1")
+        // 로그가 없으면 만들지 않고 이유를 알린다
+        touch(meta, "{\"runId\":\"RUN2\"}")
+        let b2 = RTStore.shareBundle(for: item, logsDirectory: logs)
+        XCTAssertFalse(b2.urls.contains { $0.pathExtension == "jsonl" })
+        XCTAssertTrue(b2.missing.contains { $0.contains("RUN2") })
+        // 실행 ID가 없는 예전 저장본
+        touch(meta, "{}")
+        let b3 = RTStore.shareBundle(for: RTStore.Item(url: ply, date: nil, bytes: 1, summaryURL: nil, metaURL: meta, stateURL: nil), logsDirectory: logs)
+        XCTAssertFalse(b3.urls.contains { $0.pathExtension == "jsonl" })
+        XCTAssertGreaterThanOrEqual(b3.missing.count, 3)
+    }
+
+    func testSurfaceBuilderCapsLongEllipsesAndKeepsThinStructures() {
+        let frame = planeFrame(id: 1, center: .zero) { self.noise($0, $1) }
+        // 먼 평면: 접선 크기에 상한이 있다
+        var far = RTDepthMap(gw: 160, gh: 120, step: 2)
+        for i in 0..<far.z.count { far.z[i] = 5; far.conf[i] = 0.8; far.reason[i] = 0; far.source[i] = 1; far.support[i] = 2 }
+        let rf = RTSurfaceBuilder.build(frame: frame, depth: far)
+        XCTAssertGreaterThan(rf.samples.count, 0)
+        XCTAssertLessThanOrEqual(rf.maxTangentScale, 0.0525 + 1e-5)
+        // 너무 먼 표본은 만들지 않는다
+        var tooFar = far; for i in 0..<tooFar.z.count { tooFar.z[i] = 8 }
+        let rt = RTSurfaceBuilder.build(frame: frame, depth: tooFar)
+        XCTAssertEqual(rt.samples.count, 0)
+        XCTAssertGreaterThan(rt.rejected[.outOfRange] ?? 0, 0)
+        // 얇은 기둥(3열, 1.5m)은 배경(3m) 앞에서 유지된다
+        var pole = RTDepthMap(gw: 160, gh: 120, step: 2)
+        for gy in 0..<120 { for gx in 0..<160 {
+            let i = gy * 160 + gx
+            pole.z[i] = (gx >= 78 && gx <= 80) ? 1.5 : 3.0
+            pole.conf[i] = 0.8; pole.reason[i] = 0; pole.source[i] = 1; pole.support[i] = 2
+        }}
+        let rp = RTSurfaceBuilder.build(frame: frame, depth: pole)
+        let kept = rp.samples.filter { abs($0.pos.z - 1.5) < 0.01 }
+        XCTAssertGreaterThanOrEqual(kept.count, 300)
+        // 단안 표본은 격자를 성기게 쓴다
+        var mono = far; for i in 0..<mono.source.count { mono.source[i] = RTDepthSource.mono.rawValue; mono.z[i] = 2 }
+        let rm = RTSurfaceBuilder.build(frame: frame, depth: mono)
+        XCTAssertLessThanOrEqual(rm.samples.count, 160 * 120 / 4)
+        XCTAssertTrue(rm.samples.allSatisfy { $0.rank == 0 })
+    }
+
+    func testMapPredictionAgreementAndAlignmentVote() {
+        let map = RTGaussianMap()
+        settle(map, planeSamples(z: 2), kfs: 4)
+        XCTAssertEqual(map.verifiedCount, 144)
+        let frame = planeFrame(id: 1, center: .zero) { self.noise($0, $1) }
+        let pred = RTMapPrediction.predict(map: map, frame: frame, gw: 160, gh: 120, step: 2, segment: 0)
+        XCTAssertGreaterThan(pred.covered, 100)
+        var same = RTDepthMap(gw: 160, gh: 120, step: 2)
+        for i in 0..<same.z.count { same.z[i] = 2; same.conf[i] = 0.8; same.reason[i] = 0; same.source[i] = 1 }
+        let ag = RTMapPrediction.compare(depth: same, prediction: pred)
+        XCTAssertEqual(ag.agreeRatio, 1, accuracy: 1e-9)
+        XCTAssertGreaterThan(ag.unexplained, 0, "지도가 설명하지 못하는 영역은 새로 드러난 영역으로 센다")
+        var shifted = same; for i in 0..<shifted.z.count { shifted.z[i] = 3 }
+        let bad = RTMapPrediction.compare(depth: shifted, prediction: pred)
+        XCTAssertEqual(bad.agree, 0)
+        XCTAssertGreaterThan(bad.behind, 0)
+        var vote = RTMapPrediction.AlignmentVote()
+        for _ in 0..<3 { vote.add(ag) }
+        XCTAssertFalse(vote.decide(minCompared: 100000), "표본이 부족하면 합치지 않는다")
+        XCTAssertTrue(vote.decide(minCompared: 100, minKeyframes: 1))
+        var badVote = RTMapPrediction.AlignmentVote()
+        for _ in 0..<5 { badVote.add(bad) }
+        XCTAssertFalse(badVote.decide(minCompared: 100, minKeyframes: 1), "어긋난 좌표계는 합치지 않는다")
+    }
+
     // MARK: 정밀화
 
     func testPlaneNormalFit() {
@@ -363,23 +606,44 @@ final class RealtimeGSTests: XCTestCase {
         XCTAssertNil(RTRefiner.planeNormal(points: [SIMD3<Float>(0, 0, 0)]))
     }
 
-    func testRefinerGainAndColorUpdate() {
+    func testGainFromMatchedPairsAndRefinerColorWithOcclusionCheck() {
         let map = RTGaussianMap()
-        let frame = planeFrame(id: 1, center: .zero) { _, _ in 0.5 }
-        // 밝기 0.5로 보이는 평면. 저장 색은 0.25(절반 밝기)로 두면 노출 비 ≈ 2가 나와 상한 1.4로 잘린다.
         var s = planeSamples(z: 2)
         for i in 0..<s.count { s[i].color = SIMD3<Float>(repeating: 0.25) }
         for i in 0..<s.count { s[i].pos = SIMD3<Float>(Float(i % 12) * 0.02 - 0.12, Float(i / 12) * 0.02 - 0.12, 2) }
-        var st = map.integrate(s, ctx: RTIntegrationContext(kf: 1, segment: 0, camCenter: .zero))
-        _ = map.integrate(s, ctx: RTIntegrationContext(kf: 2, segment: 0, camCenter: SIMD3<Float>(0.1, 0, 0)))
-        st = map.integrate(s, ctx: RTIntegrationContext(kf: 3, segment: 0, camCenter: SIMD3<Float>(0.2, 0, 0)))
-        let g = RTRefiner.estimateGain(frame: frame, map: map, hits: st.hits)
-        XCTAssertNotNil(g)
-        if let g { XCTAssertGreaterThan(g, 1.2); XCTAssertLessThanOrEqual(g, 1.4) }
-        let before = map.col[0].x
-        let r = RTRefiner.refine(frame: frame, map: map, hits: st.hits, gain: 1.0)
+        settle(map, s, kfs: 3)
+        XCTAssertEqual(map.verifiedCount, 144)
+        // 같은 표면이 두 배 밝게 관측되면 갱신 전 저장 색과의 짝에서 노출 비가 나온다(방금 쓴 색에 되먹임되지 않음).
+        var bright = s
+        for i in 0..<bright.count { bright[i].color = SIMD3<Float>(repeating: 0.5) }
+        let st = map.integrate(bright, ctx: RTIntegrationContext(kf: 10, segment: 0, camCenter: SIMD3<Float>(0.2, 0, 0), prevGain: 1))
+        XCTAssertEqual(st.gainPairs, 144)
+        XCTAssertEqual(try XCTUnwrap(st.gainRaw), 2.0, accuracy: 0.05)
+        XCTAssertGreaterThan(st.gainUsed, 1.2)
+        XCTAssertLessThanOrEqual(st.gainUsed, 1.7)
+        // 짝이 40개 미만이면 노출을 바꾸지 않는다
+        let few = RTGaussianMap()
+        settle(few, Array(s.prefix(10)), kfs: 3)
+        let stFew = few.integrate(Array(bright.prefix(10)), ctx: RTIntegrationContext(kf: 10, segment: 0, camCenter: SIMD3<Float>(0.2, 0, 0), prevGain: 1))
+        XCTAssertNil(stFew.gainRaw)
+        XCTAssertEqual(stFew.gainUsed, 1)
+
+        let frame = planeFrame(id: 1, center: .zero) { _, _ in 0.5 }
+        var visible = RTDepthMap(gw: 160, gh: 120, step: 2)
+        for i in 0..<visible.z.count { visible.z[i] = 2; visible.conf[i] = 0.8; visible.reason[i] = 0; visible.source[i] = 1 }
+        let hit0 = Int(st.hits[0])
+        let before = map.col[hit0].x
+        let r = RTRefiner.refine(frame: frame, map: map, hits: st.hits + st.hits, depth: visible, gain: st.gainUsed)
         XCTAssertGreaterThan(r.colorUpdated, 0)
-        XCTAssertGreaterThan(map.col[Int(st.hits[0])].x, before - 0.0001)
+        XCTAssertLessThanOrEqual(r.colorUpdated, 144, "중복 hits는 한 번만 처리")
+        XCTAssertGreaterThan(map.col[hit0].x, before)
+        // 앞에 물체가 있어 가려진 곳(깊이 1m)의 색은 바꾸지 않는다
+        var occluded = visible; for i in 0..<occluded.z.count { occluded.z[i] = 1.0 }
+        let c1 = map.col
+        let r2 = RTRefiner.refine(frame: frame, map: map, hits: st.hits, depth: occluded, gain: st.gainUsed)
+        XCTAssertEqual(r2.colorUpdated, 0)
+        XCTAssertGreaterThan(r2.colorSkippedOcclusion, 0)
+        XCTAssertEqual(map.col, c1)
     }
 
     // MARK: 저장·불러오기
@@ -394,7 +658,7 @@ final class RealtimeGSTests: XCTestCase {
             set.scale.append(SIMD3<Float>(0.01 + f * 0.0005, 0.02, 0.002))
             set.quat.append(simd_normalize(SIMD4<Float>(0.1, 0.2, 0.3, 0.9)))
             set.opacity.append(0.2 + 0.015 * f)
-            set.verified.append(i % 2 == 0)
+            set.state.append(UInt8(i % 3)); set.gid.append(UInt32(i + 1))
         }
         let data = RTPLY.data(from: set)
         let back = try RTPLY.read(data)

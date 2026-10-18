@@ -2,11 +2,25 @@ import Foundation
 import simd
 
 /// 깊이 지도 → 표면 가우시안 후보. 법선은 이웃 표본의 3D 점에서, 크기는 표본 간격과 시선 각도에서 정한다.
-/// 깊이 불연속을 넘는 이웃은 법선 계산에 쓰지 않고, 시선과 거의 평행한 면은 거부한다.
+/// 깊이 불연속을 넘는 이웃은 법선 계산에 쓰지 않고, 시선과 거의 평행한 면·평면 잔차가 큰 표본·깊이 불확실성이 큰 표본은 만들지 않는다.
+/// 일괄 축소나 흐림으로 보정하지 않는다: 믿을 수 없는 표본은 구멍으로 남기고 재관측에 맡긴다.
 enum RTSurfaceBuilder {
     struct Result {
         var samples: [RTNewGaussian] = []
         var rejected: [RTReason: Int] = [:]
+        var created = [0, 0, 0]          // 등급(0=단안, 1=스테레오 약함/도움받음, 2=강함)별 생성 수
+        var maxTangentScale: Float = 0
+    }
+
+    struct Params {
+        var maxZ: Float = 6              // 이보다 먼 표본은 만들지 않는다(표본 간격과 깊이 오차가 커서 번짐의 원인)
+        var minCosStereo: Float = 0.3    // 시선과 법선의 최소 코사인(스테레오)
+        var minCosMono: Float = 0.5      // 단안은 더 엄격
+        var maxTangentScale: Float = 0.035   // 접선 크기 상한(3.5cm)
+        var maxStretch: Float = 2.5      // 기울어진 면의 늘림 상한
+        var monoStride = 2               // 단안 표본은 2×2 격자 중 하나만
+        var maxSigmaRatio: Float = 0.06  // σZ/Z 상한
+        var planeResidual: Float = 0.02  // 이웃이 평면에서 벗어난 정도(깊이 비율)
     }
 
     /// 인접 표본이 같은 표면에 속한다고 볼 깊이 차이 한계.
@@ -14,7 +28,7 @@ enum RTSurfaceBuilder {
         z1 > 0 && abs(z1 - z0) < 0.06 * z0 + 0.02
     }
 
-    static func build(frame: RTFrame, depth: RTDepthMap, maxZ: Float = 8) -> Result {
+    static func build(frame: RTFrame, depth: RTDepthMap, params: Params = Params()) -> Result {
         var res = Result()
         let K = frame.kSmall
         let gw = depth.gw, gh = depth.gh, step = depth.step
@@ -33,7 +47,16 @@ enum RTSurfaceBuilder {
                 let i = gy * gw + gx
                 let z = depth.z[i]
                 guard z > 0 else { continue }
-                if z > maxZ { res.rejected[.outOfRange, default: 0] += 1; continue }
+                let src = RTDepthSource(rawValue: depth.source[i]) ?? .stereo
+                let mono = src == .mono
+                if mono && (gx % params.monoStride != 0 || gy % params.monoStride != 0) { continue }
+                if z > params.maxZ { res.rejected[.outOfRange, default: 0] += 1; continue }
+                let assisted = depth.isAssisted(i)
+                // 깊이 불확실성: σZ ≈ Z²·σd/(f·b) (σd = 0.3픽셀 가정). 기선이 작아 정밀도가 낮은 먼 표본은 만들지 않는다.
+                if !mono && !assisted && depth.baseline > 0 {
+                    let sigma = z * z * 0.3 / (K.fx * depth.baseline)
+                    if sigma > params.maxSigmaRatio * z { res.rejected[.depthUncertain, default: 0] += 1; continue }
+                }
                 let (u, v) = depth.pixel(gx, gy)
                 let P = K.rayZ1(u: u, v: v) * z
 
@@ -53,29 +76,35 @@ enum RTSurfaceBuilder {
                     let c = simd_cross(tx, ty)
                     if simd_length(c) > 1e-9 {
                         n = -simd_normalize(c)                     // CV 좌표에서 cross(tx,ty)는 카메라 반대쪽
+                        // 평면 잔차: 이웃 점이 이 평면에서 크게 벗어나면 법선을 믿을 수 없다(계단·모서리·잡음).
+                        for q in [l, r, up, dn] {
+                            if let q, abs(simd_dot(q - P, n)) > params.planeResidual * z + 0.004 { edge = true }
+                        }
                     } else { edge = true }
                 } else {
                     edge = true
                 }
                 if simd_dot(n, -view) < 0 { n = -n }
                 let cosT = simd_dot(n, -view)
-                if cosT < 0.2 { res.rejected[.grazing, default: 0] += 1; continue }
+                if mono && edge { res.rejected[.weakNormal, default: 0] += 1; continue }       // 단안은 믿을 수 있는 법선에서만
+                if cosT < (mono ? params.minCosMono : params.minCosStereo) { res.rejected[.grazing, default: 0] += 1; continue }
 
-                // 표본 간격(미터) = 픽셀 간격 × 깊이 / f
+                // 표본 간격(미터) = 픽셀 간격 × 깊이 / f. 접선 크기는 상한을 둔다(큰 타원이 번짐의 원인).
                 let spacing = Float(step) * z / K.fx
-                var rT = 0.85 * spacing
+                var rT = min(0.85 * spacing, params.maxTangentScale)
+                if mono { rT *= 0.8 }
                 if edge { rT *= 0.6 }
-                // 기울어진 면은 기울기 방향으로 간격이 1/cosθ만큼 늘어난다.
+                // 기울어진 면은 기울기 방향으로 간격이 1/cosθ만큼 늘어난다(상한 있음).
                 let slantDir = view - simd_dot(view, n) * n
-                // scale.x는 기울기 방향에 수직인 축(tPerp), scale.y는 기울기 방향(= n × tPerp)에 적용된다.
                 let tPerp: SIMD3<Float>
-                let sPerp = rT, sSlant = rT / max(cosT, 0.3)
+                let sPerp = rT
+                let sSlant = min(rT / max(cosT, 1 / params.maxStretch), 1.5 * params.maxTangentScale)
                 if simd_length(slantDir) > 1e-3 {
                     tPerp = simd_cross(n, simd_normalize(slantDir))
                 } else {
                     tPerp = RTSplatMath.tangents(for: n).0
                 }
-                let scale = SIMD3<Float>(sPerp, min(sSlant, rT * 3), max(0.002, 0.1 * rT))
+                let scale = SIMD3<Float>(sPerp, sSlant, max(0.002, 0.1 * rT))
 
                 // 색: 표본 블록(step×step)의 평균
                 var cr: Float = 0, cg: Float = 0, cb: Float = 0, cnt: Float = 0
@@ -89,13 +118,21 @@ enum RTSurfaceBuilder {
                 guard cnt > 0 else { continue }
                 let color = SIMD3<Float>(cr, cg, cb) / (cnt * 255)
 
-                let src = RTDepthSource(rawValue: depth.source[i]) ?? .stereo
                 let conf = depth.conf[i]
-                var opacity: Float = src == .stereo ? 0.6 + 0.2 * conf : 0.38
+                let support = Int(depth.support[i] & 0x7F)
+                var rank = 0
+                if !mono {
+                    rank = (!assisted && conf >= 0.45 && (support >= 2 || conf >= 0.7) && !edge) ? 2 : 1
+                }
+                var opacity: Float = mono ? 0.3 : 0.6 + 0.2 * conf
                 if edge { opacity *= 0.8 }
+                let worldView = frame.pose.rot * view
                 res.samples.append(RTNewGaussian(
                     pos: frame.pose.camToWorld(P), normal: simd_normalize(frame.pose.rot * n), tangent: frame.pose.rot * tPerp,
-                    color: color, scale: scale, opacity: opacity, conf: conf, source: src, z: z, edge: edge))
+                    viewDir: -worldView, color: color, scale: scale, opacity: opacity, conf: conf, source: src, z: z, edge: edge,
+                    rank: rank, assisted: assisted))
+                res.created[rank] += 1
+                res.maxTangentScale = max(res.maxTangentScale, max(scale.x, scale.y))
             }
         }
         return res

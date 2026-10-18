@@ -28,6 +28,8 @@ struct RTLive {
     var stageMs: [String: Double] = [:]
     var gaussians = 0
     var verified = 0
+    var stable = 0
+    var candidate = 0
     var provisional = 0
     var lastInserted = 0
     var lastMerged = 0
@@ -66,6 +68,20 @@ struct RTKFRecord {
     var reuse: Double
     var residualMedianCm: Double?
     var photoDiff: Double?
+    var insertedMono = 0
+    var insertedStereo = 0
+    var samplesMerged = 0
+    var contradictions = 0
+    var promoCandidate = 0
+    var promoStable = 0
+    var demoted = 0
+    var stableMoveMean = 0.0
+    var stableMoveMax = 0.0
+    var priorCompared = 0
+    var priorAgree = 0
+    var unexplained = 0
+    var pruned = 0
+    var predictMs = 0.0
 }
 
 /// 실시간 가우시안 공간 생성 엔진. ARKit 단일 세션 → 키프레임 → 시간차 스테레오(+단안 사전값) → 가우시안 융합 → 정밀화 → 렌더용 포장.
@@ -127,6 +143,12 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private let map = RTGaussianMap()
     private var ring: [RTFrame] = []
     private var procSegment: UInt16 = 0
+    private var procHasFrames = false
+    private var segmentAlias: [UInt16: UInt16] = [:]      // 좌표 정합이 검증된 새 세그먼트 → 이어 쓰는 이전 세그먼트
+    private var alignFrom: UInt16?
+    private var alignTo: UInt16 = 0
+    private var alignVote = RTMapPrediction.AlignmentVote()
+    private var alignStartKF: Int32 = 0
     private var gain: Float = 1
     private let mono = RTMonoDepth()
     private var monoLoadAttempted = false
@@ -150,7 +172,14 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private var reasonTotals: [String: Int] = [:]
     private var lastRecord: RTKFRecord?
     private var lastReasons: [String: Int] = [:]
-    private var mapCounts = (alive: 0, verified: 0)
+    private var mapCounts = (alive: 0, verified: 0, stable: 0)
+    private var refineSkippedOcclusion = 0, refineSkippedStable = 0
+    private var gainHistory: [Double] = []
+    private var gainRawList: [Double] = []
+    private var totalAssisted = 0, totalPriorCompared = 0, totalPriorAgree = 0, totalUnexplained = 0
+    private var totalContradictions = 0, totalPromoStable = 0, totalPromoCandidate = 0, totalDemoted = 0
+    private var totalInsertedMono = 0, totalInsertedStereo = 0
+    private var stableMoves: [Float] = []
     private var totalInserted = 0, totalMerged = 0, totalReplaced = 0, totalCarved = 0, totalPruned = 0, totalDoubleRejected = 0
     private var reuseList: [Double] = []
     private var residuals: [Float] = []
@@ -407,6 +436,13 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         return RTStat.percentile(stageSamples[key] ?? [], 0.5)
     }
 
+    private func resolveSegment(_ s: UInt16) -> UInt16 {
+        var cur = s
+        var n = 0
+        while let a = segmentAlias[cur], n < 8 { cur = a; n += 1 }
+        return cur
+    }
+
     private func process(_ job: RTJob) {
         defer { finishJob() }
         let tStart = ExpSys.hostNow()
@@ -415,7 +451,19 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         statLock.lock()
         let level: Int = governorLevel
         statLock.unlock()
-        if job.segment != procSegment { ring.removeAll(); procSegment = job.segment; gain = 1; lastFit = nil }
+
+        // 세그먼트: 새 세그먼트가 시작되면 링과 노출 보정을 비우고, 이전 지도와의 좌표 정합 검증을 시작한다(검증 전에는 합치지 않는다).
+        if procHasFrames && job.segment != procSegment {
+            ring.removeAll(); gain = 1; lastFit = nil
+            let from = resolveSegment(procSegment)
+            if map.verifiedCount >= 2000 && alignFrom == nil {
+                alignFrom = from; alignTo = job.segment; alignVote = RTMapPrediction.AlignmentVote(); alignStartKF = job.id
+                log?.write("rt_align_start", ["from": Int(from), "to": Int(job.segment), "verified": map.verifiedCount])
+            }
+        }
+        procSegment = job.segment
+        procHasFrames = true
+        var seg = resolveSegment(job.segment)
 
         // 1. 변환: 같은 ARFrame의 영상을 소유한 작은 복사본으로 (포즈·K·시각과 함께)
         guard let hi = RTFrameConverter.downscale(job.pb, outWidth: 640) else { return }
@@ -430,15 +478,44 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
                             kHi: job.K.scaled(toWidth: hi.width, height: hi.height), rgbHi: hi.rgb, sharpness: g.sharpness, meanLuma: g.mean)
         let tConv = ExpSys.hostNow()
 
-        // 2. 시간차 스테레오 (같은 세그먼트의 최근 키프레임을 참조)
+        // 2. 기존 지도 예측 → 시간차 스테레오(예측은 탐색을 돕는 힌트일 뿐 정답으로 강제하지 않음)
         let refs = RTStereo.selectRefs(cur: frame, candidates: ring)
-        var depth = RTStereo.estimate(cur: frame, refs: refs)
+        let gw = frame.kSmall.width / 2, gh = frame.kSmall.height / 2
+        var pred: RTMapPrediction.Result?
+        if !refs.isEmpty && map.verifiedCount > 200 {
+            pred = RTMapPrediction.predict(map: map, frame: frame, gw: gw, gh: gh, step: 2, segment: seg)
+        }
+        let tPred = ExpSys.hostNow()
+        var depth = RTStereo.estimate(cur: frame, refs: refs, prior: pred?.z)
         let stereoValid = depth.validCount
+        var assisted = 0
+        for i in 0..<depth.support.count where depth.z[i] > 0 && depth.support[i] & 0x80 != 0 { assisted += 1 }
         let tStereo = ExpSys.hostNow()
 
-        // 3. 단안 사전값 (모델이 있고, 열/메모리 여유가 있고, 간격이 지났을 때만)
+        // 지도와 새 관측의 일치(설명되는 영역 / 새로 드러난 영역 / 어긋난 영역)
+        var agreement = RTMapPrediction.Agreement()
+        if let p = pred { agreement = RTMapPrediction.compare(depth: depth, prediction: p) }
+
+        // 좌표 정합 검증: 이전 세그먼트의 지도와 새 세그먼트의 스테레오 깊이가 여러 키프레임에서 충분히 일치할 때만 같은 좌표계로 본다.
+        if let from = alignFrom, !refs.isEmpty {
+            let p2 = RTMapPrediction.predict(map: map, frame: frame, gw: gw, gh: gh, step: 2, segment: from)
+            let ag = RTMapPrediction.compare(depth: depth, prediction: p2)
+            alignVote.add(ag)
+            if alignVote.decide() {
+                let moved = map.relabelSegment(from: seg, to: from)
+                segmentAlias[alignTo] = from
+                seg = from
+                log?.write("rt_align_accept", ["from": Int(from), "to": Int(alignTo), "compared": alignVote.compared, "agreeRatio": alignVote.ratio, "keyframes": alignVote.keyframes, "relabeled": moved])
+                alignFrom = nil
+            } else if job.id - alignStartKF > 12 {
+                log?.write("rt_align_reject", ["from": Int(from), "to": Int(alignTo), "compared": alignVote.compared, "agreeRatio": alignVote.ratio, "keyframes": alignVote.keyframes,
+                                               "note": "일치가 충분하지 않아 별개 세그먼트로 유지(강제로 합치지 않음)"])
+                alignFrom = nil
+            }
+        }
+
+        // 3. 단안 사전값 (모델이 있고, 열/메모리 여유가 있고, 간격이 지났을 때만). 정렬 품질이 높을 때만 쓴다.
         var monoMs = 0.0
-        var monoUsed = false
         if opts.useMono && level < 2 {
             loadMonoIfNeeded()
             let interval = level == 1 ? 1.6 : 0.8
@@ -446,7 +523,6 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
                 let tm = ExpSys.hostNow()
                 lastMonoHost = tm
                 if let m = mono.predict(rgb: hi.rgb, srcW: hi.width, srcH: hi.height, outW: depth.gw, outH: depth.gh) {
-                    monoUsed = true
                     var fit = RTMonoAlign.fit(mono: m, depth: depth)
                     if let f = fit { lastFit = f; lastFitHost = tm; lastFitSegment = job.segment; statLock.lock(); monoRuns += 1; statLock.unlock() }
                     else if let lf = lastFit, lastFitSegment == job.segment, tm - lastFitHost < 2.0 {
@@ -454,7 +530,7 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
                         statLock.lock(); monoCarried += 1; statLock.unlock()
                     }
                     if let fit {
-                        let r = RTMonoAlign.apply(mono: m, fit: fit, to: &depth)
+                        let r = RTMonoAlign.apply(mono: m, fit: fit, to: &depth, minInlier: 0.7)
                         statLock.lock(); monoFilled += r.filled; monoConflicts += r.conflicts; statLock.unlock()
                     } else {
                         statLock.lock(); reasonTotals[RTReason.monoUnusable.label, default: 0] += 1; statLock.unlock()
@@ -463,27 +539,27 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
                 monoMs = (ExpSys.hostNow() - tm) * 1000
             }
         }
-        _ = monoUsed
 
-        // 4. 표면 가우시안 생성 + 지도 융합
+        // 4. 표면 가우시안 생성 + 지도 융합(가우시안별 한 번만 갱신, 단계별 갱신 권한)
         let tFuse0 = ExpSys.hostNow()
         let built = RTSurfaceBuilder.build(frame: frame, depth: depth)
-        let ctx = RTIntegrationContext(kf: job.id, segment: job.segment, camCenter: job.pose.center, colorGain: gain, maxGaussians: min(cap, opts.maxGaussians))
+        let eventsBefore = map.events
+        let ctx = RTIntegrationContext(kf: job.id, segment: seg, camCenter: job.pose.center, prevGain: gain,
+                                       maxGaussians: min(cap, opts.maxGaussians), monoBudget: level >= 1 ? 1200 : 2500, temporaryCap: 30_000)
         let st = map.integrate(built.samples, ctx: ctx)
+        gain = st.gainUsed
         let tFuse = ExpSys.hostNow()
 
-        // 5. 가림 위반(떠다니는 가우시안) 제거, 가지치기, 상한
-        let carved = map.carve(frame: frame, depth: depth, kf: job.id, segment: job.segment)
+        // 5. 가림 위반(자유 공간으로 관측된) 제거, 임시 가우시안 만료, 상한. 관측되지 않았다는 이유로 후보·안정 표면을 지우지 않는다.
+        let carved = map.carve(frame: frame, depth: depth, kf: job.id, segment: seg)
         let pruned = map.prune(currentKF: job.id)
         let capped = map.enforceCap(min(cap, opts.maxGaussians))
         let tCarve = ExpSys.hostNow()
 
-        // 6. 정밀화 (끄거나 열/메모리 압박이면 건너뜀)
+        // 6. 정밀화 (끄거나 열/메모리 압박이면 건너뜀). 이번 키프레임이 실제로 본 가우시안만, 가림 검사를 거쳐.
         var refineStats = RTRefiner.Stats()
         if opts.refine && level < 2 {
-            if let ng = RTRefiner.estimateGain(frame: frame, map: map, hits: st.hits) { gain = 0.6 * gain + 0.4 * ng; refineStats.gain = gain }
-            refineStats = RTRefiner.refine(frame: frame, map: map, hits: st.hits, gain: gain)
-            refineStats.gain = gain
+            refineStats = RTRefiner.refine(frame: frame, map: map, hits: st.hits, depth: depth, gain: gain)
         }
         map.compactIfNeeded()
         let tRefine = ExpSys.hostNow()
@@ -503,12 +579,21 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let toMapMs = (tRefine - captureHost) * 1000
         let nbFrac = depth.reason.isEmpty ? 0 : Double(depth.reason.filter { $0 == RTReason.noBaseline.rawValue }.count) / Double(depth.reason.count)
         noBaselineStreak = (nbFrac > 0.6 && refs.isEmpty) ? noBaselineStreak + 1 : 0
-        let rec = RTKFRecord(id: job.id, segment: job.segment, captureHost: captureHost, toMapMs: toMapMs,
-                             convertMs: (tConv - tStart) * 1000, stereoMs: (tStereo - tConv) * 1000, monoMs: monoMs,
+        let moveMean = st.stableMoveM.isEmpty ? 0 : Double(st.stableMoveM.reduce(0, +) / Float(st.stableMoveM.count))
+        let moveMax = Double(st.stableMoveM.max() ?? 0)
+        var evDelta: [String: Int] = [:]
+        for (k, v) in map.events { let d = v - (eventsBefore[k] ?? 0); if d != 0 { evDelta[k] = d } }
+        let rec = RTKFRecord(id: job.id, segment: seg, captureHost: captureHost, toMapMs: toMapMs,
+                             convertMs: (tConv - tStart) * 1000, stereoMs: (tStereo - tPred) * 1000, monoMs: monoMs,
                              fuseMs: (tFuse - tFuse0) * 1000, carveMs: (tCarve - tFuse) * 1000, refineMs: (tRefine - tCarve) * 1000,
                              refs: refs.count, validDepth: depth.validCount, stereoValid: stereoValid,
                              inserted: st.inserted, merged: st.merged, replaced: st.replaced, carved: carved + capped, reuse: reuse,
-                             residualMedianCm: resCm, photoDiff: photo)
+                             residualMedianCm: resCm, photoDiff: photo,
+                             insertedMono: st.insertedByRank[0], insertedStereo: st.insertedByRank[1] + st.insertedByRank[2],
+                             samplesMerged: st.samplesMerged, contradictions: st.contradictionsApplied,
+                             promoCandidate: st.promotedToCandidate, promoStable: st.promotedToStable, demoted: st.demoted,
+                             stableMoveMean: moveMean, stableMoveMax: moveMax, priorCompared: agreement.compared, priorAgree: agreement.agree,
+                             unexplained: agreement.unexplained, pruned: pruned, predictMs: (tPred - tConv) * 1000)
         statLock.lock()
         processed += 1
         records.append(rec); if records.count > 4000 { records.removeFirst(records.count - 4000) }
@@ -517,7 +602,7 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         for (k, v) in rejectedAll { reasonTotals[k, default: 0] += v }
         toMap.append(toMapMs); if toMap.count > 2000 { toMap.removeFirst() }
         func add(_ key: String, _ v: Double) { stageSamples[key, default: []].append(v); if stageSamples[key]!.count > 600 { stageSamples[key]!.removeFirst() } }
-        add("convert", rec.convertMs); add("stereo", rec.stereoMs); add("fuse", rec.fuseMs); add("carve", rec.carveMs); add("refine", rec.refineMs)
+        add("convert", rec.convertMs); add("predict", rec.predictMs); add("stereo", rec.stereoMs); add("fuse", rec.fuseMs); add("carve", rec.carveMs); add("refine", rec.refineMs)
         if monoMs > 0 { add("mono", monoMs) }
         totalInserted += st.inserted; totalMerged += st.merged; totalReplaced += st.replaced; totalCarved += carved + capped; totalPruned += pruned
         totalDoubleRejected += st.rejected[.doubleSurface] ?? 0
@@ -525,25 +610,38 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         residuals.append(contentsOf: st.residuals.prefix(2000)); if residuals.count > 20000 { residuals.removeFirst(residuals.count - 20000) }
         if let photo { photoDiffs.append(photo) }
         if refineStats.colorUpdated > 0 { refineColorDeltas.append(Double(refineStats.colorDelta)) }
+        refineSkippedOcclusion += refineStats.colorSkippedOcclusion; refineSkippedStable += refineStats.colorSkippedStable
         let denom = Double(max(1, depth.reason.count))
         stereoFractions.append(Double(stereoValid) / denom)
-        mapCounts = (map.aliveCount, map.verifiedCount)
+        mapCounts = (map.aliveCount, map.verifiedCount, map.stableCount)
+        gainHistory.append(Double(st.gainRaw ?? 0)); if gainHistory.count > 600 { gainHistory.removeFirst() }
+        if let r = st.gainRaw { gainRawList.append(Double(r)); if gainRawList.count > 600 { gainRawList.removeFirst() } }
+        totalAssisted += assisted
+        totalPriorCompared += agreement.compared; totalPriorAgree += agreement.agree; totalUnexplained += agreement.unexplained
+        totalContradictions += st.contradictionsApplied; totalPromoStable += st.promotedToStable; totalPromoCandidate += st.promotedToCandidate; totalDemoted += st.demoted
+        totalInsertedMono += st.insertedByRank[0]; totalInsertedStereo += st.insertedByRank[1] + st.insertedByRank[2]
+        stableMoves.append(contentsOf: st.stableMoveM.prefix(500)); if stableMoves.count > 20000 { stableMoves.removeFirst(stableMoves.count - 20000) }
         hint = noBaselineStreak >= 3 ? "제자리 회전만으로는 깊이를 알 수 없어요. 옆으로 천천히 이동해 주세요" : ""
         pendingPublishCapture.append(captureHost)
         statLock.unlock()
 
         var kfLog: [String: Any] = [:]
         kfLog["id"] = Int(job.id)
-        kfLog["segment"] = Int(job.segment)
+        kfLog["segment"] = Int(seg)
         kfLog["toMapMs"] = toMapMs
-        kfLog["ms"] = ["convert": rec.convertMs, "stereo": rec.stereoMs, "mono": monoMs, "fuse": rec.fuseMs, "carve": rec.carveMs, "refine": rec.refineMs]
+        kfLog["ms"] = ["convert": rec.convertMs, "predict": rec.predictMs, "stereo": rec.stereoMs, "mono": monoMs, "fuse": rec.fuseMs, "carve": rec.carveMs, "refine": rec.refineMs]
         kfLog["refs"] = refs.count
-        kfLog["grid"] = [depth.gw, depth.gh]
         kfLog["validDepth"] = rec.validDepth
         kfLog["stereoValid"] = stereoValid
-        kfLog["inserted"] = st.inserted
-        kfLog["merged"] = st.merged
-        kfLog["replaced"] = st.replaced
+        kfLog["assistedByMap"] = assisted
+        kfLog["created"] = ["mono": built.created[0], "stereoWeak": built.created[1], "stereoStrong": built.created[2], "maxTangentScale": Double(built.maxTangentScale)]
+        kfLog["inserted"] = ["mono": st.insertedByRank[0], "stereoWeak": st.insertedByRank[1], "stereoStrong": st.insertedByRank[2]]
+        kfLog["updated"] = st.merged
+        kfLog["samplesMerged"] = st.samplesMerged
+        kfLog["replacedTemporary"] = st.replaced
+        kfLog["contradiction"] = ["recorded": st.contradictionsRecorded, "applied": st.contradictionsApplied]
+        kfLog["transitions"] = ["toCandidate": st.promotedToCandidate, "toStable": st.promotedToStable, "demoted": st.demoted]
+        kfLog["stableMoveM"] = ["mean": moveMean, "max": moveMax, "count": st.stableMoveM.count]
         kfLog["carved"] = carved
         kfLog["capped"] = capped
         kfLog["pruned"] = pruned
@@ -551,11 +649,15 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         kfLog["reuse"] = reuse
         kfLog["residualMedianCm"] = expNN(resCm)
         kfLog["photoDiff"] = expNN(photo)
-        kfLog["gain"] = Double(gain)
-        kfLog["refine"] = ["color": refineStats.colorUpdated, "normals": refineStats.normalsRefit, "colorDelta": Double(refineStats.colorDelta)]
+        kfLog["gain"] = ["raw": expNN(st.gainRaw.map { Double($0) }), "used": Double(st.gainUsed), "pairs": st.gainPairs]
+        kfLog["refine"] = ["color": refineStats.colorUpdated, "skippedOcclusion": refineStats.colorSkippedOcclusion, "skippedStable": refineStats.colorSkippedStable,
+                           "normals": refineStats.normalsRefit, "colorDelta": Double(refineStats.colorDelta)]
+        kfLog["prior"] = ["covered": pred?.covered ?? 0, "compared": agreement.compared, "agree": agreement.agree, "behind": agreement.behind,
+                          "nearer": agreement.nearer, "unexplained": agreement.unexplained]
         kfLog["reasons"] = rejectedAll
+        kfLog["mapEvents"] = evDelta
         kfLog["alive"] = map.aliveCount
-        kfLog["verified"] = map.verifiedCount
+        kfLog["states"] = ["temporary": map.provisionalCount, "candidate": map.candidateCount, "stable": map.stableCount]
         kfLog["sharpness"] = Double(g.sharpness)
         kfLog["governor"] = level
         log?.write("rt_kf", kfLog)
@@ -642,7 +744,8 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         l.latencyToMapP50 = RTStat.percentile(toMap, 0.5); l.latencyToMapP95 = RTStat.percentile(toMap, 0.95)
         l.latencyToPublishP50 = RTStat.percentile(toPublish, 0.5); l.latencyToPublishP95 = RTStat.percentile(toPublish, 0.95)
         for (k, v) in stageSamples { if let p = RTStat.percentile(v, 0.5) { l.stageMs[k] = p } }
-        l.gaussians = mapCounts.alive; l.verified = mapCounts.verified; l.provisional = mapCounts.alive - mapCounts.verified
+        l.gaussians = mapCounts.alive; l.verified = mapCounts.verified; l.stable = mapCounts.stable
+        l.candidate = mapCounts.verified - mapCounts.stable; l.provisional = mapCounts.alive - mapCounts.verified
         l.lastInserted = lastRecord?.inserted ?? 0; l.lastMerged = lastRecord?.merged ?? 0; l.lastValidDepth = lastRecord?.validDepth ?? 0
         l.lastReasons = lastReasons
         l.stereoFraction = stereoFractions.last
@@ -708,16 +811,33 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             guard set.count > 0 else { out.error = "저장할 가우시안이 없어요"; return }
             do {
                 try RTStore.ensureDirectory()
-                let base = RTStore.newBaseName()
+                // 실행 ID(= 이 실행의 JSONL 파일 이름)로 PLY·상태·메타·요약·로그를 서로 연결한다.
+                let runId = log?.baseName
+                let base = runId.map { RTStore.baseName(runId: $0) } ?? RTStore.newBaseName()
                 let url = RTStore.directory.appendingPathComponent(base + ".ply")
-                try RTPLY.write(set, to: url)
-                let meta: [String: Any] = [
-                    "gaussians": set.count, "verified": map.verifiedCount, "provisional": map.provisionalCount,
-                    "segments": segmentsCreated, "buildSHA": GonggiBuildInfo.buildSHA, "appVersion": GonggiBuildInfo.versionLine,
-                    "machine": ExpSys.machine, "refine": options.refine, "useMono": options.useMono,
-                    "format": "3DGS PLY (binary little endian): x y z nx ny nz f_dc_0..2 opacity(logit) scale_0..2(log) rot_0..3(wxyz). 구분 정보(확인됨/임시)는 포함하지 않음",
-                    "coordinates": "ARKit 세계 좌표(중력 정렬, y 위), 세그먼트 구분 없이 합쳐 저장(세그먼트 간 정합은 검증하지 않음)"
-                ]
+                let plyData = RTPLY.data(from: set)
+                try plyData.write(to: url, options: .atomic)
+                try RTStateFile.data(records: set.records, plyData: plyData).write(to: RTStore.directory.appendingPathComponent(base + ".state"), options: .atomic)
+                let cnt = set.counts()
+                var meta: [String: Any] = [:]
+                meta["gaussians"] = set.count
+                meta["states"] = ["temporary": cnt.temporary, "candidate": cnt.candidate, "stable": cnt.stable]
+                meta["verified"] = cnt.candidate + cnt.stable
+                meta["provisional"] = cnt.temporary
+                meta["segments"] = segmentsCreated
+                meta["buildSHA"] = GonggiBuildInfo.buildSHA
+                meta["appVersion"] = GonggiBuildInfo.versionLine
+                meta["machine"] = ExpSys.machine
+                meta["refine"] = options.refine
+                meta["useMono"] = options.useMono
+                meta["runId"] = runId ?? NSNull()
+                meta["logFile"] = runId.map { $0 + ".jsonl" } ?? NSNull()
+                meta["logSummaryFile"] = runId.map { $0 + ".summary.txt" } ?? NSNull()
+                meta["stateFile"] = base + ".state"
+                meta["stateFormat"] = "RTST v1: gid, state(0 temporary/1 candidate/2 stable), flags, obs, stereoObs, segment, spread, angSpreadDeg, firstKF, lastKF. PLY와 같은 순서이며 PLY 체크섬이 맞을 때만 유효"
+                meta["format"] = "3DGS PLY (binary little endian): x y z nx ny nz f_dc_0..2 opacity(logit) scale_0..2(log) rot_0..3(wxyz). 개별 점의 상태는 .state 파일에 있다"
+                meta["coordinates"] = "ARKit 세계 좌표(중력 정렬, y 위). 정합이 검증된 세그먼트만 합쳐져 있고 검증하지 못한 세그먼트는 같은 좌표에 별개 번호로 저장됨(state 파일의 segment)"
+                meta["logContents"] = "JSONL은 키프레임별 통계(rt_kf)와 1초 요약(rt_hb)만 담고 영상·깊이 표본은 담지 않는다. 융합 과정을 프레임 단위로 재생할 수는 없다"
                 if let d = try? JSONSerialization.data(withJSONObject: expJSONSafe(meta), options: [.sortedKeys, .prettyPrinted]) {
                     try d.write(to: RTStore.directory.appendingPathComponent(base + ".meta.json"))
                 }
@@ -744,6 +864,10 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let mf = monoFilled, mc = monoConflicts, mca = monoCarried, mr = monoRuns, ms = monoStatusText
         let fp = footprintPeak, th = Array(thermalSeen).sorted(), gov = governorChanges, rcd = refineColorDeltas, sf = stereoFractions
         let mq = maxQueueLen, proc = processed, blur = blurRejected
+        let tis = totalInsertedStereo, tim = totalInsertedMono, tpc = totalPromoCandidate, tps = totalPromoStable, tdm = totalDemoted, tct = totalContradictions
+        let smv = stableMoves, tpcmp = totalPriorCompared, tpag = totalPriorAgree, tun = totalUnexplained, tas = totalAssisted
+        let rso = refineSkippedOcclusion, rss = refineSkippedStable, gr = gainRawList
+        let ev = map.events
         var stage: [String: Double] = [:], stage95: [String: Double] = [:]
         for (k, v) in stageSamples { stage[k] = RTStat.percentile(v, 0.5) ?? 0; stage95[k] = RTStat.percentile(v, 0.95) ?? 0 }
         statLock.unlock()
@@ -774,6 +898,23 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         if let r = render {
             t += "렌더\n  \(String(format: "%.1f", r.fps)) fps, CPU p50/p95 \(f(r.cpuMsP50, 1))/\(f(r.cpuMsP95, 1)) ms, GPU p50/p95 \(f(r.gpuMsP50, 1))/\(f(r.gpuMsP95, 1)) ms, 그린 수 \(r.drawn)/\(r.total) (보이는 \(r.visible), 예산으로 버림 \(r.dropped)), 정렬 p50 \(f(r.sortMsP50, 1)) ms\n  (렌더 FPS는 생성 속도가 아닙니다)\n\n"
         }
+        // 최근 30개 키프레임 구간과 전체 평균을 구분한다.
+        let win = Array(recs.suffix(30))
+        func sum(_ a: [RTKFRecord], _ k: (RTKFRecord) -> Int) -> Int { a.reduce(0) { $0 + k($1) } }
+        func ratio(_ a: [RTKFRecord]) -> Double? {
+            let m = sum(a) { $0.merged }, i = sum(a) { $0.inserted + $0.replaced }
+            return m + i > 0 ? Double(m) / Double(m + i) * 100 : nil
+        }
+        t += "안정성 (전체 / 최근 30 키프레임)\n"
+        t += "  재사용 비율(갱신/(갱신+추가+교체)) \(f(ratio(recs), 0))% / \(f(ratio(win), 0))%\n"
+        t += "  키프레임당 추가 \(f(recs.isEmpty ? nil : Double(sum(recs) { $0.inserted }) / Double(recs.count), 0)) / \(f(win.isEmpty ? nil : Double(sum(win) { $0.inserted }) / Double(win.count), 0)), 갱신 \(f(recs.isEmpty ? nil : Double(sum(recs) { $0.merged }) / Double(recs.count), 0)) / \(f(win.isEmpty ? nil : Double(sum(win) { $0.merged }) / Double(win.count), 0))\n"
+        t += "  추가한 것의 출처: 스테레오 \(tis), 단안 임시 \(tim) (단안은 키프레임·총량 예산으로 제한)\n"
+        t += "  상태: 임시 \(l.provisional) · 후보 \(l.candidate) · 안정 \(l.stable), 승격 후보 \(tpc) / 안정 \(tps), 강등 \(tdm), 모순 검증 교체 \(tct)\n"
+        t += "  안정 가우시안 이동량: 누적 중앙값 \(f(RTStat.percentile(smv.map { Double($0 * 100) }, 0.5), 2)) cm / p95 \(f(RTStat.percentile(smv.map { Double($0 * 100) }, 0.95), 2)) cm (갱신 시에만 기록)\n"
+        t += "  지도 예측과의 일치: 비교 \(tpcmp), 일치 \(f(tpcmp > 0 ? Double(tpag) / Double(tpcmp) * 100 : nil, 0))%, 새로 드러난 영역 표본 \(tun), 예측이 탐색을 도운 깊이 \(tas) (독립 증거로 세지 않음)\n"
+        t += "  정밀화: 가림으로 색 갱신 건너뜀 \(rso), 안정 표면 보호로 건너뜀 \(rss)\n"
+        t += "  노출 보정: 키프레임별 추정 중앙값 \(f(RTStat.percentile(gr, 0.5), 2)), 최근값 \(String(format: "%.2f", gain)) (한계 0.6~1.7)\n"
+        t += "  제거 사유(누적): " + ev.filter { $0.key.hasPrefix("removed_") }.sorted { $0.value > $1.value }.map { "\($0.key.dropFirst(8))=\($0.value)" }.joined(separator: ", ") + "\n\n"
         t += "자원\n  메모리 피크 \(f(fp)) MB, 열 상태 \(th.joined(separator: ", ")), 거버너 변경 \(gov.count)회\n\n"
         t += "해석 주의\n  - 이 값은 단일 장면·단일 실행의 측정이며 정확도(실제 거리 오차)가 아닙니다. 병합 차이는 지도와 새 관측 사이의 자기 일관성입니다.\n  - 다른 시점의 PSNR/SSIM과 구멍 비율은 이 앱이 측정하지 않았습니다.\n  - 세그먼트가 둘 이상이면 서로 다른 좌표계로 간주하며 병합하지 않았습니다.\n"
 
@@ -788,6 +929,15 @@ final class RTEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         d["reuseMean"] = expNN(reuseMean); d["mergeResidualCmMedian"] = expNN(resMed); d["mergeResidualCmP95"] = expNN(res95)
         d["photoDiffMean"] = expNN(photoMean); d["stereoFractionMean"] = expNN(stereoMean); d["reasonTotals"] = rt
         d["mono"] = ["status": ms, "fits": mr, "carried": mca, "filled": mf, "conflicts": mc] as [String: Any]
+        d["states"] = ["temporary": l.provisional, "candidate": l.candidate, "stable": l.stable]
+        d["insertedBySource"] = ["stereo": tis, "mono": tim]
+        d["transitions"] = ["toCandidate": tpc, "toStable": tps, "demoted": tdm, "contradictionReplace": tct]
+        d["stableMoveM"] = ["p50": expNN(RTStat.percentile(smv.map { Double($0) }, 0.5)), "p95": expNN(RTStat.percentile(smv.map { Double($0) }, 0.95)), "samples": smv.count]
+        d["prior"] = ["compared": tpcmp, "agree": tpag, "unexplained": tun, "assistedDepth": tas]
+        d["refineSkipped"] = ["occlusion": rso, "stable": rss]
+        d["gainRawP50"] = expNN(RTStat.percentile(gr, 0.5))
+        d["mapEvents"] = ev
+        d["recent30"] = ["keyframes": win.count, "inserted": sum(win) { $0.inserted }, "updated": sum(win) { $0.merged }, "replaced": sum(win) { $0.replaced }]
         d["refine"] = currentOptions.refine; d["footprintPeakMB"] = fp; d["thermalSeen"] = th; d["governorChanges"] = gov.count
         if let r = render {
             var rd: [String: Any] = [:]

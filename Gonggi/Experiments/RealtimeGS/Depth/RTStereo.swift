@@ -18,6 +18,9 @@ enum RTReason: UInt8, CaseIterable {
     case duplicate           // 이미 같은 표면의 가우시안이 있음(병합됨)
     case behindSurface       // 기존 확인 표면 뒤에서 보이는 것(가림 위반)
     case monoUnusable        // 단안 정렬 실패
+    case monoBudget          // 단안 임시 가우시안의 키프레임당/총량 예산 초과
+    case weakNormal          // 법선·평면 잔차를 믿을 수 없는 표본(단안은 만들지 않음)
+    case depthUncertain      // 기선 대비 깊이 불확실성이 큼(σZ가 깊이의 6% 초과)
 
     var label: String { String(describing: self) }
 }
@@ -37,7 +40,9 @@ struct RTDepthMap {
     var conf: [Float]
     var reason: [UInt8]
     var source: [UInt8]
+    /// 하위 7비트: 지지한 참조 수. 최상위 비트(0x80): 지도 예측이 탐색을 도운 표본(독립 증거 아님)
     var support: [UInt8]
+    var baseline: Float = 0          // 이 깊이 지도에 쓴 참조들의 최대 기선(미터)
 
     init(gw: Int, gh: Int, step: Int) {
         self.gw = gw; self.gh = gh; self.step = step
@@ -55,6 +60,8 @@ struct RTDepthMap {
     }
 
     var validCount: Int { z.reduce(0) { $0 + ($1 > 0 ? 1 : 0) } }
+
+    @inline(__always) func isAssisted(_ i: Int) -> Bool { support[i] & 0x80 != 0 }
 
     func reasonCounts() -> [String: Int] {
         var c: [String: Int] = [:]
@@ -105,7 +112,9 @@ enum RTStereo {
     }
 
     /// 참조가 없으면(제자리 회전 등) 모든 표본이 noBaseline으로 표시된다.
-    static func estimate(cur: RTFrame, refs: [RTFrame], params: RTStereoParams = RTStereoParams()) -> RTDepthMap {
+    /// prior: 기존 지도를 현재 시점으로 투영한 깊이 예측(표본 격자와 같은 크기, 0=없음). 예측은 정답으로 강제하지 않는다:
+    /// 전역 탐색을 먼저 하고, 예측 깊이의 비용이 충분히 낮고 전역 결과와 비슷하거나 전역 결과가 모호할 때만 예측 쪽을 택한다.
+    static func estimate(cur: RTFrame, refs: [RTFrame], params: RTStereoParams = RTStereoParams(), prior: [Float]? = nil) -> RTDepthMap {
         let w = cur.kSmall.width, h = cur.kSmall.height, step = params.step
         let gw = w / step, gh = h / step
         var out = RTDepthMap(gw: gw, gh: gh, step: step)
@@ -144,6 +153,9 @@ enum RTStereo {
         let offX: [Float] = [-2, 0, 2, -2, 0, 2, -2, 0, 2]
         let offY: [Float] = [-2, -2, -2, 0, 0, 0, 2, 2, 2]
         let nRef = geoms.count
+        out.baseline = bmax
+        let priorArr = prior ?? []
+        let hasPrior = priorArr.count == gw * gh
         let maxN = max(main.n, ext.n)
 
         cur.grayS.withUnsafeBufferPointer { curG in
@@ -247,10 +259,27 @@ enum RTStereo {
                             let c = comboCost(r2)
                             if c < bestC { bestC = c; bestRho = r2 }
                         }
-                        let c1 = min(s.c1, bestC), c2 = s.c2
+                        var c1 = min(s.c1, bestC)
+                        let c2 = s.c2
+                        var usedPrior = false
+                        if hasPrior, priorArr[idx] > 0 {
+                            let pz = priorArr[idx], rp = 1 / pz
+                            if rp > 1 / params.extMaxZ && rp < 1 / params.extMinZ {
+                                let cp = comboCost(rp)
+                                let gapNow = c2 - c1
+                                if cp <= params.costMax * 0.85 {
+                                    if abs(1 / bestRho - pz) / pz > 0.04 {
+                                        // 전역 결과가 예측과 다르다: 예측이 거의 같은 정도로 설명하거나 전역 결과가 모호할 때만 예측 쪽
+                                        if cp <= c1 + 0.05 || gapNow < params.ambiguityGap { bestRho = rp; c1 = cp; usedPrior = true }
+                                    } else if gapNow < params.ambiguityGap {
+                                        usedPrior = true            // 반복 무늬 등으로 모호하지만 지도가 같은 깊이를 설명한다
+                                    }
+                                }
+                            }
+                        }
                         if c1 > params.costMax { rB[idx] = RTReason.highCost.rawValue; continue }
                         let gap = c2 - c1
-                        if !(gap >= params.ambiguityGap) { rB[idx] = RTReason.ambiguous.rawValue; continue }
+                        if !usedPrior && !(gap >= params.ambiguityGap) { rB[idx] = RTReason.ambiguous.rawValue; continue }
                         let Z = 1 / bestRho
                         if Z < params.extMinZ || Z > params.extMaxZ { rB[idx] = RTReason.outOfRange.rawValue; continue }
                         // 삼각측량 각도: 광선에 수직인 기선 성분 / 깊이 (제자리 회전은 여기서 걸러진다)
@@ -266,9 +295,10 @@ enum RTStereo {
                         for gi in 0..<nRef { if let c = refCost(gi, bestRho), c <= params.supportCost { support += 1 } }
                         if support == 0 { rB[idx] = RTReason.highCost.rawValue; continue }
                         zB[idx] = Z
-                        cB[idx] = max(0.05, min(1, (1 - c1 / params.costMax)) * min(1, gap / 0.2 + 0.4))
+                        let baseConf = max(0.05, min(1, (1 - c1 / params.costMax)) * min(1, gap / 0.2 + 0.4))
+                        cB[idx] = usedPrior ? min(baseConf, 0.6) : baseConf
                         rB[idx] = RTReason.ok.rawValue
-                        sB[idx] = support
+                        sB[idx] = support | (usedPrior ? 0x80 : 0)
                         srcB[idx] = RTDepthSource.stereo.rawValue
                     }
                 }

@@ -12,25 +12,25 @@ extension RTGaussianMap {
         return out
     }
 
-    /// 접선 방향은 유지하고 법선만 바꾼다.
-    func updateNormal(_ i: Int, _ n: SIMD3<Float>) {
-        let r = RTSplatMath.rotation(fromQuat: quat[i])
-        nrm[i] = n
-        let (t1, t2) = RTGaussianMap.frame(normal: n, hint: r.columns.0)
-        quat[i] = RTSplatMath.quat(t1: t1, t2: t2, n: n)
+    /// 색 이동 평균(관측이 쌓일수록 반영 비율이 줄어듦).
+    func applyColor(_ i: Int, _ c: SIMD3<Float>, minRate: Float) {
+        let r = max(minRate, 1 / (Float(colorN[i]) + 1))
+        col[i] = col[i] * (1 - r) + c * r
+        colorN[i] = min(30, colorN[i] &+ 1)
     }
-
 }
 
 /// 재관측에 따른 활성 구역의 제한된 정밀화(고정 포즈).
-/// - 노출 보정(이 키프레임의 밝기 / 저장된 밝기)
-/// - 고해상도(약 640폭) 영상에서 색을 다시 읽어 정면에 가까운 관측일수록 더 반영
-/// - 이웃 평면 맞춤으로 법선 정리
-/// 위치·불투명도를 학습하는 완전한 3DGS 최적화가 아니다. 효과는 "정밀화 끔"과 비교해 로그로 확인한다.
+/// - 고해상도(약 640폭) 영상에서 색을 다시 읽되, 이번 키프레임의 깊이가 그 가우시안을 실제로 보고 있을 때만(가림·시야 검사)
+/// - 안정 표면은 훨씬 가까이서 정면으로 본 관측으로만, 반영 비율이 줄어드는 이동 평균으로
+/// - 후보·임시 표면의 법선은 이웃 평면 맞춤으로 정리(안정 표면의 법선은 건드리지 않음)
+/// 노출 보정은 지도 융합(`integrate`)이 갱신 전 대응 짝으로 추정하므로 여기서는 받아서 쓰기만 한다.
+/// 위치·불투명도를 학습하는 완전한 3DGS 최적화가 아니다.
 enum RTRefiner {
     struct Stats {
-        var gain: Float?
         var colorUpdated = 0
+        var colorSkippedOcclusion = 0
+        var colorSkippedStable = 0
         var normalsRefit = 0
         var colorDelta: Float = 0      // 갱신된 색 변화량의 평균 절대값
     }
@@ -52,47 +52,56 @@ enum RTRefiner {
         return SIMD3<Float>(r, g, b) / (n * 255)
     }
 
-    /// 안정적으로 여러 번 관측된 가우시안의 저장 밝기와 이번 영상 밝기의 중앙값 비.
-    static func estimateGain(frame: RTFrame, map: RTGaussianMap, hits: [Int32]) -> Float? {
-        var ratios: [Float] = []
-        for h in hits {
-            let i = Int(h)
-            guard i < map.count, map.alive[i], map.verified[i], map.obs[i] >= 3 else { continue }
-            let pc = frame.pose.worldToCam(map.pos[i])
-            guard let uv = frame.kHi.project(pc), let c = sampleHi(frame, u: uv.x, v: uv.y, rad: 1) else { continue }
-            let ls = lum(map.col[i]), lo = lum(c)
-            if ls > 0.12 && lo > 0.06 { ratios.append(lo / ls) }
-            if ratios.count >= 600 { break }
-        }
-        guard ratios.count >= 40, let m = RTStat.percentile(ratios, 0.5) else { return nil }
-        return max(0.7, min(1.4, m))
+    /// 이 키프레임의 깊이 지도가 가우시안 중심 위치를 실제로 관측하고 있는가(앞의 물체에 가려졌거나 깊이가 없으면 false).
+    static func isVisible(frame: RTFrame, depth: RTDepthMap, camPoint pc: SIMD3<Float>) -> Bool {
+        guard let uv = frame.kSmall.project(pc), uv.x >= 0, uv.y >= 0 else { return false }
+        let gx = Int(uv.x) / depth.step, gy = Int(uv.y) / depth.step
+        guard gx < depth.gw, gy < depth.gh else { return false }
+        let zd = depth.z[gy * depth.gw + gx]
+        guard zd > 0 else { return false }
+        return abs(zd - pc.z) <= max(0.06, 0.08 * zd)
     }
 
-    static func refine(frame: RTFrame, map: RTGaussianMap, hits: [Int32], gain: Float, colorBudget: Int = 4000, normalBudget: Int = 1200) -> Stats {
+    static func refine(frame: RTFrame, map: RTGaussianMap, hits: [Int32], depth: RTDepthMap, gain: Float,
+                       colorBudget: Int = 4000, normalBudget: Int = 1200) -> Stats {
         var st = Stats()
         var delta: Float = 0
         let K = frame.kHi
         var colorDone = 0, normalDone = 0
+        var seen = Set<Int32>()
         for h in hits {
+            guard seen.insert(h).inserted else { continue }          // 같은 가우시안은 키프레임당 한 번만
             let i = Int(h)
             guard i < map.count, map.alive[i] else { continue }
             let pc = frame.pose.worldToCam(map.pos[i])
             guard pc.z > 0.2 else { continue }
             let view = simd_normalize(map.pos[i] - frame.pose.center)
             let cosT = simd_dot(map.nrm[i], -view)
+            let stateNow = map.state[i]
             if colorDone < colorBudget, cosT > 0.45, let uv = K.project(pc) {
-                let footprintPx = max(map.scl[i].x, map.scl[i].y) * K.fx / pc.z
-                let rad = max(1, min(4, Int((footprintPx * 0.5).rounded())))
-                if let c = sampleHi(frame, u: uv.x, v: uv.y, rad: rad) {
-                    let obs = simd_clamp(c / max(0.5, min(2, gain)), SIMD3<Float>(repeating: 0), SIMD3<Float>(repeating: 1))
-                    let w = 0.3 * min(1, (cosT - 0.45) / 0.4 + 0.3)
-                    let before = map.col[i]
-                    map.col[i] = before * (1 - w) + obs * w
-                    delta += (abs(map.col[i].x - before.x) + abs(map.col[i].y - before.y) + abs(map.col[i].z - before.z)) / 3
-                    colorDone += 1
+                var allowed = true
+                if stateNow == RTState.stable.rawValue {
+                    // 안정 표면: 훨씬 가까이서 정면으로 본 경우에만
+                    allowed = cosT >= 0.7 && pc.z < map.bestRange[i] * 0.85
+                    if !allowed { st.colorSkippedStable += 1 }
+                }
+                if allowed && !isVisible(frame: frame, depth: depth, camPoint: pc) {
+                    allowed = false; st.colorSkippedOcclusion += 1
+                }
+                if allowed {
+                    let footprintPx = max(map.scl[i].x, map.scl[i].y) * K.fx / pc.z
+                    let rad = max(1, min(4, Int((footprintPx * 0.5).rounded())))
+                    if let c = sampleHi(frame, u: uv.x, v: uv.y, rad: rad) {
+                        let obs = simd_clamp(c / max(0.5, min(2, gain)), SIMD3<Float>(repeating: 0), SIMD3<Float>(repeating: 1))
+                        let before = map.col[i]
+                        let minRate: Float = stateNow == RTState.stable.rawValue ? 0.03 : (stateNow == RTState.candidate.rawValue ? 0.05 : 0.1)
+                        map.applyColor(i, obs, minRate: minRate)
+                        delta += (abs(map.col[i].x - before.x) + abs(map.col[i].y - before.y) + abs(map.col[i].z - before.z)) / 3
+                        colorDone += 1
+                    }
                 }
             }
-            if normalDone < normalBudget, map.obs[i] >= 2 {
+            if normalDone < normalBudget, stateNow != RTState.stable.rawValue, map.obs[i] >= 2 {
                 let rr = 2.5 * max(map.scl[i].x, map.scl[i].y)
                 let nb = map.neighborIndices(of: map.pos[i], radius: rr, segment: map.segment[i], limit: 40)
                 if nb.count >= 6, let nf = planeNormal(points: nb.map { map.pos[$0] }) {
@@ -123,7 +132,6 @@ enum RTRefiner {
             let d = p - mean
             c.columns.0 += d * d.x; c.columns.1 += d * d.y; c.columns.2 += d * d.z
         }
-        // 야코비 고유분해 (대칭 3×3)
         var a = [[Float]](repeating: [0, 0, 0], count: 3)
         let cols = [c.columns.0, c.columns.1, c.columns.2]
         for i in 0..<3 { for j in 0..<3 { a[i][j] = cols[j][i] } }

@@ -95,12 +95,82 @@ enum RTPLY {
             s.opacity.append(sigmoid(f("opacity")))
             s.scale.append(SIMD3<Float>(exp(f("scale_0")), exp(f("scale_1")), exp(f("scale_2"))))
             s.quat.append(SIMD4<Float>(f("rot_1"), f("rot_2"), f("rot_3"), f("rot_0")))
-            s.verified.append(true)
+            s.state.append(RTState.unknown.rawValue)      // PLY에는 상태가 없다: 검증됐다고 가정하지 않는다
+            s.gid.append(0)
         }
         return s
     }
 
     static func read(url: URL) throws -> RTSplatSet { try read(Data(contentsOf: url, options: .mappedIfSafe)) }
+}
+
+/// 가우시안별 상태 파일(`.state`). 표준 PLY는 그대로 두고 옆에 둔다.
+/// 형식(little endian): "RTST" | version UInt32 | count UInt32 | plyChecksum UInt64 | count × 28바이트 기록
+/// 기록: gid UInt32, state UInt8, flags UInt8, obs UInt16, stereoObs UInt16, segment UInt16, spread Float32, angSpreadDeg Float32, firstKF Int32, lastKF Int32
+/// plyChecksum(FNV-1a 64)이 PLY와 다르면 다른 PLY의 상태이므로 무시한다(개별 점의 상태를 추측하지 않는다).
+enum RTStateFile {
+    static let magic: [UInt8] = Array("RTST".utf8)
+    static let version: UInt32 = 1
+    static let recordSize = 28
+
+    static func checksum(_ data: Data) -> UInt64 {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in data { h ^= UInt64(b); h = h &* 0x100000001b3 }
+        return h
+    }
+
+    static func data(records: [RTStateRecord], plyData: Data) -> Data {
+        var d = Data(magic)
+        func put<T>(_ v: T) { var x = v; withUnsafeBytes(of: &x) { d.append(contentsOf: $0) } }
+        put(version); put(UInt32(records.count)); put(checksum(plyData))
+        for r in records {
+            put(r.gid); put(r.state); put(r.flags); put(r.obs); put(r.stereoObs); put(r.segment)
+            put(r.spread); put(r.angSpreadDeg); put(r.firstKF); put(r.lastKF)
+        }
+        return d
+    }
+
+    enum Result: Equatable {
+        case ok([RTStateRecord])
+        case checksumMismatch
+        case countMismatch
+        case invalid
+    }
+
+    static func read(_ data: Data, plyData: Data, expectedCount: Int) -> Result {
+        guard data.count >= 20, Array(data.prefix(4)) == magic else { return .invalid }
+        func get<T>(_ type: T.Type, at offset: Int) -> T { data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: T.self) } }
+        guard get(UInt32.self, at: 4) == version else { return .invalid }
+        let n = Int(get(UInt32.self, at: 8))
+        guard get(UInt64.self, at: 12) == checksum(plyData) else { return .checksumMismatch }
+        guard n == expectedCount else { return .countMismatch }
+        guard data.count >= 20 + n * recordSize else { return .invalid }
+        var out: [RTStateRecord] = []
+        out.reserveCapacity(n)
+        for i in 0..<n {
+            let o = 20 + i * recordSize
+            out.append(RTStateRecord(gid: get(UInt32.self, at: o), state: get(UInt8.self, at: o + 4), flags: get(UInt8.self, at: o + 5),
+                                     obs: get(UInt16.self, at: o + 6), stereoObs: get(UInt16.self, at: o + 8), segment: get(UInt16.self, at: o + 10),
+                                     spread: get(Float.self, at: o + 12), angSpreadDeg: get(Float.self, at: o + 16),
+                                     firstKF: get(Int32.self, at: o + 20), lastKF: get(Int32.self, at: o + 24)))
+        }
+        return .ok(out)
+    }
+
+    /// PLY와 상태 파일을 합쳐 읽는다. 상태 파일이 없거나 맞지 않으면 모두 unknown으로 둔다.
+    static func apply(to set: inout RTSplatSet, stateData: Data?, plyData: Data) -> String {
+        guard let stateData else { return "상태 파일 없음: 모든 가우시안을 상태 미확인으로 표시" }
+        switch read(stateData, plyData: plyData, expectedCount: set.count) {
+        case .ok(let recs):
+            set.records = recs
+            set.state = recs.map { $0.state }
+            set.gid = recs.map { $0.gid }
+            return "상태 파일 적용"
+        case .checksumMismatch: return "상태 파일이 이 PLY의 것이 아님(체크섬 불일치): 상태 미확인으로 표시"
+        case .countMismatch: return "상태 파일의 가우시안 수가 PLY와 다름: 상태 미확인으로 표시"
+        case .invalid: return "상태 파일을 읽을 수 없음: 상태 미확인으로 표시"
+        }
+    }
 }
 
 /// 저장한 결과 폴더(Documents/realtime-gs).
@@ -116,6 +186,7 @@ enum RTStore {
         let bytes: Int
         let summaryURL: URL?
         let metaURL: URL?
+        var stateURL: URL? = nil
     }
 
     static func list() -> [Item] {
@@ -127,9 +198,43 @@ enum RTStore {
             let base = String(n.dropLast(4))
             let meta = directory.appendingPathComponent(base + ".meta.json")
             let sum = directory.appendingPathComponent(base + ".summary.txt")
+            let st = directory.appendingPathComponent(base + ".state")
             return Item(url: u, date: attrs?[.modificationDate] as? Date, bytes: (attrs?[.size] as? NSNumber)?.intValue ?? 0,
-                        summaryURL: fm.fileExists(atPath: sum.path) ? sum : nil, metaURL: fm.fileExists(atPath: meta.path) ? meta : nil)
+                        summaryURL: fm.fileExists(atPath: sum.path) ? sum : nil, metaURL: fm.fileExists(atPath: meta.path) ? meta : nil,
+                        stateURL: fm.fileExists(atPath: st.path) ? st : nil)
         }
+    }
+
+    /// 실행(JSONL) 이름에서 저장 이름을 만든다. 같은 실행 ID로 PLY·상태·메타·요약·JSONL을 서로 찾을 수 있다.
+    static func baseName(runId: String) -> String { "space-" + runId }
+
+    struct ShareBundle {
+        var urls: [URL]
+        var missing: [String]
+        var runId: String?
+    }
+
+    /// 한 저장 결과를 공유할 파일 묶음. 같은 실행 ID의 로그만 묶고, 못 찾으면 이유를 missing에 남긴다(로그를 지어내지 않는다).
+    static func shareBundle(for item: Item, logsDirectory: URL = ExperimentRunLog.directory) -> ShareBundle {
+        let fm = FileManager.default
+        var urls = [item.url]
+        var missing: [String] = []
+        if let s = item.stateURL { urls.append(s) } else { missing.append("상태 파일(.state) 없음") }
+        var runId: String?
+        if let m = item.metaURL {
+            urls.append(m)
+            if let d = try? Data(contentsOf: m), let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { runId = obj["runId"] as? String }
+        } else { missing.append("메타(.meta.json) 없음") }
+        if let s = item.summaryURL { urls.append(s) } else { missing.append("요약(.summary.txt) 없음") }
+        if let id = runId, !id.isEmpty {
+            let jsonl = logsDirectory.appendingPathComponent(id + ".jsonl")
+            let sum = logsDirectory.appendingPathComponent(id + ".summary.txt")
+            if fm.fileExists(atPath: jsonl.path) { urls.append(jsonl) } else { missing.append("실행 로그 \(id).jsonl을 이 기기에서 찾을 수 없음") }
+            if fm.fileExists(atPath: sum.path), !urls.contains(sum) { urls.append(sum) }
+        } else {
+            missing.append("실행 ID가 없는 저장본(3.0(18) 이전 형식)이라 JSONL을 연결할 수 없음")
+        }
+        return ShareBundle(urls: urls, missing: missing, runId: runId)
     }
 
     static func newBaseName(now: Date = Date()) -> String {
