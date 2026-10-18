@@ -533,7 +533,8 @@ jobs:
             --store-api-base-url "${STORE_API_BASE_URL}" \
             --build-sha "$(git rev-parse HEAD)" \
             --require-pending-angular-rescue \
-            --require-sensor-experiments
+            --require-sensor-experiments \
+            --require-depth-model
 
       - name: Upload to App Store Connect
         if: ${{ !inputs.stop_after_tests }}

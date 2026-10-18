@@ -46,6 +46,18 @@ def truthy(value: object) -> bool:
     return isinstance(value, str) and value.strip().lower() in {"1", "yes", "true", "on"}
 
 
+def check_depth_model(zf: zipfile.ZipFile, app_prefix: str) -> None:
+    names = zf.namelist()
+    compiled = [n for n in names if n.startswith(app_prefix) and "DepthAnythingV2SmallF16.mlmodelc/" in n]
+    package = [n for n in names if n.startswith(app_prefix) and "DepthAnythingV2SmallF16.mlpackage/" in n]
+    if compiled:
+        ok(f"Depth model compiled into the app (.mlmodelc, {len(compiled)} files)")
+    elif package:
+        ok(f"Depth model present as .mlpackage ({len(package)} files); the app compiles it on first use")
+    else:
+        fail("Depth Anything V2 Small model is not inside the IPA")
+
+
 def check_release_inputs(info: dict, args: argparse.Namespace) -> None:
     """Optional checks of the real IPA Info.plist against the workflow inputs (only the ones given)."""
     if args.marketing_version is not None:
@@ -100,6 +112,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--build-sha", help="full commit SHA of the checked-out source")
     ap.add_argument("--require-pending-angular-rescue", action="store_true")
     ap.add_argument("--require-sensor-experiments", action="store_true")
+    ap.add_argument("--require-depth-model", action="store_true", help="IPA must contain the Core ML depth prior (compiled .mlmodelc or .mlpackage)")
     return ap.parse_args()
 
 
@@ -119,6 +132,8 @@ def main() -> None:
         ok(f"CFBundleIdentifier == {BUNDLE_ID}")
 
         check_release_inputs(info, args)
+        if args.require_depth_model:
+            check_depth_model(zf, app_prefix)
 
         icon_name = info.get("CFBundleIconName")
         if not icon_name:

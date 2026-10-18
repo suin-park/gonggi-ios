@@ -52,4 +52,4 @@ Vendor/OpenCV/opencv2.xcframework/
 Vendor/OpenCV/BUILD_INFO.txt
 .opencv-build/
 # fetched by scripts/fetch-depth-model.sh (not committed)
-Vendor/DepthAnything/*.mlpackage/
+Gonggi/Experiments/RealtimeGS/Model/*.mlpackage/

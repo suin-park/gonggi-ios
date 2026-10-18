@@ -25,8 +25,20 @@ final class RTMonoDepth {
     @discardableResult
     func load() -> Bool {
         let t0 = ProcessInfo.processInfo.systemUptime
-        guard let url = Bundle.main.url(forResource: Self.modelResource, withExtension: "mlmodelc") else {
-            status = "모델 파일이 앱에 포함되지 않음(\(Self.modelResource).mlmodelc). 스테레오 전용으로 동작"
+        // 빌드가 컴파일한 .mlmodelc를 우선 쓰고, 없으면 번들에 복사된 .mlpackage를 처음 한 번 컴파일한다.
+        var modelURL = Bundle.main.url(forResource: Self.modelResource, withExtension: "mlmodelc")
+        var compiledAtRuntime = false
+        if modelURL == nil, let pkg = Bundle.main.url(forResource: Self.modelResource, withExtension: "mlpackage") {
+            do {
+                modelURL = try MLModel.compileModel(at: pkg)
+                compiledAtRuntime = true
+            } catch {
+                status = "모델 컴파일 실패: \(error.localizedDescription)"
+                return false
+            }
+        }
+        guard let url = modelURL else {
+            status = "모델 파일이 앱에 포함되지 않음(\(Self.modelResource)). 스테레오 전용으로 동작"
             return false
         }
         let cfg = MLModelConfiguration()
@@ -50,7 +62,7 @@ final class RTMonoDepth {
             }
             model = m
             loadMs = (ProcessInfo.processInfo.systemUptime - t0) * 1000
-            status = "준비됨 (입력 \(inputW)x\(inputH), 로드 \(Int(loadMs))ms)"
+            status = "준비됨 (입력 \(inputW)x\(inputH), 로드 \(Int(loadMs))ms\(compiledAtRuntime ? ", 앱 실행 중 컴파일" : ""))"
             return true
         } catch {
             status = "모델 로드 실패: \(error.localizedDescription)"
