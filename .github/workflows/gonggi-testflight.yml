@@ -214,6 +214,8 @@ jobs:
               -only-testing:GonggiTests/AppServerConfigTests
               -only-testing:GonggiTests/ProductCardServerGateTests
               -only-testing:GonggiTests/RecordHomeTests
+              # 기록하기 › 실험(센서 검사) 순수 로직
+              -only-testing:GonggiTests/SensorExperimentTests
               -only-testing:GonggiTests/BackgroundCaptureUploaderTests
               -only-testing:GonggiTests/MobileAuthFreshTokenTests
               -only-testing:GonggiTests/SpatialCapturePackageTests

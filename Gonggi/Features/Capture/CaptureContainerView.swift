@@ -88,6 +88,8 @@ struct CaptureContainerView: View {
         case productObjectCapture
         /// 매장: 매대 기록하기 / 제품 찾기 (development flag; see StoreShelfFeatureFlags).
         case storeRecord
+        /// 실험(센서 검사). SensorExperimentFeature가 켜진 빌드에서만 열린다.
+        case experiments
         case debug(CaptureMode)
     }
 
@@ -182,6 +184,14 @@ struct CaptureContainerView: View {
             StoreShelfFlowView(mode: .record, onClose: { activeFlow = .none })
                 .environmentObject(appState)
         }
+        .fullScreenCover(isPresented: Binding(
+            get: { activeFlow == .experiments },
+            set: { presented in
+                if !presented { activeFlow = .none }
+            }
+        )) {
+            ExperimentHomeView(onClose: { activeFlow = .none })
+        }
         .sheet(isPresented: $showPhotoTo3D) {
             // Same flow, API and client request id rules as 보관함 › 3D 자산 › "새 3D 자산 만들기".
             CreateAssetFlowView(
@@ -274,6 +284,11 @@ struct CaptureContainerView: View {
             onStore: { option in
                 GonggiHaptics.medium()
                 if option == .recordShelf { activeFlow = .storeRecord }
+            },
+            showExperiments: SensorExperimentFeature.isEnabled,
+            onExperiments: {
+                GonggiHaptics.medium()
+                activeFlow = .experiments
             },
             scrollToLastRow: scrollToLastRow
         ) {

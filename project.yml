@@ -19,6 +19,8 @@ settings:
     # 매장 routes only. Empty = same server as GONGGI_API_BASE_URL. The TestFlight workflow sets it for builds that
     # keep the production login but use a separate store server.
     GONGGI_STORE_API_BASE_URL: ""
+    # 기록하기 › 실험(센서 검사) 메뉴. YES면 보인다. 정식 배포 빌드에서는 NO로 바꾼다(원격 설정·서버 없음).
+    GONGGI_SENSOR_EXPERIMENTS: "YES"
 
 configs:
   Debug: debug
@@ -96,6 +98,8 @@ targets:
         GonggiBuildSHA: $(GONGGI_BUILD_SHA)
         GonggiAPIBaseURL: $(GONGGI_API_BASE_URL)
         GonggiStoreAPIBaseURL: $(GONGGI_STORE_API_BASE_URL)
+        GonggiSensorExperimentsEnabled: $(GONGGI_SENSOR_EXPERIMENTS)
+        NSMotionUsageDescription: 센서 검사에서 기기 움직임(자이로·가속도) 수신 빈도를 확인하기 위해 사용합니다.
         # Internal TestFlight ONLY: bake pending-angular-rescue ON into this IPA.
         # Product default in Swift remains OFF when this key is removed/false.
         GonggiPendingAngularRescueDefault: true

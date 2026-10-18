@@ -31,6 +31,11 @@ enum RecordHomeCopy {
     static let findProduct = Choice(title: StoreShelfCopy.findTitle, line: StoreShelfCopy.findLine,
                                     icon: "magnifyingglass")
 
+    /// 실험 섹션(센서 검사). 빌드 설정 GONGGI_SENSOR_EXPERIMENTS가 켜진 빌드에서만 보인다.
+    static let experimentSection = "실험"
+    static let sensorExperiment = Choice(title: "센서 검사", line: "이 기기의 카메라·후면 깊이·ARKit를 직접 검사해요",
+                                         icon: "waveform.path.ecg")
+
     static let photoAccepted = "3D 생성을 시작했어요. 보관함의 3D 자산에서 결과를 볼 수 있어요."
     static let walkableUnavailable = "이 계정에서는 아직 걸어보는 공간을 사용할 수 없어요."
     static let walkableUnknown = "지금은 걸어보는 공간을 확인할 수 없어요. 잠시 후 다시 시도해 주세요."
@@ -198,6 +203,9 @@ struct RecordHomeScreen<Footer: View>: View {
     /// 매장 section; empty hides it (the default, so existing callers are unchanged).
     var storeOptions: [RecordStoreOption] = []
     var onStore: (RecordStoreOption) -> Void = { _ in }
+    /// 실험 섹션; 꺼져 있으면 보이지 않는다(기본값이라 기존 호출은 그대로).
+    var showExperiments = false
+    var onExperiments: () -> Void = {}
     /// DEBUG screenshots: start scrolled to the last row (large-text check).
     var scrollToLastRow = false
     @ViewBuilder var footer: () -> Footer
@@ -223,7 +231,7 @@ struct RecordHomeScreen<Footer: View>: View {
                             ForEach(Array(spaceOptions.enumerated()), id: \.offset) { index, option in
                                 if index > 0 { RecordRowDivider() }
                                 RecordChoiceRow(choice: option.choice) { onSpace(option) }
-                                    .id(index == spaceOptions.count - 1 && storeOptions.isEmpty
+                                    .id(index == spaceOptions.count - 1 && storeOptions.isEmpty && !showExperiments
                                         ? Self.lastRowId : "space-\(index)")
                             }
                         }
@@ -233,8 +241,15 @@ struct RecordHomeScreen<Footer: View>: View {
                                 ForEach(Array(storeOptions.enumerated()), id: \.offset) { index, option in
                                     if index > 0 { RecordRowDivider() }
                                     RecordChoiceRow(choice: option.choice) { onStore(option) }
-                                        .id(index == storeOptions.count - 1 ? Self.lastRowId : "store-\(index)")
+                                        .id(index == storeOptions.count - 1 && !showExperiments ? Self.lastRowId : "store-\(index)")
                                 }
+                            }
+                        }
+                        if showExperiments {
+                            Spacer(minLength: 32).frame(maxHeight: 48)
+                            RecordSection(title: RecordHomeCopy.experimentSection) {
+                                RecordChoiceRow(choice: RecordHomeCopy.sensorExperiment) { onExperiments() }
+                                    .id(Self.lastRowId)
                             }
                         }
                         footer()
