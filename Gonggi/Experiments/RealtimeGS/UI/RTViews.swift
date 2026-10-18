@@ -120,9 +120,15 @@ final class RTSessionViewModel: ObservableObject {
     }
 
     private func runFinish(reason: ExpEndReason) async {
-        engine.stop()
-        let summary = engine.summary(endReason: reason, render: renderStats)
-        let saved = engine.save(summaryText: summary.text)
+        let engine = self.engine
+        let render = renderStats
+        // 입력 중지, 요약, PLY 저장은 무거우므로 메인 스레드 밖에서 한다.
+        let (summary, saved) = await Task.detached(priority: .userInitiated) { () -> ((text: String, dict: [String: Any]), RTEngine.SaveResult) in
+            engine.stop()
+            let s = engine.summary(endReason: reason, render: render)
+            let sv = engine.save(summaryText: s.text)
+            return (s, sv)
+        }.value
         var text = summary.text
         if let item = saved.item { text += "\n저장: \(item.url.lastPathComponent) (\(saved.count)개 가우시안, \(item.bytes / 1024) KB)\n" }
         else if let e = saved.error { text += "\n저장 안 됨: \(e)\n" }
@@ -154,18 +160,24 @@ final class RTSessionViewModel: ObservableObject {
 
     func open(_ item: RTStore.Item) {
         guard state == .idle || state == .finished else { return }
-        do {
-            let set = try RTPLY.read(url: item.url)
-            engine.splats.publish(packed: set.pack(), count: set.count)
-            RTViewerBounds.shared.bounds = set.bounds()
-            renderer.orbit = RTViewMath.fitOrbit(bounds: set.bounds())
-            renderer.mode = .explore
-            viewingTitle = item.url.lastPathComponent
-            message = "저장한 결과를 열었어요 (\(set.count)개 가우시안)"
-            if let s = item.summaryURL, let t = try? String(contentsOf: s, encoding: .utf8) { summaryText = t }
-            shareItems = [item.url] + [item.metaURL, item.summaryURL].compactMap { $0 }
-        } catch {
-            message = "열 수 없어요: \(error)"
+        message = "여는 중…"
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<(RTSplatSet, [Float]), Error> in
+                do { let set = try RTPLY.read(url: item.url); return .success((set, set.pack())) } catch { return .failure(error) }
+            }.value
+            switch result {
+            case .success(let (set, packed)):
+                engine.splats.publish(packed: packed, count: set.count)
+                RTViewerBounds.shared.bounds = set.bounds()
+                renderer.orbit = RTViewMath.fitOrbit(bounds: set.bounds())
+                renderer.mode = .explore
+                viewingTitle = item.url.lastPathComponent
+                message = "저장한 결과를 열었어요 (\(set.count)개 가우시안)"
+                if let s = item.summaryURL, let t = try? String(contentsOf: s, encoding: .utf8) { summaryText = t }
+                shareItems = [item.url] + [item.metaURL, item.summaryURL].compactMap { $0 }
+            case .failure(let error):
+                message = "열 수 없어요: \(error)"
+            }
         }
     }
 }

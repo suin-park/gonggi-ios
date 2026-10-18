@@ -458,7 +458,8 @@ final class RealtimeGSTests: XCTestCase {
         // 등방 가우시안(s=0.1) 정면 2m: 화면 공분산은 (f·s/z)²
         let sigma = RTSplatMath.covariance(quat: SIMD4<Float>(0, 0, 0, 1), scale: SIMD3<Float>(repeating: 0.1))
         let c = RTSplatMath.projectedCovariance(sigmaWorld: sigma, worldToCam: matrix_identity_float3x3, pCam: SIMD3<Float>(0, 0, 2), fx: 240, fy: 240)
-        let expected = pow(240 * 0.1 / 2, 2)
+        let halfWidth: Float = 240 * 0.1 / 2
+        let expected: Float = halfWidth * halfWidth
         XCTAssertEqual(c.x, expected, accuracy: expected * 1e-4)
         XCTAssertEqual(c.z, expected, accuracy: expected * 1e-4)
         XCTAssertEqual(c.y, 0, accuracy: 1e-3)
