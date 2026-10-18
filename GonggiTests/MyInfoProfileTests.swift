@@ -82,13 +82,21 @@ final class MyInfoProfileTests: XCTestCase {
         XCTAssertEqual(GonggiProductURLs.support.path, "/support")
     }
 
-    func testVersionLockIsTwoPointZeroBuildSeventySix() throws {
+    /// 과거에는 특정 버전·빌드 번호(2.0/83)를 문자열로 고정했다. 배포 버전·빌드 번호는 워크플로 입력으로 덮어쓰므로
+    /// 여기서는 project.yml의 버전 설정이 유효하고 Info.plist에 연결돼 있는지, 내부 정책 기본값이 켜져 있는지만 검증한다.
+    /// 실제 배포 값(입력과 IPA의 일치)은 scripts/validate-ipa-preflight.py가 최종 IPA에서 확인한다.
+    func testVersionSettingsAreValidAndWiredToInfoPlist() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let yml = try String(contentsOf: root.appendingPathComponent("project.yml"), encoding: .utf8)
-        XCTAssertTrue(yml.contains("MARKETING_VERSION: \"2.0\""))
-        XCTAssertTrue(yml.contains("CURRENT_PROJECT_VERSION: \"83\""))
+        func matches(_ pattern: String) -> Bool {
+            yml.range(of: pattern, options: .regularExpression) != nil
+        }
+        XCTAssertTrue(matches(#"MARKETING_VERSION: "\d+\.\d+(\.\d+)?""#), "MARKETING_VERSION must be a dotted number")
+        XCTAssertTrue(matches(#"CURRENT_PROJECT_VERSION: "\d+""#), "CURRENT_PROJECT_VERSION must be a positive integer string")
+        XCTAssertTrue(yml.contains("CFBundleShortVersionString: $(MARKETING_VERSION)"))
+        XCTAssertTrue(yml.contains("CFBundleVersion: $(CURRENT_PROJECT_VERSION)"))
         XCTAssertTrue(yml.contains("GonggiPendingAngularRescueDefault: true"))
     }
 

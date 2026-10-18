@@ -2,6 +2,7 @@
 """Preflight validation for Gonggi IPA before App Store Connect upload."""
 from __future__ import annotations
 
+import argparse
 import plistlib
 import sys
 import zipfile
@@ -36,11 +37,75 @@ def read_info_plist(zf: zipfile.ZipFile, app_prefix: str) -> dict:
         return plistlib.load(fp)
 
 
-def main() -> None:
-    if len(sys.argv) != 2:
-        fail("Usage: validate-ipa-preflight.py <path-to.ipa>")
+def truthy(value: object) -> bool:
+    """Info.plist values come from build settings: a bool, or a string such as "YES" after $(VAR) expansion."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return isinstance(value, str) and value.strip().lower() in {"1", "yes", "true", "on"}
 
-    ipa_path = Path(sys.argv[1])
+
+def check_release_inputs(info: dict, args: argparse.Namespace) -> None:
+    """Optional checks of the real IPA Info.plist against the workflow inputs (only the ones given)."""
+    if args.marketing_version is not None:
+        got = info.get("CFBundleShortVersionString")
+        if got != args.marketing_version:
+            fail(f"CFBundleShortVersionString is {got!r}, workflow input is {args.marketing_version!r}")
+        ok(f"CFBundleShortVersionString == {got}")
+    if args.build_number is not None:
+        got = info.get("CFBundleVersion")
+        if got != args.build_number:
+            fail(f"CFBundleVersion is {got!r}, workflow input is {args.build_number!r}")
+        ok(f"CFBundleVersion == {got}")
+    if args.api_base_url is not None:
+        got = info.get("GonggiAPIBaseURL")
+        expected = args.api_base_url.rstrip("/")
+        if got != expected:
+            fail(f"GonggiAPIBaseURL is {got!r}, workflow input is {expected!r}")
+        ok(f"GonggiAPIBaseURL == {got}")
+    if args.store_api_base_url is not None:
+        got = info.get("GonggiStoreAPIBaseURL")
+        expected = args.store_api_base_url.rstrip("/")
+        if (got or "") != expected:
+            fail(f"GonggiStoreAPIBaseURL is {got!r}, workflow input is {expected!r}")
+        ok(f"GonggiStoreAPIBaseURL == {got!r}")
+    if args.build_sha is not None:
+        got = str(info.get("GonggiBuildSHA") or "")
+        if not got or got in {"local", "unknown"} or not args.build_sha.startswith(got):
+            fail(f"GonggiBuildSHA is {got!r}, checked-out commit is {args.build_sha!r}")
+        ok(f"GonggiBuildSHA {got} matches commit {args.build_sha[:12]}")
+    if args.require_pending_angular_rescue:
+        if info.get("GonggiPendingAngularRescueDefault") is not True:
+            fail(f"GonggiPendingAngularRescueDefault is {info.get('GonggiPendingAngularRescueDefault')!r}, expected True")
+        ok("GonggiPendingAngularRescueDefault == true")
+    if args.require_sensor_experiments:
+        raw = info.get("GonggiSensorExperimentsEnabled")
+        if not truthy(raw):
+            fail(f"GonggiSensorExperimentsEnabled is {raw!r}, expected an enabled value (YES/true)")
+        ok(f"GonggiSensorExperimentsEnabled == {raw!r} (enabled)")
+        motion = info.get("NSMotionUsageDescription")
+        if not isinstance(motion, str) or not motion.strip():
+            fail("NSMotionUsageDescription missing or empty")
+        ok("NSMotionUsageDescription present")
+
+
+def parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="Preflight validation for a Gonggi IPA before App Store Connect upload.")
+    ap.add_argument("ipa", help="path to the .ipa")
+    ap.add_argument("--marketing-version")
+    ap.add_argument("--build-number")
+    ap.add_argument("--api-base-url")
+    ap.add_argument("--store-api-base-url", help="empty string = expect no separate store server")
+    ap.add_argument("--build-sha", help="full commit SHA of the checked-out source")
+    ap.add_argument("--require-pending-angular-rescue", action="store_true")
+    ap.add_argument("--require-sensor-experiments", action="store_true")
+    return ap.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    ipa_path = Path(args.ipa)
     if not ipa_path.is_file():
         fail(f"IPA not found: {ipa_path}")
 
@@ -52,6 +117,8 @@ def main() -> None:
         if bundle_id != BUNDLE_ID:
             fail(f"CFBundleIdentifier is '{bundle_id}', expected '{BUNDLE_ID}'")
         ok(f"CFBundleIdentifier == {BUNDLE_ID}")
+
+        check_release_inputs(info, args)
 
         icon_name = info.get("CFBundleIconName")
         if not icon_name:

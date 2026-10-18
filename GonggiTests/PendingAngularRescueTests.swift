@@ -50,10 +50,10 @@ final class PendingAngularRescueTests: XCTestCase {
             FrameContinuityTelemetryConfig.activePolicyVersion,
             PendingAngularRescuePolicy.policyVersion
         )
-        XCTAssertEqual(
-            Bundle.main.infoDictionary?["CFBundleVersion"] as? String,
-            "83"
-        )
+        // 빌드 번호는 배포마다 워크플로 입력으로 바뀐다. 특정 번호로 고정하지 않고 형식만 본다.
+        // 입력값과 IPA의 일치는 scripts/validate-ipa-preflight.py가 확인한다.
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        XCTAssertTrue((build.flatMap { Int($0) } ?? 0) > 0, "CFBundleVersion must be a positive integer string, got \(build ?? "nil")")
     }
 
     func testPendingDiscardReleasesBufferWithoutAdvancingAnchors() {

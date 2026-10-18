@@ -516,9 +516,21 @@ jobs:
         if: ${{ !inputs.stop_after_tests }}
         env:
           IPA_PATH: ${{ steps.paths.outputs.ipa_path }}
+          MARKETING_VERSION: ${{ inputs.marketing_version }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          API_BASE_URL: ${{ inputs.api_base_url }}
+          STORE_API_BASE_URL: ${{ inputs.store_api_base_url }}
         run: |
           set -euo pipefail
-          python3 scripts/validate-ipa-preflight.py "${IPA_PATH}"
+          # The real IPA Info.plist must match the dispatch inputs, the checked-out commit and the policy/experiment settings.
+          python3 scripts/validate-ipa-preflight.py "${IPA_PATH}" \
+            --marketing-version "${MARKETING_VERSION}" \
+            --build-number "${BUILD_NUMBER}" \
+            --api-base-url "${API_BASE_URL}" \
+            --store-api-base-url "${STORE_API_BASE_URL}" \
+            --build-sha "$(git rev-parse HEAD)" \
+            --require-pending-angular-rescue \
+            --require-sensor-experiments
 
       - name: Upload to App Store Connect
         if: ${{ !inputs.stop_after_tests }}
