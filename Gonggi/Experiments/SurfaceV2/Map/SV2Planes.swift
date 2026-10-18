@@ -112,7 +112,10 @@ final class SV2PlaneModel {
                 umin = min(umin, a); umax = max(umax, a); vmin = min(vmin, b); vmax = max(vmax, b)
                 cells.insert(SV2Plane.pack(Int32(floor(a / cell)), Int32(floor(b / cell))))
             }
-            let verified = rms <= 0.008 && cells.count >= 40 && (umax - umin) >= 0.3 && (vmax - vmin) >= 0.3
+            // 평면 맞춤 잔차는 패치 자체의 불확실성(중앙값 σ) 안이어야 한다.
+            let sigmas = bestInl.map { pts[$0].s }.sorted()
+            let medSigma = sigmas[sigmas.count / 2]
+            let verified = rms <= max(0.012, medSigma) && cells.count >= 40 && (umax - umin) >= 0.3 && (vmax - vmin) >= 0.3
             if verified {
                 planes.append(SV2Plane(id: nextID, segment: segment, normal: n, origin: mean, u: u, v: v, support: cells,
                                        inliers: bestInl.count, rms: rms, extentU: umax - umin, extentV: vmax - vmin))

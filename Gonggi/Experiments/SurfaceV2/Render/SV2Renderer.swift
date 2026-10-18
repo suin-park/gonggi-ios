@@ -393,6 +393,7 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
     private var lastCounters = [UInt32](repeating: 0, count: 8)
     private var counterWindow = [UInt32](repeating: 0, count: 8)
     private var activeSourceCount = 0
+    private var pendingPresent: [(drawable: CAMetalDrawable, version: Int, age: Int)] = []
 
     init(scene: SV2SharedScene, liveCam: RTLiveCameraStore, background: RTBackgroundStore) {
         self.scene = scene; self.liveCam = liveCam; self.background = background
@@ -549,14 +550,11 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
         if mode == .live, showCamera { bgTex = backgroundTexture(core.device) }
         core.encodeMain(cmd: cmd, pass: pass, patches: frontBuffer, count: frontScene.count, view: viewU, sources: active, background: bgTex)
         let version = frontVersion
-        let needReport = version != lastPresentedVersion && version >= 0
-        if needReport { lastPresentedVersion = version }
-        drawable.addPresentedHandler { [weak self] d in
-            guard needReport, let self else { return }
-            let t = d.presentedTime
-            if t > 0 {
-                DispatchQueue.main.async { self.onPresented?(version, t) }
-            }
+        // 실제 표시 시각: 방금 그린 drawable의 presentedTime은 표시 뒤에야 채워진다. 다음 프레임들에서 읽어 보고한다.
+        pollPresented()
+        if version != lastPresentedVersion && version >= 0 {
+            lastPresentedVersion = version
+            pendingPresent.append((drawable, version, 0))
         }
         cmd.present(drawable)
         cmd.addCompletedHandler { [weak self] cb in
@@ -575,6 +573,17 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
 
     private var bgTexture: MTLTexture?
     private var bgVersion = -1
+
+    /// 표시된 drawable의 presentedTime을 읽어 새 장면 버전의 첫 표시 시각을 보고한다(최대 8프레임 기다린다).
+    private func pollPresented() {
+        var rest: [(drawable: CAMetalDrawable, version: Int, age: Int)] = []
+        for p in pendingPresent {
+            let t = p.drawable.presentedTime
+            if t > 0 { onPresented?(p.version, t) }
+            else if p.age < 8 { rest.append((p.drawable, p.version, p.age + 1)) }
+        }
+        pendingPresent = rest
+    }
 
     private func backgroundTexture(_ device: MTLDevice) -> MTLTexture? {
         let b = background.get()

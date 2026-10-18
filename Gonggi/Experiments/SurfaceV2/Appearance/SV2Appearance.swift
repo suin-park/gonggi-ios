@@ -49,8 +49,13 @@ enum SV2Raster {
         var buf = SV2DepthBuffer(w: w, h: h)
         let rt = pose.rot.transpose
         for (pi, p) in patches.enumerated() {
-            let corners = [p.c + p.tu * p.hu + p.tv * p.hv, p.c - p.tu * p.hu + p.tv * p.hv,
-                           p.c - p.tu * p.hu - p.tv * p.hv, p.c + p.tu * p.hu - p.tv * p.hv]
+            let au: SIMD3<Float> = p.tu * p.hu
+            let av: SIMD3<Float> = p.tv * p.hv
+            let c0: SIMD3<Float> = p.c + au + av
+            let c1: SIMD3<Float> = p.c - au + av
+            let c2: SIMD3<Float> = p.c - au - av
+            let c3: SIMD3<Float> = p.c + au - av
+            let corners: [SIMD3<Float>] = [c0, c1, c2, c3]
             var uv: [SIMD2<Float>] = []
             var behind = false
             for cw in corners {
