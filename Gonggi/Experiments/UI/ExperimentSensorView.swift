@@ -25,13 +25,13 @@ struct ExperimentSensorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { vm.requestStop(.userStopped) }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { vm.requestStop(.backgrounded) }
+            if phase == .background { vm.requestStop(.backgrounded) }   // inactive(권한 창·공유 시트)에서는 멈추지 않는다
         }
     }
 
     @ViewBuilder private var preview: some View {
         if let box = vm.session {
-            ExpARPreview(session: box.runner.session)
+            ExpARPreview(runner: box.runner)
                 .frame(height: 260)
                 .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
                 .accessibilityLabel("카메라 미리보기")

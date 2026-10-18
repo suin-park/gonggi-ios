@@ -184,16 +184,20 @@ struct ExpCameraPreview: UIViewRepresentable {
 
 /// ARKit 카메라 미리보기. 세션은 `ExperimentARRunner`가 소유한다.
 struct ExpARPreview: UIViewRepresentable {
-    let session: ARSession
+    let runner: ExperimentARRunner
 
     func makeUIView(context: Context) -> ARSCNView {
         let v = ARSCNView(frame: .zero)
-        v.session = session
+        v.session = runner.session
         v.automaticallyUpdatesLighting = false
         v.autoenablesDefaultLighting = false
         v.backgroundColor = .black
+        // 뷰가 세션에 붙으면서 delegate를 건드렸을 가능성에 대비해 러너를 다시 지정한다.
+        runner.reassertDelegate()
         return v
     }
 
-    func updateUIView(_ uiView: ARSCNView, context: Context) {}
+    func updateUIView(_ uiView: ARSCNView, context: Context) {
+        runner.reassertDelegate()
+    }
 }

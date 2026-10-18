@@ -128,6 +128,9 @@ final class SensorExperimentTests: XCTestCase {
         XCTAssertGreaterThan(img.height, 0)
         let data = try XCTUnwrap(ExpDepthPixels.float32Data(pb))
         XCTAssertEqual(data.count, 40 * 30 * 4)
+        XCTAssertNotNil(s.dictionary()["gridMedian"])
+        XCTAssertNil(s.dictionary(includeGrid: false)["gridMedian"], "격자를 빼면 로그 줄이 짧아진다")
+        XCTAssertTrue(JSONSerialization.isValidJSONObject(expJSONSafe(s.dictionary())))
     }
 
     func testRampEndpoints() {

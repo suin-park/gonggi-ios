@@ -293,6 +293,14 @@ final class ExperimentARRunner: NSObject, ARSessionDelegate, @unchecked Sendable
         ])
     }
 
+    /// 미리보기 뷰가 세션에 붙은 뒤에도 프레임이 이 러너로 들어오게 delegate를 다시 지정한다(실행 중일 때만).
+    func reassertDelegate() {
+        lock.lock(); let r = running; lock.unlock()
+        guard r else { return }
+        session.delegate = self
+        session.delegateQueue = queue
+    }
+
     /// 멈춘다. 여러 번 불러도 안전하다.
     func stop() {
         timer?.cancel(); timer = nil
@@ -344,10 +352,10 @@ final class ExperimentARRunner: NSObject, ARSessionDelegate, @unchecked Sendable
         l.elapsed = ExpSys.hostNow() - startedHost
         // 최근 2초 안의 도착만 모아 현재 FPS로 본다.
         let now = ExpSys.hostNow()
-        let recent = allFrames.times.filter { now - $0 <= 2.0 }
+        let recent = allFrames.times.suffix(400).filter { now - $0 <= 2.0 }
         l.fps = recent.count > 1 ? Double(recent.count - 1) / max(recent.last! - recent.first!, 0.001) : nil
         l.frames = allFrames.total
-        let recentMotion = motionMeter.times.filter { ExpSys.uptime() - $0 <= 2.0 }
+        let recentMotion = motionMeter.times.suffix(400).filter { ExpSys.uptime() - $0 <= 2.0 }
         l.motionHz = recentMotion.count > 1 ? Double(recentMotion.count - 1) / max(recentMotion.last! - recentMotion.first!, 0.001) : nil
         l.cbMsP50 = ExpMath.percentile(Array(phaseCb.suffix(120)), 0.5)
         l.lens = lastLens

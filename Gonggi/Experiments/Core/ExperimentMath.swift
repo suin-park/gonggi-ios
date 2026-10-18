@@ -105,13 +105,17 @@ struct ExpDepthFrameStats {
     var gridMedian: [Double?]
     var gridValid: [Double]
 
-    func dictionary() -> [String: Any] {
-        [
+    /// 격자(48칸 ×2)는 줄이 길어지므로 필요할 때만 포함한다.
+    func dictionary(includeGrid: Bool = true) -> [String: Any] {
+        var d: [String: Any] = [
             "type": pixelType, "w": width, "h": height, "sampled": sampled, "validRatio": validRatio,
-            "min": expNN(min), "p5": expNN(p5), "p50": expNN(p50), "p95": expNN(p95), "max": expNN(max),
-            "gridCols": gridCols, "gridRows": gridRows,
-            "gridMedian": gridMedian.map { expNN($0) }, "gridValid": gridValid
+            "min": expNN(min), "p5": expNN(p5), "p50": expNN(p50), "p95": expNN(p95), "max": expNN(max)
         ]
+        if includeGrid {
+            d["gridCols"] = gridCols; d["gridRows"] = gridRows
+            d["gridMedian"] = gridMedian.map { expNN($0) }; d["gridValid"] = gridValid
+        }
+        return d
     }
 }
 

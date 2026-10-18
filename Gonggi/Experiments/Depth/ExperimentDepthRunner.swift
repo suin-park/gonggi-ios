@@ -315,7 +315,7 @@ final class ExperimentDepthRunner: NSObject, @unchecked Sendable {
                 sessionQueue.async { self.session.stopRunning(); c.resume() }
             }
         }
-        observers.forEach(NotificationCenter.default.removeObserver)
+        for o in observers { NotificationCenter.default.removeObserver(o) }
         observers = []
         synchronizer?.setDelegate(nil, queue: nil)
         synchronizer = nil
@@ -449,13 +449,17 @@ final class ExperimentDepthRunner: NSObject, @unchecked Sendable {
             "videoFrames": live.videoFrames, "depthFrames": live.depthFrames, "videoDrops": live.videoDrops, "depthDrops": live.depthDrops,
             "videoHzPTS": expNN(live.videoHz), "depthHzPTS": expNN(live.depthHz), "videoHzArrival": expNN(vArr), "depthHzArrival": expNN(dArr),
             "videoGapP95S": expNN(ExpMath.percentile(ExpMath.gaps(vTimes), 0.95)), "depthGapP95S": expNN(ExpMath.percentile(ExpMath.gaps(dTimes), 0.95)),
-            "depthGapMaxS": expNN(ExpMath.gaps(dTimes).max()),
+            "depthGapMaxS": expNN(ExpMath.gaps(dTimes).max())
+        ]
+        d.merge([
             "validRatioMedian": expNN(vrMedian), "validRatioMin": expNN(vrMin),
             "depthType": expNN(live.depthKind), "accuracy": expNN(live.accuracy), "quality": expNN(live.quality), "filtered": expNN(live.filtered),
             "calibrationPresent": expNN(live.calibrationPresent),
             "pairFraction": expNN(live.pairFraction), "depthMinusVideoNearestP50Ms": expNN(ExpMath.percentile(depthOffsetsNearest.map { abs($0) * 1000 }, 0.5)),
             "depthMinusVideoNearestP95Ms": expNN(ExpMath.percentile(depthOffsetsNearest.map { abs($0) * 1000 }, 0.95)),
-            "syncVerdict": sync.label,
+            "syncVerdict": sync.label
+        ]) { $1 }
+        d.merge([
             "events": events.all.map { ["source": $0.source, "kind": $0.kind, "detail": $0.detail] },
             "thermalSeen": Array(th).sorted(), "footprintMaxMB": fpMax,
             "statsMsP50": expNN(statsP50), "statsMsMax": expNN(statsMax),
@@ -463,7 +467,7 @@ final class ExperimentDepthRunner: NSObject, @unchecked Sendable {
             "targetReadings": targets.map { ["knownDistanceM": $0.knownDistanceM, "native": expNN($0.native), "converted": expNN($0.converted),
                                               "centerValid": expNN($0.centerValid), "accuracy": $0.accuracy, "depthType": $0.depthType] },
             "setupError": expNN(setup.error), "activeVideoFps": expNN(setup.activeVideoFps), "activeDepthFps": expNN(setup.activeDepthFps)
-        ]
+        ]) { $1 }
         d["format"] = expNN(setup.chosen?.label)
 
         func f(_ v: Double?, _ digits: Int = 1) -> String { v.map { String(format: "%.\(digits)f", $0) } ?? "없음" }
@@ -573,11 +577,14 @@ final class ExperimentDepthRunner: NSObject, @unchecked Sendable {
             self.statsMs.append(ms)
             self.statsBusy = false
             self.lock.unlock()
-            self.log?.write("dstats", [
-                "pts": pts, "n": n, "native": expNN(nativeStats?.dictionary()),
-                "asDepthFloat32": expNN(convStats?.dictionary()),
-                "convertedAccuracy": Self.accuracy(converted.depthDataAccuracy), "statsMs": ms
-            ])
+            // 화면 갱신은 통계마다 하지만 로그에는 3번에 한 번만 남긴다 (5분 검사도 줄 한도 안에 들어가게).
+            if (n / max(1, self.opts.statsEvery)) % 3 == 1 {
+                self.log?.write("dstats", [
+                    "pts": pts, "n": n, "native": expNN(nativeStats?.dictionary()),
+                    "asDepthFloat32": expNN(convStats?.dictionary(includeGrid: false)),
+                    "convertedAccuracy": Self.accuracy(converted.depthDataAccuracy), "statsMs": ms
+                ])
+            }
         }
     }
 
@@ -677,7 +684,11 @@ final class ExperimentDepthRunner: NSObject, @unchecked Sendable {
         guard let att = CMGetAttachment(sb, key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix, attachmentModeOut: nil) as? Data,
               att.count == MemoryLayout<matrix_float3x3>.size else { return nil }
         var m = matrix_float3x3()
-        withUnsafeMutableBytes(of: &m) { att.copyBytes(to: $0) }
+        att.withUnsafeBytes { src in
+            withUnsafeMutableBytes(of: &m) { dst in
+                dst.copyMemory(from: UnsafeRawBufferPointer(rebasing: src.prefix(dst.count)))
+            }
+        }
         return [m.columns.0.x, m.columns.1.y, m.columns.2.x, m.columns.2.y]
     }
 }

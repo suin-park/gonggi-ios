@@ -50,7 +50,7 @@ struct ExperimentCoexistView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear { vm.requestStop(.userStopped) }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { vm.requestStop(.backgrounded) }
+            if phase == .background { vm.requestStop(.backgrounded) }   // inactive(권한 창·공유 시트)에서는 멈추지 않는다
         }
     }
 
