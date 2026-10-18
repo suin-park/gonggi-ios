@@ -801,6 +801,13 @@ final class SurfaceV2StoreTests: XCTestCase {
             XCTAssertEqual(r.links, (0..<SV2SurfaceMap.linksPerPatch).map { map.links[i * SV2SurfaceMap.linksPerPatch + $0] })
             XCTAssertEqual(r.evidence.count, SV2SurfaceMap.evPerPatch)
         }
+        // 가벼운 장면 읽기는 기록 기반 장면과 같은 배치를 만든다.
+        let a = SV2SurfaceFile.scene(from: recs, keyframes: [])
+        let b = try XCTUnwrap(SV2SurfaceFile.readScene(data, keyframes: []))
+        XCTAssertEqual(a.packed, b.scene.packed)
+        XCTAssertEqual(a.links, b.scene.links)
+        XCTAssertEqual(b.stateCounts.reduce(0, +), recs.count)
+        XCTAssertNil(SV2SurfaceFile.readScene(data.prefix(data.count - 3), keyframes: []))
         XCTAssertNil(SV2SurfaceFile.read(data.prefix(data.count - 3)), "잘린 표면 파일은 읽지 않는다")
         XCTAssertNil(SV2SurfaceFile.read(Data("x".utf8)))
     }
@@ -875,6 +882,19 @@ final class SurfaceV2StoreTests: XCTestCase {
         let item = try XCTUnwrap(SV2Saver.save(req).item)
         let b = SV2Store.shareBundle(for: item, logsDirectory: dir)
         XCTAssertTrue(b.missing.contains { $0.contains("kmoreplay") })
+    }
+
+    func testEngineSummaryStatesNoServerNoTrainingAndRefusesEmptySave() {
+        let e = SV2Engine(options: SV2Options(), config: sv2Config())
+        let s = e.summary(endReason: .userStopped, render: nil)
+        XCTAssertTrue(s.text.contains("서버·장면별 학습·사전학습 모델을 쓰지 않았다"))
+        XCTAssertTrue(s.text.contains("실제 화면 표시"), "표시(present) 지연을 게시 지연과 구분해 적는다")
+        XCTAssertTrue(s.text.contains("처음 도달 시각"))
+        XCTAssertEqual((s.dict["first"] as? [String: Any])?.count, 4)
+        let r = e.save(summaryText: s.text)
+        XCTAssertNil(r.item)
+        XCTAssertNotNil(r.error, "표면이 없으면 저장하지 않는다")
+        XCTAssertEqual(ExperimentKind.surfaceV2.rawValue, "surface-v2")
     }
 
     func testReplayRecordReadAndDeterministicRerun() throws {

@@ -534,7 +534,8 @@ jobs:
             --build-sha "$(git rev-parse HEAD)" \
             --require-pending-angular-rescue \
             --require-sensor-experiments \
-            --require-depth-model
+            --require-depth-model \
+            --require-surface-v2
 
       - name: Upload to App Store Connect
         if: ${{ !inputs.stop_after_tests }}

@@ -39,7 +39,7 @@ final class SV2SessionViewModel: ObservableObject {
     init() {
         renderer = SV2Renderer(scene: shared, liveCam: liveCam, background: background)
         renderer.onStats = { [weak self] s in Task { @MainActor in self?.handleRenderStats(s) } }
-        renderer.onPresented = { [weak self] version, uptime in Task { @MainActor in self?.engine?.notePresented(version: version, uptime: uptime) } }
+        renderer.onPresented = { [weak self] version, uptime, source in Task { @MainActor in self?.engine?.notePresented(version: version, uptime: uptime, source: source) } }
     }
 
     var rendererError: String? { renderer.initError }
@@ -193,9 +193,8 @@ final class SV2SessionViewModel: ObservableObject {
             renderer.orbit = RTViewMath.fitOrbit(bounds: sc.bounds)
             renderer.mode = .explore
             viewingTitle = item.url.lastPathComponent
-            var c = [0, 0, 0]
-            for r in loaded.records { c[Int(min(2, r.patch.state))] += 1 }
-            message = "저장한 결과를 열었어요 (표면 \(loaded.records.count)개: 안정 \(c[2]) · 후보 \(c[1]) · 임시 \(c[0]), 키프레임 \(loaded.store.count)장)." +
+            let c = loaded.stateCounts
+            message = "저장한 결과를 열었어요 (표면 \(loaded.scene.count)개: 안정 \(c[2]) · 후보 \(c[1]) · 임시 \(c[0]), 키프레임 \(loaded.store.count)장)." +
                 (loaded.missingTextures.isEmpty ? "" : " 텍스처가 없는 키프레임 \(loaded.missingTextures.count)장.")
             if announce {
                 if let s = item.summaryURL, let t = try? String(contentsOf: s, encoding: .utf8) { summaryText = t }

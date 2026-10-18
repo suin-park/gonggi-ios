@@ -58,6 +58,22 @@ def check_depth_model(zf: zipfile.ZipFile, app_prefix: str) -> None:
         fail("Depth Anything V2 Small model is not inside the IPA")
 
 
+def check_surface_v2(zf: zipfile.ZipFile, app_prefix: str, info: dict) -> None:
+    """실시간 공간 생성 V2가 이 IPA에 들어 있는지: Info.plist 표식 + Metal 라이브러리에 V2 셰이더 함수가 컴파일되어 있어야 한다."""
+    ver = info.get("GonggiSurfaceV2Version")
+    if str(ver).strip() != "1":
+        fail(f"GonggiSurfaceV2Version is {ver!r}, expected '1'")
+    ok(f"GonggiSurfaceV2Version == {ver}")
+    libs = [n for n in zf.namelist() if n.startswith(app_prefix) and n.endswith("default.metallib")]
+    if not libs:
+        fail("default.metallib missing from IPA")
+    blob = zf.read(libs[0])
+    for fn in (b"sv2_vertex", b"sv2_fragment", b"sv2_depth_fragment"):
+        if fn not in blob:
+            fail(f"Metal function {fn.decode()} not found in default.metallib")
+    ok("V2 Metal shader functions (sv2_vertex, sv2_fragment, sv2_depth_fragment) compiled into default.metallib")
+
+
 def check_release_inputs(info: dict, args: argparse.Namespace) -> None:
     """Optional checks of the real IPA Info.plist against the workflow inputs (only the ones given)."""
     if args.marketing_version is not None:
@@ -113,6 +129,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--require-pending-angular-rescue", action="store_true")
     ap.add_argument("--require-sensor-experiments", action="store_true")
     ap.add_argument("--require-depth-model", action="store_true", help="IPA must contain the Core ML depth prior (compiled .mlmodelc or .mlpackage)")
+    ap.add_argument("--require-surface-v2", action="store_true", help="IPA must contain the on-device surface V2 (Info.plist marker + compiled Metal functions)")
     return ap.parse_args()
 
 
@@ -134,6 +151,8 @@ def main() -> None:
         check_release_inputs(info, args)
         if args.require_depth_model:
             check_depth_model(zf, app_prefix)
+        if args.require_surface_v2:
+            check_surface_v2(zf, app_prefix, info)
 
         icon_name = info.get("CFBundleIconName")
         if not icon_name:

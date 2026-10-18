@@ -136,6 +136,7 @@ final class SV2Engine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private var toMap: [Double] = []
     private var toPublish: [Double] = []
     private var toDisplay: [Double] = []
+    private var displaySources: [String: Int] = [:]      // 표시 시각의 출처(present = drawable presentedTime, gpuEnd = GPU 완료 시각 근사)
     private var stageSamples: [String: [Double]] = [:]
     private var reasonTotals: [String: Int] = [:]
     private var rejectTotals: [String: Int] = [:]
@@ -197,17 +198,18 @@ final class SV2Engine: NSObject, ARSessionDelegate, @unchecked Sendable {
     }
 
     /// 새 장면 버전이 처음 화면에 표시된 시각. 캡처 → 실제 표시 지연을 기록한다(게시 지연과 다르다).
-    func notePresented(version: Int, uptime: Double) {
+    func notePresented(version: Int, uptime: Double, source: String = "present") {
         let presentHost = uptime + clockDelta
         procQueue.async { [weak self] in
             guard let self, let cap = self.versionCapture[version] else { return }
             let ms = (presentHost - cap) * 1000
             self.statLock.lock()
+            self.displaySources[source, default: 0] += 1
             self.toDisplay.append(ms); if self.toDisplay.count > 2000 { self.toDisplay.removeFirst() }
             if self.firstDisplayHost == nil, self.pipeline.map.aliveCount > 0 { self.firstDisplayHost = presentHost }
             self.statLock.unlock()
             self.versionCapture[version] = nil
-            if version % 8 == 0 { self.log?.write("sv2_display", ["version": version, "captureToDisplayMs": ms]) }
+            if version % 8 == 0 { self.log?.write("sv2_display", ["version": version, "captureToDisplayMs": ms, "timeSource": source]) }
         }
     }
 
@@ -388,6 +390,12 @@ final class SV2Engine: NSObject, ARSessionDelegate, @unchecked Sendable {
     func session(_ session: ARSession, didFailWithError error: Error) {
         let e = error as NSError
         log?.write("sv2_ar_error", ["domain": e.domain, "code": e.code, "description": e.localizedDescription])
+        // 세션 오류는 복구하지 않고 정리한다(그때까지의 표면은 저장한다).
+        if !autoStopSent {
+            autoStopSent = true
+            log?.write("auto_stop", ["reason": "ar_error", "code": e.code])
+            onAutoStop?(.failed)
+        }
     }
 
     func sessionWasInterrupted(_ session: ARSession) { log?.write("sv2_ar_interrupted") }
@@ -692,6 +700,7 @@ final class SV2Engine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let rv = totalRevisions, rvv = totalRemovedViolation, rve = totalRemovedExpired, rvc = totalRemovedCap
         let bc = bwdChecked, bo = bwdOK, bb = bwdBad
         let hist = renderStatsHistory
+        let dsrc = displaySources
         var stage: [String: Double] = [:], stage95: [String: Double] = [:]
         for (k, v) in stageSamples { stage[k] = RTStat.percentile(v, 0.5) ?? 0; stage95[k] = RTStat.percentile(v, 0.95) ?? 0 }
         statLock.unlock()
@@ -721,7 +730,7 @@ final class SV2Engine: NSObject, ARSessionDelegate, @unchecked Sendable {
         t += "  키프레임 거부 사유: \(rejects.sorted { $0.value > $1.value }.map { "\($0.key)=\($0.value)" }.joined(separator: ", "))\n"
         t += "  추적 상태 전환 \(trans)회, 세그먼트 \(segs)개 (\(events.joined(separator: ", ")))\n\n"
         t += "처음 도달 시각 (시작 후 초)\n  첫 입력 \(f(firstIn, 2)) · 첫 유효 시차(깊이 표본) \(f(firstPar, 2)) · 첫 표면 \(f(firstSurf, 2)) · 첫 표시 \(f(firstDisp, 2))\n\n"
-        t += "지연 (캡처 시각 기준)\n  → 지도 반영 p50 \(f(p50)) / p95 \(f(p95)) ms\n  → 렌더용 게시 p50 \(f(q50)) / p95 \(f(q95)) ms (게시는 0.25초 이상 간격)\n  → 실제 화면 표시(present) p50 \(f(d50)) / p95 \(f(d95)) ms (\(td.count)개 장면 버전)\n"
+        t += "지연 (캡처 시각 기준)\n  → 지도 반영 p50 \(f(p50)) / p95 \(f(p95)) ms\n  → 렌더용 게시 p50 \(f(q50)) / p95 \(f(q95)) ms (게시는 0.25초 이상 간격)\n  → 실제 화면 표시(present) p50 \(f(d50)) / p95 \(f(d95)) ms (\(td.count)개 장면 버전, 시각 출처: \(dsrc.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")); gpuEnd는 present 시각을 읽지 못해 GPU 완료 시각으로 근사한 값)\n"
         t += "  단계별 p50/p95(ms): " + stage.keys.sorted().map { "\($0) \(f(stage[$0]))/\(f(stage95[$0]))" }.joined(separator: ", ") + "\n  처리 대기열 최대 \(mq)\n\n"
         t += "지도\n  표면 패치 \(l.patches)개 (임시 \(l.temporary) · 후보 \(l.candidate) · 안정 \(l.stable)), 검증된 평면 채움 패치 \(l.planeFill)개, 보관 키프레임 \(l.keyframesStored)장\n"
         t += "  누적: 신규 \(ins) (약한 표본 \(wk), 평면 채움 \(fl)), 재사용(갱신된 패치) \(upd), 교체 \(rep), 병합된 표본 \(smg), 이미 표면이 있어 버린 채움 \(flc)\n"
@@ -749,7 +758,7 @@ final class SV2Engine: NSObject, ARSessionDelegate, @unchecked Sendable {
         d["first"] = ["inputS": expNN(firstIn), "validParallaxS": expNN(firstPar), "surfaceS": expNN(firstSurf), "displayS": expNN(firstDisp)]
         d["toMapMsP50"] = expNN(p50); d["toMapMsP95"] = expNN(p95)
         d["toPublishMsP50"] = expNN(q50); d["toPublishMsP95"] = expNN(q95)
-        d["toDisplayMsP50"] = expNN(d50); d["toDisplayMsP95"] = expNN(d95); d["toDisplaySamples"] = td.count
+        d["toDisplayMsP50"] = expNN(d50); d["toDisplayMsP95"] = expNN(d95); d["toDisplaySamples"] = td.count; d["displayTimeSources"] = dsrc
         d["stageMsP50"] = stage; d["stageMsP95"] = stage95; d["maxQueueLen"] = mq
         d["patches"] = l.patches
         d["states"] = ["temporary": l.temporary, "candidate": l.candidate, "stable": l.stable]

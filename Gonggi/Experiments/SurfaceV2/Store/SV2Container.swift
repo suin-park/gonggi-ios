@@ -213,6 +213,49 @@ enum SV2SurfaceFile {
         return out
     }
 
+    /// 파일에서 렌더용 장면만 바로 읽는다(패치마다 배열을 만들지 않아 큰 지도에서도 가볍다). 상태별 개수도 돌려준다.
+    /// scene(from:)과 같은 packed 배치를 만든다.
+    static func readScene(_ d: Data, keyframes: [SV2KeyframeMeta]) -> (scene: SV2Scene, stateCounts: [Int])? {
+        var r = SV2DataReader(d)
+        guard r.remaining >= 12, Array(d.prefix(4)) == magic else { return nil }
+        r.p = 4
+        guard let ver = r.get(UInt32.self), ver == version, let n32 = r.get(UInt32.self) else { return nil }
+        let n = Int(n32)
+        var packed = [Float](repeating: 0, count: n * SV2SurfaceMap.gpuStride)
+        var links = [Int32](repeating: -1, count: n * SV2SurfaceMap.linksPerPatch)
+        var counts = [0, 0, 0]
+        var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
+        let evBytes = SV2SurfaceMap.evPerPatch * (12 + 12 + 12)
+        for i in 0..<n {
+            guard let id = r.get(UInt32.self), let _ = r.get(UInt16.self), let st = r.get(UInt8.self), let fl = r.get(UInt8.self),
+                  let c = r.get3(), let nm = r.get3(), let tu = r.get3(),
+                  let hu = r.get(Float.self), let hv = r.get(Float.self), let _ = r.get(Float.self),
+                  let _ = r.get(UInt16.self), let _ = r.get(UInt8.self), let _ = r.get(UInt8.self),
+                  let _ = r.get(Int32.self), let _ = r.get(Int32.self), let _ = r.get(Float.self), let _ = r.get(UInt32.self),
+                  let col = r.get3(), let _ = r.get(Float.self), let _ = r.get(Float.self), let _ = r.get(Float.self), let _ = r.get(Float.self)
+            else { return nil }
+            for j in 0..<SV2SurfaceMap.linksPerPatch { guard let v = r.get(Int32.self) else { return nil }; links[i * SV2SurfaceMap.linksPerPatch + j] = v }
+            guard r.remaining >= SV2SurfaceMap.linksPerPatch * 4 + evBytes else { return nil }
+            r.p += SV2SurfaceMap.linksPerPatch * 4 + evBytes            // linkScore, evidence는 렌더에 필요 없다
+            let f = Float(Int(st) + (fl & 1 != 0 ? 4 : 0) + (fl & 2 != 0 ? 8 : 0))
+            let o = i * SV2SurfaceMap.gpuStride
+            packed[o] = c.x; packed[o + 1] = c.y; packed[o + 2] = c.z; packed[o + 3] = hu
+            packed[o + 4] = nm.x; packed[o + 5] = nm.y; packed[o + 6] = nm.z; packed[o + 7] = hv
+            packed[o + 8] = tu.x; packed[o + 9] = tu.y; packed[o + 10] = tu.z; packed[o + 11] = f
+            packed[o + 12] = col.x; packed[o + 13] = col.y; packed[o + 14] = col.z; packed[o + 15] = Float(id & 0xFFFFFF)
+            counts[Int(min(2, st))] += 1
+            lo = simd_min(lo, c); hi = simd_max(hi, c)
+        }
+        var s = SV2Scene()
+        s.packed = packed
+        s.links = links
+        s.count = n
+        s.indexOfRow = Array(0..<n)
+        s.keyframes = keyframes
+        s.bounds = n == 0 ? nil : (min: lo, max: hi)
+        return (s, counts)
+    }
+
     /// 읽은 기록으로 렌더용 장면을 만든다(임시 패치 포함 여부 선택).
     static func scene(from records: [Record], keyframes: [SV2KeyframeMeta], includeTemporary: Bool = true) -> SV2Scene {
         var s = SV2Scene()
@@ -321,7 +364,7 @@ struct SV2LoadedSpace {
     var scene: SV2Scene
     var store: SV2KeyframeStore
     var manifest: [String: Any]
-    var records: [SV2SurfaceFile.Record]
+    var stateCounts: [Int]                 // 임시·후보·안정 패치 수
     var missingTextures: [Int]
 }
 
@@ -364,14 +407,14 @@ extension SV2SurfaceMap {
         let r = try SV2ContainerReader(url: url)
         let mfData = try r.read("manifest.json")
         let manifest = (try JSONSerialization.jsonObject(with: mfData) as? [String: Any]) ?? [:]
-        guard let recs = SV2SurfaceFile.read(try r.read("surfaces.bin")) else { throw SV2ContainerError.truncated }
+        let surfaces = try r.read("surfaces.bin")
         guard let metas = SV2CameraFile.read(try r.read("cameras.json")) else { throw SV2ContainerError.truncated }
         let store = SV2KeyframeStore(keepDecoded: 6)
         var missing: [Int] = []
         for m in metas {
             if let d = try? r.read(SV2Container.textureName(m.id)) { store.addEncoded(meta: m, jpeg: d) } else { missing.append(m.id) }
         }
-        let scene = SV2SurfaceFile.scene(from: recs, keyframes: store.allMetas)
-        return SV2LoadedSpace(scene: scene, store: store, manifest: manifest, records: recs, missingTextures: missing)
+        guard let loaded = SV2SurfaceFile.readScene(surfaces, keyframes: store.allMetas) else { throw SV2ContainerError.truncated }
+        return SV2LoadedSpace(scene: loaded.scene, store: store, manifest: manifest, stateCounts: loaded.stateCounts, missingTextures: missing)
     }
 }

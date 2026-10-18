@@ -122,6 +122,8 @@ inline float sv2_depth(int i, uint2 p,
     }
 }
 
+// 원자 연산(통계)이 있어도 깊이 검사를 먼저 해 가려진 화소의 텍스처 읽기를 피한다.
+[[early_fragment_tests]]
 fragment float4 sv2_fragment(SV2VOut in [[stage_in]],
                              constant SV2View &V [[buffer(0)]],
                              constant SV2Sources &S [[buffer(1)]],

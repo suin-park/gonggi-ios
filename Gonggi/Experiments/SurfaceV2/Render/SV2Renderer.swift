@@ -358,7 +358,8 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
     var showTemporary = true
     var onStats: ((SV2RenderStats) -> Void)?
     /// 새 장면 버전이 처음 화면에 표시된 시각(systemUptime, drawable presented time).
-    var onPresented: ((Int, Double) -> Void)?
+    /// (장면 버전, 시각(systemUptime), 출처). 출처는 "present"(drawable presentedTime) 또는 "gpuEnd"(GPU 완료 시각; present 시각을 읽지 못할 때의 근사).
+    var onPresented: ((Int, Double, String) -> Void)?
     var clockDelta: Double = 0
 
     // 장면 상태
@@ -373,6 +374,8 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
 
     // source 상태
     private var chosen: [SV2SourceChoice] = []
+    /// source별 현재 가중치(크로스페이드): 선택된 것은 목표로 올라가고 빠진 것은 서서히 줄어든다(source 전환 깜빡임 완화).
+    private var slotWeights: [Int: Float] = [:]
     private var selectInFlight = false
     private var lastSelectHost: Double = 0
     private var texCache: [Int: MTLTexture] = [:]
@@ -393,7 +396,7 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
     private var lastCounters = [UInt32](repeating: 0, count: 8)
     private var counterWindow = [UInt32](repeating: 0, count: 8)
     private var activeSourceCount = 0
-    private var pendingPresent: [(drawable: CAMetalDrawable, version: Int, age: Int)] = []
+    private var pendingPresent: [(drawable: CAMetalDrawable, version: Int, age: Int, gpuEnd: Double)] = []
 
     init(scene: SV2SharedScene, liveCam: RTLiveCameraStore, background: RTBackgroundStore) {
         self.scene = scene; self.liveCam = liveCam; self.background = background
@@ -469,7 +472,7 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
                     self.texOrder.removeAll { $0 == id }
                     self.texOrder.append(id)
                     self.textureLoads += 1
-                    self.evictTextures(keeping: Set(self.chosen.map { $0.kf }))
+                    self.evictTextures(keeping: Set(self.chosen.map { $0.kf }).union(self.slotWeights.keys))
                 }
             }
         }
@@ -517,7 +520,15 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
         var rebuildsThisFrame = 0
         if let patches = frontBuffer, frontScene.count > 0 {
             let metaById = Dictionary(uniqueKeysWithValues: frontScene.keyframes.map { ($0.id, $0) })
-            for c in chosen {
+            // 크로스페이드 가중치: 선택된 source는 목표 가중치로 올라가고, 빠진 source는 줄어들며 잠시 남는다.
+            var target: [Int: Float] = [:]
+            for c in chosen { target[c.kf] = c.weight }
+            for (k, w) in slotWeights where target[k] == nil { slotWeights[k] = w * 0.8 }
+            for (k, t) in target { let w = slotWeights[k] ?? 0; slotWeights[k] = w + (t - w) * 0.3 }
+            slotWeights = slotWeights.filter { $0.value > 0.04 }
+            let faded = slotWeights.sorted { $0.value > $1.value || ($0.value == $1.value && $0.key < $1.key) }.prefix(4)
+            for (kfId, fadedWeight) in faded {
+                let c = SV2SourceChoice(kf: kfId, weight: fadedWeight)
                 guard let meta = metaById[c.kf] else { continue }
                 guard let tex = texCache[c.kf] else { requestTexture(c.kf); continue }
                 texOrder.removeAll { $0 == c.kf }; texOrder.append(c.kf)
@@ -554,15 +565,18 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
         pollPresented()
         if version != lastPresentedVersion && version >= 0 {
             lastPresentedVersion = version
-            pendingPresent.append((drawable, version, 0))
+            pendingPresent.append((drawable, version, 0, 0))
         }
         cmd.present(drawable)
+        let versionForGPU = version
         cmd.addCompletedHandler { [weak self] cb in
             let g = (cb.gpuEndTime - cb.gpuStartTime) * 1000
             guard let self else { return }
             self.statsLock.lock()
             if g > 0 { self.gpuMs.append(g); if self.gpuMs.count > 240 { self.gpuMs.removeFirst() } }
             self.statsLock.unlock()
+            let end = cb.gpuEndTime
+            if end > 0 { DispatchQueue.main.async { self.noteGPUEnd(version: versionForGPU, gpuEnd: end) } }
         }
         cmd.commit()
         cpuMs.append((ProcessInfo.processInfo.systemUptime - t0) * 1000)
@@ -576,13 +590,25 @@ final class SV2Renderer: NSObject, MTKViewDelegate {
 
     /// 표시된 drawable의 presentedTime을 읽어 새 장면 버전의 첫 표시 시각을 보고한다(최대 8프레임 기다린다).
     private func pollPresented() {
-        var rest: [(drawable: CAMetalDrawable, version: Int, age: Int)] = []
+        var rest: [(drawable: CAMetalDrawable, version: Int, age: Int, gpuEnd: Double)] = []
         for p in pendingPresent {
-            let t = p.drawable.presentedTime
-            if t > 0 { onPresented?(p.version, t) }
-            else if p.age < 8 { rest.append((p.drawable, p.version, p.age + 1)) }
+            let t = SV2Renderer.presentedTime(of: p.drawable)
+            if t > 0 { onPresented?(p.version, t, "present") }
+            else if p.age >= 4 && p.gpuEnd > 0 { onPresented?(p.version, p.gpuEnd, "gpuEnd") }
+            else if p.age < 12 { rest.append((p.drawable, p.version, p.age + 1, p.gpuEnd)) }
         }
         pendingPresent = rest
+    }
+
+    /// drawable의 presentedTime(표시된 뒤에야 채워진다). SDK 선언이 없어도 런타임에 getter가 있을 때만 KVC로 읽는다. 없으면 0.
+    static func presentedTime(of drawable: CAMetalDrawable) -> Double {
+        let obj = drawable as AnyObject
+        guard let nsobj = obj as? NSObject, nsobj.responds(to: NSSelectorFromString("presentedTime")) else { return 0 }
+        return (nsobj.value(forKey: "presentedTime") as? NSNumber)?.doubleValue ?? 0
+    }
+
+    private func noteGPUEnd(version: Int, gpuEnd: Double) {
+        for i in 0..<pendingPresent.count where pendingPresent[i].version == version { pendingPresent[i].gpuEnd = gpuEnd }
     }
 
     private func backgroundTexture(_ device: MTLDevice) -> MTLTexture? {
