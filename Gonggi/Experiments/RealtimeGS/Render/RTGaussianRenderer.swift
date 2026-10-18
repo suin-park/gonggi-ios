@@ -224,7 +224,7 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
             } else if frontCount > 0 {
                 let moved = simd_length(pose.center - lastSortPos)
                 let ang = simd_dot(pose.forward, lastSortFwd)
-                if !moved.isFinite || moved > 0.01 || ang < 0.9999 {
+                if (!moved.isFinite || moved > 0.01 || ang < 0.9999) && ExpSys.hostNow() - lastSortHost > 0.05 {
                     kickSort(packed: frontPacked, count: frontCount, version: frontVersion, newData: false, pose: pose)
                 }
             }

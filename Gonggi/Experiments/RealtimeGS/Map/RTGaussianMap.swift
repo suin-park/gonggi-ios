@@ -166,7 +166,6 @@ final class RTGaussianMap {
             let rn = max(s.scale.x, s.scale.y)
             var best = -1
             var bestScore = Float.infinity
-            var dbl = -1
             forEachNeighbor(of: s.pos) { q in
                 if segment[q] != ctx.segment || bornKF[q] == ctx.kf { return }
                 let d = s.pos - pos[q]
@@ -179,14 +178,13 @@ final class RTGaussianMap {
                 if lat < latTol && abs(dn) < tolN && nd >= 0.6 {
                     let sc = abs(dn) + 0.3 * lat
                     if sc < bestScore { bestScore = sc; best = q }
-                } else if lat < 0.8 * latTol && abs(dn) >= tolN && abs(dn) < 3.5 * tolN && nd >= 0.85 {
-                    dbl = q
                 }
             }
             if best >= 0 {
                 mergeInto(best, s, obsColor: obsColor, ctx: ctx, tolN: tolN, stats: &st)
                 continue
             }
+            let dbl = best >= 0 ? -1 : findParallelSurface(near: s, tolN: tolN, rn: rn, segment: ctx.segment, kf: ctx.kf)
             if dbl >= 0 {
                 if verified[dbl] || obs[dbl] >= 2 {
                     st.rejected[.doubleSurface, default: 0] += 1
@@ -217,6 +215,40 @@ final class RTGaussianMap {
         }
         if st.inserted + st.merged + st.replaced > 0 { version += 1 }
         return st
+    }
+
+    /// 새 표본의 법선 방향 tolN~3.5·tolN 거리에 있는 평행한 기존 표면(벽 이중화 후보)을 찾는다.
+    /// 3×3×3 칸 이웃은 이 거리까지 닿지 않으므로 법선을 따라 칸 하나씩 탐침한다.
+    private func findParallelSurface(near s: RTNewGaussian, tolN: Float, rn: Float, segment seg: UInt16, kf: Int32) -> Int {
+        let n = s.normal
+        let stepLen = cellSize * 0.9
+        let steps = Int(((2.5 * tolN) / stepLen).rounded(.up)) + 1
+        var found = -1
+        var foundDist = Float.infinity
+        for j in 0..<steps {
+            let dist = tolN + Float(j) * stepLen
+            for sign in [Float(1), Float(-1)] {
+                let probe = s.pos + n * (sign * dist)
+                let (ix, iy, iz) = cellIndex(probe)
+                let k = key(ix, iy, iz)
+                var i = head[slot(k)]
+                while i >= 0 {
+                    let q = Int(i)
+                    if cell[q] == k && alive[q] && segment[q] == seg && bornKF[q] != kf {
+                        let d = s.pos - pos[q]
+                        let dn = simd_dot(d, nrm[q])
+                        let lat = max(0, simd_length_squared(d) - dn * dn).squareRoot()
+                        let rq = max(scl[q].x, scl[q].y)
+                        let latTol = 1.1 * max(rq, rn) + 0.005
+                        if lat < 0.8 * latTol && abs(dn) >= tolN && abs(dn) < 3.5 * tolN && simd_dot(nrm[q], n) >= 0.85, abs(dn) < foundDist {
+                            found = q; foundDist = abs(dn)
+                        }
+                    }
+                    i = next[q]
+                }
+            }
+        }
+        return found
     }
 
     private func mergeInto(_ q: Int, _ s: RTNewGaussian, obsColor: SIMD3<Float>, ctx: RTIntegrationContext, tolN: Float, stats st: inout RTIntegrationStats) {

@@ -242,9 +242,9 @@ final class RealtimeGSTests: XCTestCase {
         let frame = planeFrame(id: 1, center: .zero) { self.noise($0, $1) }
         var d = RTDepthMap(gw: 160, gh: 120, step: 2)
         // 시선과 거의 평행한 면: 깊이가 가로로 가파르게 변하되 불연속 한계(6%+2cm) 안에서
-        for gy in 0..<120 { for gx in 0..<160 {
+        for gy in 0..<120 { for gx in 0..<30 {
             let i = gy * 160 + gx
-            d.z[i] = 1.0 + Float(gx) * 0.012      // 인접 표본 12mm 증가 → 시선과 거의 평행한 면
+            d.z[i] = 0.8 + Float(gx) * 0.06       // 인접 표본 6cm 증가(연속 한계 이내) → 앞쪽 열은 시선과 거의 평행한 면
             d.conf[i] = 0.8; d.reason[i] = 0; d.source[i] = 1
         }}
         let r = RTSurfaceBuilder.build(frame: frame, depth: d)

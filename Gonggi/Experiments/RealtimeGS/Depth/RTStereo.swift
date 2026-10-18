@@ -73,7 +73,7 @@ struct RTStereoParams {
     var extMaxZ: Float = 15
     var textureVarMin: Float = 5e-4
     var costMax: Float = 0.35
-    var ambiguityGap: Float = 0.06
+    var ambiguityGap: Float = 0.05
     var minBaseline: Float = 0.035
     var minParallaxTan: Float = 0.0175      // ≈ 1°
     var maxSteps = 96
@@ -250,7 +250,7 @@ enum RTStereo {
                         let c1 = min(s.c1, bestC), c2 = s.c2
                         if c1 > params.costMax { rB[idx] = RTReason.highCost.rawValue; continue }
                         let gap = c2 - c1
-                        if !(gap >= params.ambiguityGap || (c1 < 0.08 && c2 >= 2 * c1)) { rB[idx] = RTReason.ambiguous.rawValue; continue }
+                        if !(gap >= params.ambiguityGap) { rB[idx] = RTReason.ambiguous.rawValue; continue }
                         let Z = 1 / bestRho
                         if Z < params.extMinZ || Z > params.extMaxZ { rB[idx] = RTReason.outOfRange.rawValue; continue }
                         // 삼각측량 각도: 광선에 수직인 기선 성분 / 깊이 (제자리 회전은 여기서 걸러진다)
