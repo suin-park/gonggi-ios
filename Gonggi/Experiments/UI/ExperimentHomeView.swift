@@ -7,7 +7,7 @@ struct ExperimentHomeView: View {
     let onClose: () -> Void
 
     private enum Route: Hashable {
-        case sensor, depth, coexist, results, guide
+        case realtime, sensor, depth, coexist, results, guide
     }
 
     @State private var path: [Route] = []
@@ -24,6 +24,9 @@ struct ExperimentHomeView: View {
                             .font(.footnote).foregroundStyle(GonggiColors.textSecondary)
                         Text("검사하는 동안 카메라를 쓰고 기기가 따뜻해질 수 있어요. 기기가 많이 뜨거워지면 검사를 자동으로 끝내요.")
                             .font(.footnote).foregroundStyle(GonggiColors.textSecondary)
+                    }
+                    RecordSection(title: "실시간 공간 생성") {
+                        RecordChoiceRow(choice: .init(title: "실시간 공간 생성", line: "ARKit로 움직이며 가우시안 표면을 쌓고 둘러봐요", icon: "cube.transparent")) { path.append(.realtime) }
                     }
                     RecordSection(title: "센서 검사") {
                         RecordChoiceRow(choice: .init(title: "기본 센서 검사", line: "ARKit 추적, 노출, Core Motion과 기능별 부하 비교", icon: "gyroscope")) { path.append(.sensor) }
@@ -52,6 +55,7 @@ struct ExperimentHomeView: View {
             }
             .navigationDestination(for: Route.self) { route in
                 switch route {
+                case .realtime: RealtimeGSView()
                 case .sensor: ExperimentSensorView()
                 case .depth: ExperimentDepthView()
                 case .coexist: ExperimentCoexistView()

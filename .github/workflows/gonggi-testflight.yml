@@ -178,6 +178,9 @@ jobs:
           fi
           xcodegen --version
 
+      - name: Fetch Depth Anything V2 Small (Core ML, Apache-2.0, sha256 pinned)
+        run: bash scripts/fetch-depth-model.sh
+
       - name: Generate Xcode project
         run: |
           set -euo pipefail

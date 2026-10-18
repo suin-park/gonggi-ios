@@ -49,5 +49,13 @@ Not required for Build 27 CI. Primary monocularProxy path is geometric
 Vendor/DepthAnything/, attribute it here and in the app bundle NOTICE.
 
 ---------------------------------------------------------------------------
+Depth Anything V2 Small (Core ML conversion)
+---------------------------------------------------------------------------
+Used as an optional monocular depth prior in the realtime gaussian space experiment.
+Model: Depth Anything V2 Small, L. Yang et al., licensed under the Apache License 2.0.
+Core ML package: https://huggingface.co/apple/coreml-depth-anything-v2-small (Apache-2.0).
+Fetched at build time by scripts/fetch-depth-model.sh with pinned SHA-256 checksums.
+
+---------------------------------------------------------------------------
 End of notices
 ---------------------------------------------------------------------------

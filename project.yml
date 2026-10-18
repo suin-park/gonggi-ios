@@ -39,6 +39,10 @@ targets:
       - path: Gonggi
         excludes:
           - "**/*.md"
+      # 단안 깊이 사전값 모델(Apache-2.0). scripts/fetch-depth-model.sh가 받아 두며, 없으면 앱은 스테레오 전용으로 동작한다.
+      - path: Vendor/DepthAnything/DepthAnythingV2SmallF16.mlpackage
+        optional: true
+        buildPhase: sources
     resources:
       - path: NOTICE
       - path: third_party/opencv/LICENSE
