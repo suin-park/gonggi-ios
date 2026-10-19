@@ -322,7 +322,7 @@ final class GSOptTexLayerTests: XCTestCase {
         var labels = [UInt8](repeating: GSOProductMask.background, count: w * h)
         for y in 14..<34 { for x in 20..<44 { labels[y * w + x] = GSOProductMask.product } }
         var grown = labels
-        for y in 20..<28 { for x in 47..<51 { grown[y * w + x] = GSOProductMask.product } }          // 제품 옆(약 8~12 cm) 같은 깊이의 덩어리
+        for y in 20..<28 { for x in 44..<51 { grown[y * w + x] = GSOProductMask.product } }          // 제품에 붙은(0~12 cm) 같은 깊이의 덩어리
         let z = [Float](repeating: 1.0, count: w * h)
         func rgb(blue: Bool) -> [UInt8] {
             var v = [UInt8](repeating: 0, count: w * h * 3)

@@ -54,6 +54,10 @@ print('gain range', G3.min(0), G3.max(0), flush=True)
 trust2 = [bool(D['TRUST'][i]) and (M2[i] == 1).sum() > 100 for i in range(n)]
 LC = regen.build_layers(D, gains=G3, masks=M2, trust=trust2)
 LA = F.load_kmots(KM)
+os.environ['KNEE'] = '0'
+LE = regen.build_layers(D, gains=np.load('cache/G1.npy'))     # OLD pipeline settings on the same PC depth: product-mean gain, original masks, no highlight knee
+os.environ['KNEE'] = '1'
+SE = [F.layer_samples(l) for l in LE]
 print('regenerated layers', len(LC), 'saved layers', len(LA), flush=True)
 SA = [F.layer_samples(l) for l in LA]; SC = [F.layer_samples(l) for l in LC]
 
@@ -76,10 +80,12 @@ def render_set(L, S, keep, cam, W, H, mode):
 
 
 def eval_set(frames, excl):
-    rows = {k: [] for k in ('A', 'B', 'C', 'D')}; imgs = {}
+    rows = {k: [] for k in ('A', 'B', 'C', 'D', 'E')}; imgs = {}
     for i in frames:
-        f = fr[i]; cam = cam_of(f); gt, lab = study.gt_and_labels(f, D['MASK'][i])
-        for name, L, S, mode in (('A', LA, SA, 'old'), ('B', LA, SA, 'new'), ('C', LC, SC, 'new'), ('D', LC, SC, 'old')):
+        f = fr[i]; cam = cam_of(f); gt, lab = study.gt_and_labels(f, MS[i])        # eval region = SANITISED product mask (cloth excluded) for every method
+        labo = cv2.resize(D['MASK'][i], (EW, EH), interpolation=cv2.INTER_NEAREST)
+        hsv = cv2.cvtColor((gt * 255).astype(np.uint8), cv2.COLOR_RGB2HSV); cloth = (hsv[..., 0] > 95) & (hsv[..., 0] < 135) & (hsv[..., 1] > 90) & (labo == 1) & (lab != 1)
+        for name, L, S, mode in (('A', LA, SA, 'old'), ('B', LA, SA, 'new'), ('C', LC, SC, 'new'), ('D', LC, SC, 'old'), ('E', LE, SE, 'old')):
             fid = f['id']
             keep = [j for j, l in enumerate(L) if abs(l['id'] - fid) > excl]
             im, A = render_set(L, S, keep, cam, EW, EH, mode)
@@ -87,6 +93,7 @@ def eval_set(frames, excl):
             if s is None: continue
             R1 = lab == 1
             s['sat'] = float((im.max(-1)[R1] > 0.97).mean()); s['gt_sat'] = float((gt.max(-1)[R1] > 0.97).mean())
+            s['cloth'] = float((A[cloth] > 0.5).mean()) if cloth.sum() > 100 else float('nan')
             rows[name].append((i, s)); imgs[(i, name)] = (np.float16(im), np.float16(A))
     return rows, imgs
 
@@ -97,8 +104,8 @@ res = {}
 for tag, excl in (('near', 0), ('far', 2)):
     rows, imgs = eval_set(frames, excl); res[tag] = rows
     pickle.dump(imgs, open(f'results/final_{tag}.pkl', 'wb'))
-    keys = ['psnr', 'psnr_gc', 'ssim', 'lpips', 'hf_corr', 'psnr_edge', 'hole', 'leak', 'sil_iou', 'sat', 'gt_sat']
+    keys = ['psnr', 'psnr_gc', 'ssim', 'lpips', 'hf_corr', 'psnr_edge', 'hole', 'leak', 'sil_iou', 'sat', 'gt_sat', 'cloth']
     print(tag, 'frames', len(frames), round(time.time() - t0), flush=True)
-    for name in 'ABCD':
+    for name in 'ABCDE':
         print(f'  {name}: ' + ' '.join(f"{k} {np.nanmean([s[k] for _, s in rows[name]]):.4f}" for k in keys), flush=True)
 json.dump({t: {k: [(i, s) for i, s in v] for k, v in r.items()} for t, r in res.items()}, open('results/final_metrics.json', 'w'))

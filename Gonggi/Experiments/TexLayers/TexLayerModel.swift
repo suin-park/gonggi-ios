@@ -12,8 +12,11 @@ enum TexLayerConst {
     static let blendK = 5                // 구방식(가장 가까운 K개) 선택의 K. 진단·대조용으로만 남긴다.
     static let blendMax = 8              // 한 번에 혼합하는 레이어 수 상한(Metal 텍스처 배열 길이)
     static let blendMin = 3              // 커버리지 선택이 최소한 채우는 레이어 수
+    static let seedNearest = 5           // 선택의 바탕: 시점이 가장 가까운 레이어 수(나머지 칸은 커버리지로 채운다)
+    static let seedHysteresis: Float = 0.03   // 직전 선택 레이어의 시점 점수에서 빼는 값(가까운 레이어 순위가 프레임마다 바뀌는 것을 막는다)
     static let selectDecay: Float = 6    // 가중치 exp(-decay * score)
-    static let depthTolerance: Float = 0.06   // 같은 표면으로 보는 깊이 허용 비율(합의 판정)
+    static let depthTolerance: Float = 0.06   // 같은 표면으로 보는 깊이 허용 비율(표면 선택·혼합)
+    static let agreeTolerance: Float = 0.16   // '동의하는 레이어 수'를 셀 때의 깊이 허용 비율(깊이가 레이어마다 5~15% 어긋나는 실기기 입력에서 구멍이 늘지 않게 넓힘)
     static let selectTolerance: Float = 0.08  // 선택 단계(거친 격자) 합의 허용 비율
     static let hybridVariance: Float = 0.02   // 합의 안 색 분산이 이보다 크면 평균 대신 대표 관측 하나
     static let minAgree = 2              // 한 화소를 그리려면 같은 표면에 동의하는 레이어 수(레이어가 3개 이상일 때)
@@ -139,7 +142,8 @@ enum TexLayerSelect {
     /// 1) 모든 레이어의 선택용 표본을 앞면만 거친 격자(40×30)에 투영해 칸마다 (레이어, 깊이)를 모은다.
     /// 2) 칸마다 가중치 합이 가장 큰 깊이를 그 칸의 표면으로 정하고(가장 가까운 깊이가 아니다), 그 표면에 동의하는 레이어가 2개 이상인 칸을 '확인된 표면'으로 본다.
     /// 3) 확인된 표면을 아직 덮지 못한 칸을 가장 많이(시점 가까움 가중) 덮는 레이어를 차례로 고른다. prev에 있던 레이어에는 가산점을 줘 선택이 뒤집히지 않게 한다.
-    static func coverage(_ layers: [TexLayer], view: TexView, prev: Set<Int>, kmax: Int = TexLayerConst.blendMax, kmin: Int = TexLayerConst.blendMin) -> Selection {
+    static func coverage(_ layers: [TexLayer], view: TexView, prev: Set<Int>, kmax: Int = TexLayerConst.blendMax, kmin: Int = TexLayerConst.blendMin,
+                         seedNearest seed: Int = TexLayerConst.seedNearest) -> Selection {
         let n = layers.count
         guard n > 0 else { return Selection(picked: [], estimatedCoverage: 0, targetCells: 0) }
         let gx = TexLayerConst.gridX, gy = TexLayerConst.gridY, cellsN = gx * gy
@@ -200,7 +204,16 @@ enum TexLayerSelect {
         var chosen: [Int] = []
         var chosenSet = Set<Int>()
         let denom = Float(max(targetCount, 1))
-        for it in 0..<kmax {
+        // 바탕: 시점이 가장 가까운 레이어(직전 선택에는 가산점). 시점 근접이 화질을 가장 크게 좌우하므로 이 레이어들은 커버리지와 무관하게 쓴다.
+        if seed > 0 {
+            let adj = (0..<n).map { score[$0] - (prev.contains(layers[$0].id) ? TexLayerConst.seedHysteresis : 0) }
+            let order = (0..<n).sorted { adj[$0] < adj[$1] }
+            for i in order.prefix(min(seed, n, kmax)) {
+                chosen.append(i); chosenSet.insert(i)
+                for c in cover[i] { covered[c] = true }
+            }
+        }
+        for it in chosen.count..<kmax {
             var bestI = -1; var bestGain: Float = -1
             for i in 0..<n where !chosenSet.contains(i) {
                 var fresh = 0

@@ -72,6 +72,7 @@ def _wmean(rgb, w):
 
 HYB_VAR = 0.02
 LAST_CNT = None
+LAST_ZB = None
 
 
 def blend_consensus(rgb, z, w, tol=0.06, mode='avg'):
@@ -91,8 +92,8 @@ def blend_consensus(rgb, z, w, tol=0.06, mode='avg'):
     cons = fin & (np.abs(z - zb[None]) < tol * np.maximum(zb, 0.3)[None])
     ww = cons * w
     A = fin.any(0)
-    global LAST_CNT
-    LAST_CNT = cons.sum(0)
+    global LAST_CNT, LAST_ZB
+    LAST_CNT = cons.sum(0); LAST_ZB = zb
     if mode == 'rep':
         kk = (ww).argmax(0)
         out = np.take_along_axis(rgb, kk[None, ..., None].repeat(3, -1), 0)[0]
@@ -152,7 +153,7 @@ def coarse_project(l, cam, W, H, samples):
     return d
 
 
-def coarse_select(L, samples, cam, W, H, kmax=8, kmin=3, decay=6.0, tol=0.08, prev=None, bonus=0.1, min_gain=0.012, cand=None):
+def coarse_select(L, samples, cam, W, H, kmax=8, kmin=3, decay=6.0, tol=0.08, prev=None, bonus=0.1, min_gain=0.012, cand=None, qf=0.4, seed=0):
     n = len(L)
     sc = np.array([score_of(l, cam) for l in L], np.float32); w = np.exp(-decay * sc).astype(np.float32)
     pool = np.arange(n) if cand is None else np.argsort(sc)[:cand]
@@ -171,9 +172,13 @@ def coarse_select(L, samples, cam, W, H, kmax=8, kmin=3, decay=6.0, tol=0.08, pr
     nlay = cons.sum(0)
     target = np.isfinite(zstar) & (nlay >= 2)           # corroborated surface cells
     covered = np.zeros(D.shape[1], bool); chosen = []
+    if seed > 0:
+        sc_adj = sc - (0.03 * np.array([1.0 if (prev is not None and i in prev) else 0.0 for i in range(n)], np.float32))
+        chosen = [int(j) for j in np.argsort(sc_adj)[:seed]]
+        for j in chosen: covered |= cons[j]
     qual = np.where(sc < 0, 0, w)
-    for it in range(kmax):
-        gains = ((cons & target[None] & ~covered[None]).sum(1) / max(target.sum(), 1)) * (0.4 + w / max(w.max(), 1e-6))
+    for it in range(len(chosen), kmax):
+        gains = ((cons & target[None] & ~covered[None]).sum(1) / max(target.sum(), 1)) * (qf + w / max(w.max(), 1e-6))
         if prev is not None: gains = gains + np.array([bonus if i in prev else 0 for i in range(n)]) * (gains > 0)
         gains[chosen] = -1
         j = int(gains.argmax())

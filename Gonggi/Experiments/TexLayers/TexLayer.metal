@@ -22,7 +22,7 @@ struct TLCompose {
     float4 w0;        // 가중치 0..3
     float4 w1;        // 가중치 4..7
     float4 p0;        // 레이어 수, 깊이 허용 비율, 색 분산 한계, 필요한 동의 레이어 수
-    float4 p1;        // x: 가장자리 확장 화소, y: 레이어 텍스처/그리기 대상 배율
+    float4 p1;        // x: 가장자리 확장 화소, y: 레이어 텍스처/그리기 대상 배율, z: 동의 레이어를 셀 때의 깊이 허용 비율
 };
 
 struct TLVOut {
@@ -133,14 +133,16 @@ static TLCons tl_consensus(int2 xy, texture2d_array<float> C, texture2d_array<fl
     }
     float zb = zs[bestK];
     float tolB = tol * max(zb, 0.3);
+    float tolAgree = P.p1.z * max(zb, 0.3);
     float3 num = float3(0.0);
     float den = 0.0;
     int cnt = 0;
     int repK = -1;
     float repW = -1e30;
     for (int b = 0; b < nv; b++) {
+        if (fabs(zs[b] - zb) < tolAgree) { cnt++; }
         if (fabs(zs[b] - zb) < tolB) {
-            num += cs[b] * ws[b]; den += ws[b]; cnt++;
+            num += cs[b] * ws[b]; den += ws[b];
             if (ws[b] > repW) { repW = ws[b]; repK = b; }
         }
     }

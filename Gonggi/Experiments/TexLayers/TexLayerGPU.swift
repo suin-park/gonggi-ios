@@ -7,7 +7,7 @@ struct TLComposeParams {
     var w0 = SIMD4<Float>(0, 0, 0, 0)
     var w1 = SIMD4<Float>(0, 0, 0, 0)
     var p0 = SIMD4<Float>(0, TexLayerConst.depthTolerance, TexLayerConst.hybridVariance, Float(TexLayerConst.minAgree))
-    var p1 = SIMD4<Float>(2, 1, 0, 0)
+    var p1 = SIMD4<Float>(2, 1, TexLayerConst.agreeTolerance, 0)
 }
 
 final class TexLayerGPU {
@@ -120,7 +120,7 @@ final class TexLayerGPU {
         params.w0 = SIMD4<Float>(weights[0], weights[1], weights[2], weights[3])
         params.w1 = SIMD4<Float>(weights[4], weights[5], weights[6], weights[7])
         params.p0 = SIMD4<Float>(Float(count), TexLayerConst.depthTolerance, TexLayerConst.hybridVariance, count >= 3 ? Float(TexLayerConst.minAgree) : 1)
-        params.p1 = SIMD4<Float>(Float(max(1, Int((Float(w) / 160).rounded()))), s, 0, 0)
+        params.p1 = SIMD4<Float>(Float(max(1, Int((Float(w) / 160).rounded()))), s, TexLayerConst.agreeTolerance, 0)
         lastDrawnQuads = drawn
         lastLayerCount = count
         return params
