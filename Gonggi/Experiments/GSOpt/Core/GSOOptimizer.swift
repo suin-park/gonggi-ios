@@ -13,6 +13,8 @@ struct GSOOptConfig: Equatable {
     var scaleUp: Float = 0.5                // 늘 수 있는 폭
     var muBound: Float = 3.0                // 처음 위치에서 (처음 큰 크기 × muBound) 넘게 움직일 수 없다
     var lambdaDepth: Float = 0.0            // 스테레오 확인 깊이 제약 가중치. 기본 끔: 기기 로그에서 이 항의 손실이 0.4~0.6으로 줄지 않았고, 178장 재생에서 끄면 PSNR 17.6→18.0, 흐림(α<0.8 화소) 19%→7%였다.
+    var bgOpacityLogitMin: Float = -5       // 제품 모드: 확실한 배경에 반복 투영된(bgCount ≥ bgFlagViews) 가우시안은 이 하한까지 투명해질 수 있다
+    var bgFlagViews: UInt8 = 2
     var opacityLogitMin: Float = -1.5       // 불투명도 하한(a0 ≥ 0.18). 기기 저장본에서 가우시안 26%가 a0 < 0.1로 사라져 있었다.
     var charbonnierEps: Float = 0.01
     var alphaWeightAnchor: Float = 0.1      // 앵커 화소에서 알파를 1로 끄는 항의 가중치(깊이 항을 꺼도 투명화로 숨는 것을 막는다)
@@ -30,6 +32,9 @@ struct GSOLossStats {
     var anchorPixels = 0
     var coverage: Float = 0
     var finite = true
+    var productPixels = 0           // 제품 모드: 확실한 제품 화소 수(RGB 감독 대상)
+    var backgroundPixels = 0        // 확실한 배경 화소 수(알파 억제 대상)
+    var backgroundLeak: Float = 0   // 확실한 배경 화소의 평균 알파
 }
 
 /// 손실과 출력 gradient(dL/dImage, dL/dDepth, dL/dAlpha). 광도는 Charbonnier(L1 근사), 깊이는 스테레오로 확인된 화소에서만.
@@ -78,6 +83,66 @@ enum GSOLoss {
                     let t = depthTerm(alpha: 1 - st.transmittance[p], depthSum: st.depth[p], anchorZ: anchors[p], depthWeight: depthWeight / Float(n),
                                       alphaWeight: alphaWeight / Float(n), outlierRel: c.depthOutlierRel)
                     dLdD[p] = t.dD; dLdA[p] = t.dA
+                    if t.counted { ld += t.relError; nd += 1 }
+                }
+                stats.depth = nd > 0 ? ld / Float(nd) : 0
+                stats.anchorPixels = n
+            }
+        }
+        stats.finite = stats.photometric.isFinite && stats.depth.isFinite
+        return stats
+    }
+
+    /// 제품 모드 손실. 라벨: 1 제품(RGB 감독 + 앵커 깊이·알파 항), 2 확실한 배경(알파를 0으로: RGB는 정답으로 쓰지 않는다), 0 불확실(감독 없음).
+    /// 배경을 검게 칠한 영상을 정답으로 쓰지 않으므로 제품 가장자리가 검게 학습되지 않는다. 정규화는 감독 대상 화소 수로 한다.
+    static func evaluateMasked(state st: GSOForwardState, target: [Float], labels: [UInt8], anchors: [Float]?, config c: GSOOptConfig,
+                               depthWeight: Float, alphaWeight: Float = 0, bgAlphaWeight: Float,
+                               dLdC: inout [Float], dLdD: inout [Float], dLdA: inout [Float]) -> GSOLossStats {
+        let W = st.width, H = st.height
+        let npix = W * H
+        if dLdC.count != npix * 3 { dLdC = [Float](repeating: 0, count: npix * 3) }
+        if dLdD.count != npix { dLdD = [Float](repeating: 0, count: npix) }
+        if dLdA.count != npix { dLdA = [Float](repeating: 0, count: npix) }
+        var stats = GSOLossStats()
+        var np = 0, nb = 0
+        for p in 0..<npix { if labels[p] == GSOProductMask.product { np += 1 } else if labels[p] == GSOProductMask.background { nb += 1 } }
+        stats.productPixels = np; stats.backgroundPixels = nb
+        let eps2 = c.charbonnierEps * c.charbonnierEps
+        let inv = 1 / Float(max(1, np) * 3)
+        let invB = nb > 0 ? bgAlphaWeight / Float(nb) : 0
+        var sum: Float = 0
+        var cov = 0
+        var leak: Float = 0
+        for p in 0..<npix {
+            let a = 1 - st.transmittance[p]
+            dLdD[p] = 0; dLdA[p] = 0
+            let lab = labels[p]
+            if lab == GSOProductMask.product {
+                for ch in 0..<3 {
+                    let r = st.image[p * 3 + ch] - target[p * 3 + ch]
+                    let d = (r * r + eps2).squareRoot()
+                    sum += d
+                    dLdC[p * 3 + ch] = r / d * inv
+                }
+                if a >= 0.5 { cov += 1 }
+            } else {
+                dLdC[p * 3] = 0; dLdC[p * 3 + 1] = 0; dLdC[p * 3 + 2] = 0
+                if lab == GSOProductMask.background { dLdA[p] = invB; leak += a }
+            }
+        }
+        stats.photometric = sum * inv
+        stats.coverage = Float(cov) / Float(max(1, np))
+        stats.backgroundLeak = nb > 0 ? leak / Float(nb) : 0
+        if let anchors, depthWeight > 0 || alphaWeight > 0 {
+            var n = 0
+            for p in 0..<npix where anchors[p] > 0 && labels[p] == GSOProductMask.product { n += 1 }
+            if n > 0 {
+                var ld: Float = 0
+                var nd = 0
+                for p in 0..<npix where anchors[p] > 0 && labels[p] == GSOProductMask.product {
+                    let t = depthTerm(alpha: 1 - st.transmittance[p], depthSum: st.depth[p], anchorZ: anchors[p], depthWeight: depthWeight / Float(n),
+                                      alphaWeight: alphaWeight / Float(n), outlierRel: c.depthOutlierRel)
+                    dLdD[p] = t.dD; dLdA[p] += t.dA
                     if t.counted { ld += t.relError; nd += 1 }
                 }
                 stats.depth = nd > 0 ? ld / Float(nd) : 0
@@ -191,7 +256,8 @@ final class GSOOptimizer {
             map.mO[i] = c.beta1 * map.mO[i] + (1 - c.beta1) * go
             map.vO[i] = c.beta2 * map.vO[i] + (1 - c.beta2) * go * go
             let dO = c.lrOpacity * ls * (map.mO[i] / bc1) / ((map.vO[i] / bc2).squareRoot() + c.adamEps)
-            map.g.opacityLogit[i] = max(c.opacityLogitMin, min(6, map.g.opacityLogit[i] - dO))
+            let floorLogit = map.bgCount[i] >= c.bgFlagViews ? c.bgOpacityLogitMin : c.opacityLogitMin
+            map.g.opacityLogit[i] = max(floorLogit, min(6, map.g.opacityLogit[i] - dO))
             guard geometry, map.steps[i] > c.geometryWarmSteps else { continue }
             let gm = grads.mu[r], gl = grads.logScale[r], gq = grads.quat[r]
             guard gm.x.isFinite, gm.y.isFinite, gm.z.isFinite, gl.x.isFinite, gl.y.isFinite, gl.z.isFinite,

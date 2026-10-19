@@ -62,8 +62,14 @@ final class GSOMap {
     var splitAccum: [Float] = []
     var splitCount: [UInt16] = []
     var splitTotal = 0
+    // 제품 모드: 확실한 배경 화소에 투영된 서로 다른 시점 수(배경 가우시안 표시), 정밀화(원본 창)에서 gradient를 받은 횟수와 마지막 묶음
+    var bgCount: [UInt8] = []
+    var bgKF: [Int32] = []
+    var refineCount: [UInt16] = []
+    var refineSlice: [Int32] = []
 
     private(set) var nextID: UInt32 = 1
+    func setNextID(_ v: UInt32) { nextID = v }
     var version = 0                         // 지도 변경(게시) 번호
     var geometryRevision = 0                // 위치·크기가 바뀐 총 횟수(캐시 무효화용)
     var removedTotal = 0
@@ -93,6 +99,7 @@ final class GSOMap {
         steps.append(0)
         conflictVotes.append(0); votePos.append(.zero); voteDir.append(.zero); voteKF.append(-1); suspect.append(false)
         splitAccum.append(0); splitCount.append(0)
+        bgCount.append(0); bgKF.append(-1); refineCount.append(0); refineSlice.append(-1)
         insertedTotal += 1
         return i
     }
@@ -113,6 +120,7 @@ final class GSOMap {
                 mO[w] = mO[r]; vO[w] = vO[r]; mC[w] = mC[r]; vC[w] = vC[r]; steps[w] = steps[r]
                 conflictVotes[w] = conflictVotes[r]; votePos[w] = votePos[r]; voteDir[w] = voteDir[r]; voteKF[w] = voteKF[r]; suspect[w] = suspect[r]
                 splitAccum[w] = splitAccum[r]; splitCount[w] = splitCount[r]
+                bgCount[w] = bgCount[r]; bgKF[w] = bgKF[r]; refineCount[w] = refineCount[r]; refineSlice[w] = refineSlice[r]
             }
             w += 1
         }
@@ -126,23 +134,40 @@ final class GSOMap {
             mO.removeLast(removed); vO.removeLast(removed); mC.removeLast(removed); vC.removeLast(removed); steps.removeLast(removed)
             conflictVotes.removeLast(removed); votePos.removeLast(removed); voteDir.removeLast(removed); voteKF.removeLast(removed); suspect.removeLast(removed)
             splitAccum.removeLast(removed); splitCount.removeLast(removed)
+            bgCount.removeLast(removed); bgKF.removeLast(removed); refineCount.removeLast(removed); refineSlice.removeLast(removed)
             removedTotal += removed
             geometryRevision += 1
         }
         return removed
     }
 
-    /// 파라미터만 되돌린다(롤백). 개수가 같을 때만 호출한다.
+    /// 묶음(slice) 전 상태로 되돌린다(롤백). 파라미터·Adam 모멘트·step·revision뿐 아니라 묶음 안에서 추가된 가우시안(분할 자식)과 ID 발급, 상태·독립 증거,
+    /// 정밀화·분할 누적값도 함께 되돌린다. 묶음 안에서 제거는 일어나지 않으므로(제거는 prune에서만) 스냅샷 개수 이하일 수는 없다.
     func restore(_ s: GSOMapSnapshot) -> Bool {
-        guard s.gaussians.count == count else { return false }
+        let n = s.gaussians.count
+        guard n <= count else { return false }
+        if n < count {
+            let removed = count - n
+            var keep = [Bool](repeating: true, count: count)
+            for i in n..<count { keep[i] = false }
+            compact(keep: keep)
+            removedTotal -= removed
+        }
         g = s.gaussians
         mMu = s.mMu; vMu = s.vMu; mLs = s.mLs; vLs = s.vLs; mQ = s.mQ; vQ = s.vQ; mO = s.mO; vO = s.vO; mC = s.mC; vC = s.vC
         steps = s.steps; revision = s.revision; mu1 = s.mu1       // Adam 모멘트·step·revision 기준을 파라미터와 함께 되돌려 상태가 어긋나지 않게 한다
+        state = s.state; indep = s.indep; splitAccum = s.splitAccum; splitCount = s.splitCount
+        refineCount = s.refineCount; refineSlice = s.refineSlice; bgCount = s.bgCount; bgKF = s.bgKF
+        ls0 = s.ls0; mu0 = s.mu0
+        nextID = s.nextID; splitTotal = s.splitTotal; insertedTotal = s.insertedTotal
+        geometryRevision += 1
         return true
     }
 
     func snapshot() -> GSOMapSnapshot {
-        GSOMapSnapshot(gaussians: g, mMu: mMu, vMu: vMu, mLs: mLs, vLs: vLs, mQ: mQ, vQ: vQ, mO: mO, vO: vO, mC: mC, vC: vC, steps: steps, revision: revision, mu1: mu1)
+        GSOMapSnapshot(gaussians: g, mMu: mMu, vMu: vMu, mLs: mLs, vLs: vLs, mQ: mQ, vQ: vQ, mO: mO, vO: vO, mC: mC, vC: vC, steps: steps, revision: revision, mu1: mu1,
+                       state: state, indep: indep, splitAccum: splitAccum, splitCount: splitCount, refineCount: refineCount, refineSlice: refineSlice,
+                       bgCount: bgCount, bgKF: bgKF, ls0: ls0, mu0: mu0, nextID: nextID, splitTotal: splitTotal, insertedTotal: insertedTotal)
     }
 
     // MARK: 렌더러·저장용 복사본
@@ -153,7 +178,7 @@ final class GSOMap {
     }
 }
 
-/// 롤백용 파라미터·모멘트 복사본.
+/// 롤백용 복사본: 파라미터·모멘트·step·revision과 상태·독립 증거·정밀화/분할 누적·ID 발급 기준.
 struct GSOMapSnapshot {
     var gaussians: GSOGaussians
     var mMu: [SIMD3<Float>], vMu: [SIMD3<Float>]
@@ -164,4 +189,17 @@ struct GSOMapSnapshot {
     var steps: [Int32]
     var revision: [UInt32]
     var mu1: [SIMD3<Float>]
+    var state: [UInt8]
+    var indep: [UInt8]
+    var splitAccum: [Float]
+    var splitCount: [UInt16]
+    var refineCount: [UInt16]
+    var refineSlice: [Int32]
+    var bgCount: [UInt8]
+    var bgKF: [Int32]
+    var ls0: [SIMD3<Float>]
+    var mu0: [SIMD3<Float>]
+    var nextID: UInt32
+    var splitTotal: Int
+    var insertedTotal: Int
 }

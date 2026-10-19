@@ -7,7 +7,7 @@ struct ExperimentHomeView: View {
     let onClose: () -> Void
 
     private enum Route: Hashable {
-        case realtime, surfaceV2, gaussianOpt, sensor, depth, coexist, results, guide
+        case realtime, surfaceV2, gaussianOpt, productGS, sensor, depth, coexist, results, guide
     }
 
     @State private var path: [Route] = []
@@ -24,6 +24,9 @@ struct ExperimentHomeView: View {
                             .font(.footnote).foregroundStyle(GonggiColors.textSecondary)
                         Text("검사하는 동안 카메라를 쓰고 기기가 따뜻해질 수 있어요. 기기가 많이 뜨거워지면 검사를 자동으로 끝내요.")
                             .font(.footnote).foregroundStyle(GonggiColors.textSecondary)
+                    }
+                    RecordSection(title: "실시간 제품 3DGS") {
+                        RecordChoiceRow(choice: .init(title: "실시간 제품 3DGS (기기 내)", line: "고정된 제품을 휴대폰으로 비추며 가우시안을 만들고, 다른 시점에서 비출수록 디테일이 좋아져요. 서버 없음", icon: "cube")) { path.append(.productGS) }
                     }
                     RecordSection(title: "실시간 공간 생성") {
                         RecordChoiceRow(choice: .init(title: "가우시안 최적화 (기기 내)", line: "촬영 중 기기에서 가우시안을 실제로 최적화해요. 서버 없음", icon: "sparkles")) { path.append(.gaussianOpt) }
@@ -62,6 +65,7 @@ struct ExperimentHomeView: View {
                 case .realtime: RealtimeGSView()
                 case .surfaceV2: RealtimeSurfaceV2View()
                 case .gaussianOpt: GaussianOptView()
+                case .productGS: ProductGSView()
                 case .sensor: ExperimentSensorView()
                 case .depth: ExperimentDepthView()
                 case .coexist: ExperimentCoexistView()

@@ -40,8 +40,9 @@ final class SV2ReplayRecorder {
     }
 
     /// 입력 한 장을 기록한다(부호화·쓰기는 별도 큐). 상한에 닿으면 이후는 기록하지 않고 센다.
-    func record(_ input: SV2Input) {
+    func record(_ input: SV2Input, mask: GSOProductMask? = nil) {
         let name = String(format: "f%06d.jpg", input.id)
+        let maskData = mask?.data()
         queue.async { [weak self] in
             guard let self, let h = self.handle else { return }
             if self.frames >= self.maxFrames || self.bytes >= self.maxBytes { self.dropped += 1; self.capReached = true; return }
@@ -49,6 +50,7 @@ final class SV2ReplayRecorder {
             guard let jpeg = SV2Image.encodeJPEG(rgba: rgba, width: input.hiWidth, height: input.hiHeight, quality: 0.9) else { self.dropped += 1; return }
             do {
                 try jpeg.write(to: self.directory.appendingPathComponent(name), options: .atomic)
+                if let md = maskData { try md.write(to: self.directory.appendingPathComponent(name.replacingOccurrences(of: ".jpg", with: ".mask")), options: .atomic); self.bytes += md.count }
                 let obj = expJSONSafe(Self.line(input, file: name))
                 if JSONSerialization.isValidJSONObject(obj), var d = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) {
                     d.append(0x0A)
@@ -79,6 +81,9 @@ final class SV2ReplayRecorder {
             let names = (try? fm.contentsOfDirectory(atPath: directory.path)) ?? []
             for n in names.sorted() where n.hasSuffix(".jpg") {
                 try w.add("frames/" + n, try Data(contentsOf: directory.appendingPathComponent(n)))
+            }
+            for n in names.sorted() where n.hasSuffix(".mask") {
+                try w.add("masks/" + n, try Data(contentsOf: directory.appendingPathComponent(n)))
             }
             try w.finish()
         } catch {
@@ -144,6 +149,14 @@ final class SV2ReplayReader {
                              orientation: (o["orientation"] as? String) ?? "", file: file))
         }
         entries = out
+    }
+
+    /// i번째 입력의 제품 마스크(제품 모드 연구 기록일 때만 있다).
+    func mask(at i: Int) -> GSOProductMask? {
+        guard i >= 0, i < entries.count else { return nil }
+        let name = entries[i].file.replacingOccurrences(of: ".jpg", with: ".mask")
+        guard let d = try? reader.read("masks/" + name) else { return nil }
+        return GSOProductMask(data: d)
     }
 
     /// i번째 입력을 복원한다. 영상은 JPEG를 풀어 RGB로 돌려준다.

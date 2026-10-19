@@ -90,6 +90,30 @@ def check_gso(zf: zipfile.ZipFile, app_prefix: str, info: dict) -> None:
     ok("Gaussian display Metal functions (rt_vertex, rt_fragment) compiled into default.metallib")
 
 
+def check_product_gs(zf: zipfile.ZipFile, app_prefix: str, info: dict) -> None:
+    """실시간 제품 3DGS가 이 IPA에 들어 있는지: Info.plist 표식 + 실행 파일에 제품 실험 진입점 문자열 + 표시 Metal 함수 + 깊이 모델은 --require-depth-model이 본다."""
+    ver = info.get("GonggiProductGSVersion")
+    if str(ver).strip() != "1":
+        fail(f"GonggiProductGSVersion is {ver!r}, expected '1'")
+    ok(f"GonggiProductGSVersion == {ver}")
+    exe = info.get("CFBundleExecutable")
+    if not exe:
+        fail("CFBundleExecutable missing from Info.plist")
+    binary = zf.read(app_prefix + exe)
+    for needle in ("실시간 제품 3DGS (기기 내)".encode("utf-8"), "고정된 제품 + 움직이는 휴대폰".encode("utf-8")):
+        if needle not in binary:
+            fail(f"product experiment string {needle.decode('utf-8')!r} not found in the app executable")
+    ok("product experiment entry point strings found in the app executable")
+    libs = [n for n in zf.namelist() if n.startswith(app_prefix) and n.endswith("default.metallib")]
+    if not libs:
+        fail("default.metallib missing from IPA")
+    blob = zf.read(libs[0])
+    for fn in (b"rt_vertex", b"rt_fragment"):
+        if fn not in blob:
+            fail(f"Metal function {fn.decode()} (Gaussian display path) not found in default.metallib")
+    ok("product display Metal functions (rt_vertex, rt_fragment) compiled into default.metallib")
+
+
 def check_release_inputs(info: dict, args: argparse.Namespace) -> None:
     """Optional checks of the real IPA Info.plist against the workflow inputs (only the ones given)."""
     if args.marketing_version is not None:
@@ -146,6 +170,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--require-sensor-experiments", action="store_true")
     ap.add_argument("--require-depth-model", action="store_true", help="IPA must contain the Core ML depth prior (compiled .mlmodelc or .mlpackage)")
     ap.add_argument("--require-surface-v2", action="store_true", help="IPA must contain the on-device surface V2 (Info.plist marker + compiled Metal functions)")
+    ap.add_argument("--require-product-gs", action="store_true", help="IPA must contain the real-time product 3DGS experiment (Info.plist marker + entry point strings + display Metal functions)")
     ap.add_argument("--require-gso", action="store_true", help="IPA must contain the on-device Gaussian optimisation experiment (Info.plist marker + display Metal functions)")
     return ap.parse_args()
 
@@ -172,6 +197,8 @@ def main() -> None:
             check_surface_v2(zf, app_prefix, info)
         if args.require_gso:
             check_gso(zf, app_prefix, info)
+        if args.require_product_gs:
+            check_product_gs(zf, app_prefix, info)
 
         icon_name = info.get("CFBundleIconName")
         if not icon_name:

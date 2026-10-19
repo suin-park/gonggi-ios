@@ -46,6 +46,50 @@ struct GSOConfig: Equatable {
     var splitBudget = 120                   // 정밀화 한 번에 분할할 수 있는 가우시안 수 상한
     var splitMinScale: Float = 0.006        // 이보다 작은 가우시안은 분할하지 않는다(m)
     var seed: UInt64 = 7
+    /// 제품 모드(nil이면 공간 경로). 마스크·3D 범위·제품 기준 검증과 정밀화 배분을 켠다.
+    var product: GSOProductConfig?
+
+    /// 실시간 제품 3DGS 기본 설정(공통 엔진 + 제품 마스크 + 형상·재방문 보존 수정 + 원본 고해상도 정밀화/선택적 분할).
+    static func productDefault() -> GSOConfig {
+        var c = GSOConfig()
+        let pc = GSOProductConfig()
+        c.product = pc
+        c.maxGaussians = 40_000
+        c.insertBudget = 1500
+        c.opt.bgFlagViews = pc.bgFlagViews
+        c.opt.bgOpacityLogitMin = pc.bgFloorLogit
+        c.refineEverySlices = 1
+        c.maxViews = 120
+        return c
+    }
+
+    /// 제품 마스크를 적용한 공통 엔진 기준선(비교 P0): 마스크 손실·삽입은 쓰되 3.0(21)의 갱신(깊이 항, 낮은 불투명도 하한, 검증·복구·정밀화 없음).
+    static func productBaseline() -> GSOConfig {
+        var c = productDefault()
+        c.validate = false
+        c.frontRecovery = false
+        c.hiRefine = false
+        c.opt.lambdaDepth = 0.8
+        c.opt.alphaWeightAnchor = 0
+        c.opt.opacityLogitMin = -4
+        c.opt.legacyDepthTerm = true
+        return c
+    }
+
+    /// 형상·재방문 보존 수정 경로(비교 P1): 검증·롤백, 앞쪽 오표면 복구, 새 깊이 항. 정밀화·분할 없음.
+    static func productFixes() -> GSOConfig {
+        var c = productDefault()
+        c.hiRefine = false
+        return c
+    }
+
+    /// 원본 고해상도 정밀화(분할 선택): 비교 P2(분할 켬) / P3(분할 끔).
+    static func productRefine(split: Bool) -> GSOConfig {
+        var c = productDefault()
+        c.hiRefine = true
+        if !split { c.splitBudget = 0 }
+        return c
+    }
 
     /// TestFlight 3.0(21)의 동작(비교 A). 새 결함 수정과 정밀화를 모두 끈다.
     static func build21() -> GSOConfig {
@@ -82,10 +126,29 @@ final class GSOView {
     var errCells: [Float]        // 8×6 칸의 최근 광도 오차(정밀화 창 선택)
     var texCells: [Float]        // 8×6 칸의 영상 기울기 에너지(세부 무늬가 있는 곳)
     var half: (camera: GSOCamera, target: [Float])?    // 검증용 반해상도(지연 생성)
-    init(id: Int, camera: GSOCamera, target: [Float], anchors: [Float], gain: Float, timestamp: Double, kHi: RTIntrinsics?) {
+    // 제품 모드
+    let labels: [UInt8]?                 // 학습 격자의 마스크 라벨(0 불확실, 1 제품, 2 배경)
+    let maskFull: GSOProductMask?        // 마스크 격자(고해상도 창의 라벨을 만드는 근거)
+    var cellProduct: [Float]             // 8×6 칸의 제품(확실) 화소 비율
+    var refineCells: [UInt16]            // 칸별 원본 창 정밀화 횟수(검증을 통과한 것만)
+    var refineLast: [Int32]              // 칸별 마지막 정밀화 묶음 번호
+    var valCrop: GSOValCrop?             // 검증에 쓰는 고정 고해상도 창(처음 필요할 때 원본에서 직접 잘라 둔다)
+    var valCropFailed = false
+    init(id: Int, camera: GSOCamera, target: [Float], anchors: [Float], gain: Float, timestamp: Double, kHi: RTIntrinsics?,
+         labels: [UInt8]? = nil, maskFull: GSOProductMask? = nil) {
         self.id = id; self.camera = camera; self.target = target; self.anchors = anchors; self.gain = gain; self.timestamp = timestamp; self.kHi = kHi
+        self.labels = labels; self.maskFull = maskFull
         errCells = [Float](repeating: 0, count: GSOView.cellsX * GSOView.cellsY)
         texCells = GSOView.textureCells(target: target, width: camera.width, height: camera.height)
+        refineCells = [UInt16](repeating: 0, count: GSOView.cellsX * GSOView.cellsY)
+        refineLast = [Int32](repeating: -1, count: GSOView.cellsX * GSOView.cellsY)
+        if let labels {
+            var prod = [Float](repeating: 0, count: camera.width * camera.height)
+            for i in 0..<labels.count where labels[i] == GSOProductMask.product { prod[i] = 1 }
+            cellProduct = GSOGrid.cellMeans(prod, width: camera.width, height: camera.height, cellsX: GSOView.cellsX, cellsY: GSOView.cellsY)
+        } else {
+            cellProduct = [Float](repeating: 1, count: GSOView.cellsX * GSOView.cellsY)
+        }
     }
     static let cellsX = 8, cellsY = 6
 
@@ -137,6 +200,22 @@ struct GSOKFRecord {
     var gaps: [String: Int] = [:]
     var candidatePixels = 0
     var resolutions: [String: Int] = [:]
+    var maskTrusted = true
+    var maskNote = ""
+    var maskIoU: Float = 0
+    var productPixels = 0
+    var boundsPoints = 0
+    var boundsValid = false
+    var outOfBounds = 0
+}
+
+/// 고정 고해상도 검증 창: 원본(보관한 960폭 JPEG)에서 직접 자른 목표와 같은 창의 라벨·카메라.
+struct GSOValCrop {
+    var x0: Int, y0: Int, w: Int, h: Int
+    var camera: GSOCamera
+    var target: [Float]
+    var labels: [UInt8]
+    var edge: [Bool]
 }
 
 /// 최적화 묶음(slice) 하나의 결과.
@@ -174,6 +253,29 @@ struct GSOSliceRecord {
     var refineLossAfter: Float = 0
     var splits = 0
     var refineSkipped = ""
+    // 제품 모드
+    var valHiL1Before: Float = 0
+    var valHiL1After: Float = 0
+    var valEdgeBefore: Float = 0
+    var valEdgeAfter: Float = 0
+    var valSilBefore: Float = 0
+    var valSilAfter: Float = 0
+    var valLeakBefore: Float = 0
+    var valLeakAfter: Float = 0
+    var refineCell = ""                      // 정밀화에 고른 창의 종류: error / unrefined / stale
+    var splitsRolledBack = 0
+    var bgLeak: Float = 0
+    var productPixels = 0
+}
+
+/// 제품 정밀화 진행(검증을 통과한 정밀화만 센다).
+struct GSORefineProgress {
+    var cellsTotal = 0           // 고해상도가 있는 시점들의 제품 칸(제품 비율 ≥ 기준) 수
+    var cellsRefined = 0         // 그중 한 번 이상 정밀화된 칸
+    var gaussiansTotal = 0
+    var gaussiansRefined = 0     // 정밀화에서 gradient를 받은 적 있는 가우시안
+    var fractionCells: Float { cellsTotal > 0 ? Float(cellsRefined) / Float(cellsTotal) : 0 }
+    var fractionGaussians: Float { gaussiansTotal > 0 ? Float(gaussiansRefined) / Float(gaussiansTotal) : 0 }
 }
 
 final class GSOPipeline {
@@ -194,7 +296,7 @@ final class GSOPipeline {
     private var valScratch: GSOForwardState?
     private var dLdC: [Float] = [], dLdD: [Float] = [], dLdA: [Float] = []
     private var valIDs: [Int] = []
-    private var valCache: [Int: (version: Int, l1: Float, alpha: Float)] = [:]
+    private var valCache: [Int: (version: Int, metric: ValMetric)] = [:]
     private var mapEpoch = 0                  // 파이프라인이 지도를 바꿀 때마다 오른다(검증 값 캐시 무효화)
     private(set) var processed = 0
     private(set) var firstAlignedKF: Int?
@@ -206,9 +308,16 @@ final class GSOPipeline {
     private(set) var totalSplits = 0
     private(set) var lastRecord: GSOKFRecord?
     private(set) var resolutionInfo: [String: Int] = [:]
+    private(set) var productBounds = GSOProductBounds()
+    private(set) var maskSkipped = 0
+    private(set) var lastProductZ: Float?
+    private var pendingRefine: (view: GSOView, cell: Int)?
+    private var refineCounter = 0
     var minSharpness: Float = 2e-5
     /// 테스트 전용: 최적화 직후·검증 직전에 지도를 바꿔 '악화하는 갱신'을 재현한다(검증·롤백이 짧은 묶음에서도 작동하는지 확인).
     var testMutateBeforeValidation: ((GSOMap) -> Void)?
+    /// 테스트 전용: 정밀화에서 gradient를 받은 가우시안을 임계값·조건 없이 분할한다(분할 이후 검증·롤백 상태 복구를 확실히 시험하려고).
+    var testForceSplitAll = false
 
     init(config: GSOConfig = GSOConfig()) {
         self.config = config
@@ -225,7 +334,7 @@ final class GSOPipeline {
     // MARK: 입력 처리
 
     /// 한 키프레임을 처리한다(깊이·삽입·증거·고해상도 보관). 최적화는 optimizeSlice로 따로 한다.
-    func process(_ input: SV2Input, mono: GSOMonoProvider?, nowHost: () -> Double = { ExpSys.hostNow() }) -> GSOKFRecord {
+    func process(_ input: SV2Input, mono: GSOMonoProvider?, mask: GSOProductMask? = nil, nowHost: () -> Double = { ExpSys.hostNow() }) -> GSOKFRecord {
         var rec = GSOKFRecord(id: input.id, captureHost: input.captureHost)
         let t0 = nowHost()
         if let ls = lastSegment, ls != input.segment { ring.removeAll() }
@@ -246,6 +355,24 @@ final class GSOPipeline {
         let kTrain = input.kFull.scaled(toWidth: train.width, height: train.height)
         let cam = GSOCamera(pose: input.pose, k: kTrain)
         let kHi = input.kFull.scaled(toWidth: input.hiWidth, height: input.hiHeight)
+        // 제품 모드: 신뢰할 수 있는 마스크가 없으면 이 프레임으로 가우시안을 만들거나 감독하지 않는다(경계·가림·흐림·추적 실패를 근거로 쓰지 않는다).
+        var labels: [UInt8]?
+        if config.product != nil {
+            guard let mk = mask, mk.trusted else {
+                ring.append(frame)
+                if ring.count > 8 { ring.removeFirst(ring.count - 8) }
+                rec.skipped = "maskUncertain"
+                rec.maskTrusted = false; rec.maskNote = mask?.note ?? "noMask"; rec.maskIoU = mask?.iou ?? 0
+                rec.gaps["maskUncertain", default: 0] += 1
+                rec.totalMs = (nowHost() - t0) * 1000
+                maskSkipped += 1
+                lastRecord = rec
+                return rec
+            }
+            labels = mk.resampled(width: train.width, height: train.height)
+            rec.maskNote = mk.note; rec.maskIoU = mk.iou
+            rec.productPixels = labels!.reduce(0) { $0 + ($1 == GSOProductMask.product ? 1 : 0) }
+        }
         // 노출 정규화: 지도 색과 무관하게 키프레임 평균 밝기만으로 정한다(처음 5장의 중앙값이 기준). 지도 색으로 노출을 추정하는 되먹임이 없다.
         var gain: Float = 1
         if config.exposureNormalize {
@@ -292,13 +419,38 @@ final class GSOPipeline {
         }
         rec.anchors = nAnch
         // 학습 격자로 옮긴다. 격자 크기가 같으면 그대로, 다르면 칸당 한 화소로 옮긴다(보간·복제 없음).
-        let anchorsTrain: [Float], flagsTrain: [Bool]
+        var anchorsTrain: [Float], flagsTrain: [Bool]
         if gw == train.width && gh == train.height {
             anchorsTrain = anchorZ; flagsTrain = anchorFlag
         } else {
             let sc = GSOGrid.scatterAnchors(z: anchorZ, flags: anchorFlag, gw: gw, gh: gh, step: depth.step, smallWidth: small.width, smallHeight: small.height,
                                             toWidth: train.width, height: train.height)
             anchorsTrain = sc.z; flagsTrain = sc.flags
+        }
+        // 제품 모드: 제품(확실) 안의 앵커만 쓴다. 3D 범위는 이 앵커들로 만든다(2D 마스크만으로 부피를 확정하지 않는다).
+        var frameMedianZ: Float?
+        if let lab = labels, let pc = config.product {
+            var zs: [Float] = []
+            for i in 0..<lab.count {
+                if lab[i] != GSOProductMask.product { anchorsTrain[i] = 0; flagsTrain[i] = false } else if anchorsTrain[i] > 0 { zs.append(anchorsTrain[i]) }
+            }
+            if zs.count >= 12 { zs.sort(); frameMedianZ = zs[zs.count / 2]; lastProductZ = frameMedianZ } else { frameMedianZ = lastProductZ }
+            let fx = cam.fx, fy = cam.fy, cx = cam.cx, cy = cam.cy
+            var by = 0
+            while by < train.height {
+                var bx = 0
+                while bx < train.width {
+                    let z = anchorsTrain[by * train.width + bx]
+                    if z > 0 {
+                        let pc3 = SIMD3<Float>((Float(bx) - cx) / fx * z, (Float(by) - cy) / fy * z, z)
+                        productBounds.add(cam.center + cam.rcw.transpose * pc3, view: input.id)
+                    }
+                    bx += 2
+                }
+                by += 2
+            }
+            _ = pc
+            rec.boundsPoints = productBounds.points.count; rec.boundsValid = productBounds.isValid
         }
         let t2 = nowHost()
         rec.stereoMs = (t2 - tS) * 1000
@@ -351,9 +503,11 @@ final class GSOPipeline {
                 for x in 0..<train.width where x % stride == stride / 2 {
                     let i = y * train.width + x
                     candidates += 1
+                    if let lab = labels, lab[i] != GSOProductMask.product { gap(lab[i] == GSOProductMask.background ? "maskBackground" : "maskBand"); continue }
                     guard dense[i] > 0 else { gap(noDepthReason); continue }
                     let zs = analysis.zSmooth[i]
                     guard zs > config.depth.minZ, zs < config.depth.maxZ else { gap("outOfRange"); continue }
+                    if let pc = config.product, !productBounds.isValid, let mz = frameMedianZ, abs(zs - mz) / mz > pc.depthGateRel { gap("outOfBounds"); continue }
                     if analysis.edge[i], !config.depth.insertEdges { gap("boundaryCut"); continue }
                     guard let st else { select[i] = true; continue }
                     let a = 1 - st.transmittance[i]
@@ -378,8 +532,22 @@ final class GSOPipeline {
             }
             let tE = nowHost()
             if let st { updateEvidence(state: st, anchors: anchorsTrain, camera: cam, kf: Int32(input.id), rec: &rec) }
+            if let st, let lab = labels { updateMaskEvidence(state: st, labels: lab, width: train.width, height: train.height, kf: Int32(input.id)) }
             rec.evidenceMs = (nowHost() - tE) * 1000
             var news = GSODepthInit.makeGaussians(dense: analysis, camera: cam, select: select, color: target, stereoAnchor: flagsTrain, params: config.depth)
+            if let pc = config.product {
+                // 3D 범위 밖은 만들지 않는다. 범위가 확정되기 전에는 스테레오 확인 없는(단안만) 가우시안을 키프레임당 상한까지만 만든다(임시 상태).
+                var kept: [GSONewGaussian] = []
+                kept.reserveCapacity(news.count)
+                var monoOnly = 0
+                for n in news {
+                    if productBounds.isValid, !productBounds.contains(n.mu) { rec.outOfBounds += 1; continue }
+                    if !productBounds.isValid, !n.stereoAnchored { monoOnly += 1; if monoOnly > pc.preBoundsMonoCap { rec.outOfBounds += 1; continue } }
+                    kept.append(n)
+                }
+                if rec.outOfBounds > 0 { rec.gaps["outOfBounds", default: 0] += rec.outOfBounds }
+                news = kept
+            }
             if news.count > config.insertBudget {
                 // 균등하게 솎는다(결정적).
                 var picked: [GSONewGaussian] = []
@@ -414,7 +582,7 @@ final class GSOPipeline {
 
         // 5. 시점 보관(최적화 대상). 평가용 시점은 여기 들어오지 않는다.
         views.append(GSOView(id: input.id, camera: cam, target: target, anchors: anchorsTrain, gain: gain, timestamp: input.timestamp,
-                             kHi: hiKept ? kHi : nil))
+                             kHi: hiKept ? kHi : nil, labels: labels, maskFull: config.product != nil ? mask : nil))
         if processed % 20 == 1 { valIDs.append(input.id); if valIDs.count > 6 { valIDs.remove(at: 1) } }
         if views.count > config.maxViews {
             // 최근 창과 검증 시점은 유지하고, 오래된 것 중 하나를 결정적으로 버린다.
@@ -455,6 +623,24 @@ final class GSOPipeline {
             return true
         }
         return false
+    }
+
+    /// 제품 모드: 확실한 배경 화소에 투영된 가우시안을 서로 다른 시점에서 센다. 반복해서 확실한 배경에 놓인 가우시안은 배경으로 표시되어 알파 하한이 낮아지고 제거 대상이 된다.
+    /// 제품 3D 범위 안의 안정(독립 증거 3회 이상) 가우시안은 마스크 오류일 수 있으므로 세지 않는다. 제품 안(확실)에서 다시 확인되면 표시를 푼다.
+    private func updateMaskEvidence(state st: GSOForwardState, labels: [UInt8], width w: Int, height h: Int, kf: Int32) {
+        for r in 0..<st.nv {
+            let i = Int(st.orig[r])
+            let u = Int(st.proj[r * 9 + 1].rounded()), v = Int(st.proj[r * 9 + 2].rounded())
+            if u < 0 || v < 0 || u >= w || v >= h { continue }
+            let lab = labels[v * w + u]
+            if lab == GSOProductMask.background {
+                if map.bgKF[i] == kf { continue }
+                if map.state[i] == GSOState.stable.rawValue, productBounds.isValid, productBounds.contains(map.g.mu[i]) { continue }
+                map.bgCount[i] = min(250, map.bgCount[i] + 1); map.bgKF[i] = kf
+            } else if lab == GSOProductMask.product, map.bgCount[i] > 0 {
+                map.bgCount[i] = 0
+            }
+        }
     }
 
     /// 이번 키프레임의 스테레오 확인 깊이로 보이는 가우시안의 독립 증거를 센다.
@@ -524,7 +710,17 @@ final class GSOPipeline {
 
     // 갱신 전후 검증 ------------------------------------------------------------------------------
 
-    private struct ValMetric { var l1: Float; var alpha: Float }
+    private struct ValMetric {
+        var l1: Float
+        var alpha: Float
+        var hiL1: Float = 0               // 제품 모드: 고정 고해상도 창의 제품 화소 L1
+        var hiEdge: Float = 0             // 같은 창에서 경계·무늬(기울기가 큰) 제품 화소 L1
+        var hiValid = false
+        var edgeValid = false
+        var leak: Float = 0               // 확실한 배경 화소의 평균 알파(배경 누출)
+        var depthErr: Float = 0           // 앵커가 있는 제품 화소의 정규화 깊이 상대 오차(깊이·가림 일관성)
+        var depthValid = false
+    }
 
     /// 검증 시점: 가장 최근 키프레임 + 고정 검증 집합에서 번갈아 고른 과거 시점(최대 3개). 같은 시점으로 갱신 전후를 비교한다.
     private func validationSet() -> [GSOView] {
@@ -553,30 +749,112 @@ final class GSOPipeline {
     }
 
     private func valMetric(_ v: GSOView) -> ValMetric {
-        if let c = valCache[v.id], c.version == mapEpoch { return ValMetric(l1: c.l1, alpha: c.alpha) }
+        if let c = valCache[v.id], c.version == mapEpoch { return c.metric }
+        let eps2 = config.opt.charbonnierEps * config.opt.charbonnierEps
+        if let pc = config.product, let lab = v.labels {
+            // 제품 기준 검증: 학습 해상도의 제품 화소 L1·실루엣(제품 화소 평균 알파)·배경 누출·깊이 일관성 + 고정 고해상도 창의 제품 RGB 오차와 경계 오차.
+            // 저해상도 평균만으로 고해상도 디테일 보존을 판정하지 않는다.
+            let st = GSORaster.forward(map.g, camera: v.camera, rules: config.rules, into: valScratch)
+            valScratch = st
+            var s: Float = 0, np = 0, sil: Float = 0, leak: Float = 0, nb = 0, dsum: Float = 0, dn = 0
+            for p in 0..<lab.count {
+                let a = 1 - st.transmittance[p]
+                if lab[p] == GSOProductMask.product {
+                    for c in 0..<3 { let r = st.image[p * 3 + c] - v.target[p * 3 + c]; s += (r * r + eps2).squareRoot() }
+                    np += 1; sil += a
+                    let z = v.anchors[p]
+                    if z > 0, a >= 0.3 { dsum += abs(st.depth[p] / a - z) / z; dn += 1 }
+                } else if lab[p] == GSOProductMask.background {
+                    leak += a; nb += 1
+                }
+            }
+            var m = ValMetric(l1: np > 0 ? s / Float(np * 3) : 0, alpha: np > 0 ? sil / Float(np) : 0)
+            m.leak = nb > 0 ? leak / Float(nb) : 0
+            if dn >= 8 { m.depthErr = dsum / Float(dn); m.depthValid = true }
+            if pc.hiValidation, let crop = hiCrop(for: v) {
+                let st2 = GSORaster.forward(map.g, camera: crop.camera, rules: config.rules)
+                var hs: Float = 0, hn = 0, es: Float = 0, en = 0
+                for p in 0..<crop.labels.count where crop.labels[p] == GSOProductMask.product {
+                    var d: Float = 0
+                    for c in 0..<3 { let r = st2.image[p * 3 + c] - crop.target[p * 3 + c]; d += (r * r + eps2).squareRoot() }
+                    d /= 3
+                    hs += d; hn += 1
+                    if crop.edge[p] { es += d; en += 1 }
+                }
+                if hn >= 200 { m.hiL1 = hs / Float(hn); m.hiValid = true }
+                if en >= 60 { m.hiEdge = es / Float(en); m.edgeValid = true }
+            }
+            valCache[v.id] = (mapEpoch, m)
+            return m
+        }
         let (cam, tgt) = halfView(v)
         let st = GSORaster.forward(map.g, camera: cam, rules: config.rules, into: valScratch)
         valScratch = st
         var s: Float = 0
-        let eps2 = config.opt.charbonnierEps * config.opt.charbonnierEps
         for i in 0..<tgt.count { let r = st.image[i] - tgt[i]; s += (r * r + eps2).squareRoot() }
         var a: Float = 0
         for t in st.transmittance { a += 1 - t }
         let m = ValMetric(l1: s / Float(tgt.count), alpha: a / Float(max(1, st.transmittance.count)))
-        valCache[v.id] = (mapEpoch, m.l1, m.alpha)
+        valCache[v.id] = (mapEpoch, m)
         return m
     }
 
+    /// 검증용 고정 고해상도 창: 제품 비율이 높고 무늬가 많은 칸을 한 번 골라 원본(보관한 960폭 JPEG)에서 직접 잘라 둔다. 이후 갱신 전후가 같은 창을 쓴다.
+    private func hiCrop(for v: GSOView) -> GSOValCrop? {
+        if let c = v.valCrop { return c }
+        if v.valCropFailed { return nil }
+        guard let kHi = v.kHi, let mk = v.maskFull, let hs = hiStore.size(of: v.id) else { v.valCropFailed = true; return nil }
+        var best = -1
+        var bestScore: Float = -1
+        for minFrac: Float in [0.6, 0.25] {
+            for c in 0..<v.texCells.count where v.cellProduct[c] >= minFrac {
+                let sc = v.texCells[c] * v.cellProduct[c] + 1e-6
+                if sc > bestScore { bestScore = sc; best = c }
+            }
+            if best >= 0 { break }
+        }
+        guard best >= 0 else { v.valCropFailed = true; return nil }
+        let cw = min(config.refineCropW, hs.w), ch = min(config.refineCropH, hs.h)
+        let cx = (Float(best % GSOView.cellsX) + 0.5) / Float(GSOView.cellsX) * Float(hs.w)
+        let cy = (Float(best / GSOView.cellsX) + 0.5) / Float(GSOView.cellsY) * Float(hs.h)
+        let x0 = max(0, min(hs.w - cw, Int(cx) - cw / 2)), y0 = max(0, min(hs.h - ch, Int(cy) - ch / 2))
+        guard let tgt = hiStore.crop(id: v.id, x0: x0, y0: y0, w: cw, h: ch, gain: v.gain) else { v.valCropFailed = true; return nil }
+        let labs = mk.cropLabels(x0: x0, y0: y0, w: cw, h: ch, fullWidth: hs.w, fullHeight: hs.h)
+        var edge = [Bool](repeating: false, count: cw * ch)
+        func luma(_ k: Int) -> Float { 0.299 * tgt[k * 3] + 0.587 * tgt[k * 3 + 1] + 0.114 * tgt[k * 3 + 2] }
+        if cw > 2, ch > 2 {
+            for y in 1..<(ch - 1) { for x in 1..<(cw - 1) {
+                let k = y * cw + x
+                if abs(luma(k + 1) - luma(k - 1)) + abs(luma(k + cw) - luma(k - cw)) > 0.12 { edge[k] = true }
+            }}
+        }
+        let cam = GSOCamera(pose: v.camera.pose, k: GSOGrid.cropIntrinsics(kHi, x0: x0, y0: y0, width: cw, height: ch))
+        let crop = GSOValCrop(x0: x0, y0: y0, w: cw, h: ch, camera: cam, target: tgt, labels: labs, edge: edge)
+        v.valCrop = crop
+        return crop
+    }
+
     /// 갱신 전후를 비교해 최근/과거 시점 어느 하나라도 악화되면 이유를 돌려준다(nil이면 통과).
+    /// 제품 모드는 제품 화소 L1·실루엣·배경 누출·깊이 일관성과 고정 고해상도 창의 RGB·경계 오차를 함께 본다.
     private func validationVerdict(before: [Int: ValMetric], after: [Int: ValMetric]) -> String? {
         var meanDelta: Float = 0
         var n: Float = 0
+        let pc = config.product
+        func f(_ v: Float) -> String { String(format: "%.3f", v) }
         for (id, b) in before {
             guard let a = after[id] else { continue }
             let dl = a.l1 - b.l1
             meanDelta += dl; n += 1
-            if dl > max(config.valL1Abs, config.valL1Rel * b.l1) { return "view \(id) L1 +\(String(format: "%.3f", dl))" }
-            if b.alpha - a.alpha > config.valAlphaDrop { return "view \(id) alpha -\(String(format: "%.3f", b.alpha - a.alpha))" }
+            let absT = pc?.valTrainL1Abs ?? config.valL1Abs, relT = pc?.valTrainL1Rel ?? config.valL1Rel
+            if dl > max(absT, relT * b.l1) { return "view \(id) L1 +\(f(dl))" }
+            let alphaT = pc?.valSilhouetteDrop ?? config.valAlphaDrop
+            if b.alpha - a.alpha > alphaT { return "view \(id) alpha -\(f(b.alpha - a.alpha))" }
+            if let pc {
+                if a.leak - b.leak > pc.valBgLeakRise { return "view \(id) bgLeak +\(f(a.leak - b.leak))" }
+                if b.hiValid, a.hiValid, a.hiL1 - b.hiL1 > max(pc.valHiL1Abs, pc.valHiL1Rel * b.hiL1) { return "view \(id) hiL1 +\(f(a.hiL1 - b.hiL1))" }
+                if b.edgeValid, a.edgeValid, a.hiEdge - b.hiEdge > max(pc.valHiEdgeAbs, pc.valHiEdgeRel * b.hiEdge) { return "view \(id) hiEdge +\(f(a.hiEdge - b.hiEdge))" }
+                if b.depthValid, a.depthValid, a.depthErr - b.depthErr > pc.valDepthRise { return "view \(id) depth +\(f(a.depthErr - b.depthErr))" }
+            }
         }
         if n > 0, meanDelta / n > config.valMeanL1Abs { return "mean L1 +\(String(format: "%.4f", meanDelta / n))" }
         return nil
@@ -612,15 +890,29 @@ final class GSOPipeline {
             let st = GSORaster.forward(map.g, camera: view.camera, rules: config.rules, into: scratchState)
             scratchState = st
             let t1 = now()
-            let stats = GSOLoss.evaluate(state: st, target: view.target, anchors: view.anchors, config: config.opt,
+            let stats: GSOLossStats
+            if let pc = config.product, let lab = view.labels {
+                stats = GSOLoss.evaluateMasked(state: st, target: view.target, labels: lab, anchors: view.anchors, config: config.opt,
+                                               depthWeight: config.geometryOptimization ? config.opt.lambdaDepth : 0,
+                                               alphaWeight: config.geometryOptimization ? config.opt.alphaWeightAnchor : 0,
+                                               bgAlphaWeight: pc.bgAlphaWeight, dLdC: &dLdC, dLdD: &dLdD, dLdA: &dLdA)
+                rec.bgLeak = stats.backgroundLeak; rec.productPixels = stats.productPixels
+            } else {
+                stats = GSOLoss.evaluate(state: st, target: view.target, anchors: view.anchors, config: config.opt,
                                          depthWeight: config.geometryOptimization ? config.opt.lambdaDepth : 0,
                                          alphaWeight: config.geometryOptimization ? config.opt.alphaWeightAnchor : 0,
                                          dLdC: &dLdC, dLdD: &dLdD, dLdA: &dLdA)
+            }
             guard stats.finite else { rec.nonFinite += 1; continue }
-            // 정밀화 창 선택용 오차 칸 갱신
+            // 정밀화 창 선택용 오차 칸 갱신(제품 모드는 제품 화소의 오차를 제품 비율로 정규화한다)
             var err = [Float](repeating: 0, count: view.camera.width * view.camera.height)
-            for p in 0..<err.count { err[p] = (abs(st.image[p * 3] - view.target[p * 3]) + abs(st.image[p * 3 + 1] - view.target[p * 3 + 1]) + abs(st.image[p * 3 + 2] - view.target[p * 3 + 2])) / 3 }
-            view.errCells = GSOGrid.cellMeans(err, width: view.camera.width, height: view.camera.height, cellsX: GSOView.cellsX, cellsY: GSOView.cellsY)
+            for p in 0..<err.count {
+                if let lab = view.labels, lab[p] != GSOProductMask.product { continue }
+                err[p] = (abs(st.image[p * 3] - view.target[p * 3]) + abs(st.image[p * 3 + 1] - view.target[p * 3 + 1]) + abs(st.image[p * 3 + 2] - view.target[p * 3 + 2])) / 3
+            }
+            var cells = GSOGrid.cellMeans(err, width: view.camera.width, height: view.camera.height, cellsX: GSOView.cellsX, cellsY: GSOView.cellsY)
+            if view.labels != nil { for c in 0..<cells.count { cells[c] = view.cellProduct[c] > 0.05 ? cells[c] / view.cellProduct[c] : 0 } }
+            view.errCells = cells
             let grads = GSORaster.backward(map.g, camera: view.camera, state: st, dLdC: dLdC, dLdD: dLdD, dLdA: dLdA)
             let t2 = now()
             movedTotal += optimizer.step(map: map, grads: grads, geometry: config.geometryOptimization)
@@ -647,6 +939,11 @@ final class GSOPipeline {
             rec.refineSkipped = "off"
         }
 
+        // 분할은 검증 전에 한다: 검증이 분할로 늘어난 가우시안까지 포함해 판정하고, 악화하면 자식 추가·ID 발급까지 함께 되돌린다.
+        if config.hiRefine, config.splitBudget > 0, !refineTouched.isEmpty {
+            rec.splits = splitSelected(touched: refineTouched)
+            if rec.splits > 0 { mapEpoch += 1 }
+        }
         testMutateBeforeValidation?(map)
         // 갱신 전후 검증 → 악화하면 파라미터·Adam 모멘트·step 등을 함께 되돌린다
         var reject: String?
@@ -661,6 +958,16 @@ final class GSOPipeline {
             rec.valL1After = after.values.map { $0.l1 }.reduce(0, +) / Float(max(1, after.count))
             rec.valAlphaBefore = before.values.map { $0.alpha }.reduce(0, +) / Float(max(1, before.count))
             rec.valAlphaAfter = after.values.map { $0.alpha }.reduce(0, +) / Float(max(1, after.count))
+            func avg(_ d: [Int: ValMetric], _ f: (ValMetric) -> Float?) -> Float {
+                let v = d.values.compactMap(f)
+                return v.isEmpty ? 0 : v.reduce(0, +) / Float(v.count)
+            }
+            if config.product != nil {
+                rec.valHiL1Before = avg(before) { $0.hiValid ? $0.hiL1 : nil }; rec.valHiL1After = avg(after) { $0.hiValid ? $0.hiL1 : nil }
+                rec.valEdgeBefore = avg(before) { $0.edgeValid ? $0.hiEdge : nil }; rec.valEdgeAfter = avg(after) { $0.edgeValid ? $0.hiEdge : nil }
+                rec.valSilBefore = rec.valAlphaBefore; rec.valSilAfter = rec.valAlphaAfter
+                rec.valLeakBefore = avg(before) { $0.leak }; rec.valLeakAfter = avg(after) { $0.leak }
+            }
             reject = validationVerdict(before: before, after: after)
         } else if config.validate {
             rec.validationSkipped = true; validationSkips += 1
@@ -671,13 +978,15 @@ final class GSOPipeline {
         }
         if let why = reject, map.restore(snap) {
             rec.rolledBack = true; rec.rollbackReason = why; rollbacks += 1
+            rec.splitsRolledBack = rec.splits; totalSplits -= rec.splits; rec.splits = 0
+            pendingRefine = nil
             map.version += 1; mapEpoch += 1
             optimizer.lrScale = max(0.125, optimizer.lrScale * 0.5)
             valCache.removeAll()
         } else {
             optimizer.lrScale = min(1, optimizer.lrScale * 1.25)
-            // 통과: 선택적 분할
-            if config.hiRefine, !refineTouched.isEmpty { rec.splits = splitSelected(touched: refineTouched); if rec.splits > 0 { mapEpoch += 1 } }
+            if let p = pendingRefine { p.view.refineCells[p.cell] &+= 1; p.view.refineLast[p.cell] = Int32(sliceCounter) }   // 검증을 통과한 정밀화만 진행으로 센다
+            pendingRefine = nil
             map.version += 1
         }
         rec.moved = movedTotal
@@ -695,15 +1004,23 @@ final class GSOPipeline {
         // 시점 선택: 절반은 최근(고해상도가 있는 가장 최근), 절반은 과거
         let withHi = views.filter { $0.kHi != nil && hiStore.has($0.id) }
         guard !withHi.isEmpty else { rec.refineSkipped = "noHiRes"; return [] }
-        let view: GSOView = (sliceCounter / config.refineEverySlices) % 2 == 0 ? withHi.last! : withHi[nextRandom() % withHi.count]
-        guard let kHi = view.kHi, let hs = hiStore.size(of: view.id) else { rec.refineSkipped = "decodeFailed"; return [] }
-        // 창 선택: 오차 × (0.25 + 무늬)가 가장 큰 칸
+        let view: GSOView
         var bestCell = 0
-        var bestScore: Float = -1
-        for c in 0..<view.errCells.count {
-            let s = view.errCells[c] * (0.25 + view.texCells[c] * 8)
-            if s > bestScore { bestScore = s; bestCell = c }
+        if config.product != nil {
+            // 제품 모드: 오차 우선만 반복하지 않고 아직 정밀화되지 않은 칸과 오래 갱신하지 않은 칸에도 배분한다(제품 비율이 낮은 칸은 제외).
+            guard let pick = pickRefineTarget(withHi) else { rec.refineSkipped = "noProductCell"; return [] }
+            view = pick.view; bestCell = pick.cell; rec.refineCell = pick.kind
+        } else {
+            view = (sliceCounter / config.refineEverySlices) % 2 == 0 ? withHi.last! : withHi[nextRandom() % withHi.count]
+            // 창 선택: 오차 × (0.25 + 무늬)가 가장 큰 칸
+            var bestScore: Float = -1
+            for c in 0..<view.errCells.count {
+                let s = view.errCells[c] * (0.25 + view.texCells[c] * 8)
+                if s > bestScore { bestScore = s; bestCell = c }
+            }
+            rec.refineCell = "error"
         }
+        guard let kHi = view.kHi, let hs = hiStore.size(of: view.id) else { rec.refineSkipped = "decodeFailed"; return [] }
         let cw = min(config.refineCropW, hs.w), ch = min(config.refineCropH, hs.h)
         let cx = (Float(bestCell % GSOView.cellsX) + 0.5) / Float(GSOView.cellsX) * Float(hs.w)
         let cy = (Float(bestCell / GSOView.cellsX) + 0.5) / Float(GSOView.cellsY) * Float(hs.h)
@@ -713,13 +1030,20 @@ final class GSOPipeline {
         rec.refineDecodeMs += (now() - td) * 1000
         // 창 카메라: 같은 포즈, 원본 K에서 주점을 창 원점만큼 옮긴 K (픽셀 중심 규약 유지)
         let camHi = GSOCamera(pose: view.camera.pose, k: GSOGrid.cropIntrinsics(kHi, x0: x0, y0: y0, width: cw, height: ch))
+        let cropLabels: [UInt8]? = config.product != nil ? view.maskFull?.cropLabels(x0: x0, y0: y0, w: cw, h: ch, fullWidth: hs.w, fullHeight: hs.h) : nil
         var touched: Set<Int> = []
         var lossFirst: Float = 0, lossLast: Float = 0
         var dC: [Float] = [], dD: [Float] = [], dA: [Float] = []
         for it in 0..<config.refineIterations {
             if now() >= deadlineHost && it > 0 { break }
             let st = GSORaster.forward(map.g, camera: camHi, rules: config.rules)
-            let stats = GSOLoss.evaluate(state: st, target: tgt, anchors: nil, config: config.opt, depthWeight: 0, dLdC: &dC, dLdD: &dD, dLdA: &dA)
+            let stats: GSOLossStats
+            if let pc = config.product, let cl = cropLabels {
+                stats = GSOLoss.evaluateMasked(state: st, target: tgt, labels: cl, anchors: nil, config: config.opt, depthWeight: 0, bgAlphaWeight: pc.bgAlphaWeight,
+                                               dLdC: &dC, dLdD: &dD, dLdA: &dA)
+            } else {
+                stats = GSOLoss.evaluate(state: st, target: tgt, anchors: nil, config: config.opt, depthWeight: 0, dLdC: &dC, dLdD: &dD, dLdA: &dA)
+            }
             guard stats.finite else { rec.nonFinite += 1; continue }
             if it == 0 { lossFirst = stats.photometric }
             lossLast = stats.photometric
@@ -731,12 +1055,15 @@ final class GSOPipeline {
                 let i = Int(grads.orig[r])
                 map.splitAccum[i] = map.splitCount[i] == 0 ? grads.mean2D[r] * scale : 0.7 * map.splitAccum[i] + 0.3 * grads.mean2D[r] * scale
                 if map.splitCount[i] < 60000 { map.splitCount[i] += 1 }
+                if map.refineCount[i] < 60000 { map.refineCount[i] += 1 }
+                map.refineSlice[i] = Int32(sliceCounter)
                 touched.insert(i)
             }
             rec.refineIterations += 1
             rec.refineCropPixels = cw * ch
         }
         totalRefineIterations += rec.refineIterations
+        if rec.refineIterations > 0 { pendingRefine = (view, bestCell) }
         rec.refineLossBefore = lossFirst; rec.refineLossAfter = lossLast
         rec.refineMs = (now() - t0) * 1000
         return touched
@@ -747,14 +1074,15 @@ final class GSOPipeline {
     private func splitSelected(touched: Set<Int>) -> Int {
         var cands: [(i: Int, score: Float)] = []
         var accs: [Float] = []
-        for i in touched where map.splitCount[i] >= 2 && i < map.count { accs.append(map.splitAccum[i]) }
-        guard accs.count >= 8 else { return 0 }
+        let force = testForceSplitAll
+        for i in touched where map.splitCount[i] >= (force ? 1 : 2) && i < map.count { accs.append(map.splitAccum[i]) }
+        guard accs.count >= 8 || (force && !accs.isEmpty) else { return 0 }
         accs.sort()
-        let thr = max(1e-9, 2 * accs[accs.count / 2])
-        for i in touched where i < map.count && map.splitCount[i] >= 2 {
+        let thr = force ? 0 : max(1e-9, 2 * accs[accs.count / 2])
+        for i in touched where i < map.count && map.splitCount[i] >= (force ? 1 : 2) {
             let s = map.g.logScale[i]
             let smax = max(Foundation.exp(s.x), max(Foundation.exp(s.y), Foundation.exp(s.z)))
-            if smax >= config.splitMinScale, map.splitAccum[i] >= thr { cands.append((i, map.splitAccum[i])) }
+            if force || (smax >= config.splitMinScale && map.splitAccum[i] >= thr && splitAllowed(i)) { cands.append((i, map.splitAccum[i])) }
         }
         guard !cands.isEmpty else { return 0 }
         cands.sort { $0.score > $1.score }
@@ -783,17 +1111,74 @@ final class GSOPipeline {
             map.mMu[i] = .zero; map.vMu[i] = .zero; map.mLs[i] = .zero; map.vLs[i] = .zero; map.mQ[i] = .zero; map.vQ[i] = .zero
             map.steps[i] = 0; map.splitAccum[i] = 0; map.splitCount[i] = 0
             map.revision[i] &+= 1
+            // 분할로 위치·크기가 바뀐 부모와 자식은 이전 위치의 신뢰를 그대로 물려받지 않는다: 후보 상태·독립 증거 1회로 낮추고, 새 독립 관측으로 다시 올라간다.
+            map.state[i] = min(parentState, GSOState.candidate.rawValue); map.indep[i] = min(parentIndep, 1)
             // 자식
             let child = GSONewGaussian(mu: map.g.mu[i] + 2 * off, logScale: newLs, quat: qq, color: map.g.color[i], opacityLogit: map.g.opacityLogit[i],
                                        stereoAnchored: stereo, parent: parentID)
             let c = map.append(child, kf: map.lastKF[i])
-            map.state[c] = parentState == GSOState.stable.rawValue ? GSOState.candidate.rawValue : parentState   // 새 위치는 독립 증거가 다시 필요하다
-            map.indep[c] = min(parentIndep, 2)
+            map.state[c] = min(parentState, GSOState.candidate.rawValue)
+            map.indep[c] = min(parentIndep, 1)
         }
         map.geometryRevision += 1
         map.splitTotal += take
         totalSplits += take
         return take
+    }
+
+    /// 제품 모드 분할 허용 조건: 후보 이상(독립 증거 1회 이상)이고 여러 시점에서 관측됐으며 배경 표시·의심 표시가 없는 가우시안만 쪼갠다(잘못된 위치의 가우시안을 쪼개 오류를 늘리지 않는다).
+    private func splitAllowed(_ i: Int) -> Bool {
+        guard let pc = config.product else { return true }
+        return map.state[i] >= pc.splitMinState && map.nObs[i] >= pc.splitMinObs && map.bgCount[i] == 0 && !map.suspect[i]
+    }
+
+    /// 제품 정밀화 창 선택. 4번에 2번은 오차 우선(이미 많이 한 칸은 감점), 1번은 아직 정밀화되지 않은 칸, 1번은 가장 오래 갱신하지 않은 칸이다.
+    private func pickRefineTarget(_ cands: [GSOView]) -> (view: GSOView, cell: Int, kind: String)? {
+        guard let pc = config.product else { return nil }
+        refineCounter += 1
+        let now = Float(sliceCounter)
+        func scan(_ slot: Int) -> (GSOView, Int)? {
+            var best: (v: GSOView, c: Int, score: Float)?
+            for v in cands {
+                for c in 0..<v.errCells.count where v.cellProduct[c] >= pc.refineMinProductFraction {
+                    let last = v.refineLast[c]
+                    let score: Float
+                    switch slot {
+                    case 2:
+                        guard v.refineCells[c] == 0 else { continue }
+                        score = v.cellProduct[c] * (0.02 + v.texCells[c] * 8) + Float(v.id) * 1e-7
+                    case 3:
+                        guard v.refineCells[c] > 0 else { continue }
+                        score = (now - Float(last)) * v.cellProduct[c] + v.texCells[c]
+                    default:
+                        let stale = last < 0 ? 1 : min(8, now - Float(last)) / 8
+                        score = (v.errCells[c] * (0.25 + v.texCells[c] * 8) + 0.01) / (1 + Float(v.refineCells[c])) * (1 + stale)
+                    }
+                    if best == nil || score > best!.score { best = (v, c, score) }
+                }
+            }
+            return best.map { ($0.v, $0.c) }
+        }
+        let slot = refineCounter % 4
+        let kinds = ["error", "error", "unrefined", "stale"]
+        if let r = scan(slot) { return (r.0, r.1, kinds[slot]) }
+        if let r = scan(0) { return (r.0, r.1, "error") }
+        return nil
+    }
+
+    /// 제품 정밀화 진행: 고해상도가 있는 시점들의 제품 칸 중 정밀화된 비율과, 정밀화에서 gradient를 받은 가우시안 비율.
+    func refineProgress() -> GSORefineProgress {
+        var p = GSORefineProgress()
+        guard let pc = config.product else { return p }
+        for v in views where v.kHi != nil && hiStore.has(v.id) {
+            for c in 0..<v.refineCells.count where v.cellProduct[c] >= pc.refineMinProductFraction {
+                p.cellsTotal += 1
+                if v.refineCells[c] > 0 { p.cellsRefined += 1 }
+            }
+        }
+        p.gaussiansTotal = map.count
+        p.gaussiansRefined = map.refineCount.reduce(0) { $0 + ($1 > 0 ? 1 : 0) }
+        return p
     }
 
     /// 불투명도가 충분히 낮아진 가우시안과, 독립 시점 표가 충분히 쌓인 앞쪽 오표면(의심 가우시안)을 제거한다.
@@ -807,6 +1192,7 @@ final class GSOPipeline {
             let a0 = GSORasterConst.opacityMax / (1 + Foundation.exp(-map.g.opacityLogit[i]))
             if a0 < config.pruneOpacity, map.steps[i] > config.pruneMinSteps, map.state[i] != GSOState.stable.rawValue { keep[i] = false; any = true }
             else if map.suspect[i], map.conflictVotes[i] >= config.frontVotesToReplace { keep[i] = false; any = true }
+            else if config.product != nil, map.bgCount[i] >= config.opt.bgFlagViews, a0 < 0.05, map.steps[i] > 6 { keep[i] = false; any = true }    // 확실한 배경에 반복 투영되어 투명해진 배경 가우시안
         }
         guard any else { return 0 }
         let removed = map.compact(keep: keep)

@@ -6,9 +6,11 @@ on:
   push:
     branches:
       - feat/ondevice-gs-optimizer
+      - feat/realtime-product-gs
     paths:
       - 'Gonggi/Experiments/**'
       - 'GonggiTests/GSOpt*'
+      - 'GonggiTests/ProductGS*'
       - 'project.yml'
       - '.github/workflows/gonggi-gso-check.yml'
   workflow_dispatch:
@@ -98,6 +100,11 @@ jobs:
             -only-testing:GonggiTests/GSOptPreserveTests \
             -only-testing:GonggiTests/GSOptRecoveryTests \
             -only-testing:GonggiTests/GSOptHiResTests \
+            -only-testing:GonggiTests/GSOptProductMaskTests \
+            -only-testing:GonggiTests/GSOptProductLossTests \
+            -only-testing:GonggiTests/GSOptProductPipelineTests \
+            -only-testing:GonggiTests/GSOptProductCompareTests \
+            -only-testing:GonggiTests/GSOptProductStoreTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild-gso.log
           STATUS=${PIPESTATUS[0]}

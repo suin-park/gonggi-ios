@@ -267,6 +267,7 @@ enum GSOSaver {
         var recorder: SV2ReplayRecorder?
         var extraMeta: [String: Any] = [:]
         var directory: URL = GSOStore.directory
+        var prefix = "space-gs-"
     }
 
     static func save(_ r: Request) -> GSOSaveResult {
@@ -275,7 +276,7 @@ enum GSOSaver {
         do {
             try GSOStore.ensureDirectory(r.directory)
             let stamp = r.runId ?? ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
-            let base = GSOStore.baseName(runId: stamp)
+            let base = r.prefix + stamp
             let dir = r.directory
             let kmogs = dir.appendingPathComponent(base + ".kmogs")
             let persisted = r.map.persisted()

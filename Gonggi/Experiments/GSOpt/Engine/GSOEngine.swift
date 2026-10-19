@@ -67,6 +67,19 @@ struct GSOLive {
     var gapTop = ""
     var resolutionText = ""
     var suspectTotal = 0
+    // 제품 모드
+    var isProduct = false
+    var phase = ""                         // 대상 선택 / 촬영 / 일시정지
+    var maskStatus = ""                    // 추적 중 / 불확실 / 놓침
+    var maskTrusted = 0, maskUncertain = 0
+    var maskMsP50: Double?
+    var maskNote = ""
+    var boundsText = ""
+    var refineCellsPct: Double?, refineGaussiansPct: Double?
+    var bgLeak: Double?
+    var productPixels = 0
+    var budgetText = ""
+    var refineKind = ""
 }
 
 /// 엔진이 모으는 추가 통계(정밀화·검증·미생성 이유·중지 구간).
@@ -86,6 +99,14 @@ struct GSOExtraStats {
     var pauseEvents: [(host: Double, event: String)] = []
     var optimizerPausedSince: Double?
     var resolutionLogged = false
+    // 제품 모드 계산 예산
+    var budgetSlices = 0
+    var budgetWaits = 0
+    var budgetPlannedMs = 0.0
+    var budgetActualMs = 0.0
+    var budgetOverMs = 0.0
+    var splitsRolledBack = 0
+    var refineKinds: [String: Int] = [:]
 }
 
 /// 기기 내 가우시안 최적화 엔진. 하나의 ARSession → 같은 ARFrame의 영상·포즈·K·시각 → GSOPipeline(스테레오 앵커 + 단안 깊이 정렬 → 지속적인 가우시안 지도 → 렌더링 오차 최적화)
@@ -183,11 +204,30 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private var renderStatsLatest: RTRenderStats?
     private var timer: DispatchSourceTimer?
     private var autoStopSent = false
+    // 제품 모드
+    let maskProvider: GSOInstanceMaskProvider?
+    let tracker: GSOProductMaskTracker?
+    var onPreviewMask: ((GSOProductMask?, String) -> Void)?
+    private var previewMode = false
+    private var latestFrame: (pb: CVPixelBuffer, pose: RTPose, k: RTIntrinsics)?
+    private var maskSamples: [Double] = []
+    private var maskStats = (trusted: 0, uncertain: 0)
+    private var maskNoteLast = ""
+    private var progressLatest = GSORefineProgress()
+    private var bgLeakLast: Double?
+    private var productPixelsLast = 0
+    private var refineKindLast = ""
+    private var optWindow: [(end: Double, ms: Double)] = []
+    private var budgetText = ""
+    var isProduct: Bool { config.product != nil }
 
     init(options: GSOOptions, config: GSOConfig = GSOConfig(), log: ExperimentRunLog? = nil, splats: RTSharedSplats = RTSharedSplats(),
-         liveCam: RTLiveCameraStore = RTLiveCameraStore(), background: RTBackgroundStore = RTBackgroundStore(), mono: RTMonoDepth = RTMonoDepth()) {
+         liveCam: RTLiveCameraStore = RTLiveCameraStore(), background: RTBackgroundStore = RTBackgroundStore(), mono: RTMonoDepth = RTMonoDepth(),
+         maskProvider: GSOInstanceMaskProvider? = nil, tracker: GSOProductMaskTracker? = nil) {
         self.options = options
         self.mono = mono
+        self.maskProvider = maskProvider
+        self.tracker = tracker
         var cfg = config
         cfg.optimize = options.optimize
         cfg.geometryOptimization = options.geometryOptimization
@@ -239,7 +279,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         return c
     }
 
-    func start(runDirectoryForReplay: URL? = nil) {
+    /// 제품 모드는 대상 선택 단계(preview)로 시작한다: 카메라와 ARKit 추적만 돌고 키프레임은 만들지 않는다. beginCapture()로 촬영을 시작한다.
+    func start(runDirectoryForReplay: URL? = nil, preview: Bool = false) {
+        statLock.lock(); previewMode = preview; statLock.unlock()
         arLock.lock()
         running = true; paused = false
         startedHost = ExpSys.hostNow()
@@ -273,6 +315,12 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         info["pretrainedModelInference"] = "Depth Anything V2 Small (Core ML, 기기 내 추론만, 재학습 없음)"
         info["orientation"] = "capturedImage=sensorLandscapeRight, display=portrait(app locked)"
         info["algorithm"] = "ARKit pose + stereo anchors + monocular depth aligned to anchors -> persistent gaussians -> on-device photometric optimisation (sparse Adam, CPU forward/backward)"
+        if let pc = config.product {
+            info["product"] = ["enabled": true, "minKeyframeIntervalS": pc.minKeyframeInterval, "bgAlphaWeight": Double(pc.bgAlphaWeight), "bgFloorLogit": Double(pc.bgFloorLogit),
+                               "optDuty": pc.optDuty, "hiValidation": pc.hiValidation, "maskGrid": "\(tracker?.config.gridWidth ?? 0)x\(tracker?.config.gridHeight ?? 0)",
+                               "maskBandRadius": tracker?.config.bandRadius ?? 0, "maskSource": "Vision VNGenerateForegroundInstanceMaskRequest (기기 내)"]
+            info["productMode"] = "고정된 제품 + 움직이는 휴대폰. 돌림판·손에 들고 돌리는 방식은 물체 포즈 추정이 없어 지원하지 않는다."
+        }
         log?.write("gso_start", info)
         session.delegate = self
         session.delegateQueue = arQueue
@@ -316,6 +364,70 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
     var isPaused: Bool { arLock.lock(); defer { arLock.unlock() }; return paused }
 
+    /// 저장하지 않고 끝낼 때 연구 기록 임시 폴더를 지운다.
+    func discardReplay() { procQueue.sync { recorder?.discard(); recorder = nil } }
+
+    // MARK: 제품 모드: 대상 선택·촬영 시작
+
+    /// 대상 선택을 마치고 촬영(키프레임 생성)을 시작한다. 이미 돌고 있는 ARKit 추적은 그대로 이어진다.
+    func beginCapture() {
+        statLock.lock(); previewMode = false; statLock.unlock()
+        arLock.lock(); startedHost = ExpSys.hostNow(); firstInputHost = nil; lastKF = nil; prev = nil; arLock.unlock()
+        log?.write("product_capture_begin", ["targetID": tracker?.targetID ?? 0])
+    }
+
+    /// 화면(세로, 센서 영상을 맞춤으로 놓은 뷰)의 정규화 탭 위치에서 제품을 고른다. 마지막 카메라 프레임 한 장에 Vision 마스크를 돌린다(기기 내).
+    /// completion은 백그라운드 큐에서 불린다.
+    func selectTarget(viewTap: CGPoint, viewSize: CGSize, completion: @escaping (GSOProductMask?, String) -> Void) {
+        statLock.lock(); let fr = latestFrame; statLock.unlock()
+        guard let fr, let prov = maskProvider, let trk = tracker else { completion(nil, "카메라 영상이 아직 없어요"); return }
+        let imgW = Float(fr.k.width), imgH = Float(fr.k.height)
+        let m = RTViewMath.portraitMapping(imgW: imgW, imgH: imgH, viewW: Float(viewSize.width), viewH: Float(viewSize.height))
+        let xp = Float(viewTap.x * viewSize.width), yp = Float(viewTap.y * viewSize.height)
+        let u = (yp - m.ty) / m.m10, v = (m.tx - xp) / m.m10          // xp = tx − s·v, yp = ty + s·u
+        let nu = u / imgW, nv = v / imgH
+        guard nu >= 0, nu <= 1, nv >= 0, nv <= 1 else { completion(nil, "카메라 화면 안을 탭해 주세요"); return }
+        loadQueue.async { [weak self] in
+            guard let inst = prov.instanceMasks(pixelBuffer: fr.pb) else { completion(nil, "제품을 찾지 못했어요"); return }
+            if let mk = trk.select(instances: inst, tap: SIMD2<Float>(nu, nv)) {
+                self?.log?.write("product_select", ["targetID": trk.targetID, "areaFraction": Double(mk.areaFraction), "instances": inst.instanceCount, "tap": [Double(nu), Double(nv)]])
+                completion(mk, "선택했어요. 초록 영역이 제품 전체를 덮는지 확인하세요")
+            } else {
+                completion(nil, "그 위치에서 제품을 찾지 못했어요. 제품을 직접 탭해 주세요")
+            }
+        }
+    }
+
+    /// 지금까지 모은 제품 3D 중심을 이 프레임에 투영한 센서 영상 정규화 좌표(마스크 추적에서 같은 대상을 고르는 단서).
+    private func projectedProductCenter(_ job: SV2Engine.Job) -> SIMD2<Float>? {
+        guard let c = pipeline.productBounds.center else { return nil }
+        let p = job.pose.worldToCam(c)
+        guard p.z > 0.05 else { return nil }
+        return SIMD2<Float>((job.K.fx * p.x / p.z + job.K.cx) / Float(job.K.width), (job.K.fy * p.y / p.z + job.K.cy) / Float(job.K.height))
+    }
+
+    /// 저장 메타: 제품 중심·좌표계·스케일의 의미·정밀화 진행·마스크 통계.
+    private func productMeta() -> [String: Any] {
+        let pb = pipeline.productBounds
+        var d: [String: Any] = ["productMode": true, "targetID": tracker?.targetID ?? 1, "productBoundsValid": pb.isValid]
+        func arr(_ v: SIMD3<Float>) -> [Double] { [Double(v.x), Double(v.y), Double(v.z)] }
+        if let b = pb.box {
+            d["productBounds"] = ["min": arr(b.lo), "max": arr(b.hi)]
+            d["productExtentMeters"] = arr(b.hi - b.lo)
+        }
+        if let c = pb.center { d["productCenter"] = arr(c) }
+        d["coordinateSystem"] = "ARKit 세계 좌표(중력 정렬, y 위, 단위 m). 원점은 ARSession 시작 위치이며 제품 중심은 productCenter."
+        d["scaleMeaning"] = "ARKit 포즈에 맞춘 스테레오 앵커 기준의 미터 추정치. 실제 치수 정확도는 검증되지 않았다."
+        d["unobservedNote"] = "관측하지 않은 면(뒷면 등)은 복원하지 않는다. 비어 있는 부분은 복원 실패가 아니라 미관측일 수 있다."
+        d["captureMode"] = "고정된 제품 + 움직이는 휴대폰(돌림판·손에 들고 돌리는 방식은 지원하지 않음)"
+        statLock.lock()
+        let prog = progressLatest
+        d["refineProgress"] = ["cellsRefined": prog.cellsRefined, "cellsTotal": prog.cellsTotal, "gaussiansRefined": prog.gaussiansRefined, "gaussiansTotal": prog.gaussiansTotal]
+        d["maskStats"] = ["trusted": maskStats.trusted, "uncertain": maskStats.uncertain]
+        statLock.unlock()
+        return d
+    }
+
     // MARK: ARSessionDelegate (arQueue)
 
     private func startNewSegmentLocked(reason: String, host: Double) {
@@ -328,7 +440,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let host = ExpSys.hostNow()
-        let showBG = currentOptions.showCamera
+        statLock.lock(); let preview = previewMode; statLock.unlock()
+        let showBG = currentOptions.showCamera || preview
         let cam = frame.camera
         let pose = RTPose.fromARKit(cam.transform)
         var normal = false
@@ -349,6 +462,11 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let imgW = Float(cam.imageResolution.width), imgH = Float(cam.imageResolution.height)
         liveCam.set(RTLiveCameraStore.Value(pose: pose, fx: k.columns.0.x, fy: k.columns.1.y, cx: k.columns.2.x, cy: k.columns.2.y,
                                             imgW: imgW, imgH: imgH, timestamp: frame.timestamp))
+        if preview {
+            statLock.lock()
+            latestFrame = (frame.capturedImage, pose, RTIntrinsics(fx: k.columns.0.x, fy: k.columns.1.y, cx: k.columns.2.x, cy: k.columns.2.y, width: Int(imgW), height: Int(imgH)))
+            statLock.unlock()
+        }
         arLock.lock()
         guard running, !paused else { arLock.unlock(); return }
         received += 1
@@ -374,8 +492,10 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
         statLock.lock(); let level = governorLevel; statLock.unlock()
         var pol = policy
+        if let pc = config.product { pol.minInterval = max(pol.minInterval, pc.minKeyframeInterval) }      // 새 깊이·지도 추가 최대 초당 3회
         if level >= 2 { pol.minInterval *= 2 }
-        let decision = pol.evaluate(timestamp: frame.timestamp, pose: pose, trackingNormal: normal, last: lastKF, prev: prev)
+        var decision = pol.evaluate(timestamp: frame.timestamp, pose: pose, trackingNormal: normal, last: lastKF, prev: prev)
+        if preview { decision = .reject("preview") }
         prev = RTKeyframePolicy.Last(timestamp: frame.timestamp, pose: pose)
         var job: SV2Engine.Job?
         switch decision {
@@ -402,7 +522,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             }
         }
         arLock.unlock()
-        if wantBG, let bg = RTFrameConverter.downscale(frame.capturedImage, outWidth: 160) {
+        if wantBG, let bg = RTFrameConverter.downscale(frame.capturedImage, outWidth: preview ? 360 : 160) {
             background.set(rgb: bg.rgb, width: bg.width, height: bg.height)
         }
         if let j = dispatchNow { procQueue.async { [weak self] in self?.process(j) } }
@@ -448,14 +568,32 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let width = 960
         guard let input = SV2Engine.makeInput(job: job, hiWidth: width, clockDelta: clockDelta) else { return }
         let tConv = ExpSys.hostNow()
-        recorder?.record(input)
+        // 제품 모드: 같은 ARFrame의 원본 버퍼에서 기기 내 Vision 마스크를 만들고 대상 ID를 유지하며 갱신한다(RGB·포즈·K·시각·노출·마스크가 같은 프레임).
+        var mask: GSOProductMask?
+        var maskMs = 0.0
+        if config.product != nil, let prov = maskProvider, let trk = tracker {
+            let tm = ExpSys.hostNow()
+            let inst = prov.instanceMasks(pixelBuffer: job.pb)
+            mask = trk.track(instances: inst, projectedCenter: projectedProductCenter(job))
+            maskMs = (ExpSys.hostNow() - tm) * 1000
+            statLock.lock()
+            maskSamples.append(maskMs); if maskSamples.count > 400 { maskSamples.removeFirst() }
+            if mask?.trusted == true { maskStats.trusted += 1 } else { maskStats.uncertain += 1 }
+            maskNoteLast = mask?.note ?? ""
+            statLock.unlock()
+            log?.write("product_mask", ["id": input.id, "trusted": mask?.trusted ?? false, "note": mask?.note ?? "", "iou": Double(mask?.iou ?? 0),
+                                        "area": Double(mask?.areaFraction ?? 0), "ms": maskMs, "status": trk.status.rawValue, "targetID": trk.targetID])
+        }
+        recorder?.record(input, mask: mask)
         statLock.lock(); let monoOK = monoLoaded; statLock.unlock()
-        var rec = pipeline.process(input, mono: monoOK ? mono : nil)
+        var rec = pipeline.process(input, mono: monoOK ? mono : nil, mask: mask)
         rec.convertMs += (tConv - tStart) * 1000
         let tDone = ExpSys.hostNow()
         rec.toMapMs = (tDone - captureHost) * 1000
         if rec.skipped != nil {
-            statLock.lock(); blurRejected += 1; statLock.unlock()
+            statLock.lock()
+            if rec.skipped == "maskUncertain" { for (k, v) in rec.gaps { extra.gapTotals[k, default: 0] += v } } else { blurRejected += 1 }
+            statLock.unlock()
             return
         }
         let sinceStart = tDone - startedHost
@@ -542,10 +680,44 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         arLock.lock(); let busy = inFlight || pending != nil; let ok = running && !paused; arLock.unlock()
         guard ok, !busy else { return }
         statLock.lock(); let level = governorLevel; statLock.unlock()
-        let iters = level >= 1 ? 4 : 8
+        var iters = level >= 1 ? 4 : 8
         let now = ExpSys.hostNow()
+        var window = 0.045
+        var plannedMs = 45.0
+        var usedMs = 0.0
+        var allowedMs = 0.0
+        if let pc = config.product {
+            // 계산 예산: 키프레임을 줄여도 남는 시간을 무제한 최적화가 쓰지 않도록, 한 시계 초 안에서 최적화가 쓸 수 있는 시간 비율(optDuty, 부하가 있으면 절반)을 지킨다.
+            // 반복 수 × 가우시안 수 상한도 둔다. 설정한 예산과 실제 실행 시간의 차이는 gso_opt 로그와 요약에 남긴다.
+            statLock.lock()
+            optWindow.removeAll { now - $0.end > 1.0 }
+            usedMs = optWindow.reduce(0) { $0 + $1.ms }
+            statLock.unlock()
+            allowedMs = (level >= 1 ? pc.optDuty * 0.5 : pc.optDuty) * 1000
+            if usedMs >= allowedMs {
+                statLock.lock(); extra.budgetWaits += 1; statLock.unlock()
+                optTickScheduled = true
+                procQueue.asyncAfter(deadline: .now() + min(0.25, (usedMs - allowedMs) / 1000 + 0.03)) { [weak self] in self?.optimizeTick() }
+                return
+            }
+            iters = pc.iterationCap(gaussians: pipeline.map.count, base: iters)
+            plannedMs = min(45, allowedMs - usedMs)
+            window = plannedMs / 1000
+        }
         // 고해상도 정밀화는 부하가 없을 때만(열 fair·AR 프레임 저하 등으로 level ≥ 1이면 쉰다)
-        let s = pipeline.optimizeSlice(maxIterations: iters, deadlineHost: now + 0.045, allowRefine: level == 0)
+        let s = pipeline.optimizeSlice(maxIterations: iters, deadlineHost: now + window, allowRefine: level == 0)
+        if config.product != nil {
+            let prog = pipeline.refineProgress()
+            statLock.lock()
+            optWindow.append((ExpSys.hostNow(), s.wallMs))
+            progressLatest = prog
+            if s.productPixels > 0 { productPixelsLast = s.productPixels; bgLeakLast = Double(s.bgLeak) }
+            if !s.refineCell.isEmpty, s.refineIterations > 0 { extra.refineKinds[s.refineCell, default: 0] += 1; refineKindLast = s.refineCell }
+            extra.splitsRolledBack += s.splitsRolledBack
+            extra.budgetSlices += 1; extra.budgetPlannedMs += plannedMs; extra.budgetActualMs += s.wallMs; extra.budgetOverMs += max(0, s.wallMs - plannedMs)
+            budgetText = String(format: "예산 %.0f%% 중 최근 1초 사용 %.0f ms · 이번 묶음 계획 %.0f ms → 실제 %.0f ms · 반복 상한 %d · 대기 %d회", (level >= 1 ? 0.5 : 1) * (config.product?.optDuty ?? 0) * 100, usedMs, plannedMs, s.wallMs, iters, extra.budgetWaits)
+            statLock.unlock()
+        }
         if s.iterations > 0 {
             statLock.lock()
             slices.append(s); if slices.count > 600 { slices.removeFirst(slices.count - 600) }
@@ -566,6 +738,10 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
                                    "lossStart": Double(s.lossStart), "lossEnd": Double(s.lossEnd), "depthLoss": Double(s.depthLossEnd),
                                    "rolledBack": s.rolledBack, "nonFinite": s.nonFinite, "moved": s.moved, "active": s.activeGaussians,
                                    "wallMs": s.wallMs, "geometry": s.geometry, "governor": level, "trainViewCoverage": Double(s.coverage),
+                                   "budget": ["dutyAllowedMs": allowedMs, "usedLastSecondMs": usedMs, "plannedMs": plannedMs, "actualWallMs": s.wallMs, "itersCap": iters],
+                                   "product": ["pixels": s.productPixels, "bgLeak": Double(s.bgLeak), "refineCell": s.refineCell, "splitsRolledBack": s.splitsRolledBack,
+                                               "hiL1": [Double(s.valHiL1Before), Double(s.valHiL1After)], "edgeL1": [Double(s.valEdgeBefore), Double(s.valEdgeAfter)],
+                                               "silhouette": [Double(s.valSilBefore), Double(s.valSilAfter)], "bgLeakVal": [Double(s.valLeakBefore), Double(s.valLeakAfter)]],
                                    "rollbackReason": s.rollbackReason, "validation": ["views": s.validationViews, "ms": s.validationMs, "skipped": s.validationSkipped,
                                                                                       "l1Before": Double(s.valL1Before), "l1After": Double(s.valL1After),
                                                                                       "alphaBefore": Double(s.valAlphaBefore), "alphaAfter": Double(s.valAlphaAfter)],
@@ -716,6 +892,20 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         l.hiCacheMB = Double(pipeline.hiStore.bytes) / 1_048_576
         l.gapTop = extra.gapTotals.sorted { $0.value > $1.value }.prefix(4).map { "\($0.key) \($0.value)" }.joined(separator: " · ")
         l.resolutionText = pipeline.resolutionInfo.isEmpty ? "" : "센서 \(pipeline.resolutionInfo["sensorW"] ?? 0)×\(pipeline.resolutionInfo["sensorH"] ?? 0) · 원본창 \(pipeline.resolutionInfo["hiW"] ?? 0)×\(pipeline.resolutionInfo["hiH"] ?? 0) · 깊이 \(pipeline.resolutionInfo["smallW"] ?? 0)×\(pipeline.resolutionInfo["smallH"] ?? 0) · 학습 \(pipeline.resolutionInfo["trainW"] ?? 0)×\(pipeline.resolutionInfo["trainH"] ?? 0) · 정밀화 창 \(pipeline.resolutionInfo["cropW"] ?? 0)×\(pipeline.resolutionInfo["cropH"] ?? 0)"
+        if config.product != nil {
+            l.isProduct = true
+            l.phase = previewMode ? "대상 선택" : (l.paused ? "일시정지" : "촬영")
+            l.maskStatus = { switch tracker?.status { case .tracking?: return "추적 중"; case .uncertain?: return "불확실(가림·흐림 등: 이 프레임은 쓰지 않음)"; case .lost?: return "놓침(제품을 다시 비춰 주세요)"; default: return "—" } }()
+            l.maskTrusted = maskStats.trusted; l.maskUncertain = maskStats.uncertain
+            l.maskMsP50 = RTStat.percentile(maskSamples, 0.5)
+            l.maskNote = maskNoteLast
+            let pb = pipeline.productBounds
+            l.boundsText = pb.isValid ? "확정(점 \(pb.points.count)개, 시점 \(pb.viewIDs.count)개)" : "모으는 중(점 \(pb.points.count)/\(pb.minPoints), 시점 \(pb.viewIDs.count)/\(pb.minViews))"
+            l.refineCellsPct = progressLatest.cellsTotal > 0 ? Double(progressLatest.fractionCells) * 100 : nil
+            l.refineGaussiansPct = progressLatest.gaussiansTotal > 0 ? Double(progressLatest.fractionGaussians) * 100 : nil
+            l.bgLeak = bgLeakLast; l.productPixels = productPixelsLast
+            l.budgetText = budgetText; l.refineKind = refineKindLast
+        }
         l.firstInputS = fi.map { $0 - startedHost }
         l.firstAlignedS = firstAlignedHost.map { $0 - startedHost }
         l.firstCandidateS = firstCandidateHost.map { $0 - startedHost }
@@ -763,11 +953,48 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         var out = GSOSaveResult(item: nil, error: nil, gaussians: 0, views: 0)
         procQueue.sync {
             let views = pipeline.views.map { GSOCameraRecord(id: $0.id, pose: $0.camera.pose, k: $0.camera.intrinsics, timestamp: $0.timestamp) }
-            let req = GSOSaver.Request(map: pipeline.map, views: views, runId: log?.baseName, config: config, summaryText: summaryText, recorder: recorder)
+            var req = GSOSaver.Request(map: pipeline.map, views: views, runId: log?.baseName, config: config, summaryText: summaryText, recorder: recorder)
+            if config.product != nil {
+                req.directory = ProductGSStore.directory; req.prefix = ProductGSStore.prefix; req.kind = "product"; req.extraMeta = productMeta()
+            }
             out = GSOSaver.save(req)
             if out.error == nil { recorder = nil }
         }
         return out
+    }
+
+    // MARK: 제품 요약
+
+    private func productSummaryText(ex: GSOExtraStats, f: (Double?, Int) -> String) -> String {
+        statLock.lock()
+        let prog = progressLatest, ms = maskStats, msamples = maskSamples
+        let leak = bgLeakLast, pp = productPixelsLast
+        statLock.unlock()
+        let pb = pipeline.productBounds
+        var t = "제품 모드 (고정된 제품 + 움직이는 휴대폰)\n"
+        t += "  마스크: 기기 내 Vision, 신뢰 \(ms.trusted)장 · 불확실 \(ms.uncertain)장(이 프레임은 가우시안 생성·감독에 쓰지 않음), 마스크 시간 p50 \(f(RTStat.percentile(msamples, 0.5), 0))ms / p95 \(f(RTStat.percentile(msamples, 0.95), 0))ms, 대상 ID \(tracker?.targetID ?? 0)\n"
+        t += "  3D 범위: " + (pb.isValid ? "확정(신뢰 깊이 점 \(pb.points.count)개, 서로 다른 시점 \(pb.viewIDs.count)개)" : "확정되지 않음(점 \(pb.points.count)/\(pb.minPoints), 시점 \(pb.viewIDs.count)/\(pb.minViews))") + "\n"
+        t += "  정밀화 진행: 제품 칸 \(prog.cellsRefined)/\(prog.cellsTotal) (\(String(format: "%.0f", Double(prog.fractionCells) * 100))%) · 정밀화에서 갱신된 가우시안 \(prog.gaussiansRefined)/\(prog.gaussiansTotal) (\(String(format: "%.0f", Double(prog.fractionGaussians) * 100))%), 창 종류 \(ex.refineKinds.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: " · "))\n"
+        t += "  분할 \(ex.splits)개(검증 실패로 되돌린 분할 \(ex.splitsRolledBack)개), 롤백 \(pipeline.rollbacks)회, 마지막 제품 화소 \(pp)개, 배경 누출(확실한 배경 화소의 평균 알파) \(leak.map { String(format: "%.3f", $0) } ?? "—")\n"
+        let planned = ex.budgetPlannedMs, actual = ex.budgetActualMs
+        t += "  계산 예산: 최적화 시간 비율 상한 \(Int((config.product?.optDuty ?? 0) * 100))%, 묶음 \(ex.budgetSlices)개의 계획 \(String(format: "%.0f", planned))ms 대비 실제 \(String(format: "%.0f", actual))ms(초과 합계 \(String(format: "%.0f", ex.budgetOverMs))ms), 예산 때문에 기다린 횟수 \(ex.budgetWaits)\n"
+        t += "  키프레임 간격 하한 \(String(format: "%.2f", config.product?.minKeyframeInterval ?? 0))초(초당 최대 \(String(format: "%.1f", 1 / max(0.001, config.product?.minKeyframeInterval ?? 1)))회)\n"
+        t += "  연구 기록: " + (recorder != nil ? "켜짐(RGB·마스크·포즈·K·시각·노출 저장, 자동 업로드 없음)" : "꺼짐 — 재생 자료가 없어 같은 입력으로 다시 비교할 수 없음") + "\n\n"
+        return t
+    }
+
+    private func productDict(ex: GSOExtraStats) -> [String: Any] {
+        statLock.lock()
+        let prog = progressLatest, ms = maskStats, msamples = maskSamples
+        statLock.unlock()
+        let pb = pipeline.productBounds
+        return ["maskTrusted": ms.trusted, "maskUncertain": ms.uncertain, "maskMsP50": expNN(RTStat.percentile(msamples, 0.5)), "maskMsP95": expNN(RTStat.percentile(msamples, 0.95)),
+                "boundsValid": pb.isValid, "boundsPoints": pb.points.count, "boundsViews": pb.viewIDs.count,
+                "refine": ["cellsRefined": prog.cellsRefined, "cellsTotal": prog.cellsTotal, "gaussiansRefined": prog.gaussiansRefined, "gaussiansTotal": prog.gaussiansTotal, "kinds": ex.refineKinds],
+                "splitsRolledBack": ex.splitsRolledBack,
+                "budget": ["slices": ex.budgetSlices, "waits": ex.budgetWaits, "plannedMs": ex.budgetPlannedMs, "actualMs": ex.budgetActualMs, "overMs": ex.budgetOverMs,
+                           "duty": config.product?.optDuty ?? 0, "minKeyframeIntervalS": config.product?.minKeyframeInterval ?? 0],
+                "replayRecorded": recorder != nil]
     }
 
     // MARK: 요약
@@ -823,6 +1050,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             t += "렌더 (마지막 1초)\n  \(String(format: "%.1f", r.fps)) fps, CPU p50/p95 \(ms(r.cpuMsP50))/\(ms(r.cpuMsP95)) ms, GPU p50/p95 \(ms(r.gpuMsP50))/\(ms(r.gpuMsP95)) ms, 그린 가우시안 \(r.drawn)/\(r.total)\n\n"
         }
         t += "자원\n  메모리 피크 \(f(fp)) MB, 열 상태 \(th.joined(separator: ", ")), 거버너 변경 \(gov.count)회\n  재생 자료 \(l.replayFrames)장 \(l.replayBytes / 1_048_576) MB\n\n"
+        if config.product != nil { t += productSummaryText(ex: ex, f: f) }
         t += "해석 주의\n  - 단일 장면·단일 실행의 측정이며 정확도(실제 거리 오차)나 화질(PSNR/SSIM)이 아니다. 다른 시점의 화질과 구멍 비율은 앱이 라이브로 측정하지 않는다(재생 비교 도구가 별도로 잰다).\n  - 포즈는 ARKit 값을 그대로 쓴다(최적화하지 않음). 세그먼트가 둘 이상이면 서로 다른 좌표계로 간주하고 병합하지 않았다.\n  - 지연 목표와 30fps는 목표이며 달성했다는 뜻이 아니다.\n"
 
         var d: [String: Any] = [:]
@@ -852,6 +1080,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         if let r = render {
             d["render"] = ["fps": r.fps, "cpuMsP50": r.cpuMsP50, "cpuMsP95": r.cpuMsP95, "gpuMsP50": r.gpuMsP50, "gpuMsP95": r.gpuMsP95, "drawn": r.drawn, "total": r.total]
         }
+        if config.product != nil { d["product"] = productDict(ex: ex) }
         return (t, d)
     }
 }
