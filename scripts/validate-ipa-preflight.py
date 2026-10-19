@@ -104,6 +104,14 @@ def check_product_gs(zf: zipfile.ZipFile, app_prefix: str, info: dict) -> None:
         if needle not in binary:
             fail(f"product experiment string {needle.decode('utf-8')!r} not found in the app executable")
     ok("product experiment entry point strings found in the app executable")
+    tex = info.get("GonggiTexLayersVersion")
+    if str(tex).strip() != "1":
+        fail(f"GonggiTexLayersVersion is {tex!r}, expected '1'")
+    ok(f"GonggiTexLayersVersion == {tex}")
+    for needle in ("텍스처 스플랫 레이어".encode("utf-8"), "일반 3DGS PLY가 아니".encode("utf-8")):
+        if needle not in binary:
+            fail(f"texture-layer string {needle.decode('utf-8')!r} not found in the app executable")
+    ok("texture-layer experiment strings found in the app executable")
     libs = [n for n in zf.namelist() if n.startswith(app_prefix) and n.endswith("default.metallib")]
     if not libs:
         fail("default.metallib missing from IPA")
@@ -111,7 +119,10 @@ def check_product_gs(zf: zipfile.ZipFile, app_prefix: str, info: dict) -> None:
     for fn in (b"rt_vertex", b"rt_fragment"):
         if fn not in blob:
             fail(f"Metal function {fn.decode()} (Gaussian display path) not found in default.metallib")
-    ok("product display Metal functions (rt_vertex, rt_fragment) compiled into default.metallib")
+    for fn in (b"tl_vertex", b"tl_fragment", b"tl_compose_fragment"):
+        if fn not in blob:
+            fail(f"Metal function {fn.decode()} (texture layers) not found in default.metallib")
+    ok("product display Metal functions (rt_vertex, rt_fragment) and texture-layer functions (tl_vertex, tl_fragment, tl_compose_fragment) compiled into default.metallib")
 
 
 def check_release_inputs(info: dict, args: argparse.Namespace) -> None:

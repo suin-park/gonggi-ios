@@ -48,6 +48,8 @@ struct GSOConfig: Equatable {
     var seed: UInt64 = 7
     /// 제품 모드(nil이면 공간 경로). 마스크·3D 범위·제품 기준 검증과 정밀화 배분을 켠다.
     var product: GSOProductConfig?
+    /// 텍스처 스플랫 레이어 경로(실험): 가우시안 지도·장면별 최적화 대신 키프레임별 텍스처 레이어를 만든다. 제품 모드에서만 쓴다.
+    var textureLayers = false
 
     /// 실시간 제품 3DGS 기본 설정(공통 엔진 + 제품 마스크 + 형상·재방문 보존 수정 + 원본 고해상도 정밀화/선택적 분할).
     static func productDefault() -> GSOConfig {
@@ -60,6 +62,15 @@ struct GSOConfig: Equatable {
         c.opt.bgOpacityLogitMin = pc.bgFloorLogit
         c.refineEverySlices = 1
         c.maxViews = 120
+        return c
+    }
+
+    /// 텍스처 스플랫 레이어(새 방식). 같은 ARKit·마스크·깊이 입력을 쓰고 최적화·분할을 하지 않는다.
+    static func productTexture() -> GSOConfig {
+        var c = productDefault()
+        c.textureLayers = true
+        c.optimize = false
+        c.hiRefine = false
         return c
     }
 

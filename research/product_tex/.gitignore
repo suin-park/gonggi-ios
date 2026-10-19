@@ -1,0 +1,8 @@
+cache/
+results/
+*.npz
+*.npy
+*.png
+*.jpg
+__pycache__/
+*.log

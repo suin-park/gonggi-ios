@@ -11,6 +11,7 @@ on:
       - 'Gonggi/Experiments/**'
       - 'GonggiTests/GSOpt*'
       - 'GonggiTests/ProductGS*'
+      - 'GonggiTests/TexLayer*'
       - 'project.yml'
       - '.github/workflows/gonggi-gso-check.yml'
   workflow_dispatch:
@@ -105,6 +106,9 @@ jobs:
             -only-testing:GonggiTests/GSOptProductPipelineTests \
             -only-testing:GonggiTests/GSOptProductCompareTests \
             -only-testing:GonggiTests/GSOptProductStoreTests \
+            -only-testing:GonggiTests/GSOptTexLayerTests \
+            -only-testing:GonggiTests/GSOptTexLayerGPUTests \
+            -only-testing:GonggiTests/GSOptTexLayerPipelineTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild-gso.log
           STATUS=${PIPESTATUS[0]}

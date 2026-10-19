@@ -81,6 +81,7 @@ struct GSOLive {
     var budgetText = ""
     var refineKind = ""
     var coverageText = ""
+    var texText = ""
 }
 
 /// 엔진이 모으는 추가 통계(정밀화·검증·미생성 이유·중지 구간).
@@ -161,6 +162,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
     // MARK: 처리 쪽 상태 (procQueue에서만)
     let pipeline: GSOPipeline
+    /// 텍스처 스플랫 레이어 경로(config.textureLayers). 가우시안 경로의 pipeline은 이때 쓰이지 않는다.
+    let texPipeline: TexLayerPipeline?
+    let texStore = TexLayerStore()
     private let mono: RTMonoDepth
     private var monoLoaded = false
     private var recorder: SV2ReplayRecorder?
@@ -239,6 +243,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         self.liveCam = liveCam
         self.background = background
         pipeline = GSOPipeline(config: cfg)
+        texPipeline = cfg.textureLayers ? TexLayerPipeline() : nil
         super.init()
     }
 
@@ -401,7 +406,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
     /// 지금까지 모은 제품 3D 중심을 이 프레임에 투영한 센서 영상 정규화 좌표(마스크 추적에서 같은 대상을 고르는 단서).
     private func projectedProductCenter(_ job: SV2Engine.Job) -> SIMD2<Float>? {
-        guard let c = pipeline.productBounds.center else { return nil }
+        var centre = pipeline.productBounds.center
+        if let tp = texPipeline, let b = TexLayerSelect.bounds(tp.layers) { centre = (b.min + b.max) * 0.5 }
+        guard let c = centre else { return nil }
         let p = job.pose.worldToCam(c)
         guard p.z > 0.05 else { return nil }
         return SIMD2<Float>((job.K.fx * p.x / p.z + job.K.cx) / Float(job.K.width), (job.K.fy * p.y / p.z + job.K.cy) / Float(job.K.height))
@@ -412,7 +419,14 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let pb = pipeline.productBounds
         var d: [String: Any] = ["productMode": true, "targetID": tracker?.targetID ?? 1, "productBoundsValid": pb.isValid]
         func arr(_ v: SIMD3<Float>) -> [Double] { [Double(v.x), Double(v.y), Double(v.z)] }
-        if let b = pb.box {
+        if let tp = texPipeline, let tb = TexLayerSelect.bounds(tp.layers) {
+            d["productBounds"] = ["min": arr(tb.min), "max": arr(tb.max)]
+            d["productCenter"] = arr((tb.min + tb.max) * 0.5)
+            d["productExtentMeters"] = arr(tb.max - tb.min)
+            d["productBoundsValid"] = true
+            d["representation"] = "texture-layers"
+            d["textureLayers"] = ["layers": tp.layers.count, "quads": tp.quadCount, "bytes": tp.bytes, "removedForBudget": tp.removedForBudget, "maskSkipped": tp.maskSkipped, "depthSkipped": tp.depthSkipped]
+        } else if let b = pb.box {
             d["productBounds"] = ["min": arr(b.lo), "max": arr(b.hi)]
             d["productExtentMeters"] = arr(b.hi - b.lo)
         }
@@ -589,7 +603,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         }
         recorder?.record(input, mask: mask)
         statLock.lock(); let monoOK = monoLoaded; statLock.unlock()
-        var rec = pipeline.process(input, mono: monoOK ? mono : nil, mask: mask)
+        var rec = texPipeline?.process(input, mono: monoOK ? mono : nil, mask: mask) ?? pipeline.process(input, mono: monoOK ? mono : nil, mask: mask)
         rec.convertMs += (tConv - tStart) * 1000
         let tDone = ExpSys.hostNow()
         rec.toMapMs = (tDone - captureHost) * 1000
@@ -671,7 +685,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private func scheduleOptimize() {
         statLock.lock()
         let level = governorLevel
-        let want = options.optimize && !autoStopSent
+        let want = options.optimize && !autoStopSent && texPipeline == nil
         statLock.unlock()
         arLock.lock(); let ok = running && !paused; arLock.unlock()
         guard want, ok, level < 2, !optTickScheduled else { return }
@@ -772,10 +786,16 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private func publish(force: Bool) {
         let now = ExpSys.hostNow()
         if !force && now - lastPublishHost < 0.25 { return }
-        if pipeline.map.count == 0 && !force { return }
+        if let tp = texPipeline {
+            if tp.layers.isEmpty && !force { return }
+            texStore.publish(tp.layers)
+            splats.publish(packed: [], count: 0)        // 버전을 올려 표시 지연 측정(notePresented)을 같은 방식으로 쓴다
+        } else if pipeline.map.count == 0 && !force {
+            return
+        }
         let includeTemp = currentOptions.includeTemporary
-        let set = pipeline.map.splatSet(includeTemporary: includeTemp)
-        splats.publish(packed: set.pack(), count: set.count)
+        let set = texPipeline == nil ? pipeline.map.splatSet(includeTemporary: includeTemp) : RTSplatSet()
+        if texPipeline == nil { splats.publish(packed: set.pack(), count: set.count) }
         let version = splats.snapshot().version
         let latest = pendingPublishCaptures.last ?? 0
         if latest > 0 {
@@ -789,7 +809,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         statLock.unlock()
         pendingPublishCaptures.removeAll()
         lastPublishHost = now
-        RTViewerBounds.shared.bounds = set.bounds()
+        if let tp = texPipeline { RTViewerBounds.shared.bounds = TexLayerSelect.bounds(tp.layers) } else { RTViewerBounds.shared.bounds = set.bounds() }
     }
 
     // MARK: 모니터·거버너
@@ -907,6 +927,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             l.maskMsP50 = RTStat.percentile(maskSamples, 0.5)
             l.maskNote = maskNoteLast
             let pb = pipeline.productBounds
+            if let tp = texPipeline { l.texText = "텍스처 레이어 \(tp.layers.count)개 · 사각형 \(tp.quadCount)개 · 메모리 \(String(format: "%.1f", Double(tp.bytes) / 1_048_576)) MB · 마스크로 건너뜀 \(tp.maskSkipped) · 깊이 없어 건너뜀 \(tp.depthSkipped) · 예산으로 버린 레이어 \(tp.removedForBudget)" }
             l.boundsText = pb.isValid ? "확정(점 \(pb.points.count)개, 시점 \(pb.viewIDs.count)개)" : "모으는 중(점 \(pb.points.count)/\(pb.minPoints), 시점 \(pb.viewIDs.count)/\(pb.minViews))"
             l.coverageText = "관측한 방향 \(progressLatest.azimuthObserved)/\(progressLatest.azimuthBins) 방위 · \(progressLatest.directionCells)/\(progressLatest.directionBins) 칸 · 복원이 부족한 가우시안 \(Int(progressLatest.insufficientShare * 100))% (비추지 않은 방향은 복원하지 않아요)"
             l.refineCellsPct = progressLatest.cellsTotal > 0 ? Double(progressLatest.fractionCells) * 100 : nil
@@ -960,6 +981,13 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     func save(summaryText: String) -> GSOSaveResult {
         var out = GSOSaveResult(item: nil, error: nil, gaussians: 0, views: 0)
         procQueue.sync {
+            if let tp = texPipeline {
+                // 텍스처 스플랫 레이어: .kmots(일반 3DGS PLY가 아님). 결과 구조체는 재사용한다(gaussians = 사각형 수, views = 레이어 수).
+                let r = TexLayerFiles.save(layers: tp.layers, runId: log?.baseName, config: tp.config, summaryText: summaryText, replay: recorder, extraMeta: productMeta())
+                out = GSOSaveResult(item: r.item, error: r.error, gaussians: r.quads, views: r.layers)
+                if r.error == nil { recorder = nil }
+                return
+            }
             let views = pipeline.views.map { GSOCameraRecord(id: $0.id, pose: $0.camera.pose, k: $0.camera.intrinsics, timestamp: $0.timestamp) }
             var req = GSOSaver.Request(map: pipeline.map, views: views, runId: log?.baseName, config: config, summaryText: summaryText, recorder: recorder)
             if config.product != nil {
@@ -969,6 +997,19 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             if out.error == nil { recorder = nil }
         }
         return out
+    }
+
+    // MARK: 텍스처 레이어 요약
+
+    private func texSummaryText(_ tp: TexLayerPipeline) -> String {
+        statLock.lock(); let ms = maskStats, msamples = maskSamples; statLock.unlock()
+        var t = "텍스처 스플랫 레이어 (고정된 제품 + 움직이는 휴대폰)\n"
+        t += "  표현: 키프레임마다 제품 영역 전체를 8×8 원본 화소 셀의 평면 사각형 + 8×8 RGBA 텍스처로 유지하고, 새 시점에서는 가까운 \(TexLayerConst.blendK)개 레이어를 시점 방향 가중치와 깊이 일관성으로 혼합한다. 가우시안 지도·장면별 최적화(Adam)·분할을 쓰지 않았다. 일반 3DGS PLY가 아니다(.kmots).\n"
+        t += "  레이어 \(tp.layers.count)개 · 사각형 \(tp.quadCount)개 · 메모리 \(String(format: "%.1f", Double(tp.bytes) / 1_048_576)) MB · 예산(최대 \(tp.config.maxLayers))으로 버린 레이어 \(tp.removedForBudget)\n"
+        t += "  마스크: 신뢰 \(ms.trusted)장 · 불확실 \(ms.uncertain)장(이 프레임은 레이어를 만들지 않음), 마스크 시간 p50 \(String(format: "%.0f", RTStat.percentile(msamples, 0.5) ?? 0))ms\n"
+        t += "  건너뜀: 마스크 \(tp.maskSkipped) · 깊이 없음 \(tp.depthSkipped) · 흐림 \(tp.blurSkipped)\n"
+        t += "  깊이는 스테레오 앵커에 맞춘 단안 모델 추정이며 독립 기준으로 검증하지 않았다(깊이 정확도 아님). 관측하지 않은 방향은 복원하지 않는다. 연구 기록: " + (recorder != nil ? "켜짐(자동 업로드 없음)" : "꺼짐 — 재생 자료 없음") + "\n\n"
+        return t
     }
 
     // MARK: 제품 요약
@@ -1059,7 +1100,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             t += "렌더 (마지막 1초)\n  \(String(format: "%.1f", r.fps)) fps, CPU p50/p95 \(ms(r.cpuMsP50))/\(ms(r.cpuMsP95)) ms, GPU p50/p95 \(ms(r.gpuMsP50))/\(ms(r.gpuMsP95)) ms, 그린 가우시안 \(r.drawn)/\(r.total)\n\n"
         }
         t += "자원\n  메모리 피크 \(f(fp)) MB, 열 상태 \(th.joined(separator: ", ")), 거버너 변경 \(gov.count)회\n  재생 자료 \(l.replayFrames)장 \(l.replayBytes / 1_048_576) MB\n\n"
-        if config.product != nil { t += productSummaryText(ex: ex, f: f) }
+        if let tp = texPipeline { t += texSummaryText(tp) } else if config.product != nil { t += productSummaryText(ex: ex, f: f) }
         t += "해석 주의\n  - 단일 장면·단일 실행의 측정이며 정확도(실제 거리 오차)나 화질(PSNR/SSIM)이 아니다. 다른 시점의 화질과 구멍 비율은 앱이 라이브로 측정하지 않는다(재생 비교 도구가 별도로 잰다).\n  - 포즈는 ARKit 값을 그대로 쓴다(최적화하지 않음). 세그먼트가 둘 이상이면 서로 다른 좌표계로 간주하고 병합하지 않았다.\n  - 지연 목표와 30fps는 목표이며 달성했다는 뜻이 아니다.\n"
 
         var d: [String: Any] = [:]
@@ -1089,7 +1130,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         if let r = render {
             d["render"] = ["fps": r.fps, "cpuMsP50": r.cpuMsP50, "cpuMsP95": r.cpuMsP95, "gpuMsP50": r.gpuMsP50, "gpuMsP95": r.gpuMsP95, "drawn": r.drawn, "total": r.total]
         }
-        if config.product != nil { d["product"] = productDict(ex: ex) }
+        if let tp = texPipeline { d["textureLayers"] = ["layers": tp.layers.count, "quads": tp.quadCount, "bytes": tp.bytes, "removedForBudget": tp.removedForBudget, "maskSkipped": tp.maskSkipped, "depthSkipped": tp.depthSkipped, "blurSkipped": tp.blurSkipped] } else if config.product != nil { d["product"] = productDict(ex: ex) }
         return (t, d)
     }
 }

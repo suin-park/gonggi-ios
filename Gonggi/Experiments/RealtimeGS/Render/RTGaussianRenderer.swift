@@ -80,6 +80,12 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
     private let queue: MTLCommandQueue?
     private var pipeline: MTLRenderPipelineState?
     private var bgPipeline: MTLRenderPipelineState?
+    /// 텍스처 스플랫 레이어(실험). nil이거나 비어 있으면 기존 가우시안 경로 그대로다.
+    var texStore: TexLayerStore?
+    private var texGPU: TexLayerGPU?
+    private var texVersion = -1
+    private var lastTexQuads = 0, lastTexTotal = 0
+    var texLayersActive: Bool { lastTexTotal > 0 }
     private(set) var initError: String?
 
     let splats: RTSharedSplats
@@ -155,6 +161,8 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
             b.vertexFunction = bv; b.fragmentFunction = bf
             b.colorAttachments[0].pixelFormat = .bgra8Unorm
             bgPipeline = try dev.makeRenderPipelineState(descriptor: b)
+            let tg = TexLayerGPU(device: dev, library: lib)
+            if tg.ready { texGPU = tg }
         } catch {
             initError = "렌더 파이프라인 생성 실패: \(error.localizedDescription)"
         }
@@ -248,6 +256,19 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
             }
         }
 
+        // 텍스처 레이어: 가까운 K개 레이어를 먼저 각자의 텍스처에 그린다(합성은 아래 메인 패스에서).
+        var texParams: TLComposeParams?
+        lastTexQuads = 0
+        if let store = texStore, let tg = texGPU, let (u0, pose) = cam {
+            let snap = store.snapshot()
+            if !snap.layers.isEmpty {
+                if snap.version != texVersion { tg.sync(layers: snap.layers); texVersion = snap.version }
+                tg.renderScale = mode == .live ? 0.5 : 1
+                texParams = tg.encodeLayers(cmd: cmd, picked: TexLayerSelect.pick(snap.layers, pose: pose), uniforms: u0, targetW: Int(vw), targetH: Int(vh))
+                lastTexQuads = tg.lastDrawnQuads
+            }
+            lastTexTotal = snap.layers.reduce(0) { $0 + $1.count }
+        }
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0.02, green: 0.03, blue: 0.04, alpha: 1)
         pass.colorAttachments[0].loadAction = .clear
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
@@ -259,7 +280,9 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
                 enc.setFragmentTexture(tex, index: 0)
                 enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             }
-            if let splat = frontSplat, let idx = frontIdx, frontIdxCount > 0 {
+            if let tp = texParams, let tg = texGPU {
+                tg.encodeCompose(enc: enc, params: tp)
+            } else if let splat = frontSplat, let idx = frontIdx, frontIdxCount > 0 {
                 enc.setRenderPipelineState(pipeline)
                 enc.setVertexBuffer(splat, offset: 0, index: 0)
                 enc.setVertexBuffer(idx, offset: 0, index: 1)
@@ -342,7 +365,7 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
         s.cpuMsP50 = RTStat.percentile(cpuMs, 0.5) ?? 0; s.cpuMsP95 = RTStat.percentile(cpuMs, 0.95) ?? 0
         s.gpuMsP50 = RTStat.percentile(gpu, 0.5) ?? 0; s.gpuMsP95 = RTStat.percentile(gpu, 0.95) ?? 0
         s.sortMsP50 = RTStat.percentile(sortMs, 0.5) ?? 0
-        s.drawn = frontIdxCount; s.total = frontCount; s.visible = lastVisible; s.dropped = lastDropped
+        s.drawn = lastTexTotal > 0 ? lastTexQuads : frontIdxCount; s.total = lastTexTotal > 0 ? lastTexTotal : frontCount; s.visible = lastVisible; s.dropped = lastDropped
         s.sortAgeMs = lastSortHost > 0 ? (ExpSys.hostNow() - lastSortHost) * 1000 : 0
         s.frames = frames
         s.error = initError

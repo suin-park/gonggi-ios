@@ -42,6 +42,8 @@ final class ProductSessionViewModel: ObservableObject {
     @Published var recordReplay = true
     @Published var showTemporary = true { didSet { applyOptions() } }
     @Published var optimize = true { didSet { applyOptions() } }
+    /// 새 방식(기본): 텍스처 스플랫 레이어. 끄면 기존 가우시안 최적화 경로.
+    @Published var textureLayers = true
     @Published var showDiagnostics = true
     @Published var savedItems: [GSOStore.Item] = []
     @Published var viewingTitle: String?
@@ -52,6 +54,7 @@ final class ProductSessionViewModel: ObservableObject {
     @Published var compareShare: [URL] = []
 
     let splats = RTSharedSplats()
+    let texStore = TexLayerStore()
     let liveCam = RTLiveCameraStore()
     let background = RTBackgroundStore()
     let renderer: RTGaussianRenderer
@@ -135,8 +138,10 @@ final class ProductSessionViewModel: ObservableObject {
         tcfg.bandRadius = 4
         let tracker = GSOProductMaskTracker(config: tcfg, targetID: 1)
         state = .selecting          // options()가 선택 단계의 카메라 배경 표시를 반영한다
-        let e = GSOEngine(options: options(), config: GSOConfig.productDefault(), log: l, splats: splats, liveCam: liveCam, background: background, mono: mono,
+        let e = GSOEngine(options: options(), config: textureLayers ? GSOConfig.productTexture() : GSOConfig.productDefault(), log: l, splats: splats, liveCam: liveCam, background: background, mono: mono,
                           maskProvider: provider, tracker: tracker)
+        renderer.texStore = textureLayers ? e.texStore : nil
+        if !textureLayers { texStore.publish([]) }
         e.onLive = { [weak self] live in Task { @MainActor in self?.live = live } }
         e.onAutoStop = { [weak self] reason in Task { @MainActor in self?.finish(reason: reason) } }
         engine = e
@@ -219,7 +224,7 @@ final class ProductSessionViewModel: ObservableObject {
         gate.release(gateName)
         self.engine = nil
         previewOverlay = nil
-        savedItems = ProductGSStore.list()
+        savedItems = allSavedItems()
         // 저장 직후에도 저장한 파일을 다시 읽어 보여 준다: 화면의 결과 == 다시 열었을 때의 결과.
         if let it = saved.item {
             await loadAndShow(it, announce: false)
@@ -237,7 +242,12 @@ final class ProductSessionViewModel: ObservableObject {
 
     // MARK: 저장한 결과 열기
 
-    func refreshSaved() { savedItems = ProductGSStore.list(); preloadModel() }
+    func refreshSaved() { savedItems = allSavedItems(); preloadModel() }
+
+    /// 가우시안(.kmogs)과 텍스처 레이어(.kmots) 저장본을 최신순으로 함께 보여 준다.
+    private func allSavedItems() -> [GSOStore.Item] {
+        (ProductGSStore.list() + TexLayerFiles.list()).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+    }
 
     /// 첫 실행의 Neural Engine 컴파일(약 50초)이 촬영 중에 걸리지 않도록 화면을 열 때 깊이 모델을 미리 읽는다.
     func preloadModel() {
@@ -254,6 +264,8 @@ final class ProductSessionViewModel: ObservableObject {
     }
 
     private func loadAndShow(_ item: GSOStore.Item, announce: Bool) async {
+        if item.url.pathExtension == "kmots" { await loadAndShowTexture(item, announce: announce); return }
+        renderer.texStore = nil
         let result = await Task.detached(priority: .userInitiated) { () -> Result<(GSOLoadedSpace, RTSplatSet, [Float]), Error> in
             do {
                 let loaded = try GSOStore.load(url: item.url)
@@ -284,6 +296,35 @@ final class ProductSessionViewModel: ObservableObject {
         }
     }
 
+    /// 텍스처 레이어 저장본을 열어 카메라 영상 없이 둘러본다(저장 == 재열기).
+    private func loadAndShowTexture(_ item: GSOStore.Item, announce: Bool) async {
+        let result = await Task.detached(priority: .userInitiated) { () -> Result<TexLayerFiles.Loaded, Error> in
+            do { return .success(try TexLayerFiles.load(url: item.url)) } catch { return .failure(error) }
+        }.value
+        switch result {
+        case .success(let loaded):
+            splats.publish(packed: [], count: 0)
+            texStore.publish(loaded.layers)
+            renderer.texStore = texStore
+            let b = TexLayerSelect.bounds(loaded.layers)
+            RTViewerBounds.shared.bounds = b
+            renderer.orbit = RTViewMath.fitOrbit(bounds: b)
+            renderer.mode = .explore
+            viewingTitle = item.url.lastPathComponent
+            let quads = loaded.layers.reduce(0) { $0 + $1.count }
+            var extra = ""
+            if let c = loaded.manifest["productCenter"] as? [Double], c.count == 3 { extra = String(format: " · 제품 중심 (%.2f, %.2f, %.2f) m(ARKit 세계 좌표)", c[0], c[1], c[2]) }
+            message = "저장한 텍스처 레이어를 열었어요 (레이어 \(loaded.layers.count)개, 사각형 \(quads)개)" + extra + ". 카메라 영상 없이 레이어만 그려요." + (loaded.checksumOK ? "" : " 체크섬이 맞지 않아요.")
+            if announce {
+                if let s = item.summaryURL, let t = try? String(contentsOf: s, encoding: .utf8) { summaryText = t }
+                let bd = GSOStore.shareBundle(for: item)
+                shareItems = bd.urls; shareMissing = bd.missing
+            }
+        case .failure(let error):
+            message = "열 수 없어요: \(error)"
+        }
+    }
+
     // MARK: 같은 입력 비교 (연구 기록 필요)
 
     struct CompareSource: Identifiable, Hashable {
@@ -293,7 +334,7 @@ final class ProductSessionViewModel: ObservableObject {
     }
 
     func compareSources() -> [CompareSource] {
-        ProductGSStore.list().compactMap { it in it.replayURL.map { CompareSource(url: $0, title: $0.lastPathComponent + " (연구 기록)") } }
+        allSavedItems().compactMap { it in it.replayURL.map { CompareSource(url: $0, title: $0.lastPathComponent + " (연구 기록)") } }
     }
 
     /// 저장한 연구 기록(마스크 포함)으로 P0 마스크 기준선 / P1 형상·재방문 보존 / P2 +원본 정밀화(분할 끔) / P3 +선택적 분할을 같은 조건으로 돌린다.
@@ -426,6 +467,7 @@ struct ProductGSView: View {
         let l = vm.live, r = vm.renderStats
         return VStack(alignment: .leading, spacing: 2) {
             Text("단계 \(l.phase) · 마스크 \(l.maskStatus) (신뢰 \(l.maskTrusted) · 불확실 \(l.maskUncertain) · p50 \(f(l.maskMsP50, 0))ms)")
+            if !l.texText.isEmpty { Text(l.texText) }
             Text(l.coverageText)
             Text("3D 범위 \(l.boundsText) · 제품 화소 \(l.productPixels) · 배경 누출 \(f(l.bgLeak.map { $0 * 100 }, 1))%")
             Text("가우시안 \(l.gaussians) (안정 \(l.stable) · 후보 \(l.candidate) · 임시 \(l.temporary)) · 방금 +\(l.lastInserted) · 키프레임 \(f(l.keyframeHz, 1)) Hz · 처리 \(l.processed)/\(l.keyframes)")
@@ -455,8 +497,13 @@ struct ProductGSView: View {
             if !vm.recordReplay {
                 Text("연구 기록이 꺼져 있으면 재생 자료가 남지 않아 같은 입력 비교를 할 수 없어요. 생성 품질에는 영향이 없어요.").font(.caption).foregroundStyle(ExpTheme.warn)
             }
-            Toggle("촬영 중 가우시안 최적화", isOn: $vm.optimize)
-            Toggle("임시 가우시안도 표시", isOn: $vm.showTemporary)
+            Toggle("새 방식: 텍스처 스플랫 레이어 (끄면 기존 가우시안 최적화)", isOn: $vm.textureLayers)
+            if !vm.textureLayers {
+                Toggle("촬영 중 가우시안 최적화", isOn: $vm.optimize)
+                Toggle("임시 가우시안도 표시", isOn: $vm.showTemporary)
+            } else {
+                Text("텍스처 레이어는 원본 사진 디테일을 그대로 쓰고 장면별 최적화를 하지 않아요. 일반 3DGS(PLY)와 다른 형식(.kmots)으로 저장돼요.").font(.caption).foregroundStyle(.white.opacity(0.8))
+            }
             Toggle("카메라 영상 배경 (비교용 — 복원 품질로 평가하지 마세요)", isOn: $vm.showCameraCompare)
         }
         .font(.footnote).foregroundStyle(.white)

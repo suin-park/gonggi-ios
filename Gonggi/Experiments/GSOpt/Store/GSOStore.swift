@@ -205,8 +205,11 @@ enum GSOStore {
         let fm = FileManager.default
         var urls = [item.url]
         var missing: [String] = []
-        if let p = item.plyURL { urls.append(p) } else { missing.append("호환용 PLY 없음") }
-        if let s = item.stateURL { urls.append(s) } else { missing.append("상태 파일(.state) 없음") }
+        let isTexLayers = item.url.pathExtension == "kmots"          // 텍스처 레이어는 PLY·상태 파일이 없다(일반 3DGS가 아님)
+        if !isTexLayers {
+            if let p = item.plyURL { urls.append(p) } else { missing.append("호환용 PLY 없음") }
+            if let s = item.stateURL { urls.append(s) } else { missing.append("상태 파일(.state) 없음") }
+        }
         var runId: String?
         var replayRecorded = false
         if let m = item.metaURL {
