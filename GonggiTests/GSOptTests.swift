@@ -25,13 +25,13 @@ final class GSOptRasterTests: XCTestCase {
         let wD = (0..<(W * H)).map { _ in rnd() * 0.4 }
         let wA = (0..<(W * H)).map { _ in rnd() }
         func loss(_ gg: GSOGaussians) -> Double {
-            let st = GSORaster.forward(gg, camera: cam, qcut: 100, amin: 0, tmin: 0)
+            let st = GSORaster.forward(gg, camera: cam, rules: .unlimited, qcut: 100, amin: 0, tmin: 0)
             var l = 0.0
             for i in 0..<(W * H * 3) { l += Double(st.image[i]) * Double(wC[i]) }
             for i in 0..<(W * H) { l += Double(st.depth[i]) * Double(wD[i]) + Double(1 - st.transmittance[i]) * Double(wA[i]) }
             return l
         }
-        let st = GSORaster.forward(g, camera: cam, qcut: 100, amin: 0, tmin: 0)
+        let st = GSORaster.forward(g, camera: cam, rules: .unlimited, qcut: 100, amin: 0, tmin: 0)
         XCTAssertGreaterThan(st.coverage(threshold: 0.1), 0.05)
         let grads = GSORaster.backward(g, camera: cam, state: st, dLdC: wC, dLdD: wD, dLdA: wA)
         XCTAssertEqual(grads.count, st.nv)
@@ -97,7 +97,7 @@ final class GSOptRasterTests: XCTestCase {
         let big = Foundation.log(Float(0.4))
         g.append(mu: SIMD3<Float>(0, 0, 2), logScale: SIMD3<Float>(big, big, big), quat: SIMD4<Float>(0, 0, 0, 1), color: SIMD3<Float>(0, 0, 1), opacityLogit: 6)
         g.append(mu: SIMD3<Float>(0, 0, 1), logScale: SIMD3<Float>(big, big, big), quat: SIMD4<Float>(0, 0, 0, 1), color: SIMD3<Float>(1, 0, 0), opacityLogit: 6)
-        let st = GSORaster.forward(g, camera: cam)
+        let st = GSORaster.forward(g, camera: cam, rules: .unlimited)       // 큰 가우시안의 가림·깊이 의미만 본다(반경 규칙은 GSOptRenderTests)
         let p = 15 * 40 + 20
         XCTAssertGreaterThan(st.image[p * 3], 0.9)                 // 가까운 빨강이 앞
         XCTAssertLessThan(st.image[p * 3 + 2], 0.1)
@@ -169,6 +169,8 @@ final class GSOptRasterTests: XCTestCase {
         pass.colorAttachments[0].storeAction = .store
         var u = RTViewMath.uniforms(pose: pose, fx: K.fx, fy: K.fy, cx: K.cx, cy: K.cy, imgW: Float(W), imgH: Float(H),
                                     mapping: RTViewMath.Mapping(m00: 1, m01: 0, m10: 0, m11: 1, tx: 0, ty: 0), viewW: Float(W), viewH: Float(H))
+        u.viewport.z = GSORasterRules.display.nearZ      // 앱(GSO)이 화면에 쓰는 규칙: 근평면과 반경 비율 제한을 CPU와 같게
+        u.imgSize.z = 0.5
         let cmd = queue.makeCommandBuffer()!
         let enc = cmd.makeRenderCommandEncoder(descriptor: pass)!
         enc.setRenderPipelineState(pso)

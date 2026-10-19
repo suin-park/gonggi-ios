@@ -45,6 +45,10 @@ final class GSOSessionViewModel: ObservableObject {
 
     init() {
         renderer = RTGaussianRenderer(splats: splats, liveCam: liveCam, background: background)
+        // 최적화·삽입(CPU)과 같은 가시성 규칙을 화면에도 쓴다(근평면, 주축 반경 > 0.5·f이면 그리지 않음). 3.0(21)은 화면만 600px로 찌그러뜨렸다.
+        let rules = GSORasterRules.display
+        renderer.nearZ = rules.nearZ
+        if case .cullFraction(let f) = rules.cap { renderer.radiusCapFraction = f }
         renderer.onStats = { [weak self] s in Task { @MainActor in self?.handleRenderStats(s) } }
         renderer.onPresented = { [weak self] version, uptime, source in
             Task { @MainActor in self?.engine?.notePresented(version: version, uptime: uptime, source: source) }
@@ -70,6 +74,8 @@ final class GSOSessionViewModel: ObservableObject {
     private func handleRenderStats(_ s: RTRenderStats) {
         renderStats = s
         engine?.noteRenderStats(s)
+        let ds = renderer.lastDrawableSize
+        if ds.width > 0 { engine?.noteDisplaySize(Int(ds.width), Int(ds.height)) }
         guard state == .running || state == .paused || state == .finished, Date().timeIntervalSince(lastBudgetChange) > 2 else { return }
         if s.gpuMsP95 > 28 {
             renderer.renderBudget = max(60_000, Int(Double(renderer.renderBudget) * 0.8)); lastBudgetChange = Date()
@@ -260,18 +266,20 @@ final class GSOSessionViewModel: ObservableObject {
                     let mono = RTMonoDepth()
                     _ = mono.load()
                     let held: (Int) -> Bool = { GSOCompare.isHeldOut(index: $0) }
-                    var cfgB = GSOConfig(); cfgB.optimize = false
-                    var cfgC = GSOConfig(); cfgC.optimize = true
                     let total = 3.0
-                    let a = GSOCompare.runLegacyV2(source: source, trainWidth: cfgB.trainWidth, heldOut: held)
-                    Task { @MainActor in self.compareProgress = 1 / total }
-                    let b = GSOCompare.runGaussian(name: "B 밀집 깊이+가우시안(최적화 끔)", source: source, config: cfgB, mono: mono, iterationsPerKeyframe: 0, heldOut: held) { d, n in
+                    // A: 3.0(21) 동작(렌더 규칙 불일치·깊이 항·삽입 경계 제외·고해상도 없음). 평가는 그 빌드의 화면 규칙(600px 압착)으로.
+                    // B: 렌더·재방문·삽입 결함 수정. C: B + 원본 고해상도 창 정밀화와 선택적 분할. 모두 같은 입력·같은 평가 프레임·같은 해상도.
+                    let a = GSOCompare.runGaussian(name: "A 빌드21", source: source, config: GSOConfig.build21(), mono: mono, iterationsPerKeyframe: 24, heldOut: held,
+                                                   displayRules: GSORasterRules.legacyMetal()) { d, n in
+                        Task { @MainActor in self.compareProgress = Double(d) / Double(max(1, n)) / total }
+                    }
+                    let b = GSOCompare.runGaussian(name: "B 결함 수정", source: source, config: GSOConfig.fixesOnly(), mono: mono, iterationsPerKeyframe: 24, heldOut: held) { d, n in
                         Task { @MainActor in self.compareProgress = (1 + Double(d) / Double(max(1, n))) / total }
                     }
-                    let c = GSOCompare.runGaussian(name: "C B + 최적화(켬)", source: source, config: cfgC, mono: mono, iterationsPerKeyframe: 24, heldOut: held) { d, n in
+                    let c = GSOCompare.runGaussian(name: "C B+원본 정밀화·분할", source: source, config: GSOConfig(), mono: mono, iterationsPerKeyframe: 24, heldOut: held) { d, n in
                         Task { @MainActor in self.compareProgress = (2 + Double(d) / Double(max(1, n))) / total }
                     }
-                    let text = GSOCompare.formatReport([a, b, c], environment: env, inputDescription: "\(src.url.lastPathComponent) (\(source.count)장, 평가 프레임 10장마다 1장)")
+                    let text = GSOCompare.formatReport([a, b, c], environment: env, inputDescription: "\(src.url.lastPathComponent) (\(source.count)장, 평가 프레임 10장마다 1장, 평가 해상도 960폭)")
                     try? GSOStore.ensureDirectory()
                     let url = GSOStore.directory.appendingPathComponent("compare-" + ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "") + ".txt")
                     try text.write(to: url, atomically: true, encoding: .utf8)
@@ -367,6 +375,11 @@ struct GaussianOptView: View {
             Text("가우시안 \(l.gaussians) (안정 \(l.stable) · 후보 \(l.candidate) · 임시 \(l.temporary)) · 방금 +\(l.lastInserted) · 앵커 \(l.lastAnchors) · 깊이 \(l.lastDenseSource)")
             Text("정렬 내부점 \(f(l.lastFitInlier.map { $0 * 100 }))% 신뢰 \(f(l.lastFitConfidence.map { $0 * 100 }))% · 모델 \(l.monoReady ? "준비" : "대기") (\(l.monoStatus))")
             Text("최적화 \(l.optimizing ? "켬" : "끔") 반복 \(l.optIterations) (\(f(l.optPerSecond, 1))/s) · 손실 \(f(l.lossStart, 4)) → \(f(l.lossEnd, 4)) · 롤백 \(l.rollbacks) · 훈련 시점 면적 \(f(l.coverage.map { $0 * 100 }))%")
+            Text("모델: \(l.modelState)")
+            Text("최적화: \(l.optimizerState) · 정밀화: \(l.refineState) (원본 창 \(l.refineIterations)회, 분할 \(l.splitsTotal), 보관 \(f(l.hiCacheMB, 1))MB) · 검증 공백 \(l.validationSkips) · 의심 \(l.suspectTotal)")
+            if !l.lastRollbackReason.isEmpty { Text("마지막 롤백: \(l.lastRollbackReason)") }
+            if !l.gapTop.isEmpty { Text("미생성 이유: \(l.gapTop)") }
+            if !l.resolutionText.isEmpty { Text(l.resolutionText) }
             Text("추적 \(l.tracking) · 세그먼트 \(l.segment) · 처음(초) 입력 \(f(l.firstInputS, 1)) 정렬 \(f(l.firstAlignedS, 1)) 후보 \(f(l.firstCandidateS, 1)) 안정 \(f(l.firstStableS, 1)) 표시 \(f(l.firstDisplayS, 1))")
             Text("렌더 \(f(r.fps)) fps · CPU \(f(r.cpuMsP95, 1)) · GPU p95 \(f(r.gpuMsP95, 1)) ms · 그림 \(r.drawn)/\(r.total) · 정렬 \(f(r.sortMsP50, 1)) ms")
             Text("메모리 \(f(l.footprintMB)) MB · 열 \(l.thermal) · 거버너 \(l.governor)" + (l.replayFrames > 0 ? " · 연구 기록 \(l.replayFrames)장 \(l.replayBytes / 1_048_576) MB" : ""))
@@ -485,7 +498,7 @@ struct GaussianOptView: View {
         NavigationStack {
             List {
                 Section {
-                    Text("저장한 입력(V2 저장본의 키프레임 또는 연구 기록)으로 A 기존 V2 / B 밀집 깊이+가우시안(최적화 끔) / C B+최적화(켬)를 이 기기에서 같은 조건으로 돌려 비교합니다. 평가용 프레임은 생성에 쓰지 않습니다. 수 분이 걸릴 수 있습니다.")
+                    Text("저장한 입력(V2 저장본의 키프레임 또는 연구 기록)으로 A 빌드21 / B 렌더·재방문·삽입 결함 수정 / C B+원본 고해상도 정밀화·분할을 이 기기에서 같은 조건으로 돌려 비교합니다. 평가용 프레임은 생성에 쓰지 않습니다. 수 분이 걸릴 수 있습니다.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 if let t = vm.compareText {

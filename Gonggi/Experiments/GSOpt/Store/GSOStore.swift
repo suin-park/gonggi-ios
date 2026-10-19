@@ -305,7 +305,10 @@ enum GSOSaver {
             manifest["config"] = ["trainWidth": r.config.trainWidth, "optimize": r.config.optimize, "geometryOptimization": r.config.geometryOptimization,
                                   "winRecent": r.config.winRecent, "lrMu": r.config.opt.lrMu, "lrLogScale": r.config.opt.lrLogScale,
                                   "lrQuat": r.config.opt.lrQuat, "lrColor": r.config.opt.lrColor, "lrOpacity": r.config.opt.lrOpacity,
-                                  "lambdaDepth": r.config.opt.lambdaDepth]
+                                  "lambdaDepth": r.config.opt.lambdaDepth, "alphaWeightAnchor": r.config.opt.alphaWeightAnchor, "opacityLogitMin": r.config.opt.opacityLogitMin,
+                                  "rules": GSOCompare.rulesLabel(r.config.rules), "validate": r.config.validate, "frontRecovery": r.config.frontRecovery,
+                                  "hiRefine": r.config.hiRefine, "refineCrop": "\(r.config.refineCropW)x\(r.config.refineCropH)", "splitBudget": r.config.splitBudget,
+                                  "insertEdges": r.config.depth.insertEdges]
             manifest["coordinates"] = "ARKit 세계 좌표(중력 정렬, y 위)."
             manifest["limits"] = "포즈는 ARKit 값을 고정으로 쓴다. 영상 유사도는 실제 거리 정확도가 아니다. A15 실측 전의 실험 결과다."
             for (k, v) in r.extraMeta { manifest[k] = v }

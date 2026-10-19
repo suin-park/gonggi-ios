@@ -34,7 +34,7 @@ def _rotmat(qx, qy, qz, qw):
 
 
 @njit(cache=True)
-def _project_one(i, mu, logs, quat, opa, Rcw, C, fx, fy, cx, cy, W, H, near, qcut, out):
+def _project_one(i, mu, logs, quat, opa, Rcw, C, fx, fy, cx, cy, W, H, near, qcut, capmode, capval, out):
     # out columns: 0 valid, 1 u, 2 v, 3 z, 4 ca, 5 cb, 6 cc, 7 a0, 8 radius
     out[i, 0] = 0
     d0 = mu[i, 0] - C[0]
@@ -78,6 +78,36 @@ def _project_one(i, mu, logs, quat, opa, Rcw, C, fx, fy, cx, cy, W, H, near, qcu
         return
     mid = 0.5 * (sa + sc)
     rad = np.sqrt(max(0.25 * (sa - sc) * (sa - sc) + sb * sb, 0.0))
+    if capmode == 1:
+        # legacy Metal vertex stage: each principal axis radius (3 sigma) is clamped to capval pixels while the fragment keeps the +-3 mapping,
+        # i.e. the ellipse is squeezed. Emulate by clamping the eigenvalues of the 2D covariance.
+        l1 = mid + rad
+        l2 = max(mid - rad, 1e-4)
+        c1 = min(3.0 * np.sqrt(l1), capval) / 3.0
+        c2 = min(3.0 * np.sqrt(l2), capval) / 3.0
+        if 3.0 * np.sqrt(l1) > capval or 3.0 * np.sqrt(l2) > capval:
+            ex = sb
+            ey = l1 - sa
+            ln = np.sqrt(ex * ex + ey * ey)
+            if ln > 1e-6:
+                ex /= ln
+                ey /= ln
+            else:
+                ex = 1.0 if sa >= sc else 0.0
+                ey = 0.0 if sa >= sc else 1.0
+            n1 = c1 * c1
+            n2 = c2 * c2
+            sa = n1 * ex * ex + n2 * ey * ey
+            sc = n1 * ey * ey + n2 * ex * ex
+            sb = (n1 - n2) * ex * ey
+            det = sa * sc - sb * sb
+            if det <= 1e-12:
+                return
+            mid = 0.5 * (sa + sc)
+            rad = np.sqrt(max(0.25 * (sa - sc) * (sa - sc) + sb * sb, 0.0))
+    elif capmode == 2:
+        if 3.0 * np.sqrt(mid + rad) > capval * max(fx, fy):
+            return
     r = np.sqrt(qcut) * np.sqrt(mid + rad)
     u = fx * px * iz + cx
     v = fy * py * iz + cy
@@ -95,11 +125,11 @@ def _project_one(i, mu, logs, quat, opa, Rcw, C, fx, fy, cx, cy, W, H, near, qcu
 
 
 @njit(cache=True, parallel=True)
-def _project_all(mu, logs, quat, opa, Rcw, C, fx, fy, cx, cy, W, H, near, qcut):
+def _project_all(mu, logs, quat, opa, Rcw, C, fx, fy, cx, cy, W, H, near, qcut, capmode, capval):
     N = mu.shape[0]
     out = np.zeros((N, 9), np.float32)
     for i in prange(N):
-        _project_one(i, mu, logs, quat, opa, Rcw, C, fx, fy, cx, cy, W, H, near, qcut, out)
+        _project_one(i, mu, logs, quat, opa, Rcw, C, fx, fy, cx, cy, W, H, near, qcut, capmode, capval, out)
     return out
 
 
@@ -188,13 +218,13 @@ def _raster_fwd(proj, col, cnt, items, W, H, tw, th, qcut, amin, tmin):
     return img, dep, Tf, last
 
 
-def render(mu, logs, quat, col, opa, cam, near=0.05, qcut=9.0, amin=ALPHA_MIN, tmin=1e-4):
+def render(mu, logs, quat, col, opa, cam, near=0.05, qcut=9.0, amin=ALPHA_MIN, tmin=1e-4, capmode=0, capval=0.0):
     """cam: dict(Rcw 3x3, C 3, fx, fy, cx, cy, W, H). Returns img (H,W,3), depth (H,W; alpha-weighted sum, not normalised),
     T (H,W) final transmittance, state (for backward)."""
     W, H = cam['W'], cam['H']
     proj = _project_all(mu, logs, quat, opa, cam['Rcw'].astype(np.float32), cam['C'].astype(np.float32),
                         np.float32(cam['fx']), np.float32(cam['fy']), np.float32(cam['cx']), np.float32(cam['cy']),
-                        W, H, np.float32(near), np.float32(qcut))
+                        W, H, np.float32(near), np.float32(qcut), int(capmode), np.float32(capval))
     tw = (W + TILE - 1) // TILE
     th = (H + TILE - 1) // TILE
     idx = np.nonzero(proj[:, 0] > 0.5)[0]

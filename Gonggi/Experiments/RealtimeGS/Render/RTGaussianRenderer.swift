@@ -93,6 +93,11 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
     var tintProvisional = false
     var renderBudget = 220_000
     var onStats: ((RTRenderStats) -> Void)?
+    /// 가우시안 최적화 경로가 CPU GSORaster와 같은 가시성 규칙을 쓰게 한다. nil이면 기존 동작(근평면 0.05, 두 축 600px 제한). 메인 스레드에서만 바꾼다.
+    var nearZ: Float?
+    var radiusCapFraction: Float?
+    /// 마지막으로 그린 drawable 크기(로그용). 메인 스레드에서만 읽는다.
+    private(set) var lastDrawableSize = CGSize.zero
     /// (splats 버전, 시각(systemUptime), 출처). 새 버전이 처음 화면에 표시된 시각. 출처는 "present"(drawable presentedTime) 또는 "gpuEnd"(GPU 완료 시각 근사).
     /// 기본값은 nil이라 기존 실험(V1)의 동작은 바뀌지 않는다.
     var onPresented: ((Int, Double, String) -> Void)?
@@ -158,6 +163,13 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
     // MARK: 카메라
 
     private func currentUniforms(viewW: Float, viewH: Float) -> (RTUniforms, RTPose)? {
+        guard var r = currentUniformsRaw(viewW: viewW, viewH: viewH) else { return nil }
+        if let n = nearZ { r.0.viewport.z = n }
+        if let f = radiusCapFraction { r.0.imgSize.z = f }
+        return r
+    }
+
+    private func currentUniformsRaw(viewW: Float, viewH: Float) -> (RTUniforms, RTPose)? {
         switch mode {
         case .live:
             guard let c = liveCam.get() else { return nil }
@@ -218,6 +230,7 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
         guard initError == nil, let queue, let pipeline, let bgPipeline, let drawable = view.currentDrawable,
               let pass = view.currentRenderPassDescriptor, let cmd = queue.makeCommandBuffer() else { return }
         let vw = Float(view.drawableSize.width), vh = Float(view.drawableSize.height)
+        lastDrawableSize = view.drawableSize
         guard vw > 8, vh > 8 else { return }
         let cam = currentUniforms(viewW: vw, viewH: vh)
 

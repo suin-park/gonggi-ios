@@ -52,6 +52,16 @@ final class GSOMap {
     var mO: [Float] = [], vO: [Float] = []
     var mC: [SIMD3<Float>] = [], vC: [SIMD3<Float>] = []
     var steps: [Int32] = []                // 이 가우시안이 gradient를 받은 횟수
+    // 앞쪽 오표면 의심: 독립 시점에서 '신뢰 앵커보다 지도가 앞에 있다'는 증거를 센다(런타임 상태, 저장하지 않는다)
+    var conflictVotes: [UInt8] = []
+    var votePos: [SIMD3<Float>] = []
+    var voteDir: [SIMD3<Float>] = []
+    var voteKF: [Int32] = []
+    var suspect: [Bool] = []
+    // 선택적 분할: 정밀화 때 화면 위치 gradient 크기의 이동 평균과 횟수
+    var splitAccum: [Float] = []
+    var splitCount: [UInt16] = []
+    var splitTotal = 0
 
     private(set) var nextID: UInt32 = 1
     var version = 0                         // 지도 변경(게시) 번호
@@ -81,6 +91,8 @@ final class GSOMap {
         mMu.append(.zero); vMu.append(.zero); mLs.append(.zero); vLs.append(.zero); mQ.append(.zero); vQ.append(.zero)
         mO.append(0); vO.append(0); mC.append(.zero); vC.append(.zero)
         steps.append(0)
+        conflictVotes.append(0); votePos.append(.zero); voteDir.append(.zero); voteKF.append(-1); suspect.append(false)
+        splitAccum.append(0); splitCount.append(0)
         insertedTotal += 1
         return i
     }
@@ -99,6 +111,8 @@ final class GSOMap {
                 revision[w] = revision[r]; parent[w] = parent[r]; ls0[w] = ls0[r]; mu0[w] = mu0[r]; mu1[w] = mu1[r]
                 mMu[w] = mMu[r]; vMu[w] = vMu[r]; mLs[w] = mLs[r]; vLs[w] = vLs[r]; mQ[w] = mQ[r]; vQ[w] = vQ[r]
                 mO[w] = mO[r]; vO[w] = vO[r]; mC[w] = mC[r]; vC[w] = vC[r]; steps[w] = steps[r]
+                conflictVotes[w] = conflictVotes[r]; votePos[w] = votePos[r]; voteDir[w] = voteDir[r]; voteKF[w] = voteKF[r]; suspect[w] = suspect[r]
+                splitAccum[w] = splitAccum[r]; splitCount[w] = splitCount[r]
             }
             w += 1
         }
@@ -110,6 +124,8 @@ final class GSOMap {
             revision.removeLast(removed); parent.removeLast(removed); ls0.removeLast(removed); mu0.removeLast(removed); mu1.removeLast(removed)
             mMu.removeLast(removed); vMu.removeLast(removed); mLs.removeLast(removed); vLs.removeLast(removed); mQ.removeLast(removed); vQ.removeLast(removed)
             mO.removeLast(removed); vO.removeLast(removed); mC.removeLast(removed); vC.removeLast(removed); steps.removeLast(removed)
+            conflictVotes.removeLast(removed); votePos.removeLast(removed); voteDir.removeLast(removed); voteKF.removeLast(removed); suspect.removeLast(removed)
+            splitAccum.removeLast(removed); splitCount.removeLast(removed)
             removedTotal += removed
             geometryRevision += 1
         }
@@ -121,11 +137,12 @@ final class GSOMap {
         guard s.gaussians.count == count else { return false }
         g = s.gaussians
         mMu = s.mMu; vMu = s.vMu; mLs = s.mLs; vLs = s.vLs; mQ = s.mQ; vQ = s.vQ; mO = s.mO; vO = s.vO; mC = s.mC; vC = s.vC
+        steps = s.steps; revision = s.revision; mu1 = s.mu1       // Adam 모멘트·step·revision 기준을 파라미터와 함께 되돌려 상태가 어긋나지 않게 한다
         return true
     }
 
     func snapshot() -> GSOMapSnapshot {
-        GSOMapSnapshot(gaussians: g, mMu: mMu, vMu: vMu, mLs: mLs, vLs: vLs, mQ: mQ, vQ: vQ, mO: mO, vO: vO, mC: mC, vC: vC)
+        GSOMapSnapshot(gaussians: g, mMu: mMu, vMu: vMu, mLs: mLs, vLs: vLs, mQ: mQ, vQ: vQ, mO: mO, vO: vO, mC: mC, vC: vC, steps: steps, revision: revision, mu1: mu1)
     }
 
     // MARK: 렌더러·저장용 복사본
@@ -144,4 +161,7 @@ struct GSOMapSnapshot {
     var mQ: [SIMD4<Float>], vQ: [SIMD4<Float>]
     var mO: [Float], vO: [Float]
     var mC: [SIMD3<Float>], vC: [SIMD3<Float>]
+    var steps: [Int32]
+    var revision: [UInt32]
+    var mu1: [SIMD3<Float>]
 }

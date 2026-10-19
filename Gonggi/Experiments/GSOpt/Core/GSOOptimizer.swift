@@ -15,6 +15,9 @@ struct GSOOptConfig: Equatable {
     var lambdaDepth: Float = 0.0            // 스테레오 확인 깊이 제약 가중치. 기본 끔: 기기 로그에서 이 항의 손실이 0.4~0.6으로 줄지 않았고, 178장 재생에서 끄면 PSNR 17.6→18.0, 흐림(α<0.8 화소) 19%→7%였다.
     var opacityLogitMin: Float = -1.5       // 불투명도 하한(a0 ≥ 0.18). 기기 저장본에서 가우시안 26%가 a0 < 0.1로 사라져 있었다.
     var charbonnierEps: Float = 0.01
+    var alphaWeightAnchor: Float = 0.1      // 앵커 화소에서 알파를 1로 끄는 항의 가중치(깊이 항을 꺼도 투명화로 숨는 것을 막는다)
+    var legacyDepthTerm = false             // 3.0(21)의 깊이 항 λ·|D − zA|/z (비교 A 재현용)
+    var depthOutlierRel: Float = 0.35       // 앵커와 정규화 깊이의 상대 오차가 이보다 크면 깊이 gradient를 주지 않는다
     var revisionMoveMeters: Float = 0.002
     var beta1: Float = 0.9
     var beta2: Float = 0.99
@@ -32,7 +35,7 @@ struct GSOLossStats {
 /// 손실과 출력 gradient(dL/dImage, dL/dDepth, dL/dAlpha). 광도는 Charbonnier(L1 근사), 깊이는 스테레오로 확인된 화소에서만.
 enum GSOLoss {
     /// target: H·W·3 (0...1), anchors: H·W(카메라 Z, 0 = 없음).
-    static func evaluate(state st: GSOForwardState, target: [Float], anchors: [Float]?, config c: GSOOptConfig, depthWeight: Float,
+    static func evaluate(state st: GSOForwardState, target: [Float], anchors: [Float]?, config c: GSOOptConfig, depthWeight: Float, alphaWeight: Float = 0,
                          dLdC: inout [Float], dLdD: inout [Float], dLdA: inout [Float]) -> GSOLossStats {
         let W = st.width, H = st.height
         let npix = W * H
@@ -56,26 +59,61 @@ enum GSOLoss {
         }
         stats.photometric = sum * inv
         stats.coverage = Float(cov) / Float(npix)
-        if let anchors, depthWeight > 0 {
+        if let anchors, depthWeight > 0 || alphaWeight > 0 {
             var n = 0
             for p in 0..<npix where anchors[p] > 0 { n += 1 }
             if n > 0 {
-                let w = depthWeight / Float(n)
                 var ld: Float = 0
+                var nd = 0
                 for p in 0..<npix where anchors[p] > 0 {
-                    let z = anchors[p]
-                    let rd = st.depth[p] - z * (1 - st.transmittance[p])
-                    let s: Float = rd > 0 ? 1 : (rd < 0 ? -1 : 0)
-                    ld += abs(rd) / z
-                    dLdD[p] = w * s / z
-                    dLdA[p] = -w * s
+                    if c.legacyDepthTerm {
+                        let z = anchors[p]
+                        let rd = st.depth[p] - z * (1 - st.transmittance[p])
+                        let s: Float = rd > 0 ? 1 : (rd < 0 ? -1 : 0)
+                        ld += abs(rd) / z; nd += 1
+                        dLdD[p] = depthWeight / Float(n) * s / z
+                        dLdA[p] = -depthWeight / Float(n) * s
+                        continue
+                    }
+                    let t = depthTerm(alpha: 1 - st.transmittance[p], depthSum: st.depth[p], anchorZ: anchors[p], depthWeight: depthWeight / Float(n),
+                                      alphaWeight: alphaWeight / Float(n), outlierRel: c.depthOutlierRel)
+                    dLdD[p] = t.dD; dLdA[p] = t.dA
+                    if t.counted { ld += t.relError; nd += 1 }
                 }
-                stats.depth = ld / Float(n)
+                stats.depth = nd > 0 ? ld / Float(nd) : 0
                 stats.anchorPixels = n
             }
         }
         stats.finite = stats.photometric.isFinite && stats.depth.isFinite
         return stats
+    }
+
+    /// 스테레오 앵커 한 화소의 깊이·알파 항과 gradient.
+    /// 3.0(21)의 항 λ·|D − zA|/z는 위치를 고치지 않고 알파를 낮춰도(A→0) 줄어들었다(깊이가 틀린 가우시안이 사라지는 쪽이 손실이 낮았다).
+    /// 개선: (1) 정규화 깊이 D/A를 앵커와 비교하므로 알파를 낮춰도 깊이 오차가 줄지 않고, (2) 앵커가 있는 화소에는 표면이 있어야 하므로 알파를 1로 끄는 항을 더하며,
+    /// (3) 상대 오차가 outlierRel을 넘는 앵커는 깊이 gradient를 주지 않는다(틀린 앵커·가림에 지도가 끌려가지 않게. 이 경우에도 알파 항은 유지).
+    /// A < 0.3이면 D/A가 불안정해 깊이 항은 쓰지 않는다.
+    static func depthTerm(alpha A: Float, depthSum D: Float, anchorZ z: Float, depthWeight lamD: Float, alphaWeight lamA: Float, outlierRel: Float)
+        -> (value: Float, dD: Float, dA: Float, relError: Float, counted: Bool) {
+        var value: Float = 0, dD: Float = 0, dA: Float = 0, rel: Float = 0
+        var counted = false
+        if lamD > 0, A >= 0.3 {
+            let dn = D / A
+            let rd = dn - z
+            rel = abs(rd) / z
+            counted = true
+            if rel <= outlierRel {
+                let s: Float = rd > 0 ? 1 : (rd < 0 ? -1 : 0)
+                value += lamD * rel
+                dD = lamD * s / (z * A)
+                dA = -lamD * s * D / (z * A * A)
+            }
+        }
+        if lamA > 0 {
+            value += lamA * (1 - A)
+            dA += -lamA
+        }
+        return (value, dD, dA, rel, counted)
     }
 
     /// PSNR (두 H·W·3 영상, 0...1).
@@ -123,6 +161,7 @@ enum GSOLoss {
 final class GSOOptimizer {
     var config: GSOOptConfig
     private(set) var updates = 0
+    var lrScale: Float = 1                  // 롤백 뒤 일정 동안 학습률을 낮춘다(반복 악화 방지)
     private(set) var nonFiniteSkipped = 0
 
     init(config: GSOOptConfig = GSOOptConfig()) { self.config = config }
@@ -131,6 +170,7 @@ final class GSOOptimizer {
     @discardableResult
     func step(map: GSOMap, grads: GSOGradients, geometry: Bool) -> Int {
         let c = config
+        let ls = lrScale
         var moved = 0
         let n = grads.count
         for r in 0..<n {
@@ -146,23 +186,23 @@ final class GSOOptimizer {
                 return lr * (m / bc1) / ((v / bc2).squareRoot() + c.adamEps)
             }
             // 색·불투명도
-            let dc = adam3(&map.mC[i], &map.vC[i], gc, c.lrColor)
+            let dc = adam3(&map.mC[i], &map.vC[i], gc, c.lrColor * ls)
             map.g.color[i] = simd_clamp(map.g.color[i] - dc, SIMD3<Float>(repeating: 0), SIMD3<Float>(repeating: 1))
             map.mO[i] = c.beta1 * map.mO[i] + (1 - c.beta1) * go
             map.vO[i] = c.beta2 * map.vO[i] + (1 - c.beta2) * go * go
-            let dO = c.lrOpacity * (map.mO[i] / bc1) / ((map.vO[i] / bc2).squareRoot() + c.adamEps)
+            let dO = c.lrOpacity * ls * (map.mO[i] / bc1) / ((map.vO[i] / bc2).squareRoot() + c.adamEps)
             map.g.opacityLogit[i] = max(c.opacityLogitMin, min(6, map.g.opacityLogit[i] - dO))
             guard geometry, map.steps[i] > c.geometryWarmSteps else { continue }
             let gm = grads.mu[r], gl = grads.logScale[r], gq = grads.quat[r]
             guard gm.x.isFinite, gm.y.isFinite, gm.z.isFinite, gl.x.isFinite, gl.y.isFinite, gl.z.isFinite,
                   gq.x.isFinite, gq.y.isFinite, gq.z.isFinite, gq.w.isFinite else { nonFiniteSkipped += 1; continue }
-            let dm = adam3(&map.mMu[i], &map.vMu[i], gm, c.lrMu)
+            let dm = adam3(&map.mMu[i], &map.vMu[i], gm, c.lrMu * ls)
             var mu = map.g.mu[i] - dm
-            let dl = adam3(&map.mLs[i], &map.vLs[i], gl, c.lrLogScale)
+            let dl = adam3(&map.mLs[i], &map.vLs[i], gl, c.lrLogScale * ls)
             map.g.logScale[i] = simd_clamp(map.g.logScale[i] - dl, map.ls0[i] - SIMD3<Float>(repeating: c.scaleDown), map.ls0[i] + SIMD3<Float>(repeating: c.scaleUp))
             map.mQ[i] = c.beta1 * map.mQ[i] + (1 - c.beta1) * gq
             map.vQ[i] = c.beta2 * map.vQ[i] + (1 - c.beta2) * gq * gq
-            let dq = c.lrQuat * (map.mQ[i] / bc1) / ((map.vQ[i] / bc2).squareRoot() + SIMD4<Float>(repeating: c.adamEps))
+            let dq = c.lrQuat * ls * (map.mQ[i] / bc1) / ((map.vQ[i] / bc2).squareRoot() + SIMD4<Float>(repeating: c.adamEps))
             let qNew = map.g.quat[i] - dq
             let qLen = simd_length(qNew)
             map.g.quat[i] = qLen > 1e-9 ? qNew / qLen : map.g.quat[i]

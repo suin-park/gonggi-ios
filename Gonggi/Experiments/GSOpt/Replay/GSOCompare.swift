@@ -57,12 +57,14 @@ struct GSOScore: Equatable {
     var coverage: Float
     var hole: Float
     var psnrSupported: Float
+    var psnrEdge: Float = 0
 }
 
 struct GSOVariantReport {
     var name: String
     var final: [GSOScore] = []
     var arrival: [GSOScore] = []
+    var midScores: [Int: Float] = [:]           // 40% 지점에서 이미 본 구역의 평가 프레임 PSNR(id → dB)
     var gaussians = 0
     var states = [0, 0, 0]
     var keyframes = 0
@@ -70,6 +72,7 @@ struct GSOVariantReport {
     var inserted = 0
     var pruned = 0
     var rollbacks = 0
+    var validationSkips = 0
     var forwardMs = 0.0
     var backwardMs = 0.0
     var updateMs = 0.0
@@ -78,6 +81,14 @@ struct GSOVariantReport {
     var geometryMoved = 0
     var lossStart: Float = 0
     var lossEnd: Float = 0
+    var refineIterations = 0
+    var refineMs = 0.0
+    var splits = 0
+    var suspectMarked = 0
+    var gapTotals: [String: Int] = [:]
+    var evalWidth = 0
+    var evalRulesLabel = ""
+    var resolutions: [String: Int] = [:]
     var lastImages: [Int: [Float]] = [:]      // 평가 시점별 마지막 렌더(비교 이미지용, 선택)
 
     static func mean(_ s: [GSOScore], _ f: (GSOScore) -> Float) -> Float { s.isEmpty ? 0 : s.map(f).reduce(0, +) / Float(s.count) }
@@ -86,11 +97,17 @@ struct GSOVariantReport {
     var coverage: Float { Self.mean(final) { $0.coverage } }
     var hole: Float { Self.mean(final) { $0.hole } }
     var psnrSupported: Float { Self.mean(final) { $0.psnrSupported } }
+    var psnrEdge: Float { Self.mean(final) { $0.psnrEdge } }
     var arrivalPSNR: Float { Self.mean(arrival) { $0.psnr } }
+    /// 재방문 후 과거 구역의 악화: 40% 지점에서 이미 본 구역의 평가 프레임이 끝난 뒤 얼마나 나빠졌나(dB, 양수 = 악화).
+    var pastDegradation: Float {
+        let diffs = final.compactMap { s in midScores[s.id].map { $0 - s.psnr } }
+        return diffs.isEmpty ? 0 : diffs.reduce(0, +) / Float(diffs.count)
+    }
 
     var summaryLine: String {
-        name + String(format: ": PSNR %.2f / SSIM %.3f / 면적 %.1f%% / 구멍 %.1f%% (지원 화소만 PSNR %.2f) · 가우시안 %d · 도착 시점 PSNR %.2f",
-                      psnr, ssim, coverage * 100, hole * 100, psnrSupported, gaussians, arrivalPSNR)
+        name + String(format: ": 전체 화면 PSNR %.2f / SSIM %.3f / 경계·세부 PSNR %.2f / 면적 %.1f%% / 구멍 %.1f%% (지원 화소만 %.2f) · 과거 구역 악화 %+.2f dB · 가우시안 %d · 평가 %d폭",
+                      psnr, ssim, psnrEdge, coverage * 100, hole * 100, psnrSupported, pastDegradation, gaussians, evalWidth) + " [" + evalRulesLabel + "]"
     }
 }
 
@@ -108,16 +125,46 @@ enum GSOCompare {
         return (GSOCamera(pose: input.pose, k: k), t)
     }
 
+    /// 평가 해상도(폭 evalWidth, 입력이 더 작으면 입력 크기)로 원본에서 직접 줄인 영상과 같은 해상도의 카메라(K 스케일·픽셀 중심 규약 적용).
+    static func evalTarget(_ input: SV2Input, evalWidth: Int) -> (camera: GSOCamera, target: [Float]) {
+        let img = SV2Image.resizeAreaRGB(input.rgbHi, width: input.hiWidth, height: input.hiHeight, outW: min(evalWidth, input.hiWidth))
+        let k = input.kFull.scaled(toWidth: img.width, height: img.height)
+        var t = [Float](repeating: 0, count: img.width * img.height * 3)
+        for i in 0..<t.count { t[i] = Float(img.rgb[i]) / 255 }
+        return (GSOCamera(pose: input.pose, k: k), t)
+    }
+
+    static func rulesLabel(_ r: GSORasterRules) -> String {
+        switch r.cap {
+        case .none: return "반경 무제한"
+        case .clampPixels(let c): return "3.0(21) 화면: 600px 압착 \(Int(c))"
+        case .cullFraction(let f): return "반경 > \(f)f 제외, 근평면 \(r.nearZ)m"
+        }
+    }
+
     /// B/C/Cc 같은 가우시안 경로를 재생한다. iterationsPerKeyframe만큼 키프레임마다 최적화한다(0이면 최적화 끔).
+    /// displayRules: 평가(화면에 보이는 결과)에 쓰는 규칙. nil이면 설정의 규칙. 3.0(21)(A)은 화면이 600px 압착 규칙이었으므로 그 규칙으로 평가한다.
     static func runGaussian(name: String, source: GSOInputSource, config cfg: GSOConfig, mono: GSOMonoProvider?, iterationsPerKeyframe: Int,
-                            heldOut: (Int) -> Bool, keepImages: Set<Int> = [], progress: ((Int, Int) -> Void)? = nil) -> GSOVariantReport {
+                            heldOut: (Int) -> Bool, evalWidth: Int = 960, displayRules: GSORasterRules? = nil, keepImages: Set<Int> = [],
+                            progress: ((Int, Int) -> Void)? = nil) -> GSOVariantReport {
         var cfg = cfg
         cfg.exposureNormalize = false          // 평가 대상(원본 영상)과 같은 밝기 기준을 쓴다
         let p = GSOPipeline(config: cfg)
         var rep = GSOVariantReport(name: name)
+        let evalRules = displayRules ?? cfg.rules
+        rep.evalRulesLabel = rulesLabel(evalRules)
         let t0 = ExpSys.hostNow()
         var heldInputs: [(Int, SV2Input)] = []
         var firstLoss: Float?
+        let nonHeld = (0..<source.count).filter { !heldOut($0) }.count
+        let midAt = max(1, Int(Double(nonHeld) * 0.4))
+        var midDone = false
+        var seen = 0
+        func score(_ input: SV2Input) -> (GSOScore, [Float], Int) {
+            let (cam, tgt) = evalTarget(input, evalWidth: evalWidth)
+            let e = p.evaluate(camera: cam, target: tgt, rules: evalRules)
+            return (GSOScore(id: input.id, psnr: e.psnr, ssim: e.ssim, coverage: e.coverage, hole: e.hole, psnrSupported: e.psnrSupported, psnrEdge: e.psnrEdge), e.image, cam.width)
+        }
         for i in 0..<source.count {
             guard let input = source.input(at: i) else { continue }
             if heldOut(i) {
@@ -130,24 +177,35 @@ enum GSOCompare {
                 continue
             }
             let r = p.process(input, mono: mono)
-            if r.skipped == nil { rep.keyframes += 1; rep.processMs += r.totalMs; rep.inserted += r.inserted }
+            seen += 1
+            if r.skipped == nil {
+                rep.keyframes += 1; rep.processMs += r.totalMs; rep.inserted += r.inserted; rep.suspectMarked += r.suspectMarked
+                for (k, v) in r.gaps { rep.gapTotals[k, default: 0] += v }
+                if rep.resolutions.isEmpty { rep.resolutions = r.resolutions }
+            }
             if iterationsPerKeyframe > 0, cfg.optimize {
                 let s = p.optimizeSlice(maxIterations: iterationsPerKeyframe, deadlineHost: .infinity)
                 rep.iterations += s.iterations; rep.forwardMs += s.forwardMs; rep.backwardMs += s.backwardMs; rep.updateMs += s.updateMs
-                rep.geometryMoved += s.moved
+                rep.geometryMoved += s.moved; rep.refineIterations += s.refineIterations; rep.refineMs += s.refineMs; rep.splits += s.splits
                 if firstLoss == nil, s.lossStart > 0 { firstLoss = s.lossStart }
                 rep.lossEnd = s.lossEnd
             }
             if p.processed % 4 == 0 { rep.pruned += p.prune() }
+            // 40% 지점: 이미 본 구역(그때까지 도착한 평가 프레임)의 품질을 기록해 두었다가 끝난 뒤와 비교한다.
+            if !midDone, seen >= midAt {
+                midDone = true
+                for (_, hi) in heldInputs { rep.midScores[hi.id] = score(hi).0.psnr }
+            }
             progress?(i + 1, source.count)
         }
         rep.lossStart = firstLoss ?? 0
         rep.rollbacks = p.rollbacks
+        rep.validationSkips = p.validationSkips
         for (_, input) in heldInputs {
-            let (cam, tgt) = evalTarget(input, trainWidth: cfg.trainWidth, smallWidth: cfg.smallWidth)
-            let e = p.evaluate(camera: cam, target: tgt)
-            rep.final.append(GSOScore(id: input.id, psnr: e.psnr, ssim: e.ssim, coverage: e.coverage, hole: e.hole, psnrSupported: e.psnrSupported))
-            if keepImages.contains(input.id) { rep.lastImages[input.id] = e.image }
+            let (sc, img, w) = score(input)
+            rep.final.append(sc)
+            rep.evalWidth = w
+            if keepImages.contains(input.id) { rep.lastImages[input.id] = img }
         }
         rep.gaussians = p.map.count
         let sc = p.map.stateCounts()
@@ -158,7 +216,9 @@ enum GSOCompare {
 
     /// A: 기존 V2(표면 패치 + 원본 사진 투영)를 같은 입력(평가용 프레임 제외)으로 만들고 같은 시점·해상도에서 렌더해 같은 지표로 잰다.
     static func runLegacyV2(source: GSOInputSource, trainWidth: Int, heldOut: (Int) -> Bool, smallWidth: Int = 320) -> GSOVariantReport {
-        var rep = GSOVariantReport(name: "A 기존 V2")
+        var rep = GSOVariantReport(name: "V2 표면(이전 방식)")
+        rep.evalRulesLabel = "V2 표면 렌더"
+        rep.evalWidth = trainWidth
         let t0 = ExpSys.hostNow()
         var cfg = SV2Config.default
         cfg.smallWidth = smallWidth
@@ -216,6 +276,12 @@ enum GSOCompare {
                             r.forwardMs, r.backwardMs, r.updateMs, r.forwardMs / Double(r.iterations), r.backwardMs / Double(r.iterations),
                             r.updateMs / Double(r.iterations), r.processMs, r.wallSeconds)
             }
+        }
+        t += "\n안전장치·정밀화·미생성 이유 (이 환경 합계)\n"
+        for r in reports where r.iterations > 0 || !r.gapTotals.isEmpty {
+            t += r.name + String(format: " · 정밀화 반복 %d (%.0f ms) · 분할 %d · 앞쪽 오표면 의심 %d · 검증 공백 %d\n", r.refineIterations, r.refineMs, r.splits, r.suspectMarked, r.validationSkips)
+            if !r.gapTotals.isEmpty { t += "   미생성 이유: " + r.gapTotals.sorted { $0.value > $1.value }.map { "\($0.key) \($0.value)" }.joined(separator: " · ") + "\n" }
+            if !r.resolutions.isEmpty { t += "   해상도: " + r.resolutions.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ") + "\n" }
         }
         if let w = reports.first(where: { !$0.final.isEmpty }) {
             t += "\n평가 프레임별(최종 지도) PSNR\n"

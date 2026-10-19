@@ -15,7 +15,7 @@ struct RTUniforms {
     float4 viewport;  // 뷰 폭, 뷰 높이, 근평면 z, 디버그(임시 가우시안 색 구분)
     float4 mapA;      // 센서 픽셀 -> 뷰 픽셀 2x2: m00, m01, m10, m11
     float4 mapT;      // tx, ty, 0, 0
-    float4 imgSize;   // 센서 영상 폭, 높이
+    float4 imgSize;   // 센서 영상 폭, 높이, (z) 반경 제한 비율(0이면 기존 600px 제한), 예약
 };
 
 struct RTVOut {
@@ -82,8 +82,18 @@ vertex RTVOut rt_vertex(uint vid [[vertex_id]],
     float len = length(e1);
     e1 = len > 1e-6 ? e1 / len : (sa >= sc ? float2(1.0, 0.0) : float2(0.0, 1.0));
     float2 e2 = float2(-e1.y, e1.x);
-    float r1 = min(3.0 * sqrt(l1), 600.0);
-    float r2 = min(3.0 * sqrt(l2), 600.0);
+    float r1 = 3.0 * sqrt(l1);
+    float r2 = 3.0 * sqrt(l2);
+    if (U.imgSize.z > 0.0) {
+        // 가우시안 최적화 경로(CPU GSORaster와 같은 규칙): 주축 반경이 f의 일정 비율을 넘으면 그리지 않는다(찌그러뜨리지 않는다).
+        // 비율 규칙이라 해상도·세로 회전·레터박스와 무관하다. 근평면은 viewport.z가 정한다.
+        float viewScale = sqrt(U.mapA.x * U.mapA.x + U.mapA.z * U.mapA.z);
+        if (r1 > U.imgSize.z * max(fx, fy) * viewScale) { return o; }
+    } else {
+        // 기존 실험(V1·3.0(21) 이전)의 동작: 두 축을 600 drawable 픽셀로 자른다.
+        r1 = min(r1, 600.0);
+        r2 = min(r2, 600.0);
+    }
 
     // 화면 밖이면 그리지 않는다.
     float2 vp = U.viewport.xy;

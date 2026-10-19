@@ -94,6 +94,10 @@ jobs:
             -only-testing:GonggiTests/GSOptPipelineTests \
             -only-testing:GonggiTests/GSOptCompareTests \
             -only-testing:GonggiTests/GSOptModelTests \
+            -only-testing:GonggiTests/GSOptRenderTests \
+            -only-testing:GonggiTests/GSOptPreserveTests \
+            -only-testing:GonggiTests/GSOptRecoveryTests \
+            -only-testing:GonggiTests/GSOptHiResTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild-gso.log
           STATUS=${PIPESTATUS[0]}

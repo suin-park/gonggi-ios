@@ -56,6 +56,36 @@ struct GSOLive {
     var replayBytes = 0
     var paused = false
     var optimizing = true
+    var modelState = "대기"                // 준비 전 / 준비됨 / 사용 안 함
+    var optimizerState = "대기"            // 실행 중 / 부하 낮춤(정밀화 중지) / 열·메모리 제한으로 중지 / 꺼짐
+    var refineState = "대기"
+    var splitsTotal = 0
+    var refineIterations = 0
+    var lastRollbackReason = ""
+    var validationSkips = 0
+    var hiCacheMB: Double?
+    var gapTop = ""
+    var resolutionText = ""
+    var suspectTotal = 0
+}
+
+/// 엔진이 모으는 추가 통계(정밀화·검증·미생성 이유·중지 구간).
+struct GSOExtraStats {
+    var refineIterations = 0
+    var refineMs = 0.0
+    var refineSlices = 0
+    var splits = 0
+    var suspect = 0
+    var validationMs = 0.0
+    var validatedSlices = 0
+    var validationSkipped = 0
+    var rollbackReasons: [String: Int] = [:]
+    var gapTotals: [String: Int] = [:]
+    var candidatePixels = 0
+    var thermalSkipMs = 0.0                 // 열·메모리 제한으로 최적화를 쉰 시간 합계(초)
+    var pauseEvents: [(host: Double, event: String)] = []
+    var optimizerPausedSince: Double?
+    var resolutionLogged = false
 }
 
 /// 기기 내 가우시안 최적화 엔진. 하나의 ARSession → 같은 ARFrame의 영상·포즈·K·시각 → GSOPipeline(스테레오 앵커 + 단안 깊이 정렬 → 지속적인 가우시안 지도 → 렌더링 오차 최적화)
@@ -133,6 +163,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private var optSamples: [String: [Double]] = [:]
     private var optIterTimes: [Double] = []
     private var counts = (n: 0, temp: 0, cand: 0, stable: 0)
+    private var extra = GSOExtraStats()
+    private var lastRollbackReason = ""
+    private var displaySizeText = ""
     private var totals = (inserted: 0, stereoInserted: 0, monoInserted: 0, pruned: 0, monoRuns: 0, iterations: 0, moved: 0, nonFinite: 0, rejectedByCap: 0)
     private var lossStartLast: Double?, lossEndLast: Double?
     private var coverageLast: Double?
@@ -174,6 +207,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private var currentOptions: GSOOptions { statLock.lock(); defer { statLock.unlock() }; return options }
 
     func noteRenderStats(_ s: RTRenderStats) { statLock.lock(); renderStatsLatest = s; statLock.unlock() }
+    func noteDisplaySize(_ w: Int, _ h: Int) { statLock.lock(); displaySizeText = "\(w)x\(h)"; statLock.unlock() }
 
     /// 새 장면 버전이 처음 화면에 표시된 시각. 캡처 → 실제 표시 지연을 기록한다(게시 지연과 다르다).
     func notePresented(version: Int, uptime: Double, source: String) {
@@ -409,8 +443,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         defer { finishJob() }
         let captureHost = job.timestamp + clockDelta
         let tStart = ExpSys.hostNow()
-        // 연구 기록을 켰을 때만 960폭으로 변환한다(재생용). 기본은 320폭(깊이·훈련 해상도의 원본).
-        let width = currentOptions.recordReplay ? 960 : config.smallWidth
+        // 원본(센서 1920×1440 등)에서 직접 960폭 영상을 만든다. 정밀화(고해상도 창)는 연구 기록 옵션과 무관하게 이 영상을 쓰고,
+        // 연구 기록은 같은 영상을 디스크에 저장할지만 정한다.
+        let width = 960
         guard let input = SV2Engine.makeInput(job: job, hiWidth: width, clockDelta: clockDelta) else { return }
         let tConv = ExpSys.hostNow()
         recorder?.record(input)
@@ -442,6 +477,10 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         totals.inserted += rec.inserted; totals.stereoInserted += rec.insertedStereo; totals.monoInserted += rec.insertedMono
         totals.rejectedByCap += rec.rejectedByCap
         if rec.monoRan { totals.monoRuns += 1 }
+        for (k, v) in rec.gaps { extra.gapTotals[k, default: 0] += v }
+        extra.candidatePixels += rec.candidatePixels
+        extra.suspect += rec.suspectMarked
+        add("hi", rec.hiMs)
         counts = (rec.count, rec.states[0], rec.states[1], rec.states[2])
         if noBaselineStreak >= 3 {
             hint = "제자리 회전만으로는 깊이를 알 수 없어요. 옆으로 천천히 이동해 주세요"
@@ -451,6 +490,12 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             depthStatus = rec.count == 0 ? "표면을 찾는 중" : (rec.denseSource == "mono" ? "가우시안 생성·최적화 중" : "스테레오로 생성 중(단안 정렬 대기)")
         }
         statLock.unlock()
+        if !extra.resolutionLogged {
+            extra.resolutionLogged = true
+            var res = rec.resolutions.mapValues { $0 as Any }
+            res["display"] = displaySizeText
+            log?.write("gso_resolutions", res)
+        }
         log?.write("gso_kf", kfLog(rec))
         publish(force: false)
     }
@@ -470,6 +515,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         d["inserted"] = ["total": r.inserted, "stereo": r.insertedStereo, "mono": r.insertedMono, "rejectedByCap": r.rejectedByCap]
         d["evidence"] = ["supportCounted": r.supportCounted, "toCandidate": r.promotedCandidate, "toStable": r.promotedStable]
         d["gain"] = Double(r.gain)
+        d["gaps"] = r.gaps; d["candidatePixels"] = r.candidatePixels
+        d["insertedRecovery"] = r.insertedRecovery; d["suspectMarked"] = r.suspectMarked; d["hiMs"] = r.hiMs
         d["gaussians"] = r.count
         d["states"] = ["temporary": r.states[0], "candidate": r.states[1], "stable": r.states[2]]
         return d
@@ -497,7 +544,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         statLock.lock(); let level = governorLevel; statLock.unlock()
         let iters = level >= 1 ? 4 : 8
         let now = ExpSys.hostNow()
-        let s = pipeline.optimizeSlice(maxIterations: iters, deadlineHost: now + 0.045)
+        // 고해상도 정밀화는 부하가 없을 때만(열 fair·AR 프레임 저하 등으로 level ≥ 1이면 쉰다)
+        let s = pipeline.optimizeSlice(maxIterations: iters, deadlineHost: now + 0.045, allowRefine: level == 0)
         if s.iterations > 0 {
             statLock.lock()
             slices.append(s); if slices.count > 600 { slices.removeFirst(slices.count - 600) }
@@ -507,11 +555,22 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             optIterTimes.append(ExpSys.hostNow()); if optIterTimes.count > 400 { optIterTimes.removeFirst() }
             if s.lossStart > 0 { lossStartLast = Double(s.lossStart); lossEndLast = Double(s.lossEnd) }
             coverageLast = Double(s.coverage)
+            extra.refineIterations += s.refineIterations; extra.refineMs += s.refineMs; extra.splits += s.splits
+            if s.refineIterations > 0 { extra.refineSlices += 1 }
+            extra.validationMs += s.validationMs
+            if s.validationViews > 0 { extra.validatedSlices += 1 }
+            if s.validationSkipped { extra.validationSkipped += 1 }
+            if s.rolledBack { extra.rollbackReasons[String(s.rollbackReason.split(separator: " ").first ?? "?"), default: 0] += 1; lastRollbackReason = s.rollbackReason }
             statLock.unlock()
             log?.write("gso_opt", ["iterations": s.iterations, "forwardMs": s.forwardMs, "backwardMs": s.backwardMs, "updateMs": s.updateMs,
                                    "lossStart": Double(s.lossStart), "lossEnd": Double(s.lossEnd), "depthLoss": Double(s.depthLossEnd),
                                    "rolledBack": s.rolledBack, "nonFinite": s.nonFinite, "moved": s.moved, "active": s.activeGaussians,
-                                   "wallMs": s.wallMs, "geometry": s.geometry, "governor": level, "trainViewCoverage": Double(s.coverage)])
+                                   "wallMs": s.wallMs, "geometry": s.geometry, "governor": level, "trainViewCoverage": Double(s.coverage),
+                                   "rollbackReason": s.rollbackReason, "validation": ["views": s.validationViews, "ms": s.validationMs, "skipped": s.validationSkipped,
+                                                                                      "l1Before": Double(s.valL1Before), "l1After": Double(s.valL1After),
+                                                                                      "alphaBefore": Double(s.valAlphaBefore), "alphaAfter": Double(s.valAlphaAfter)],
+                                   "refine": ["iterations": s.refineIterations, "ms": s.refineMs, "decodeMs": s.refineDecodeMs, "cropPixels": s.refineCropPixels,
+                                              "lossBefore": Double(s.refineLossBefore), "lossAfter": Double(s.refineLossAfter), "splits": s.splits, "skipped": s.refineSkipped]])
         }
         statLock.lock(); let procCount = processed; statLock.unlock()
         if procCount % 4 == 0 || s.iterations == 0 {
@@ -586,6 +645,19 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         thermalSeen.insert(ExpSys.thermalName(th))
         let changed = level != governorLevel
         if changed { governorChanges.append((ExpSys.hostNow(), level, "thermal=\(ExpSys.thermalName(th)) footprintMB=\(Int(fp)) arHz=\(Int(hz))")) }
+        if changed {
+            let nowH = ExpSys.hostNow()
+            if level >= 2, extra.optimizerPausedSince == nil {
+                extra.optimizerPausedSince = nowH
+                extra.pauseEvents.append((nowH, "optimizer paused: thermal=\(ExpSys.thermalName(th)) footprintMB=\(Int(fp))"))
+                log?.write("gso_optimizer_paused", ["thermal": ExpSys.thermalName(th), "footprintMB": fp, "level": level])
+            } else if level < 2, let since = extra.optimizerPausedSince {
+                extra.thermalSkipMs += (nowH - since)
+                extra.optimizerPausedSince = nil
+                extra.pauseEvents.append((nowH, "optimizer resumed: thermal=\(ExpSys.thermalName(th))"))
+                log?.write("gso_optimizer_resumed", ["thermal": ExpSys.thermalName(th), "pausedSeconds": nowH - since])
+            }
+        }
         governorLevel = level
         statLock.unlock()
         if changed {
@@ -636,6 +708,14 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         l.rollbacks = pipeline.rollbacks
         l.hint = hint; l.depthStatus = depthStatus; l.governor = governorLevel
         l.optimizing = options.optimize
+        l.modelState = !config.useMono ? "사용 안 함" : (monoLoaded ? "준비됨" : "준비 중(첫 실행은 약 50초 걸릴 수 있어요. 그동안 스테레오 전용 결과만 나와요)")
+        l.optimizerState = !options.optimize ? "꺼짐" : (governorLevel >= 2 ? "열·메모리 제한으로 중지됨(내려가면 자동 재개)" : (governorLevel == 1 ? "부하를 낮춤(고해상도 정밀화 쉼)" : "실행 중"))
+        l.refineState = !config.hiRefine ? "꺼짐" : (governorLevel >= 1 || !options.optimize ? "쉼" : (extra.refineIterations > 0 ? "실행 중" : "대기"))
+        l.splitsTotal = extra.splits; l.refineIterations = extra.refineIterations; l.lastRollbackReason = lastRollbackReason
+        l.validationSkips = extra.validationSkipped; l.suspectTotal = extra.suspect
+        l.hiCacheMB = Double(pipeline.hiStore.bytes) / 1_048_576
+        l.gapTop = extra.gapTotals.sorted { $0.value > $1.value }.prefix(4).map { "\($0.key) \($0.value)" }.joined(separator: " · ")
+        l.resolutionText = pipeline.resolutionInfo.isEmpty ? "" : "센서 \(pipeline.resolutionInfo["sensorW"] ?? 0)×\(pipeline.resolutionInfo["sensorH"] ?? 0) · 원본창 \(pipeline.resolutionInfo["hiW"] ?? 0)×\(pipeline.resolutionInfo["hiH"] ?? 0) · 깊이 \(pipeline.resolutionInfo["smallW"] ?? 0)×\(pipeline.resolutionInfo["smallH"] ?? 0) · 학습 \(pipeline.resolutionInfo["trainW"] ?? 0)×\(pipeline.resolutionInfo["trainH"] ?? 0) · 정밀화 창 \(pipeline.resolutionInfo["cropW"] ?? 0)×\(pipeline.resolutionInfo["cropH"] ?? 0)"
         l.firstInputS = fi.map { $0 - startedHost }
         l.firstAlignedS = firstAlignedHost.map { $0 - startedHost }
         l.firstCandidateS = firstCandidateHost.map { $0 - startedHost }
@@ -729,6 +809,12 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         t += "지연 (캡처 시각 기준)\n  → 지도 반영 p50 \(f(p50)) / p95 \(f(p95)) ms (\(tm.count)개)\n  → 렌더용 게시 p50 \(f(q50)) / p95 \(f(q95)) ms (\(tp.count)개)\n  → 실제 화면 표시 p50 \(f(d50)) / p95 \(f(d95)) ms (\(td.count)개, 시각 출처: \(dsrc.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")); gpuEnd는 present 시각을 읽지 못해 GPU 완료 시각으로 근사한 값)\n"
         t += "  키프레임 단계 p50/p95(ms): " + stage.keys.sorted().map { "\($0) \(f(stage[$0]))/\(f(stage95[$0]))" }.joined(separator: ", ") + "\n  처리 대기열 최대 \(mq)\n\n"
         t += "깊이\n  단안 모델 실행 \(tot.monoRuns)회, 밀집 깊이로 처리한 키프레임 \(monoKFs), 스테레오만 \(stereoOnly), 정렬 내부점 비율 중앙값 \(f(fitRatio.map { $0 * 100 }))%\n  모델 출력 의미 판정(새로 맞춘 키프레임): 역깊이 가정 \(spaceInv) · 깊이 가정 \(spaceDep)\n\n"
+        let ex = extra
+        t += "정밀화·검증\n  원본 고해상도 창 정밀화 반복 \(ex.refineIterations)회(묶음 \(ex.refineSlices)개, \(f(ex.refineMs / 1000, 1))초), 선택적 분할 \(ex.splits)개, 앞쪽 오표면 의심 \(ex.suspect)개\n"
+        t += "  갱신 전후 검증 \(ex.validatedSlices)묶음(공백 \(ex.validationSkipped), 검증 시간 합 \(f(ex.validationMs / 1000, 1))초), 롤백 \(pipeline.rollbacks)회: " + (ex.rollbackReasons.isEmpty ? "없음" : ex.rollbackReasons.map { "\($0.key) \($0.value)" }.joined(separator: ", ")) + "\n"
+        t += "  미생성 이유(삽입 후보 화소 \(ex.candidatePixels)개 중): " + ex.gapTotals.sorted { $0.value > $1.value }.map { "\($0.key) \($0.value)" }.joined(separator: " · ") + "\n"
+        t += "  열·메모리 제한으로 최적화를 쉰 시간 \(f(ex.thermalSkipMs, 1))초, 중지·재개 기록 \(ex.pauseEvents.count)건 " + ex.pauseEvents.map { "[\($0.event)]" }.joined(separator: "") + "\n"
+        t += "  사용한 해상도: \(l.resolutionText)\n  원본 고해상도 보관 \(f(l.hiCacheMB, 1)) MB\n\n"
         t += "가우시안 지도\n  \(l.gaussians)개 (임시 \(l.temporary) · 후보 \(l.candidate) · 안정 \(l.stable)); 누적 삽입 \(tot.inserted) (스테레오 확인 \(tot.stereoInserted) · 단안 \(tot.monoInserted)), 제거 \(tot.pruned), 상한으로 못 만든 \(tot.rejectedByCap)\n\n"
         t += "최적화\n  반복 \(tot.iterations)회(묶음 \(sl.count)개), 위치가 의미 있게 움직인 갱신 \(tot.moved), 비정상 gradient 건너뜀 \(tot.nonFinite), 롤백 \(rollbacks)회\n"
         t += "  반복당 p50/p95(ms): " + opt.keys.sorted().map { "\($0) \(f(opt[$0], 1))/\(f(opt95[$0], 1))" }.joined(separator: ", ") + "\n"
@@ -754,6 +840,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         d["totals"] = ["inserted": tot.inserted, "stereoInserted": tot.stereoInserted, "monoInserted": tot.monoInserted, "pruned": tot.pruned,
                        "monoRuns": tot.monoRuns, "iterations": tot.iterations, "moved": tot.moved, "nonFinite": tot.nonFinite, "rejectedByCap": tot.rejectedByCap]
         d["rollbacks"] = rollbacks
+        d["extra"] = ["refineIterations": ex.refineIterations, "refineMs": ex.refineMs, "splits": ex.splits, "suspect": ex.suspect, "validatedSlices": ex.validatedSlices,
+                       "validationSkipped": ex.validationSkipped, "rollbackReasons": ex.rollbackReasons, "gapTotals": ex.gapTotals, "candidatePixels": ex.candidatePixels,
+                       "thermalPausedSeconds": ex.thermalSkipMs, "pauseEvents": ex.pauseEvents.map { "\($0.event)" }, "resolutions": pipeline.resolutionInfo]
         d["lossFirst10"] = expNN(lossFirst.isEmpty ? nil : lossFirst.reduce(0, +) / Double(lossFirst.count))
         d["lossLast10"] = expNN(lossLast.isEmpty ? nil : lossLast.reduce(0, +) / Double(lossLast.count))
         d["monoKeyframes"] = monoKFs; d["stereoOnlyKeyframes"] = stereoOnly

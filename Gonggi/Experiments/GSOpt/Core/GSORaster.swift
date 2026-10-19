@@ -31,7 +31,7 @@ struct GSOCamera: Equatable {
 }
 
 /// 가우시안 파라미터(구조체 배열). 최적화가 직접 바꾸는 값만 담는다(식별자·상태는 GSOMap).
-struct GSOGaussians {
+struct GSOGaussians: Equatable {
     var mu: [SIMD3<Float>] = []
     var logScale: [SIMD3<Float>] = []
     var quat: [SIMD4<Float>] = []           // (x, y, z, w), 정규화는 래스터라이저가 한다
@@ -51,6 +51,28 @@ enum GSORasterConst {
     static let tile = 16
 }
 
+/// 투영 가시성 규칙. 최적화·삽입·화면 표시가 같은 규칙을 써야 "내부에서는 채워졌는데 화면에는 구멍"이 생기지 않는다.
+/// 3.0(21)은 CPU(최적화·삽입)가 반경 무제한이었고 Metal 화면은 두 주축 반경을 600 drawable 픽셀로 잘라 타원을 찌그러뜨렸다.
+/// 그 결과 근평면 가까운 가우시안의 큰 꼬리가 CPU에서는 화면을 채웠고 화면에서는 사라졌다(저장 지도·카메라 184, 480×360 수식 렌더에서 coverage 100% → 15.3%).
+struct GSORasterRules: Equatable {
+    enum Cap: Equatable {
+        case none                       // 반경 제한 없음(CPU 3.0(21) 최적화·삽입)
+        case clampPixels(Float)         // 3.0(21) Metal: 주축 반경(3σ)을 이 픽셀로 자르고 fragment는 ±3 매핑을 유지(찌그러짐)
+        case cullFraction(Float)        // 주축 반경(3σ)이 max(fx, fy)의 이 비율을 넘으면 그리지 않는다(해상도에 의존하지 않는 규칙)
+    }
+    var nearZ: Float
+    var cap: Cap
+
+    /// 3.0(22) 규칙: 근평면 0.15m, 반경 0.5·f 초과는 CPU와 Metal 모두 그리지 않는다.
+    static let display = GSORasterRules(nearZ: 0.15, cap: .cullFraction(0.5))
+    /// 3.0(21)의 CPU 규칙(최적화·삽입이 썼다).
+    static let legacyCPU = GSORasterRules(nearZ: 0.05, cap: .none)
+    /// 3.0(21)의 Metal 화면 규칙을 CPU에서 흉내 낸 것(평가·재현용).
+    static func legacyMetal(clampPixels: Float = 600) -> GSORasterRules { GSORasterRules(nearZ: 0.05, cap: .clampPixels(clampPixels)) }
+    /// gradient 검증·단위 테스트용(제한 없음).
+    static let unlimited = GSORasterRules(nearZ: 0.05, cap: .none)
+}
+
 /// 한 번의 forward 결과. backward가 같은 상태를 다시 쓴다.
 final class GSOForwardState {
     let width: Int, height: Int
@@ -58,6 +80,8 @@ final class GSOForwardState {
     var depth: [Float]          // α 가중 깊이 합(정규화하지 않음)
     var transmittance: [Float]  // 최종 투과율 T (1 − 누적 α)
     var last: [Int32]           // 화소가 소비한 항목 수(backward용)
+    var top: [Int32]            // 화소에서 가중치(α·T)가 가장 큰 가우시안의 rank(없으면 -1). 앞쪽 오표면 추적용
+    var rules = GSORasterRules.display
     // 카메라 앞·화면 안의 가우시안(깊이 오름차순)
     var nv = 0
     var orig: [Int32] = []      // rank → 원래 인덱스
@@ -74,6 +98,7 @@ final class GSOForwardState {
         depth = [Float](repeating: 0, count: width * height)
         transmittance = [Float](repeating: 1, count: width * height)
         last = [Int32](repeating: 0, count: width * height)
+        top = [Int32](repeating: -1, count: width * height)
     }
 
     /// 누적 α(= 가려지지 않은 정도)가 threshold 이상인 화소 비율.
@@ -92,6 +117,7 @@ struct GSOGradients {
     var quat: [SIMD4<Float>] = []
     var opacity: [Float] = []
     var color: [SIMD3<Float>] = []
+    var mean2D: [Float] = []        // |dL/d(u,v)| (렌더 해상도의 화소 단위, 손실 정규화 포함). 선택적 분할의 근거
     var count: Int { orig.count }
 }
 
@@ -106,11 +132,11 @@ enum GSORaster {
     }
 
     /// forward. g의 모든 가우시안을 투영·정렬·래스터한다. qcut/amin/tmin은 gradient 검증 때만 바꾼다.
-    static func forward(_ g: GSOGaussians, camera cam: GSOCamera, near: Float = 0.05, qcut: Float = 9,
+    static func forward(_ g: GSOGaussians, camera cam: GSOCamera, rules: GSORasterRules = .display, qcut: Float = 9,
                         amin: Float = GSORasterConst.alphaMin, tmin: Float = 1e-4, into st: GSOForwardState? = nil) -> GSOForwardState {
         let W = cam.width, H = cam.height
         let state = (st != nil && st!.width == W && st!.height == H) ? st! : GSOForwardState(width: W, height: H)
-        state.qcut = qcut; state.amin = amin; state.tmin = tmin
+        state.qcut = qcut; state.amin = amin; state.tmin = tmin; state.rules = rules
         let N = g.count
         let tile = GSORasterConst.tile
         let tw = (W + tile - 1) / tile, th = (H + tile - 1) / tile
@@ -131,7 +157,7 @@ enum GSORaster {
                     let lo = c * per, hi = min(N, lo + per)
                     if lo >= hi { return }
                     for i in lo..<hi {
-                        projectOne(i, mu: muP[i], ls: lsP[i], q: qP[i], opa: oP[i], cam: cam, near: near, qcut: qcut, out: out + i * 9)
+                        projectOne(i, mu: muP[i], ls: lsP[i], q: qP[i], opa: oP[i], cam: cam, rules: rules, qcut: qcut, out: out + i * 9)
                     }
                 }
             }}}}}
@@ -192,8 +218,9 @@ enum GSORaster {
         state.depth.withUnsafeMutableBufferPointer { depP in
         state.transmittance.withUnsafeMutableBufferPointer { tfP in
         state.last.withUnsafeMutableBufferPointer { lastP in
+        state.top.withUnsafeMutableBufferPointer { topP in
             let proj = projP.baseAddress, colB = colP.baseAddress, cntB = cntP.baseAddress, itemB = itemP.baseAddress
-            let img = imgP.baseAddress!, dep = depP.baseAddress!, tf = tfP.baseAddress!, lastB = lastP.baseAddress!
+            let img = imgP.baseAddress!, dep = depP.baseAddress!, tf = tfP.baseAddress!, lastB = lastP.baseAddress!, topB = topP.baseAddress!
             DispatchQueue.concurrentPerform(iterations: nt) { t in
                 let ty = t / tw, tx = t % tw
                 let s = Int(cntB![t]), e = Int(cntB![t + 1])
@@ -203,6 +230,7 @@ enum GSORaster {
                         var T: Float = 1
                         var r: Float = 0, gg: Float = 0, b: Float = 0, d: Float = 0
                         var n: Int32 = 0
+                        var bestW: Float = 0, bestRank: Int32 = -1
                         if e > s, let proj, let colB, let itemB {
                             var a = s
                             while a < e {
@@ -216,6 +244,7 @@ enum GSORaster {
                                 let al = p[7] * Foundation.exp(-0.5 * q)
                                 if al < amin { continue }
                                 let w = al * T
+                                if w > bestW { bestW = w; bestRank = Int32(rk) }
                                 let c = colB + rk * 3
                                 r += w * c[0]; gg += w * c[1]; b += w * c[2]; d += w * p[3]
                                 T *= (1 - al)
@@ -224,21 +253,21 @@ enum GSORaster {
                         }
                         let o = py * W + px
                         img[o * 3] = r; img[o * 3 + 1] = gg; img[o * 3 + 2] = b
-                        dep[o] = d; tf[o] = T; lastB[o] = n
+                        dep[o] = d; tf[o] = T; lastB[o] = n; topB[o] = bestRank
                     }
                 }
             }
-        }}}}}}}}
+        }}}}}}}}}
         return state
     }
 
     @inline(__always)
     private static func projectOne(_ i: Int, mu: SIMD3<Float>, ls: SIMD3<Float>, q: SIMD4<Float>, opa: Float, cam: GSOCamera,
-                                   near: Float, qcut: Float, out: UnsafeMutablePointer<Float>) {
+                                   rules: GSORasterRules, qcut: Float, out: UnsafeMutablePointer<Float>) {
         for k in 0..<9 { out[k] = 0 }
         let d = mu - cam.center
         let p = cam.rcw * d
-        if !(p.z >= near) { return }
+        if !(p.z >= rules.nearZ) { return }
         var qx = q.x, qy = q.y, qz = q.z, qw = q.w
         let qn = (qx * qx + qy * qy + qz * qz + qw * qw).squareRoot()
         if !(qn > 1e-12) { return }
@@ -253,13 +282,36 @@ enum GSORaster {
             A[k] = cam.fx * iz * t.x - cam.fx * p.x * iz * iz * t.z
             B[k] = cam.fy * iz * t.y - cam.fy * p.y * iz * iz * t.z
         }
-        let sa = simd_dot(A, A) + GSORasterConst.dilation
-        let sb = simd_dot(A, B)
-        let sc = simd_dot(B, B) + GSORasterConst.dilation
-        let det = sa * sc - sb * sb
+        var sa = simd_dot(A, A) + GSORasterConst.dilation
+        var sb = simd_dot(A, B)
+        var sc = simd_dot(B, B) + GSORasterConst.dilation
+        var det = sa * sc - sb * sb
         if !(det > 1e-12) { return }
-        let mid = 0.5 * (sa + sc)
-        let rad = max(0.25 * (sa - sc) * (sa - sc) + sb * sb, 0).squareRoot()
+        var mid = 0.5 * (sa + sc)
+        var rad = max(0.25 * (sa - sc) * (sa - sc) + sb * sb, 0).squareRoot()
+        switch rules.cap {
+        case .none:
+            break
+        case .cullFraction(let frac):
+            if 3 * (mid + rad).squareRoot() > frac * max(cam.fx, cam.fy) { return }
+        case .clampPixels(let cap):
+            // 3.0(21) Metal 정점 단계: 두 주축 반경(3σ)을 cap으로 자르되 fragment 매핑은 ±3으로 유지 → 타원이 찌그러진다.
+            let l1 = mid + rad, l2 = max(mid - rad, 1e-4)
+            if 3 * l1.squareRoot() > cap || 3 * l2.squareRoot() > cap {
+                let c1 = min(3 * l1.squareRoot(), cap) / 3, c2 = min(3 * l2.squareRoot(), cap) / 3
+                var e = SIMD2<Float>(sb, l1 - sa)
+                let ln = simd_length(e)
+                e = ln > 1e-6 ? e / ln : (sa >= sc ? SIMD2<Float>(1, 0) : SIMD2<Float>(0, 1))
+                let n1 = c1 * c1, n2 = c2 * c2
+                sa = n1 * e.x * e.x + n2 * e.y * e.y
+                sc = n1 * e.y * e.y + n2 * e.x * e.x
+                sb = (n1 - n2) * e.x * e.y
+                det = sa * sc - sb * sb
+                if !(det > 1e-12) { return }
+                mid = 0.5 * (sa + sc)
+                rad = max(0.25 * (sa - sc) * (sa - sc) + sb * sb, 0).squareRoot()
+            }
+        }
         let r = qcut.squareRoot() * (mid + rad).squareRoot()
         let u = cam.fx * p.x * iz + cam.cx
         let v = cam.fy * p.y * iz + cam.cy
@@ -373,6 +425,8 @@ enum GSORaster {
         grads.quat = [SIMD4<Float>](repeating: .zero, count: nv)
         grads.opacity = [Float](repeating: 0, count: nv)
         grads.color = [SIMD3<Float>](repeating: .zero, count: nv)
+        grads.mean2D = [Float](repeating: 0, count: nv)
+        for rk in 0..<nv { grads.mean2D[rk] = (g2[rk * 10] * g2[rk * 10] + g2[rk * 10 + 1] * g2[rk * 10 + 1]).squareRoot() }
         let chunks = min(8, max(1, nv / 1024))
         let perG = (nv + chunks - 1) / chunks
         g2.withUnsafeBufferPointer { g2P in
