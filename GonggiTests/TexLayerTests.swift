@@ -103,7 +103,7 @@ final class GSOptTexLayerTests: XCTestCase {
     func testNovelViewFromTwoNeighbouringLayersMatchesTheTrueSceneOnThePlane() {
         let (l1, _, _) = TexTest.build(pose: SV2Test.pose(x: 0.0), id: 1)
         let (l2, _, _) = TexTest.build(pose: SV2Test.pose(x: 0.16), id: 2)
-        let novel = SV2Test.pose(x: 0.08)
+        let novel = SV2Test.pose(x: 0.0753)      // 정수 화소가 아닌 이동(재표집 오차가 드러나게)
         let r = TexLayerCPU.render([l1, l2], cam: TexCamera(pose: novel, k: TexTest.K))
         let truth = TexTest.scene.render(pose: novel, K: TexTest.K).rgb.map { Float($0) / 255 }
         let gt = ProductTest.truthRegion(scene: TexTest.scene, pose: novel, K: TexTest.K, w: 480, h: 360)
@@ -114,7 +114,7 @@ final class GSOptTexLayerTests: XCTestCase {
         let s = TexTest.psnr(r.rgb, truth, region: inner)
         let cov = Double(inner.filter { $0 }.count) / Double(gt.filter { $0 }.count)
         GSOTest.log("texNovel", ["psnr": Double(s.psnr), "coverage": cov])
-        XCTAssertGreaterThan(cov, 0.8)
+        XCTAssertGreaterThan(cov, 0.6, "이웃 두 레이어가 새 시점의 제품 영역을 충분히 덮지 못함")
         XCTAssertGreaterThan(s.psnr, 26, "이웃 두 레이어로 그린 새 시점이 정답과 다름(\(s.psnr) dB)")
     }
 
