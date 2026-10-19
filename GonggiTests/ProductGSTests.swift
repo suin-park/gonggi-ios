@@ -1,9 +1,37 @@
 import XCTest
 import simd
+import ImageIO
+import UniformTypeIdentifiers
 @testable import Gonggi
 
 // 실시간 제품 3DGS 테스트. 합성 장면(질감 있는 앞 평면 = 제품, 뒤 평면 = 배경)과 CPU 렌더의 결과이며
 // A15 성능, 실제 Vision 마스크 품질, 실사 화질을 증명하지 않는다. 이름은 단언하는 내용과 같게 붙였다(악화하지 않음 ≠ 개선).
+
+/// 비교 이미지 저장(합성 장면이라 사용자 자료가 아니다). CI가 이 폴더를 아티팩트로 올린다.
+enum ProductTestImages {
+    static var directory: URL { URL(fileURLWithPath: ProcessInfo.processInfo.environment["PRODUCT_IMAGE_DIR"] ?? "/tmp/product-compare", isDirectory: true) }
+
+    static func writePNG(rgb: [Float], width: Int, height: Int, name: String) {
+        var rgba = [UInt8](repeating: 255, count: width * height * 4)
+        for i in 0..<(width * height) { for c in 0..<3 { rgba[i * 4 + c] = UInt8(max(0, min(255, rgb[i * 3 + c] * 255))) } }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(name)
+        rgba.withUnsafeMutableBytes { raw in
+            guard let ctx = CGContext(data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  let img = ctx.makeImage(), let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+            CGImageDestinationAddImage(dest, img, nil)
+            CGImageDestinationFinalize(dest)
+        }
+    }
+
+    /// 가로로 이어 붙인다(같은 크기의 영상들).
+    static func hstack(_ imgs: [[Float]], width w: Int, height h: Int) -> [Float] {
+        var out = [Float](repeating: 0, count: w * imgs.count * h * 3)
+        for (k, im) in imgs.enumerated() { for y in 0..<h { for x in 0..<w { for c in 0..<3 { out[(y * w * imgs.count + k * w + x) * 3 + c] = im[(y * w + x) * 3 + c] } } } }
+        return out
+    }
+}
 
 enum ProductTest {
     static let maskW = 160, maskH = 120
@@ -478,13 +506,30 @@ final class GSOptProductCompareTests: XCTestCase {
 
     func testSameInputComparisonMatrixIsConsistentAndRefinementDoesNotDegradeProductQuality() {
         let src = ProductTest.source(frames: 16)
-        func run(_ name: String, _ cfg: GSOConfig) -> GSOProductVariantReport {
-            ProductCompare.run(name: name, source: src, config: cfg, mono: ProductMonoFactory.make(src), iterationsPerKeyframe: 8, heldOut: heldOut, evalWidth: 320)
+        let keep: Set<Int> = [6, 16]
+        func runK(_ name: String, _ cfg: GSOConfig) -> GSOProductVariantReport {
+            ProductCompare.run(name: name, source: src, config: cfg, mono: ProductMonoFactory.make(src), iterationsPerKeyframe: 8, heldOut: heldOut, evalWidth: 320, keepImages: keep)
         }
-        let p0 = run("P0 마스크 기준선", ProductTest.baseline())
-        let p1 = run("P1 형상·재방문 보존", ProductTest.fixes())
-        let p2 = run("P2 +정밀화(분할 끔)", ProductTest.refine(split: false))
-        let p3 = run("P3 +선택적 분할", ProductTest.refine(split: true))
+        let p0 = runK("P0 마스크 기준선", ProductTest.baseline())
+        let p1 = runK("P1 형상·재방문 보존", ProductTest.fixes())
+        let p2 = runK("P2 +정밀화(분할 끔)", ProductTest.refine(split: false))
+        let p3 = runK("P3 +선택적 분할", ProductTest.refine(split: true))
+        // 비교 이미지: [정답 | P0 | P1 | P2 | P3], 위 = 전체 화면, 아래 = 제품 영역 밖을 어둡게(평가 마스크 기준)
+        for id in keep.sorted() {
+            guard let i = src.inputs.firstIndex(where: { $0.id == id }) else { continue }
+            let (cam, tgt) = GSOCompare.evalTarget(src.inputs[i], evalWidth: 320)
+            let lab = ProductTest.evalMask(scene: ProductTest.scene, pose: src.inputs[i].pose).resampled(width: cam.width, height: cam.height)
+            let renders = [p0, p1, p2, p3].compactMap { $0.lastImages[id] }
+            guard renders.count == 4 else { continue }
+            let all = [tgt] + renders
+            ProductTestImages.writePNG(rgb: ProductTestImages.hstack(all, width: cam.width, height: cam.height), width: cam.width * 5, height: cam.height, name: "heldout\(id)_full_target_P0_P1_P2_P3.png")
+            let dimmed = all.map { img -> [Float] in
+                var o = img
+                for px in 0..<(cam.width * cam.height) where lab[px] != GSOProductMask.product { for c in 0..<3 { o[px * 3 + c] *= 0.25 } }
+                return o
+            }
+            ProductTestImages.writePNG(rgb: ProductTestImages.hstack(dimmed, width: cam.width, height: cam.height), width: cam.width * 5, height: cam.height, name: "heldout\(id)_productOnly_target_P0_P1_P2_P3.png")
+        }
         for r in [p0, p1, p2, p3] {
             ProductTest.log("compare_" + String(r.name.prefix(2)), ["psnr": Double(r.psnr), "ssim": Double(r.ssim), "edge": Double(r.psnrEdge), "silhouette": Double(r.silhouette),
                                                                     "hole": Double(r.hole), "leak": Double(r.leak), "past": Double(r.pastDegradation), "gaussians": Double(r.gaussians),

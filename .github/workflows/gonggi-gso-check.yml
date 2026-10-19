@@ -122,3 +122,12 @@ jobs:
           name: xcodebuild-gso-log
           path: xcodebuild-gso.log
           retention-days: 7
+
+      - name: Upload product comparison images (synthetic scene, no user data)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: product-compare-images
+          path: /tmp/product-compare
+          if-no-files-found: ignore
+          retention-days: 14
