@@ -3,7 +3,7 @@ import numpy as np, cv2, os
 import tex_data, texsplat as TS
 from texsplat import Frame, Surfels
 TS.MAX_RESID = 0.03; TS.MIN_FRONTAL = 0.2
-RP = r'C:\Users\emili\Downloads\테스트_06\product-tex-20261020-013225-product-gs.kmoreplay'
+RP = os.environ.get('REGEN_RP', r'C:\Users\emili\Downloads\테스트_06\product-tex-20261020-013225-product-gs.kmoreplay')
 _fr = None
 def frames():
     global _fr

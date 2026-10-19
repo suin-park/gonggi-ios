@@ -45,7 +45,7 @@ def label(img, text):
 
 def render_new(L, S, cam, prev):
     ids, rgb, z = F.render_all(L, cam, W, H, cull=1)
-    sel, w, _ = F.coarse_select(L, S, cam, W, H, kmax=8, prev=prev); sel = np.array(sel)
+    sel, w, _ = F.coarse_select(L, S, cam, W, H, kmax=8, prev=prev, seed=5); sel = np.array(sel)
     im, A, _ = FF.compose_new(rgb[sel], z[sel], w)
     return im, set(sel.tolist())
 

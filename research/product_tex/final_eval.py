@@ -74,7 +74,7 @@ def render_set(L, S, keep, cam, W, H, mode):
         sc = {j: F.score_of(sub[j], cam) for j in range(len(sub))}
         return F.blend_current(list(range(len(sub))), rgb, z, sc)
     ids, rgb, z = F.render_all(L, cam, W, H, only=keep, cull=1)
-    sel, w, _ = F.coarse_select(sub, Ssub, cam, W, H, kmax=8); sel = np.array(sel)
+    sel, w, _ = F.coarse_select(sub, Ssub, cam, W, H, kmax=8, seed=5); sel = np.array(sel)
     im, A, cnt = FF.compose_new(rgb[sel], z[sel], w)
     return im, A
 
