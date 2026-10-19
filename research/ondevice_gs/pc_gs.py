@@ -60,7 +60,9 @@ class GMap:
                      m_mu=(3, np.float32), v_mu=(3, np.float32), m_ls=(3, np.float32), v_ls=(3, np.float32),
                      m_q=(4, np.float32), v_q=(4, np.float32), m_o=(None, np.float32), v_o=(None, np.float32),
                      m_c=(3, np.float32), v_c=(3, np.float32), nvis=(None, np.int32), born=(None, np.int32), src=(None, np.int8),
-                     steps=(None, np.int32), ls0=(3, np.float32), mu0=(3, np.float32), col0=(3, np.float32))
+                     steps=(None, np.int32), ls0=(3, np.float32), mu0=(3, np.float32), col0=(3, np.float32),
+                     votes=(None, np.int16), suspect=(None, np.int8), vkf=(None, np.int32), vpos=(3, np.float32), vdir=(3, np.float32),
+                     sacc=(None, np.float32), scnt=(None, np.int32), parent=(None, np.int32), gid=(None, np.int32))
         for k, (dim, dt) in names.items():
             old = getattr(self, k, None)
             shape = (cap,) if dim is None else (cap, dim)
@@ -78,11 +80,15 @@ class GMap:
         self.mu[s] = mu; self.logs[s] = logs; self.quat[s] = quat; self.col[s] = col; self.opa[s] = opa
         self.src[s] = src; self.born[s] = born
         self.ls0[s] = logs; self.mu0[s] = mu; self.col0[s] = col
+        self.vkf[s] = -1
+        nid = getattr(self, 'next_id', 1)
+        self.gid[s] = np.arange(nid, nid + n)
+        self.next_id = nid + n
         self.n += n
 
     def keep(self, mask):
         idx = np.nonzero(mask[:self.n])[0]
-        for k in ['mu', 'logs', 'quat', 'col', 'opa', 'm_mu', 'v_mu', 'm_ls', 'v_ls', 'm_q', 'v_q', 'm_o', 'v_o', 'm_c', 'v_c', 'nvis', 'born', 'src', 'steps', 'ls0', 'mu0', 'col0']:
+        for k in ['mu', 'logs', 'quat', 'col', 'opa', 'm_mu', 'v_mu', 'm_ls', 'v_ls', 'm_q', 'v_q', 'm_o', 'v_o', 'm_c', 'v_c', 'nvis', 'born', 'src', 'steps', 'ls0', 'mu0', 'col0', 'votes', 'suspect', 'vkf', 'vpos', 'vdir', 'sacc', 'scnt', 'parent', 'gid']:
             a = getattr(self, k)
             a[:len(idx)] = a[idx]
         self.n = len(idx)
@@ -166,6 +172,7 @@ class Optimizer:
         self.cfg = cfg
         self.t = 0
         self.LR = dict(mu=cfg['lr_mu'], ls=cfg['lr_ls'], q=cfg['lr_q'], o=cfg['lr_o'], c=cfg['lr_c'])
+        self.base_lr = dict(self.LR)
 
     def step(self, G, grads, geom, only_visible):
         gmu, glogs, gquat, gopa, gcol = grads
@@ -240,7 +247,7 @@ def loss_and_grads(G, cam, tgt, anchors_z, lam_d):
             Ld = float((np.abs(rd) / np.maximum(anchors_z, 1e-3))[m].mean())
             dLdD = lam_d * sgn / np.maximum(anchors_z, 1e-3) / na
             dLdA = -lam_d * sgn * anchors_z / np.maximum(anchors_z, 1e-3) / na
-    g = gsref.backward(mu, logs, quat, col, opa, cam, st, Tf, dLdC, dLdD, dLdA)
+    g = gsref.backward(mu, logs, quat, col, opa, cam, st, Tf, dLdC, dLdD, dLdA)[:5]
     vis = st['proj'][:, 0] > 0.5
     return L1, Ld, g, vis, img, A
 

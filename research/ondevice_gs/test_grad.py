@@ -25,7 +25,7 @@ def loss(mu, logs, q, col, opa):
 
 img, dep, Tf, st = gsref.render(mu, logs, q, col, opa, cam, qcut=100.0, amin=0.0, tmin=0.0)
 print("rendered: alpha cover", float((1 - Tf).mean()), "n_items", len(st['items']))
-g = gsref.backward(mu, logs, q, col, opa, cam, st, Tf, wC, wD, wA)
+g = gsref.backward(mu, logs, q, col, opa, cam, st, Tf, wC, wD, wA)[:5]
 names = ['mu', 'logs', 'quat', 'opa', 'col']
 params = dict(mu=mu, logs=logs, quat=q, opa=opa, col=col)
 grads = dict(mu=g[0], logs=g[1], quat=g[2], opa=g[3], col=g[4])

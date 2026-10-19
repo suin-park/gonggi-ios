@@ -176,6 +176,7 @@ def _raster_fwd(proj, col, cnt, items, W, H, tw, th, qcut, amin, tmin):
     dep = np.zeros((H, W), np.float32)
     Tf = np.ones((H, W), np.float32)
     last = np.zeros((H, W), np.int32)
+    top = np.full((H, W), -1, np.int32)
     nt = tw * th
     for t in prange(nt):
         ty = t // tw
@@ -190,6 +191,8 @@ def _raster_fwd(proj, col, cnt, items, W, H, tw, th, qcut, amin, tmin):
                 b = np.float32(0.0)
                 d = np.float32(0.0)
                 n = 0
+                bw = np.float32(0.0)
+                bi = -1
                 for a in range(s, e):
                     i = items[a]
                     dx = px - proj[i, 1]
@@ -202,6 +205,9 @@ def _raster_fwd(proj, col, cnt, items, W, H, tw, th, qcut, amin, tmin):
                     if al < amin:
                         continue
                     w = al * T
+                    if w > bw:
+                        bw = w
+                        bi = i
                     r += w * col[i, 0]
                     g += w * col[i, 1]
                     b += w * col[i, 2]
@@ -215,7 +221,8 @@ def _raster_fwd(proj, col, cnt, items, W, H, tw, th, qcut, amin, tmin):
                 dep[py, px] = d
                 Tf[py, px] = T
                 last[py, px] = n
-    return img, dep, Tf, last
+                top[py, px] = bi
+    return img, dep, Tf, last, top
 
 
 def render(mu, logs, quat, col, opa, cam, near=0.05, qcut=9.0, amin=ALPHA_MIN, tmin=1e-4, capmode=0, capval=0.0):
@@ -230,8 +237,8 @@ def render(mu, logs, quat, col, opa, cam, near=0.05, qcut=9.0, amin=ALPHA_MIN, t
     idx = np.nonzero(proj[:, 0] > 0.5)[0]
     idx = idx[np.argsort(proj[idx, 3], kind='stable')].astype(np.int32)
     cnt, items = _bin(idx, proj, tw, th)
-    img, dep, Tf, last = _raster_fwd(proj, col, cnt, items, W, H, tw, th, np.float32(qcut), np.float32(amin), np.float32(tmin))
-    return img, dep, Tf, dict(proj=proj, cnt=cnt, items=items, last=last, tw=tw, th=th, W=W, H=H, qcut=qcut, amin=amin)
+    img, dep, Tf, last, top = _raster_fwd(proj, col, cnt, items, W, H, tw, th, np.float32(qcut), np.float32(amin), np.float32(tmin))
+    return img, dep, Tf, dict(proj=proj, cnt=cnt, items=items, last=last, top=top, tw=tw, th=th, W=W, H=H, qcut=qcut, amin=amin)
 
 
 @njit(cache=True, parallel=True)
@@ -431,5 +438,6 @@ def backward(mu, logs, quat, col, opa, cam, state, Tf, dLdC, dLdD, dLdA=None, nc
     g2 = _raster_bwd(proj, col, state['cnt'], state['items'], cam['W'], cam['H'], state['tw'], state['th'],
                      Tf, state['last'], dLdC.astype(np.float32), dLdD.astype(np.float32), dLdA.astype(np.float32), nchunk,
                      np.float32(state['qcut']), np.float32(state['amin']))
-    return _params_bwd(g2, proj, mu, logs, quat, opa, cam['Rcw'].astype(np.float32), cam['C'].astype(np.float32),
-                       np.float32(cam['fx']), np.float32(cam['fy']))
+    out = _params_bwd(g2, proj, mu, logs, quat, opa, cam['Rcw'].astype(np.float32), cam['C'].astype(np.float32),
+                      np.float32(cam['fx']), np.float32(cam['fy']))
+    return out + (np.sqrt(g2[:, 0] ** 2 + g2[:, 1] ** 2),)
