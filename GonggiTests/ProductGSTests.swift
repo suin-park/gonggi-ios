@@ -143,6 +143,17 @@ final class GSOptProductMaskTests: XCTestCase {
         XCTAssertEqual(train[60 * 160 + 80], lab[6 * 16 + 8])
     }
 
+    /// 시뮬레이터에서 Vision 전경 마스크가 크래시 없이 격자 크기의 지도를 돌려주는지만 본다(합성 영상이라 제품 검출 품질은 평가하지 않는다. 실기기 품질·지연은 미측정).
+    func testVisionProviderSmokeOnSyntheticImage() {
+        let input = ProductTest.scene.input(id: 1, pose: SV2Test.pose(x: 0))
+        let prov = VisionInstanceMaskProvider()
+        let r = prov.instanceMasks(rgb: input.rgbHi, width: input.hiWidth, height: input.hiHeight)
+        ProductTest.log("visionSmoke", ["returned": r == nil ? 0 : 1, "instances": Double(r?.instanceCount ?? -1), "ms": prov.lastMs, "failures": Double(prov.failures)])
+        if let r {
+            XCTAssertEqual(r.width, 320); XCTAssertEqual(r.height, 240); XCTAssertEqual(r.ids.count, 320 * 240)
+        }
+    }
+
     func testMaskRecordSerialisationRoundTrips() {
         let m = ProductTest.mask(scene: ProductTest.scene, pose: SV2Test.pose(x: 0), id: 3)
         guard let r = GSOProductMask(data: m.data()) else { return XCTFail("역직렬화 실패") }
