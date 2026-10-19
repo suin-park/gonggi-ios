@@ -210,7 +210,7 @@ enum ProductCompare {
                 }
             }
             if p.processed % 4 == 0 { _ = p.prune() }
-            if !midDone, seen >= midAt {
+            if !midDone, seen >= midAt, !held.isEmpty {
                 midDone = true
                 for (_, hi, mk) in held { rep.mid[hi.id] = scoreOne(hi, mk).0.psnr }
             }

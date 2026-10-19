@@ -426,6 +426,7 @@ struct ProductGSView: View {
         let l = vm.live, r = vm.renderStats
         return VStack(alignment: .leading, spacing: 2) {
             Text("단계 \(l.phase) · 마스크 \(l.maskStatus) (신뢰 \(l.maskTrusted) · 불확실 \(l.maskUncertain) · p50 \(f(l.maskMsP50, 0))ms)")
+            Text(l.coverageText)
             Text("3D 범위 \(l.boundsText) · 제품 화소 \(l.productPixels) · 배경 누출 \(f(l.bgLeak.map { $0 * 100 }, 1))%")
             Text("가우시안 \(l.gaussians) (안정 \(l.stable) · 후보 \(l.candidate) · 임시 \(l.temporary)) · 방금 +\(l.lastInserted) · 키프레임 \(f(l.keyframeHz, 1)) Hz · 처리 \(l.processed)/\(l.keyframes)")
             Text("정밀화 진행: 제품 칸 \(f(l.refineCellsPct, 0))% · 가우시안 \(f(l.refineGaussiansPct, 0))% · 창 \(l.refineKind) · 원본 창 \(l.refineIterations)회 · 분할 \(l.splitsTotal) · 롤백 \(l.rollbacks)")

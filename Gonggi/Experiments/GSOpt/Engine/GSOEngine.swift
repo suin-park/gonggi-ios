@@ -80,6 +80,7 @@ struct GSOLive {
     var productPixels = 0
     var budgetText = ""
     var refineKind = ""
+    var coverageText = ""
 }
 
 /// 엔진이 모으는 추가 통계(정밀화·검증·미생성 이유·중지 구간).
@@ -423,6 +424,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         statLock.lock()
         let prog = progressLatest
         d["refineProgress"] = ["cellsRefined": prog.cellsRefined, "cellsTotal": prog.cellsTotal, "gaussiansRefined": prog.gaussiansRefined, "gaussiansTotal": prog.gaussiansTotal]
+        d["viewCoverage"] = ["azimuthObserved": prog.azimuthObserved, "azimuthBins": prog.azimuthBins, "directionCells": prog.directionCells, "directionBins": prog.directionBins,
+                             "insufficientGaussianShare": Double(prog.insufficientShare), "note": "관측하지 않은 방향의 면은 복원하지 않는다. 관측했지만 복원이 부족한 가우시안(임시 또는 관측 3회 미만)은 따로 센다."]
         d["maskStats"] = ["trusted": maskStats.trusted, "uncertain": maskStats.uncertain]
         statLock.unlock()
         return d
@@ -655,6 +658,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         d["gain"] = Double(r.gain)
         d["gaps"] = r.gaps; d["candidatePixels"] = r.candidatePixels
         d["insertedRecovery"] = r.insertedRecovery; d["suspectMarked"] = r.suspectMarked; d["hiMs"] = r.hiMs
+        d["rotationOnlySkipped"] = r.rotationOnlySkipped; d["fitScaleRatio"] = Double(r.fitScaleRatio); d["alignFailed"] = r.alignFailed
+        d["mask"] = ["trusted": r.maskTrusted, "note": r.maskNote, "iou": Double(r.maskIoU), "productPixels": r.productPixels, "boundsPoints": r.boundsPoints, "boundsValid": r.boundsValid, "outOfBounds": r.outOfBounds]
         d["gaussians"] = r.count
         d["states"] = ["temporary": r.states[0], "candidate": r.states[1], "stable": r.states[2]]
         return d
@@ -733,6 +738,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             if s.validationViews > 0 { extra.validatedSlices += 1 }
             if s.validationSkipped { extra.validationSkipped += 1 }
             if s.rolledBack { extra.rollbackReasons[String(s.rollbackReason.split(separator: " ").first ?? "?"), default: 0] += 1; lastRollbackReason = s.rollbackReason }
+            if s.splitsRolledBack > 0 { extra.rollbackReasons["split", default: 0] += 1; lastRollbackReason = "분할 되돌림: " + s.splitRollbackReason }
             statLock.unlock()
             log?.write("gso_opt", ["iterations": s.iterations, "forwardMs": s.forwardMs, "backwardMs": s.backwardMs, "updateMs": s.updateMs,
                                    "lossStart": Double(s.lossStart), "lossEnd": Double(s.lossEnd), "depthLoss": Double(s.depthLossEnd),
@@ -746,7 +752,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
                                                                                       "l1Before": Double(s.valL1Before), "l1After": Double(s.valL1After),
                                                                                       "alphaBefore": Double(s.valAlphaBefore), "alphaAfter": Double(s.valAlphaAfter)],
                                    "refine": ["iterations": s.refineIterations, "ms": s.refineMs, "decodeMs": s.refineDecodeMs, "cropPixels": s.refineCropPixels,
-                                              "lossBefore": Double(s.refineLossBefore), "lossAfter": Double(s.refineLossAfter), "splits": s.splits, "skipped": s.refineSkipped]])
+                                              "lossBefore": Double(s.refineLossBefore), "lossAfter": Double(s.refineLossAfter), "splits": s.splits, "skipped": s.refineSkipped,
+                                              "crop": [s.refineCropW, s.refineCropH], "source": [s.refineSrcW, s.refineSrcH]]])
         }
         statLock.lock(); let procCount = processed; statLock.unlock()
         if procCount % 4 == 0 || s.iterations == 0 {
@@ -901,6 +908,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             l.maskNote = maskNoteLast
             let pb = pipeline.productBounds
             l.boundsText = pb.isValid ? "확정(점 \(pb.points.count)개, 시점 \(pb.viewIDs.count)개)" : "모으는 중(점 \(pb.points.count)/\(pb.minPoints), 시점 \(pb.viewIDs.count)/\(pb.minViews))"
+            l.coverageText = "관측한 방향 \(progressLatest.azimuthObserved)/\(progressLatest.azimuthBins) 방위 · \(progressLatest.directionCells)/\(progressLatest.directionBins) 칸 · 복원이 부족한 가우시안 \(Int(progressLatest.insufficientShare * 100))% (비추지 않은 방향은 복원하지 않아요)"
             l.refineCellsPct = progressLatest.cellsTotal > 0 ? Double(progressLatest.fractionCells) * 100 : nil
             l.refineGaussiansPct = progressLatest.gaussiansTotal > 0 ? Double(progressLatest.fractionGaussians) * 100 : nil
             l.bgLeak = bgLeakLast; l.productPixels = productPixelsLast
@@ -975,6 +983,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         t += "  마스크: 기기 내 Vision, 신뢰 \(ms.trusted)장 · 불확실 \(ms.uncertain)장(이 프레임은 가우시안 생성·감독에 쓰지 않음), 마스크 시간 p50 \(f(RTStat.percentile(msamples, 0.5), 0))ms / p95 \(f(RTStat.percentile(msamples, 0.95), 0))ms, 대상 ID \(tracker?.targetID ?? 0)\n"
         t += "  3D 범위: " + (pb.isValid ? "확정(신뢰 깊이 점 \(pb.points.count)개, 서로 다른 시점 \(pb.viewIDs.count)개)" : "확정되지 않음(점 \(pb.points.count)/\(pb.minPoints), 시점 \(pb.viewIDs.count)/\(pb.minViews))") + "\n"
         t += "  정밀화 진행: 제품 칸 \(prog.cellsRefined)/\(prog.cellsTotal) (\(String(format: "%.0f", Double(prog.fractionCells) * 100))%) · 정밀화에서 갱신된 가우시안 \(prog.gaussiansRefined)/\(prog.gaussiansTotal) (\(String(format: "%.0f", Double(prog.fractionGaussians) * 100))%), 창 종류 \(ex.refineKinds.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: " · "))\n"
+        t += "  관측 범위: 방위 \(prog.azimuthObserved)/\(prog.azimuthBins), 방향 칸 \(prog.directionCells)/\(prog.directionBins) — 비추지 않은 방향의 면은 복원하지 않는다(미관측). 관측했지만 복원이 부족한 가우시안(임시 또는 관측 3회 미만) \(Int(prog.insufficientShare * 100))%\n"
         t += "  분할 \(ex.splits)개(검증 실패로 되돌린 분할 \(ex.splitsRolledBack)개), 롤백 \(pipeline.rollbacks)회, 마지막 제품 화소 \(pp)개, 배경 누출(확실한 배경 화소의 평균 알파) \(leak.map { String(format: "%.3f", $0) } ?? "—")\n"
         let planned = ex.budgetPlannedMs, actual = ex.budgetActualMs
         t += "  계산 예산: 최적화 시간 비율 상한 \(Int((config.product?.optDuty ?? 0) * 100))%, 묶음 \(ex.budgetSlices)개의 계획 \(String(format: "%.0f", planned))ms 대비 실제 \(String(format: "%.0f", actual))ms(초과 합계 \(String(format: "%.0f", ex.budgetOverMs))ms), 예산 때문에 기다린 횟수 \(ex.budgetWaits)\n"

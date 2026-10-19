@@ -207,6 +207,9 @@ struct GSOKFRecord {
     var boundsPoints = 0
     var boundsValid = false
     var outOfBounds = 0
+    var rotationOnlySkipped = 0        // 제품 모드: 제자리 회전(이동 4cm 미만)이라 새 삼각측량 증거로 세지 않은 지지 횟수
+    var fitScaleRatio: Float = 0       // 단안 정렬 스케일 a의 직전 대비 비율(상대 스케일 변화)
+    var alignFailed = false            // 단안 모델은 돌았지만 정렬이 신뢰 기준을 넘지 못함
 }
 
 /// 고정 고해상도 검증 창: 원본(보관한 960폭 JPEG)에서 직접 자른 목표와 같은 창의 라벨·카메라.
@@ -263,7 +266,10 @@ struct GSOSliceRecord {
     var valLeakBefore: Float = 0
     var valLeakAfter: Float = 0
     var refineCell = ""                      // 정밀화에 고른 창의 종류: error / unrefined / stale
+    var refineCropW = 0, refineCropH = 0    // 이번 창의 크기
+    var refineSrcW = 0, refineSrcH = 0      // 창을 잘라 낸 원본(보관한 960폭 영상)의 해상도
     var splitsRolledBack = 0
+    var splitRollbackReason = ""
     var bgLeak: Float = 0
     var productPixels = 0
 }
@@ -274,6 +280,11 @@ struct GSORefineProgress {
     var cellsRefined = 0         // 그중 한 번 이상 정밀화된 칸
     var gaussiansTotal = 0
     var gaussiansRefined = 0     // 정밀화에서 gradient를 받은 적 있는 가우시안
+    var azimuthObserved = 0      // 제품 중심 기준 방위 12칸 중 카메라가 한 번이라도 본 칸
+    var azimuthBins = 12
+    var directionCells = 0       // 방위 12 × 고도 3 = 36칸 중 본 칸
+    var directionBins = 36
+    var insufficientShare: Float = 0   // 관측했지만 복원이 부족한 가우시안(임시 상태이거나 서로 다른 시점 관측 3회 미만)의 비율
     var fractionCells: Float { cellsTotal > 0 ? Float(cellsRefined) / Float(cellsTotal) : 0 }
     var fractionGaussians: Float { gaussiansTotal > 0 ? Float(gaussiansRefined) / Float(gaussiansTotal) : 0 }
 }
@@ -287,6 +298,7 @@ final class GSOPipeline {
     private var ring: [RTFrame] = []
     private var lastSegment: Int?
     private var lastFit: GSOAffineFit?
+    private var lastFitScale: Float?
     private var refLuma: Float?
     private var lumaSamples: [Float] = []
     private var rng: UInt64
@@ -302,6 +314,7 @@ final class GSOPipeline {
     private(set) var firstAlignedKF: Int?
     private(set) var firstSurfaceKF: Int?
     private(set) var rollbacks = 0
+    private(set) var splitRollbacks = 0
     private(set) var validationSkips = 0
     private(set) var totalIterations = 0
     private(set) var totalRefineIterations = 0
@@ -318,6 +331,10 @@ final class GSOPipeline {
     var testMutateBeforeValidation: ((GSOMap) -> Void)?
     /// 테스트 전용: 정밀화에서 gradient를 받은 가우시안을 임계값·조건 없이 분할한다(분할 이후 검증·롤백 상태 복구를 확실히 시험하려고).
     var testForceSplitAll = false
+    /// 테스트 전용: 분할 직전(기록용), 분할 직후·2단계 검증 직전(악화 재현), 분할 개수 상한.
+    var testBeforeSplit: ((GSOMap) -> Void)?
+    var testMutateAfterSplit: ((GSOMap) -> Void)?
+    var testSplitLimit: Int?
 
     init(config: GSOConfig = GSOConfig()) {
         self.config = config
@@ -481,6 +498,11 @@ final class GSOPipeline {
             }
         }
         rec.fit = fit
+        if let f = fit, !f.carried {
+            if let pa = lastFitScale, abs(pa) > 1e-6 { rec.fitScaleRatio = f.a / pa }
+            lastFitScale = f.a
+        }
+        rec.alignFailed = rec.monoRan && (fit == nil || (fit?.confidence ?? 0) < config.minFitConfidence)
         if rec.denseSource == "none", nAnch > 0 {
             dense = anchorsTrain
             rec.denseSource = "stereoOnly"
@@ -613,7 +635,7 @@ final class GSOPipeline {
         if map.voteKF[j] == kf { return false }
         let moved = simd_length(cam.center - map.votePos[j])
         let ang = acos(max(-1, min(1, simd_dot(fwd, map.voteDir[j])))) * 180 / .pi
-        guard map.conflictVotes[j] == 0 || moved >= 0.04 || ang >= 3.5 else { return false }
+        guard map.conflictVotes[j] == 0 || moved >= 0.04 || (config.product == nil && ang >= 3.5) else { return false }
         map.conflictVotes[j] = min(250, map.conflictVotes[j] + 1)
         map.votePos[j] = cam.center; map.voteDir[j] = fwd; map.voteKF[j] = kf
         if map.conflictVotes[j] >= config.frontVotesToSuspect, !map.suspect[j] {
@@ -665,7 +687,10 @@ final class GSOPipeline {
             let moved = simd_length(cam.center - map.supportPos[i])
             let ang = acos(max(-1, min(1, simd_dot(fwd, map.supportDir[i])))) * 180 / .pi
             let first = map.indep[i] == 0
-            if first || moved >= 0.04 || ang >= 3.5 {
+            // 제품 모드: 제자리 회전만으로는 새 삼각측량 증거가 생기지 않는다(이동 4cm 이상일 때만 독립 지지로 센다).
+            let rotationOnly = config.product != nil && !first && moved < 0.04 && ang >= 3.5
+            if rotationOnly { rec.rotationOnlySkipped += 1 }
+            if !rotationOnly, first || moved >= 0.04 || ang >= 3.5 {
                 map.indep[i] = min(250, map.indep[i] + 1)
                 map.supportPos[i] = cam.center; map.supportDir[i] = fwd; map.supportKF[i] = kf
                 map.lastKF[i] = kf
@@ -939,14 +964,10 @@ final class GSOPipeline {
             rec.refineSkipped = "off"
         }
 
-        // 분할은 검증 전에 한다: 검증이 분할로 늘어난 가우시안까지 포함해 판정하고, 악화하면 자식 추가·ID 발급까지 함께 되돌린다.
-        if config.hiRefine, config.splitBudget > 0, !refineTouched.isEmpty {
-            rec.splits = splitSelected(touched: refineTouched)
-            if rec.splits > 0 { mapEpoch += 1 }
-        }
         testMutateBeforeValidation?(map)
         // 갱신 전후 검증 → 악화하면 파라미터·Adam 모멘트·step 등을 함께 되돌린다
         var reject: String?
+        var afterMetrics: [Int: ValMetric] = [:]
         if config.validate, !valSet.isEmpty, rec.iterations + rec.refineIterations > 0 {
             let tv = now()
             mapEpoch += 1                         // 지도가 바뀌었으므로 캐시를 무효화하고 갱신 후 값을 새로 잰다
@@ -968,6 +989,7 @@ final class GSOPipeline {
                 rec.valSilBefore = rec.valAlphaBefore; rec.valSilAfter = rec.valAlphaAfter
                 rec.valLeakBefore = avg(before) { $0.leak }; rec.valLeakAfter = avg(after) { $0.leak }
             }
+            afterMetrics = after
             reject = validationVerdict(before: before, after: after)
         } else if config.validate {
             rec.validationSkipped = true; validationSkips += 1
@@ -978,7 +1000,6 @@ final class GSOPipeline {
         }
         if let why = reject, map.restore(snap) {
             rec.rolledBack = true; rec.rollbackReason = why; rollbacks += 1
-            rec.splitsRolledBack = rec.splits; totalSplits -= rec.splits; rec.splits = 0
             pendingRefine = nil
             map.version += 1; mapEpoch += 1
             optimizer.lrScale = max(0.125, optimizer.lrScale * 0.5)
@@ -987,6 +1008,32 @@ final class GSOPipeline {
             optimizer.lrScale = min(1, optimizer.lrScale * 1.25)
             if let p = pendingRefine { p.view.refineCells[p.cell] &+= 1; p.view.refineLast[p.cell] = Int32(sliceCounter) }   // 검증을 통과한 정밀화만 진행으로 센다
             pendingRefine = nil
+            // 2단계: 선택적 분할. 최적화·정밀화가 통과한 상태를 기준으로 분할을 시험하고, 분할 이후 결과를 같은 검증 시점으로 다시 판정한다.
+            // 분할만 실패하면 자식 추가·ID 발급·부모 갱신·상태 변경을 함께 되돌린다. 최적화 자체가 나빴던 것이 아니므로 학습률은 낮추지 않는다.
+            if config.hiRefine, config.splitBudget > 0, !refineTouched.isEmpty {
+                let snap2 = map.snapshot()
+                testBeforeSplit?(map)
+                let n = splitSelected(touched: refineTouched)
+                if n > 0 {
+                    mapEpoch += 1
+                    testMutateAfterSplit?(map)
+                    var why2: String?
+                    if config.validate, !afterMetrics.isEmpty {
+                        let tv2 = now()
+                        var after2: [Int: ValMetric] = [:]
+                        for v in valSet { after2[v.id] = valMetric(v) }
+                        rec.validationMs += (now() - tv2) * 1000
+                        why2 = validationVerdict(before: afterMetrics, after: after2)
+                    }
+                    if let w = why2, map.restore(snap2) {
+                        rec.splitsRolledBack = n; rec.splitRollbackReason = w
+                        totalSplits -= n; splitRollbacks += 1
+                        valCache.removeAll(); mapEpoch += 1
+                    } else {
+                        rec.splits = n
+                    }
+                }
+            }
             map.version += 1
         }
         rec.moved = movedTotal
@@ -1061,6 +1108,7 @@ final class GSOPipeline {
             }
             rec.refineIterations += 1
             rec.refineCropPixels = cw * ch
+            rec.refineCropW = cw; rec.refineCropH = ch; rec.refineSrcW = hs.w; rec.refineSrcH = hs.h
         }
         totalRefineIterations += rec.refineIterations
         if rec.refineIterations > 0 { pendingRefine = (view, bestCell) }
@@ -1087,7 +1135,7 @@ final class GSOPipeline {
         guard !cands.isEmpty else { return 0 }
         cands.sort { $0.score > $1.score }
         let room = max(0, config.maxGaussians - map.count)
-        let take = min(cands.count, config.splitBudget, room)
+        let take = min(cands.count, testSplitLimit ?? config.splitBudget, room)
         guard take > 0 else { return 0 }
         for k in 0..<take {
             let i = cands[k].i
@@ -1178,6 +1226,26 @@ final class GSOPipeline {
         }
         p.gaussiansTotal = map.count
         p.gaussiansRefined = map.refineCount.reduce(0) { $0 + ($1 > 0 ? 1 : 0) }
+        // 관측한 방향: 제품 중심을 기준으로 카메라 방위(12칸)·고도(3칸)를 센다. 비추지 않은 방향의 면(뒷면 등)은 복원하지 않는다(미관측).
+        if let c = productBounds.center {
+            var az = Set<Int>(), cells = Set<Int>()
+            for v in views {
+                let d = v.camera.center - c
+                let h = (d.x * d.x + d.z * d.z).squareRoot()
+                guard h > 1e-4 || abs(d.y) > 1e-4 else { continue }
+                let a = (atan2(d.x, d.z) + .pi) / (2 * .pi)
+                let ab = min(11, max(0, Int(a * 12)))
+                let el = atan2(d.y, h) * 180 / .pi
+                let eb = el < 15 ? 0 : (el < 45 ? 1 : 2)
+                az.insert(ab); cells.insert(ab * 3 + eb)
+            }
+            p.azimuthObserved = az.count; p.directionCells = cells.count
+        }
+        if map.count > 0 {
+            var weak = 0
+            for i in 0..<map.count where map.state[i] == GSOState.temporary.rawValue || map.nObs[i] < 3 { weak += 1 }
+            p.insufficientShare = Float(weak) / Float(map.count)
+        }
         return p
     }
 

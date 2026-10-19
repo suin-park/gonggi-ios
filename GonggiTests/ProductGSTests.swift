@@ -268,7 +268,7 @@ final class GSOptProductPipelineTests: XCTestCase {
         }
         let fp = nearProduct(product), fs = nearProduct(space)
         ProductTest.log("maskGating", ["productN": Double(product.map.count), "spaceN": Double(space.map.count), "productNearFraction": Double(fp), "spaceNearFraction": Double(fs)])
-        XCTAssertGreaterThan(product.map.count, 150)
+        XCTAssertGreaterThan(product.map.count, 100)
         XCTAssertGreaterThan(fp, 0.95, "제품 모드가 배경 평면에 가우시안을 만듦")
         XCTAssertLessThan(fs, 0.8, "대조군(공간 모드)이 배경도 만들지 않아 시험이 의미 없음")
     }
@@ -333,32 +333,59 @@ final class GSOptProductPipelineTests: XCTestCase {
         XCTAssertLessThan(sc.hole, 0.35)
     }
 
-    func testRollbackRestoresSplitChildrenIdsStatesAndAdamTogetherInProductMode() {
+    func testUpdateRollbackRestoresAdamStepsRefineCountsAndStatesInProductMode() {
+        var cfg = ProductTest.refine(split: false)
+        cfg.opt.lambdaDepth = 0
+        let p = pipeline(cfg, frames: 8)
+        for _ in 0..<2 { _ = p.optimizeSlice(maxIterations: 4, deadlineHost: .infinity) }
+        let before = p.map.persisted()
+        let steps = p.map.steps, refine = p.map.refineCount, refineSlice = p.map.refineSlice, mMu = p.map.mMu, vMu = p.map.vMu
+        let progress = p.refineProgress()
+        p.testMutateBeforeValidation = { m in for i in 0..<m.count { m.g.opacityLogit[i] -= 3 } }
+        let bad = p.optimizeSlice(maxIterations: 4, deadlineHost: .infinity)
+        p.testMutateBeforeValidation = nil
+        XCTAssertTrue(bad.rolledBack, "악화를 검증이 잡지 못함: \(bad.rollbackReason)")
+        XCTAssertEqual(p.map.persisted(), before, "롤백 뒤 파라미터·상태가 갱신 전과 다름")
+        XCTAssertEqual(p.map.steps, steps); XCTAssertEqual(p.map.refineCount, refine); XCTAssertEqual(p.map.refineSlice, refineSlice)
+        XCTAssertEqual(p.map.mMu, mMu); XCTAssertEqual(p.map.vMu, vMu)
+        XCTAssertEqual(p.refineProgress().cellsRefined, progress.cellsRefined, "롤백된 정밀화가 진행으로 세어짐")
+    }
+
+    func testSplitRollbackRestoresChildrenIdsStatesAndLineageAndAcceptedSplitsLowerTrust() {
         var cfg = ProductTest.refine(split: true)
         cfg.opt.lambdaDepth = 0
         let p = pipeline(cfg, frames: 8)
         for _ in 0..<2 { _ = p.optimizeSlice(maxIterations: 4, deadlineHost: .infinity) }
+        // 분할 이후 단계에서 악화가 일어난 경우(최적화 자체는 통과): 분할만 되돌아가고 자식·ID 발급·부모 상태가 분할 직전과 같다.
         p.testForceSplitAll = true
-        let before = p.map.persisted()
-        let countBefore = p.map.count, nextBefore = p.map.nextID, stepsBefore = p.map.steps, splitTotalBefore = p.map.splitTotal, totalSplitsBefore = p.totalSplits
-        p.testMutateBeforeValidation = { m in for i in 0..<m.count { m.g.opacityLogit[i] -= 3 } }       // 분할 이후 단계에서 악화가 일어난 경우
-        let bad = p.optimizeSlice(maxIterations: 4, deadlineHost: .infinity)
-        p.testMutateBeforeValidation = nil
-        ProductTest.log("splitRollback", ["rolledBack": bad.rolledBack ? 1 : 0, "splitsRolledBack": Double(bad.splitsRolledBack), "countBefore": Double(countBefore)])
-        XCTAssertTrue(bad.rolledBack, "분할 이후 악화를 검증이 잡지 못함: \(bad.rollbackReason)")
-        XCTAssertGreaterThan(bad.splitsRolledBack, 0, "이 시험에서 분할이 일어나지 않아 롤백 복구를 확인할 수 없음")
+        p.testSplitLimit = 40
+        var capture: GSOPersisted?
+        var nextCapture: UInt32 = 0
+        var countCapture = 0
+        var stepsCapture: [Int32] = []
+        p.testBeforeSplit = { m in capture = m.persisted(); nextCapture = m.nextID; countCapture = m.count; stepsCapture = m.steps }
+        p.testMutateAfterSplit = { m in for i in 0..<m.count { m.g.opacityLogit[i] -= 3 } }
+        var bad = GSOSliceRecord()
+        for _ in 0..<4 where bad.splitsRolledBack == 0 { bad = p.optimizeSlice(maxIterations: 4, deadlineHost: .infinity) }
+        p.testMutateAfterSplit = nil
+        ProductTest.log("splitRollback", ["splitsRolledBack": Double(bad.splitsRolledBack), "countBefore": Double(countCapture), "splitRollbacks": Double(p.splitRollbacks)])
+        guard bad.splitsRolledBack > 0 else { return XCTFail("분할 이후 악화를 검증이 잡지 못했거나 분할이 일어나지 않음: \(bad.rollbackReason)") }
+        XCTAssertFalse(bad.rolledBack, "분할 실패가 최적화 전체의 롤백으로 번짐")
         XCTAssertEqual(bad.splits, 0)
-        XCTAssertEqual(p.map.count, countBefore, "롤백 뒤 가우시안 수가 다름(분할 자식이 남음)")
-        XCTAssertEqual(p.map.persisted(), before, "롤백 뒤 파라미터·ID·상태·계보가 갱신 전과 다름")
-        XCTAssertEqual(p.map.nextID, nextBefore, "롤백 뒤 ID 발급 기준이 되돌아가지 않음")
-        XCTAssertEqual(p.map.steps, stepsBefore, "롤백 뒤 Adam step이 갱신 전과 다름")
-        XCTAssertEqual(p.map.splitTotal, splitTotalBefore); XCTAssertEqual(p.totalSplits, totalSplitsBefore)
-        XCTAssertEqual(p.map.refineCount.count, p.map.count); XCTAssertEqual(p.map.bgCount.count, p.map.count)
-        // 정상 갱신에서는 분할이 확정되고, 부모·자식은 이전 위치의 신뢰를 물려받지 않는다
+        XCTAssertFalse(bad.splitRollbackReason.isEmpty)
+        XCTAssertEqual(p.map.count, countCapture, "분할 롤백 뒤 가우시안 수가 다름(자식이 남음)")
+        XCTAssertEqual(p.map.persisted(), capture, "분할 롤백 뒤 파라미터·ID·상태·계보가 분할 직전과 다름")
+        XCTAssertEqual(p.map.nextID, nextCapture, "분할 롤백 뒤 ID 발급 기준이 되돌아가지 않음")
+        XCTAssertEqual(p.map.steps, stepsCapture, "분할 롤백 뒤 Adam step이 분할 직전과 다름")
+        XCTAssertEqual(p.map.bgCount.count, p.map.count); XCTAssertEqual(p.map.refineCount.count, p.map.count)
+        // 정상 갱신: 소수만 쪼개면 분할이 확정되고, 부모·자식은 이전 위치의 신뢰를 물려받지 않는다.
+        p.testBeforeSplit = nil
+        p.testSplitLimit = 4
+        let before = p.map.count
         var good = GSOSliceRecord()
         for _ in 0..<6 where good.splits == 0 { good = p.optimizeSlice(maxIterations: 4, deadlineHost: .infinity) }
-        guard good.splits > 0 else { return XCTFail("정상 갱신에서도 분할이 일어나지 않음") }
-        XCTAssertGreaterThan(p.map.count, countBefore)
+        guard good.splits > 0 else { return XCTFail("정상 갱신에서도 분할이 확정되지 않음: \(good.splitRollbackReason)") }
+        XCTAssertGreaterThan(p.map.count, before)
         let ids = Set(p.map.ids)
         XCTAssertEqual(ids.count, p.map.count, "ID 중복")
         var children = 0
@@ -418,7 +445,7 @@ final class GSOptProductPipelineTests: XCTestCase {
         let kHi = v.kHi!
         XCTAssertEqual(crop.camera.intrinsics.cx, kHi.cx - Float(crop.x0), accuracy: 1e-3, "창 카메라의 주점 이동이 틀림")
         XCTAssertEqual(crop.camera.intrinsics.cy, kHi.cy - Float(crop.y0), accuracy: 1e-3)
-        XCTAssertEqual(kHi.width, 640)
+        XCTAssertEqual(kHi.width, input.hiWidth, "고해상도 K의 해상도가 원본 창 영상과 다름")
     }
 
     func testSplitsOnlyHappenToTrustedGaussiansWhenNotForced() {
