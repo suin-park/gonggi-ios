@@ -20,6 +20,7 @@ enum GSOTest {
         c.optimize = optimize
         c.geometryOptimization = geometry
         c.exposureNormalize = false
+        c.opt.lambdaDepth = 0.8        // 앱 기본은 끔이지만 이 항의 구현은 계속 검증한다
         return c
     }
 

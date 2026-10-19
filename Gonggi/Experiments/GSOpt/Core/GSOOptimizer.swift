@@ -12,7 +12,8 @@ struct GSOOptConfig: Equatable {
     var scaleDown: Float = 0.7              // log-scale이 처음 값에서 줄 수 있는 폭
     var scaleUp: Float = 0.5                // 늘 수 있는 폭
     var muBound: Float = 3.0                // 처음 위치에서 (처음 큰 크기 × muBound) 넘게 움직일 수 없다
-    var lambdaDepth: Float = 0.8            // 스테레오 확인 깊이 제약 가중치(단안 깊이에는 적용하지 않는다)
+    var lambdaDepth: Float = 0.0            // 스테레오 확인 깊이 제약 가중치. 기본 끔: 기기 로그에서 이 항의 손실이 0.4~0.6으로 줄지 않았고, 178장 재생에서 끄면 PSNR 17.6→18.0, 흐림(α<0.8 화소) 19%→7%였다.
+    var opacityLogitMin: Float = -1.5       // 불투명도 하한(a0 ≥ 0.18). 기기 저장본에서 가우시안 26%가 a0 < 0.1로 사라져 있었다.
     var charbonnierEps: Float = 0.01
     var revisionMoveMeters: Float = 0.002
     var beta1: Float = 0.9
@@ -150,7 +151,7 @@ final class GSOOptimizer {
             map.mO[i] = c.beta1 * map.mO[i] + (1 - c.beta1) * go
             map.vO[i] = c.beta2 * map.vO[i] + (1 - c.beta2) * go * go
             let dO = c.lrOpacity * (map.mO[i] / bc1) / ((map.vO[i] / bc2).squareRoot() + c.adamEps)
-            map.g.opacityLogit[i] = max(-4, min(6, map.g.opacityLogit[i] - dO))
+            map.g.opacityLogit[i] = max(c.opacityLogitMin, min(6, map.g.opacityLogit[i] - dO))
             guard geometry, map.steps[i] > c.geometryWarmSteps else { continue }
             let gm = grads.mu[r], gl = grads.logScale[r], gq = grads.quat[r]
             guard gm.x.isFinite, gm.y.isFinite, gm.z.isFinite, gl.x.isFinite, gl.y.isFinite, gl.z.isFinite,

@@ -144,6 +144,7 @@ enum GSODepthInit {
         var maxNormal: Float = 0.03
         var initialOpacityLogit: Float = 0.4       // a0 = 0.99·sigmoid(0.4) ≈ 0.59
         var edgeJump: Float = 0.06
+        var insertEdges = true               // 깊이 경계 화소에도 가우시안을 만든다(막으면 경계·얇은 물체가 영원히 비어 있다)
         var smoothSigmaRel: Float = 0.04
     }
 
@@ -238,7 +239,7 @@ enum GSODepthInit {
         var out: [GSONewGaussian] = []
         for y in 0..<h { for x in 0..<w {
             let i = y * w + x
-            guard select[i], !dense.edge[i] else { continue }
+            guard select[i], p.insertEdges || !dense.edge[i] else { continue }
             let z = dense.zSmooth[i]
             guard z > p.minZ, z < p.maxZ else { continue }
             let P = SIMD3<Float>((Float(x) - cam.cx) / cam.fx * z, (Float(y) - cam.cy) / cam.fy * z, z)

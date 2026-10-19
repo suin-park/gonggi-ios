@@ -34,6 +34,8 @@ final class GSOSessionViewModel: ObservableObject {
     let liveCam = RTLiveCameraStore()
     let background = RTBackgroundStore()
     let renderer: RTGaussianRenderer
+    let mono = RTMonoDepth()
+    private var monoPreloading = false
     private var engine: GSOEngine?
     private let gate = ExperimentCameraGate.shared
     private let gateName = "gso"
@@ -102,7 +104,7 @@ final class GSOSessionViewModel: ObservableObject {
             message = "로그 파일을 만들 수 없어요. 저장 공간을 확인해 주세요."; gate.release(gateName); state = .idle; return
         }
         log = l
-        let e = GSOEngine(options: o, log: l, splats: splats, liveCam: liveCam, background: background)
+        let e = GSOEngine(options: o, log: l, splats: splats, liveCam: liveCam, background: background, mono: mono)
         e.onLive = { [weak self] live in Task { @MainActor in self?.live = live } }
         e.onAutoStop = { [weak self] reason in Task { @MainActor in self?.finish(reason: reason) } }
         engine = e
@@ -182,7 +184,15 @@ final class GSOSessionViewModel: ObservableObject {
 
     // MARK: 저장한 결과 열기
 
-    func refreshSaved() { savedItems = GSOStore.list() }
+    func refreshSaved() { savedItems = GSOStore.list(); preloadModel() }
+
+    /// 화면을 열 때 깊이 모델을 미리 읽는다. 처음 설치한 뒤 첫 로드는 Neural Engine 컴파일로 약 50초가 걸려, 촬영 시작 뒤에 읽으면 그동안 스테레오 전용(성긴) 결과만 나온다.
+    func preloadModel() {
+        guard !mono.isReady, !monoPreloading else { return }
+        monoPreloading = true
+        let m = mono
+        Task.detached(priority: .utility) { _ = m.load(); await MainActor.run { self.monoPreloading = false } }
+    }
 
     func open(_ item: GSOStore.Item) {
         guard state == .idle || state == .finished else { return }

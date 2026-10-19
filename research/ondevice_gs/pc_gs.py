@@ -204,7 +204,7 @@ class Optimizer:
         np.clip(G.col[:n], 0, 1, out=G.col[:n])
         if self.cfg['color_bound'] > 0:
             np.clip(G.col[:n], G.col0[:n] - self.cfg['color_bound'], G.col0[:n] + self.cfg['color_bound'], out=G.col[:n])
-        np.clip(G.opa[:n], -4.0, 6.0, out=G.opa[:n])
+        np.clip(G.opa[:n], self.cfg['opa_min'], 6.0, out=G.opa[:n])
         ls = G.logs[:n]
         np.clip(ls, G.ls0[:n] - self.cfg['scale_down'], G.ls0[:n] + self.cfg['scale_up'], out=ls)
         if geom and self.cfg['mu_bound'] > 0:
@@ -262,7 +262,7 @@ def evaluate(G, D, i):
     tgt = D['imgs'][i].astype(np.float32) / 255
     A = 1 - Tf
     sup = A > 0.5
-    out = dict(psnr=psnr(img, tgt), ssim=ssim(img, tgt), coverage=float(sup.mean()), hole=float((A < 0.1).mean()))
+    out = dict(psnr=psnr(img, tgt), ssim=ssim(img, tgt), coverage=float(sup.mean()), hole=float((A < 0.1).mean()), alpha_mean=float(A.mean()), dark_frac=float((A < 0.8).mean()))
     if sup.any():
         out['psnr_supported'] = psnr(img[sup], tgt[sup])
     return out, img
@@ -304,7 +304,7 @@ def run(D, variant, cfg, out_dir=None, verbose=True):
         if len(sel_idx) > cfg['ins_budget']:
             keep = rng.choice(sel_idx, cfg['ins_budget'], replace=False)
             sel = np.zeros(H * W, bool); sel[keep] = True; sel = sel.reshape(H, W)
-        gg = make_gaussians(i, D, cam, sel, anch)
+        gg = make_gaussians(i, D, cam, sel, anch, edge_ok=bool(cfg['edge_ok']))
         if gg is not None:
             G.add(*gg, born=i)
             added = len(gg[0])
@@ -346,13 +346,13 @@ def run(D, variant, cfg, out_dir=None, verbose=True):
     return dict(variant=variant, G=G, final=final, arrival=arrival, stats=stats, sec=time.time() - t_all)
 
 
-DEFAULT_CFG = dict(iters=24, win_recent=4, past_n=1, lam_d=0.8, geom_warm=6, ins_alpha=0.6, ins_budget=2400,
-                   lr_mu=2e-4, lr_ls=1e-3, lr_q=5e-4, lr_o=0.04, lr_c=0.012, scale_down=0.7, scale_up=0.5, mu_bound=3.0, smooth=1, color_bound=0.0)
+DEFAULT_CFG = dict(iters=24, win_recent=3, past_n=2, lam_d=0.0, geom_warm=6, ins_alpha=0.6, ins_budget=2400,
+                   lr_mu=2e-4, lr_ls=1e-3, lr_q=5e-4, lr_o=0.04, lr_c=0.012, scale_down=0.7, scale_up=0.5, mu_bound=3.0, smooth=1, color_bound=0.0, opa_min=-1.5, edge_ok=1)
 
 
 def summarize(res):
     f = res['final']
-    keys = ['psnr', 'ssim', 'coverage', 'hole', 'psnr_supported']
+    keys = ['psnr', 'ssim', 'coverage', 'hole', 'psnr_supported', 'alpha_mean', 'dark_frac']
     out = {k: float(np.mean([v[k] for v in f.values() if k in v])) for k in keys}
     out['n_gaussians'] = res['G'].n
     out['sec'] = res['sec']

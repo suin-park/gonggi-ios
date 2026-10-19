@@ -259,7 +259,7 @@ final class GSOptMapTests: XCTestCase {
                 XCTAssertLessThanOrEqual(m.g.logScale[i][k], m.ls0[i][k] + opt.config.scaleUp + 1e-5)
                 XCTAssertTrue((0...1).contains(m.g.color[i][k]))
             }
-            XCTAssertTrue((-4...6).contains(m.g.opacityLogit[i]))
+            XCTAssertTrue((opt.config.opacityLogitMin...6).contains(m.g.opacityLogit[i]))
             XCTAssertEqual(simd_length(m.g.quat[i]), 1, accuracy: 1e-3)
         }
         XCTAssertNotEqual(m.g.mu, mu0)

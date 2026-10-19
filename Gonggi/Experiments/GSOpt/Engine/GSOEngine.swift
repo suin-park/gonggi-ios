@@ -109,7 +109,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
     // MARK: 처리 쪽 상태 (procQueue에서만)
     let pipeline: GSOPipeline
-    private let mono = RTMonoDepth()
+    private let mono: RTMonoDepth
     private var monoLoaded = false
     private var recorder: SV2ReplayRecorder?
     private var lastPublishHost: Double = 0
@@ -152,8 +152,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private var autoStopSent = false
 
     init(options: GSOOptions, config: GSOConfig = GSOConfig(), log: ExperimentRunLog? = nil, splats: RTSharedSplats = RTSharedSplats(),
-         liveCam: RTLiveCameraStore = RTLiveCameraStore(), background: RTBackgroundStore = RTBackgroundStore()) {
+         liveCam: RTLiveCameraStore = RTLiveCameraStore(), background: RTBackgroundStore = RTBackgroundStore(), mono: RTMonoDepth = RTMonoDepth()) {
         self.options = options
+        self.mono = mono
         var cfg = config
         cfg.optimize = options.optimize
         cfg.geometryOptimization = options.geometryOptimization
@@ -216,7 +217,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         if config.useMono {
             loadQueue.async { [weak self] in
                 guard let self else { return }
-                let ok = self.mono.load()
+                // 화면을 열 때 미리 읽어 둔 모델이면 다시 읽지 않는다(첫 실행의 Neural Engine 컴파일에 약 50초가 걸렸다).
+                let ok = self.mono.isReady ? true : self.mono.load()
                 self.statLock.lock(); self.monoLoaded = ok; self.statLock.unlock()
                 self.log?.write("gso_model", ["ready": ok, "status": self.mono.status, "loadMs": self.mono.loadMs, "computeUnits": self.mono.computeUnits,
                                               "model": RTMonoDepth.modelResource])
