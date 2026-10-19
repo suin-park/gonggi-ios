@@ -104,7 +104,7 @@ def fuse_depth(D, hi, held, max_base=0.35, min_votes=3, tol=0.08):
     return out
 
 
-def main(out, k, fuse_z=False):
+def main(out, k, fuse_z=False, zref=None):
     global K_NEAR
     K_NEAR = k
     os.makedirs(out, exist_ok=True)
@@ -117,7 +117,7 @@ def main(out, k, fuse_z=False):
     means = np.array(means); ref = np.nanmedian(np.array([means[i] for i in range(n) if i not in held]), axis=0)
     gains = np.clip(ref[None] / np.where(np.isnan(means), ref[None], means), 0.7, 1.4)
     hi = [dict(img=np.clip(f['img'].astype(np.float32) * gains[i][None, None], 0, 255).astype(np.uint8), R=f['R'], C=f['C'], fx=f['fx'], fy=f['fy'], cx=f['cx'], cy=f['cy']) for i, f in enumerate(fr)]
-    Zuse = fuse_depth(D, hi, held) if fuse_z else None
+    Zuse = fuse_depth(D, hi, held) if fuse_z else (np.load(zref) if zref else None)
     t0 = time.time(); layers = build_layers(hi, D, held, Zuse); print('layers', len(layers), 'surfels', sum(len(s) for s in layers.values()), 'sec', time.time() - t0, flush=True)
     evalset = [i for i in sorted(held) if D['TRUST'][i] and (D['MASK'][i] == 1).sum() > 100]
     sc = {}; imgs = {}
@@ -126,13 +126,13 @@ def main(out, k, fuse_z=False):
         img, A = (render_gpu_style if os.environ.get('E_GPU', '1') == '1' else render_blend)(layers, hi, cam, study.EW, study.EH, k)
         s = study.score(img, A, gt, lab)
         if s: sc[i] = s
-        imgs[i] = {('E2' if fuse_z else 'E'): (np.float16(img), np.float16(A))}
+        imgs[i] = {('E3' if zref else ('E2' if fuse_z else 'E')): (np.float16(img), np.float16(A))}
     keys = ['lpips', 'psnr', 'psnr_gc', 'psnr_band', 'ssim', 'psnr_edge', 'hole', 'leak', 'sharp_ratio', 'hf_corr', 'sil_iou']
     res = dict(mean={kk: float(np.nanmean([v[kk] for v in sc.values()])) for kk in keys}, per_frame=sc, surfels=sum(len(s) for s in layers.values()), layers=len(layers), k=k)
-    print('E2' if fuse_z else 'E', json.dumps(res['mean']), flush=True)
+    print('E3' if zref else ('E2' if fuse_z else 'E'), json.dumps(res['mean']), flush=True)
     json.dump(res, open(os.path.join(out, 'e_metrics.json'), 'w'), indent=1)
     pickle.dump(dict(imgs=imgs), open(os.path.join(out, 'renders.pkl'), 'wb'))
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 3, len(sys.argv) > 3 and sys.argv[3] == 'fuse')
+    main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 3, len(sys.argv) > 3 and sys.argv[3] == 'fuse', (sys.argv[4] if len(sys.argv) > 4 and sys.argv[3] == 'ref' else None))
