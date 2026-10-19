@@ -12,7 +12,8 @@ struct GSOConfig: Equatable {
     var insertAlpha: Float = 0.6            // 렌더 누적 α가 이 값보다 작은 화소(설명되지 않는 영역)에 새로 만든다
     var insertBudget = 2400                 // 키프레임당 새 가우시안 상한
     var insertDepthRatio: Float = 1.07      // 스테레오 확인 깊이가 렌더 깊이보다 이만큼 가까우면 앞 표면이 비어 있다고 본다
-    var winRecent = 4                       // 최적화 창: 최근 키프레임 수
+    var winRecent = 3                       // 최적화 창: 최근 키프레임 수
+    var pastReplay = 2                      // 한 주기에서 과거 시점을 보는 횟수(오래된 영역의 품질 저하를 줄인다)
     var maxViews = 150
     var optimize = true                     // B 경로는 false(초기화만)
     var geometryOptimization = true         // false면 색·불투명도만(Cc)
@@ -80,6 +81,7 @@ struct GSOSliceRecord {
     var lossStart: Float = 0
     var lossEnd: Float = 0
     var depthLossEnd: Float = 0
+    var coverage: Float = 0                // 훈련 시점의 화면 기준 가우시안 coverage(α ≥ 0.5 화소 비율, held-out 아님)
     var rolledBack = false
     var nonFinite = 0
     var moved = 0
@@ -330,10 +332,10 @@ final class GSOPipeline {
     private func chooseView() -> GSOView? {
         guard !views.isEmpty else { return nil }
         let recent = Array(views.suffix(config.winRecent))
-        let cycle = config.winRecent + 1
+        let cycle = config.winRecent + config.pastReplay
         let slot = iterCounter % cycle
         iterCounter += 1
-        if slot == config.winRecent, views.count > recent.count {
+        if slot >= config.winRecent, views.count > recent.count {
             let past = views.dropLast(recent.count)
             if let cur = views.last, nextRandom() % 2 == 0 {
                 // 재방문: 현재와 시선이 비슷하고 가까운 과거 시점을 우선한다.
@@ -362,6 +364,7 @@ final class GSOPipeline {
         guard config.optimize, map.count > 0, !views.isEmpty else { return rec }
         let snap = map.snapshot()
         var losses: [Float] = []
+        var coverageSum: Float = 0
         var movedTotal = 0
         for _ in 0..<maxIterations {
             if now() >= deadlineHost && rec.iterations > 0 { break }
@@ -382,9 +385,11 @@ final class GSOPipeline {
             rec.iterations += 1
             rec.activeGaussians = max(rec.activeGaussians, grads.count)
             rec.depthLossEnd = stats.depth
+            coverageSum += stats.coverage
             losses.append(stats.photometric)
         }
         totalIterations += rec.iterations
+        if rec.iterations > 0 { rec.coverage = coverageSum / Float(rec.iterations) }
         if losses.count >= 6 {
             let third = losses.count / 3
             let a = losses.prefix(third).reduce(0, +) / Float(third)

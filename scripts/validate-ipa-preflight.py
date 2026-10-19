@@ -74,6 +74,22 @@ def check_surface_v2(zf: zipfile.ZipFile, app_prefix: str, info: dict) -> None:
     ok("V2 Metal shader functions (sv2_vertex, sv2_fragment, sv2_depth_fragment) compiled into default.metallib")
 
 
+def check_gso(zf: zipfile.ZipFile, app_prefix: str, info: dict) -> None:
+    """기기 내 가우시안 최적화(GSO)가 이 IPA에 들어 있는지: Info.plist 표식 + V1 가우시안 렌더 Metal 함수(표시 경로) + 깊이 모델."""
+    ver = info.get("GonggiGSOptVersion")
+    if str(ver).strip() != "1":
+        fail(f"GonggiGSOptVersion is {ver!r}, expected '1'")
+    ok(f"GonggiGSOptVersion == {ver}")
+    libs = [n for n in zf.namelist() if n.startswith(app_prefix) and n.endswith("default.metallib")]
+    if not libs:
+        fail("default.metallib missing from IPA")
+    blob = zf.read(libs[0])
+    for fn in (b"rt_vertex", b"rt_fragment"):
+        if fn not in blob:
+            fail(f"Metal function {fn.decode()} (Gaussian display path) not found in default.metallib")
+    ok("Gaussian display Metal functions (rt_vertex, rt_fragment) compiled into default.metallib")
+
+
 def check_release_inputs(info: dict, args: argparse.Namespace) -> None:
     """Optional checks of the real IPA Info.plist against the workflow inputs (only the ones given)."""
     if args.marketing_version is not None:
@@ -130,6 +146,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--require-sensor-experiments", action="store_true")
     ap.add_argument("--require-depth-model", action="store_true", help="IPA must contain the Core ML depth prior (compiled .mlmodelc or .mlpackage)")
     ap.add_argument("--require-surface-v2", action="store_true", help="IPA must contain the on-device surface V2 (Info.plist marker + compiled Metal functions)")
+    ap.add_argument("--require-gso", action="store_true", help="IPA must contain the on-device Gaussian optimisation experiment (Info.plist marker + display Metal functions)")
     return ap.parse_args()
 
 
@@ -153,6 +170,8 @@ def main() -> None:
             check_depth_model(zf, app_prefix)
         if args.require_surface_v2:
             check_surface_v2(zf, app_prefix, info)
+        if args.require_gso:
+            check_gso(zf, app_prefix, info)
 
         icon_name = info.get("CFBundleIconName")
         if not icon_name:

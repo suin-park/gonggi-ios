@@ -461,7 +461,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         d["refs"] = r.refs; d["anchors"] = r.anchors; d["monoRan"] = r.monoRan; d["denseSource"] = r.denseSource
         if let f = r.fit {
             d["fit"] = ["a": Double(f.a), "b": Double(f.b), "inlierRatio": Double(f.inlierRatio), "anchors": f.anchorCount, "inliers": f.inlierCount,
-                        "rmsRho": Double(f.rmsRho), "coverage": Double(f.spatialCoverage), "confidence": Double(f.confidence), "carried": f.carried]
+                        "rmsRho": Double(f.rmsRho), "coverage": Double(f.spatialCoverage), "confidence": Double(f.confidence), "carried": f.carried,
+                        "space": f.space.rawValue, "alternativeInlierRatio": Double(f.alternativeInlierRatio)]
         }
         d["rawMonoRange"] = [Double(r.rawMonoMin), Double(r.rawMonoMax)]
         d["inserted"] = ["total": r.inserted, "stereo": r.insertedStereo, "mono": r.insertedMono, "rejectedByCap": r.rejectedByCap]
@@ -503,11 +504,12 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             totals.iterations += s.iterations; totals.moved += s.moved; totals.nonFinite += s.nonFinite
             optIterTimes.append(ExpSys.hostNow()); if optIterTimes.count > 400 { optIterTimes.removeFirst() }
             if s.lossStart > 0 { lossStartLast = Double(s.lossStart); lossEndLast = Double(s.lossEnd) }
+            coverageLast = Double(s.coverage)
             statLock.unlock()
             log?.write("gso_opt", ["iterations": s.iterations, "forwardMs": s.forwardMs, "backwardMs": s.backwardMs, "updateMs": s.updateMs,
                                    "lossStart": Double(s.lossStart), "lossEnd": Double(s.lossEnd), "depthLoss": Double(s.depthLossEnd),
                                    "rolledBack": s.rolledBack, "nonFinite": s.nonFinite, "moved": s.moved, "active": s.activeGaussians,
-                                   "wallMs": s.wallMs, "geometry": s.geometry, "governor": level])
+                                   "wallMs": s.wallMs, "geometry": s.geometry, "governor": level, "trainViewCoverage": Double(s.coverage)])
         }
         statLock.lock(); let procCount = processed; statLock.unlock()
         if procCount % 4 == 0 || s.iterations == 0 {
@@ -628,7 +630,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         l.optIterations = totals.iterations
         let recentIt = optIterTimes.filter { now - $0 <= 5 }
         l.optPerSecond = recentIt.count > 1 ? Double(recentIt.count - 1) / max(recentIt.last! - recentIt.first!, 0.001) : nil
-        l.lossStart = lossStartLast; l.lossEnd = lossEndLast
+        l.lossStart = lossStartLast; l.lossEnd = lossEndLast; l.coverage = coverageLast
         l.rollbacks = pipeline.rollbacks
         l.hint = hint; l.depthStatus = depthStatus; l.governor = governorLevel
         l.optimizing = options.optimize

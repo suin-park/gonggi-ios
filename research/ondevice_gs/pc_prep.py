@@ -10,7 +10,8 @@ rho = a*m + b to the anchors (robust). Output: cache/<name>.npz
 import argparse, io, json, os, struct, sys, time
 import numpy as np, cv2, torch, torch.nn.functional as F
 
-W, H = 256, 192
+import os
+W, H = int(os.environ.get('GS_W', 256)), int(os.environ.get('GS_H', 192))
 HELD = lambda idx: idx % 10 == 5
 
 

@@ -342,6 +342,30 @@ final class GSOptPipelineTests: XCTestCase {
         XCTAssertNotNil(p.firstAlignedKF)
     }
 
+    /// 모델 출력의 의미(역깊이 / 깊이)를 알 수 없을 때 두 가정으로 맞춰 더 잘 맞는 쪽을 고른다.
+    func testAlignmentSelectsOutputMeaningForDepthLikeModel() {
+        let cfg = GSOTest.config(optimize: false)
+        let p = GSOPipeline(config: cfg)
+        let mono = GSOTest.SynthMono()
+        mono.outputsDepth = true
+        mono.a = -0.4; mono.b = 1.9
+        var fits: [GSOAffineFit] = []
+        for (i, pose) in GSOTest.trajectory(count: 8).enumerated() {
+            let r = GSOTest.feed(p, scene: scene, mono: mono, id: i + 1, pose: pose)
+            if let f = r.fit, !f.carried { fits.append(f) }
+        }
+        let last = try! XCTUnwrap(fits.last)
+        GSOTest.log("alignDepthLike", ["inlier": Double(last.inlierRatio), "alt": Double(last.alternativeInlierRatio), "isDepth": last.space == .depth ? 1 : 0])
+        XCTAssertEqual(last.space, .depth, "깊이를 내는 모델을 역깊이로 해석했다")
+        XCTAssertGreaterThan(last.inlierRatio, last.alternativeInlierRatio)
+        // 역깊이 모델은 역깊이로 해석된다.
+        let p2 = GSOPipeline(config: cfg)
+        let mono2 = GSOTest.SynthMono()
+        var inv: GSOAffineFit?
+        for (i, pose) in GSOTest.trajectory(count: 8).enumerated() { if let f = GSOTest.feed(p2, scene: scene, mono: mono2, id: i + 1, pose: pose).fit, !f.carried { inv = f } }
+        XCTAssertEqual(inv?.space, .inverseDepth)
+    }
+
     /// 단안 전용으로 만든 가우시안은 독립 기하 증거 없이 확인됨으로 올라가지 않는다. 스테레오가 일치한 가우시안만 후보/안정이 된다.
     func testMonoOnlyGaussiansStayTemporaryWithoutIndependentEvidence() {
         let (p, _, _, _, _) = run(optimize: false, frames: 10)

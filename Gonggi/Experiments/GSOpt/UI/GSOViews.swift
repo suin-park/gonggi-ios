@@ -356,7 +356,7 @@ struct GaussianOptView: View {
             Text("지연(캡처→지도) p50 \(f(l.toMapP50)) / p95 \(f(l.toMapP95)) ms · (→게시) p95 \(f(l.toPublishP95)) · (→표시) p95 \(f(l.toDisplayP95)) ms")
             Text("가우시안 \(l.gaussians) (안정 \(l.stable) · 후보 \(l.candidate) · 임시 \(l.temporary)) · 방금 +\(l.lastInserted) · 앵커 \(l.lastAnchors) · 깊이 \(l.lastDenseSource)")
             Text("정렬 내부점 \(f(l.lastFitInlier.map { $0 * 100 }))% 신뢰 \(f(l.lastFitConfidence.map { $0 * 100 }))% · 모델 \(l.monoReady ? "준비" : "대기") (\(l.monoStatus))")
-            Text("최적화 \(l.optimizing ? "켬" : "끔") 반복 \(l.optIterations) (\(f(l.optPerSecond, 1))/s) · 손실 \(f(l.lossStart, 4)) → \(f(l.lossEnd, 4)) · 롤백 \(l.rollbacks)")
+            Text("최적화 \(l.optimizing ? "켬" : "끔") 반복 \(l.optIterations) (\(f(l.optPerSecond, 1))/s) · 손실 \(f(l.lossStart, 4)) → \(f(l.lossEnd, 4)) · 롤백 \(l.rollbacks) · 훈련 시점 면적 \(f(l.coverage.map { $0 * 100 }))%")
             Text("추적 \(l.tracking) · 세그먼트 \(l.segment) · 처음(초) 입력 \(f(l.firstInputS, 1)) 정렬 \(f(l.firstAlignedS, 1)) 후보 \(f(l.firstCandidateS, 1)) 안정 \(f(l.firstStableS, 1)) 표시 \(f(l.firstDisplayS, 1))")
             Text("렌더 \(f(r.fps)) fps · CPU \(f(r.cpuMsP95, 1)) · GPU p95 \(f(r.gpuMsP95, 1)) ms · 그림 \(r.drawn)/\(r.total) · 정렬 \(f(r.sortMsP50, 1)) ms")
             Text("메모리 \(f(l.footprintMB)) MB · 열 \(l.thermal) · 거버너 \(l.governor)" + (l.replayFrames > 0 ? " · 연구 기록 \(l.replayFrames)장 \(l.replayBytes / 1_048_576) MB" : ""))

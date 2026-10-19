@@ -45,6 +45,7 @@ enum GSOTest {
         var a: Float = 0.9
         var b: Float = 0.12
         var noise: Float = 0.03
+        var outputsDepth = false         // true면 상대 역깊이가 아니라 (affine 변환된) 깊이를 내는 모델을 흉내 낸다
         var calls = 0
         var isReady: Bool { true }
 
@@ -65,7 +66,8 @@ enum GSOTest {
             var m = [Float](repeating: 0, count: rho.count)
             for y in 0..<outH { for x in 0..<outW {
                 let n = (SV2Test.valueNoise(Float(x), Float(y), cell: 18, seed: 77) - 0.5) * 2 * noise
-                m[y * outW + x] = (rho[y * outW + x] * (1 + n) - b) / a
+                let r = rho[y * outW + x]
+                m[y * outW + x] = outputsDepth ? ((1 / max(r, 1e-3)) * (1 + n) - b) / a : (r * (1 + n) - b) / a
             }}
             return m
         }

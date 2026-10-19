@@ -10,16 +10,25 @@ protocol GSOMonoProvider: AnyObject {
 
 extension RTMonoDepth: GSOMonoProvider {}
 
-/// 단안 상대 역깊이 m → 역깊이 ρ = a·m + b 의 정렬 결과. 스테레오로 확인한 점들에 강건하게 맞춘 값이다.
+/// 단안 출력 m의 의미. Depth Anything V2는 상대 역깊이(클수록 가까움)를 내지만, 앱에 들어 있는 Core ML 변환본의 출력 의미를 이 환경에서
+/// 직접 확인하지 못했으므로 두 가정(역깊이 / 깊이)으로 각각 맞춰 더 잘 맞는 쪽을 고르고 로그에 남긴다.
+enum GSOMonoSpace: String, Equatable {
+    case inverseDepth       // ρ = 1/Z ≈ a·m + b
+    case depth              // Z ≈ a·m + b
+}
+
+/// 단안 출력 m → 미터 단위 깊이로의 정렬 결과. 스테레오로 확인한 점들에 강건하게 맞춘 값이다.
 struct GSOAffineFit: Equatable {
     var a: Float
     var b: Float
+    var space: GSOMonoSpace = .inverseDepth
     var inlierRatio: Float
     var anchorCount: Int
     var inlierCount: Int
-    var rmsRho: Float
+    var rmsRho: Float                // 내부점 잔차의 rms(역깊이 가정이면 ρ 단위, 깊이 가정이면 미터)
     var spatialCoverage: Float      // 앵커가 있는 격자 칸(4×4) 비율
     var carried = false             // 이번 키프레임에서 새로 맞춘 값이 아니라 직전 값을 이어 쓴 것
+    var alternativeInlierRatio: Float = 0     // 다른 가정으로 맞췄을 때의 내부점 비율(출력 의미 판정의 근거)
 
     /// 정렬 신뢰도(0...1). 앵커가 적거나 한쪽에 치우치거나 이어 쓴 값이면 낮다. 임계 이하이면 단안 깊이를 가우시안 생성에 쓰지 않는다.
     var confidence: Float {
@@ -34,34 +43,50 @@ enum GSOMonoAlign {
     static let minInlierRatio: Float = 0.5
     static let minCoverage: Float = 0.2
 
-    /// mono와 anchorZ는 같은 격자(w×h). anchorZ <= 0은 앵커 없음. 실패하면 nil.
+    /// mono와 anchorZ는 같은 격자(w×h). anchorZ <= 0은 앵커 없음. 두 가정으로 각각 맞춰 내부점 비율이 더 높은 쪽을 쓴다(비슷하면 역깊이 우선). 실패하면 nil.
     static func fit(mono: [Float], anchorZ: [Float], width w: Int, height h: Int, seed: UInt64 = 12345) -> GSOAffineFit? {
+        let inv = fit(mono: mono, anchorZ: anchorZ, width: w, height: h, space: .inverseDepth, seed: seed)
+        let dep = fit(mono: mono, anchorZ: anchorZ, width: w, height: h, space: .depth, seed: seed &+ 1)
+        switch (inv, dep) {
+        case (nil, nil): return nil
+        case (let i?, nil): return i
+        case (nil, let d?): return d
+        case (let i?, let d?):
+            if d.inlierRatio > i.inlierRatio + 0.05 { var r = d; r.alternativeInlierRatio = i.inlierRatio; return r }
+            var r = i; r.alternativeInlierRatio = d.inlierRatio; return r
+        }
+    }
+
+    static func fit(mono: [Float], anchorZ: [Float], width w: Int, height h: Int, space: GSOMonoSpace, seed: UInt64) -> GSOAffineFit? {
         guard mono.count == w * h, anchorZ.count == w * h else { return nil }
         var ms: [Float] = [], rs: [Float] = []
-        var cells = Set<Int>()
         var cellCount = [Int](repeating: 0, count: 16)
         for i in 0..<(w * h) where anchorZ[i] > 0 && mono[i].isFinite {
-            ms.append(mono[i]); rs.append(1 / anchorZ[i])
+            ms.append(mono[i]); rs.append(space == .inverseDepth ? 1 / anchorZ[i] : anchorZ[i])
             let x = i % w, y = i / w
             cellCount[min(3, y * 4 / h) * 4 + min(3, x * 4 / w)] += 1
         }
         guard ms.count >= minAnchors else { return nil }
-        for (k, c) in cellCount.enumerated() where c >= 3 { cells.insert(k) }
-        let coverage = Float(cells.count) / 16
+        let coverage = Float(cellCount.filter { $0 >= 3 }.count) / 16
         let mMean = ms.reduce(0, +) / Float(ms.count)
         let mStd = (ms.reduce(0) { $0 + ($1 - mMean) * ($1 - mMean) } / Float(ms.count)).squareRoot()
         guard mStd > 1e-3 else { return nil }          // 단안 값이 거의 한 가지뿐이면 기울기를 정할 수 없다
 
         var rng = seed
         func next() -> Int { rng = rng &* 6364136223846793005 &+ 1442695040888963407; return Int(truncatingIfNeeded: rng >> 33) }
-        func tol(_ r: Float) -> Float { 0.08 * r + 0.015 }
+        func tol(_ r: Float) -> Float { space == .inverseDepth ? 0.08 * r + 0.015 : 0.08 * r + 0.02 }
+        // 역깊이 가정은 기울기가 양수(클수록 가까움)여야 한다. 깊이 가정은 부호를 가리지 않는다.
+        func valid(_ a: Float, _ b: Float) -> Bool {
+            if !(a.isFinite && b.isFinite) { return false }
+            return space == .inverseDepth ? a > 0 : abs(a) > 1e-6
+        }
         var bestA: Float = 0, bestB: Float = 0, bestIn = -1
         for _ in 0..<200 {
             let i = next() % ms.count, j = next() % ms.count
             let dm = ms[i] - ms[j]
             if abs(dm) < 1e-3 { continue }
             let a = (rs[i] - rs[j]) / dm, b = rs[i] - a * ms[i]
-            if !(a > 0) { continue }
+            if !valid(a, b) { continue }
             var cnt = 0
             for k in 0..<ms.count where abs(rs[k] - (a * ms[k] + b)) < tol(rs[k]) { cnt += 1 }
             if cnt > bestIn { bestIn = cnt; bestA = a; bestB = b }
@@ -78,7 +103,7 @@ enum GSOMonoAlign {
             a = (sw * smr - sm * sr) / den
             b = (sr - a * sm) / sw
         }
-        guard a > 0, a.isFinite, b.isFinite else { return nil }
+        guard valid(a, b) else { return nil }
         var inl = 0
         var se: Float = 0
         for k in 0..<ms.count {
@@ -86,16 +111,20 @@ enum GSOMonoAlign {
             if abs(e) < tol(rs[k]) { inl += 1; se += e * e }
         }
         let ratio = Float(inl) / Float(ms.count)
-        return GSOAffineFit(a: a, b: b, inlierRatio: ratio, anchorCount: ms.count, inlierCount: inl,
+        return GSOAffineFit(a: a, b: b, space: space, inlierRatio: ratio, anchorCount: ms.count, inlierCount: inl,
                             rmsRho: (se / Float(max(1, inl))).squareRoot(), spatialCoverage: coverage)
     }
 
-    /// 단안 값 → camera-Z 격자. ρ가 허용 범위(1/maxZ ... 1/minZ) 밖이면 0.
+    /// 단안 값 → camera-Z 격자. 예측이 허용 범위(minZ ... maxZ) 밖이면 0.
     static func denseDepth(mono: [Float], fit: GSOAffineFit, minZ: Float = 0.25, maxZ: Float = 8) -> [Float] {
         var z = [Float](repeating: 0, count: mono.count)
         for i in 0..<mono.count {
-            let rho = fit.a * mono[i] + fit.b
-            if rho.isFinite, rho > 1 / maxZ, rho < 1 / minZ { z[i] = 1 / rho }
+            let v = fit.a * mono[i] + fit.b
+            guard v.isFinite else { continue }
+            switch fit.space {
+            case .inverseDepth: if v > 1 / maxZ, v < 1 / minZ { z[i] = 1 / v }
+            case .depth: if v > minZ, v < maxZ { z[i] = v }
+            }
         }
         return z
     }
@@ -103,7 +132,7 @@ enum GSOMonoAlign {
 
 /// 밀집 깊이 → 가우시안 생성. 법선은 평활한 깊이의 중앙 차분 외적, 깊이 경계(이웃과 6% 넘게 점프)는 만들지 않는다.
 enum GSODepthInit {
-    struct Params {
+    struct Params: Equatable {
         var stride = 2                       // 화소 간격(훈련 해상도 기준)
         var minZ: Float = 0.25
         var maxZ: Float = 6

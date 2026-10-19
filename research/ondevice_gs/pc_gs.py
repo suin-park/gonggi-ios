@@ -10,7 +10,8 @@ import argparse, json, time, sys
 import numpy as np, cv2
 import gsref
 
-H, W = 192, 256
+import os
+W, H = int(os.environ.get('GS_W', 256)), int(os.environ.get('GS_H', 192))
 
 
 def load(path):
@@ -151,7 +152,7 @@ def make_gaussians(i, D, cam, sel, stereo_anchor, edge_ok=False):
     return mu, logs, quat, col, opa, src
 
 
-SAMPLE_STRIDE = 3
+SAMPLE_STRIDE = int(os.environ.get('GS_STRIDE', 3))
 CFG_SMOOTH = True
 
 
@@ -312,10 +313,11 @@ def run(D, variant, cfg, out_dir=None, verbose=True):
             window = train_ids[-cfg['win_recent']:]
             past = [k for k in train_ids[:-cfg['win_recent']]]
             for it in range(cfg['iters']):
-                if it % (cfg['win_recent'] + 1) == cfg['win_recent'] and past:
+                cyc = cfg['win_recent'] + cfg['past_n']
+                if it % cyc >= cfg['win_recent'] and past:
                     v = past[rng.randint(len(past))]
                 else:
-                    v = window[(it % len(window)) if it % (cfg['win_recent'] + 1) < len(window) else 0]
+                    v = window[(it % cyc) % len(window)]
                 camv = cam_of(D, v)
                 tgt = D['imgs'][v].astype(np.float32) / 255
                 az = np.where(D['ZS'][v] > 0, D['ZS'][v], 0).astype(np.float32)
@@ -342,8 +344,8 @@ def run(D, variant, cfg, out_dir=None, verbose=True):
     return dict(variant=variant, G=G, final=final, arrival=arrival, stats=stats, sec=time.time() - t_all)
 
 
-DEFAULT_CFG = dict(iters=24, win_recent=4, lam_d=0.4, geom_warm=6, ins_alpha=0.6, ins_budget=2400,
-                   lr_mu=4e-4, lr_ls=2e-3, lr_q=5e-4, lr_o=0.04, lr_c=0.012, scale_down=0.7, scale_up=0.5, mu_bound=3.0, smooth=1)
+DEFAULT_CFG = dict(iters=24, win_recent=4, past_n=1, lam_d=0.8, geom_warm=6, ins_alpha=0.6, ins_budget=2400,
+                   lr_mu=2e-4, lr_ls=1e-3, lr_q=5e-4, lr_o=0.04, lr_c=0.012, scale_down=0.7, scale_up=0.5, mu_bound=3.0, smooth=1)
 
 
 def summarize(res):
