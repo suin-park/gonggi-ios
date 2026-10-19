@@ -1,0 +1,113 @@
+name: Gonggi GS optimizer check
+
+# 기기 내 가우시안 최적화(feat/ondevice-gs-optimizer) 전용 빠른 검증: 컴파일 + Metal 셰이더 + GSO 테스트 클래스만 실행한다.
+# 서명·아카이브·업로드 없음. 전체 게이트는 gonggi-testflight.yml(pre_archive_tests=full)이 담당한다.
+on:
+  push:
+    branches:
+      - feat/ondevice-gs-optimizer
+    paths:
+      - 'Gonggi/Experiments/**'
+      - 'GonggiTests/GSOpt*'
+      - 'project.yml'
+      - '.github/workflows/gonggi-gso-check.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: gonggi-gso-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+  OPENCV_VERSION: "4.10.0"
+
+jobs:
+  check:
+    name: Build and run GSO tests
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache OpenCV xcframework
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Ensure OpenCV xcframework
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh
+          ./scripts/ensure_opencv_xcframework.sh
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Fetch Depth Anything V2 Small (Core ML, sha256 pinned)
+        run: bash scripts/fetch-depth-model.sh
+
+      - name: Generate Xcode project
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+
+      - name: GSO tests
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)['devices']
+          for rt in sorted([k for k in data if 'iOS' in k], reverse=True):
+              phones = sorted([d for d in data[rt] if d.get('isAvailable') and 'iPhone' in d.get('name', '')], key=lambda d: d['name'])
+              pick = [d for d in phones if any(x in d['name'] for x in ('iPhone 16', 'iPhone 15', 'iPhone 14'))] or phones
+              if pick:
+                  print(pick[0]['udid']); sys.exit(0)
+          sys.exit(1)")"
+          xcrun simctl boot "${UDID}" 2>/dev/null || true
+          set +e
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${UDID}" \
+            -only-testing:GonggiTests/GSOptRasterTests \
+            -only-testing:GonggiTests/GSOptMapTests \
+            -only-testing:GonggiTests/GSOptPipelineTests \
+            -only-testing:GonggiTests/GSOptCompareTests \
+            -only-testing:GonggiTests/GSOptModelTests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee xcodebuild-gso.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "---- errors ----"
+          grep -E "error:|XCTAssert|failed \(" xcodebuild-gso.log | head -n 80 || true
+          echo "---- gso metrics ----"
+          grep -E "GSOMETRIC" xcodebuild-gso.log | sed 's/^.*GSOMETRIC/GSOMETRIC/' | head -n 120 || true
+          exit "${STATUS}"
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-gso-log
+          path: xcodebuild-gso.log
+          retention-days: 7

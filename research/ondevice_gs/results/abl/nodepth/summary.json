@@ -1,0 +1,32 @@
+{
+ "cfg": {
+  "iters": 24,
+  "win_recent": 4,
+  "lam_d": 0.0,
+  "geom_warm": 6,
+  "ins_alpha": 0.6,
+  "ins_budget": 2400,
+  "lr_mu": 0.0004,
+  "lr_ls": 0.002,
+  "lr_q": 0.0005,
+  "lr_o": 0.04,
+  "lr_c": 0.012,
+  "scale_down": 0.7,
+  "scale_up": 0.5,
+  "mu_bound": 3.0,
+  "smooth": 1
+ },
+ "summary": {
+  "C": {
+   "psnr": 17.33122115516162,
+   "ssim": 0.6293808768192927,
+   "coverage": 0.9950380678530093,
+   "hole": 2.2605613425925925e-06,
+   "psnr_supported": 17.607330348807217,
+   "n_gaussians": 37716,
+   "sec": 137.60777807235718,
+   "arrival_psnr": 18.952537076458093,
+   "arrival_coverage": 0.9651776482077206
+  }
+ }
+}

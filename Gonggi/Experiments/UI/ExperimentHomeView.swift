@@ -7,7 +7,7 @@ struct ExperimentHomeView: View {
     let onClose: () -> Void
 
     private enum Route: Hashable {
-        case realtime, surfaceV2, sensor, depth, coexist, results, guide
+        case realtime, surfaceV2, gaussianOpt, sensor, depth, coexist, results, guide
     }
 
     @State private var path: [Route] = []
@@ -26,6 +26,8 @@ struct ExperimentHomeView: View {
                             .font(.footnote).foregroundStyle(GonggiColors.textSecondary)
                     }
                     RecordSection(title: "실시간 공간 생성") {
+                        RecordChoiceRow(choice: .init(title: "가우시안 최적화 (기기 내)", line: "촬영 중 기기에서 가우시안을 실제로 최적화해요. 서버 없음", icon: "sparkles")) { path.append(.gaussianOpt) }
+                        divider
                         RecordChoiceRow(choice: .init(title: "실시간 공간 생성 V2", line: "서버·학습·모델 없이 표면을 만들고 원본 영상을 입혀 저장해요", icon: "square.3.layers.3d")) { path.append(.surfaceV2) }
                         divider
                         RecordChoiceRow(choice: .init(title: "실시간 공간 생성", line: "ARKit로 움직이며 가우시안 표면을 쌓고 둘러봐요 (비교용)", icon: "cube.transparent")) { path.append(.realtime) }
@@ -59,6 +61,7 @@ struct ExperimentHomeView: View {
                 switch route {
                 case .realtime: RealtimeGSView()
                 case .surfaceV2: RealtimeSurfaceV2View()
+                case .gaussianOpt: GaussianOptView()
                 case .sensor: ExperimentSensorView()
                 case .depth: ExperimentDepthView()
                 case .coexist: ExperimentCoexistView()

@@ -1,0 +1,8 @@
+C kf 28 N 14227 added 301 opt_ms 883
+C kf 50 N 20124 added 1129 opt_ms 859
+C kf 72 N 31610 added 261 opt_ms 842
+C kf 94 N 34054 added 14 opt_ms 1320
+C kf 117 N 35234 added 327 opt_ms 1237
+C kf 139 N 37583 added 256 opt_ms 1209
+C kf 161 N 43108 added 1091 opt_ms 1495
+C {"psnr": 17.40260293054993, "ssim": 0.6231838166713715, "coverage": 0.9807445384837963, "hole": 7.346824363425925e-05, "psnr_supported": 17.713607637423564, "n_gaussians": 49659, "sec": 169.3095166683197, "arrival_psnr": 19.100575070387496, "arrival_coverage": 0.9493348364736519}

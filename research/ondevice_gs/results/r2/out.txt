@@ -1,0 +1,24 @@
+B kf 28 N 14476 added 206 opt_ms 0
+B kf 50 N 21025 added 1058 opt_ms 0
+B kf 72 N 31889 added 92 opt_ms 0
+B kf 94 N 33990 added 55 opt_ms 0
+B kf 117 N 35413 added 26 opt_ms 0
+B kf 139 N 36308 added 124 opt_ms 0
+B kf 161 N 39822 added 892 opt_ms 0
+B {"psnr": 16.162127064351424, "ssim": 0.45777933796246845, "coverage": 0.9952076099537036, "hole": 8.364076967592592e-05, "psnr_supported": 16.35468712829818, "n_gaussians": 48534, "sec": 4.775904893875122, "arrival_psnr": 15.117810756418033, "arrival_coverage": 0.9566853841145831}
+Cc kf 28 N 12480 added 179 opt_ms 577
+Cc kf 50 N 18420 added 1039 opt_ms 598
+Cc kf 72 N 28630 added 107 opt_ms 672
+Cc kf 94 N 30671 added 58 opt_ms 951
+Cc kf 117 N 31729 added 54 opt_ms 836
+Cc kf 139 N 32529 added 106 opt_ms 836
+Cc kf 161 N 35920 added 873 opt_ms 1002
+Cc {"psnr": 17.609070268599346, "ssim": 0.5273214214377933, "coverage": 0.9943305121527778, "hole": 0.0026572898582175927, "psnr_supported": 18.042761776541838, "n_gaussians": 44108, "sec": 127.33573293685913, "arrival_psnr": 18.706126412478266, "arrival_coverage": 0.9584374521292893}
+C kf 28 N 12889 added 368 opt_ms 826
+C kf 50 N 19696 added 1118 opt_ms 1007
+C kf 72 N 26399 added 14 opt_ms 632
+C kf 94 N 28716 added 74 opt_ms 1355
+C kf 117 N 28828 added 3 opt_ms 1181
+C kf 139 N 31927 added 249 opt_ms 1337
+C kf 161 N 38556 added 770 opt_ms 1515
+C {"psnr": 15.492942732877047, "ssim": 0.5800325721502304, "coverage": 0.9890407986111112, "hole": 0.00018197518807870367, "psnr_supported": 15.505368322252016, "n_gaussians": 39366, "sec": 166.6508469581604, "arrival_psnr": 17.563628647026142, "arrival_coverage": 0.9805321786917891}

@@ -1,0 +1,23 @@
+{
+ "cfg": {
+  "iters": 24,
+  "win_recent": 4,
+  "lam_d": 0.4,
+  "geom_warm": 6,
+  "ins_alpha": 0.6,
+  "ins_budget": 2400
+ },
+ "summary": {
+  "B": {
+   "psnr": 16.162127064351424,
+   "ssim": 0.45777933796246845,
+   "coverage": 0.9952076099537036,
+   "hole": 8.364076967592592e-05,
+   "psnr_supported": 16.35468712829818,
+   "n_gaussians": 48534,
+   "sec": 7.2373552322387695,
+   "arrival_psnr": 15.117810756418033,
+   "arrival_coverage": 0.9566853841145831
+  }
+ }
+}

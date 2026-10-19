@@ -93,6 +93,11 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
     var tintProvisional = false
     var renderBudget = 220_000
     var onStats: ((RTRenderStats) -> Void)?
+    /// (splats 버전, 시각(systemUptime), 출처). 새 버전이 처음 화면에 표시된 시각. 출처는 "present"(drawable presentedTime) 또는 "gpuEnd"(GPU 완료 시각 근사).
+    /// 기본값은 nil이라 기존 실험(V1)의 동작은 바뀌지 않는다.
+    var onPresented: ((Int, Double, String) -> Void)?
+    private var pendingPresent: [(drawable: CAMetalDrawable, version: Int, age: Int, gpuEnd: Double)] = []
+    private var lastPresentedVersion = -1
 
     private var frontSplat: MTLBuffer?
     private var frontIdx: MTLBuffer?
@@ -250,19 +255,52 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
             }
         }
         enc.endEncoding()
+        if onPresented != nil {
+            pollPresented()
+            if frontVersion != lastPresentedVersion && frontVersion >= 0 {
+                lastPresentedVersion = frontVersion
+                pendingPresent.append((drawable, frontVersion, 0, 0))
+            }
+        }
         cmd.present(drawable)
+        let versionForGPU = frontVersion
         cmd.addCompletedHandler { [weak self] cb in
             let g = (cb.gpuEndTime - cb.gpuStartTime) * 1000
             guard let self else { return }
             self.statsLock.lock()
             if g > 0 { self.gpuMs.append(g); if self.gpuMs.count > 240 { self.gpuMs.removeFirst() } }
             self.statsLock.unlock()
+            let end = cb.gpuEndTime
+            if end > 0, self.onPresented != nil { DispatchQueue.main.async { self.noteGPUEnd(version: versionForGPU, gpuEnd: end) } }
         }
         cmd.commit()
         let cpu = (ProcessInfo.processInfo.systemUptime - t0) * 1000
         cpuMs.append(cpu); if cpuMs.count > 240 { cpuMs.removeFirst() }
         frames += 1
         reportIfDue()
+    }
+
+    /// 표시된 drawable의 presentedTime을 읽어 새 버전의 첫 표시 시각을 보고한다(최대 12프레임 기다린다).
+    private func pollPresented() {
+        var rest: [(drawable: CAMetalDrawable, version: Int, age: Int, gpuEnd: Double)] = []
+        for p in pendingPresent {
+            let t = RTGaussianRenderer.presentedTime(of: p.drawable)
+            if t > 0 { onPresented?(p.version, t, "present") }
+            else if p.age >= 4 && p.gpuEnd > 0 { onPresented?(p.version, p.gpuEnd, "gpuEnd") }
+            else if p.age < 12 { rest.append((p.drawable, p.version, p.age + 1, p.gpuEnd)) }
+        }
+        pendingPresent = rest
+    }
+
+    /// drawable의 presentedTime(표시된 뒤에야 채워진다). SDK 선언이 없어도 런타임에 getter가 있을 때만 KVC로 읽는다. 없으면 0.
+    static func presentedTime(of drawable: CAMetalDrawable) -> Double {
+        let obj = drawable as AnyObject
+        guard let nsobj = obj as? NSObject, nsobj.responds(to: NSSelectorFromString("presentedTime")) else { return 0 }
+        return (nsobj.value(forKey: "presentedTime") as? NSNumber)?.doubleValue ?? 0
+    }
+
+    private func noteGPUEnd(version: Int, gpuEnd: Double) {
+        for i in 0..<pendingPresent.count where pendingPresent[i].version == version { pendingPresent[i].gpuEnd = gpuEnd }
     }
 
     private func backgroundTexture() -> MTLTexture? {
