@@ -5,7 +5,7 @@ import simd
 /// 셀(8×8 원본 화소)마다: 제품(확실) 화소 비율 ≥ 0.5 → 3×3 셀 창의 신뢰 깊이 점으로 평면을 맞추고(거칠면 건너뜀) → 셀 모서리 광선과 평면의 교점 4개 →
 /// 8×8 텍셀은 원본 화소를 그대로(노출 보정 이득만 곱함), 알파는 제품 라벨이고 텍셀 깊이가 평면과 일치할 때만 1.
 enum TexLayerBuilder {
-    struct Params {
+    struct Params: Equatable {
         var minProduct: Float = 0.5        // 셀의 제품(확실) 화소 비율 하한
         var tau: Float = 0.05              // 평면 깊이 허용 오차 비율(깊이 자기 일관성 p95 약 7~9%보다 작게 두고 텍셀 알파로 거른다)
         var maxResid: Float = 0.03         // 평면 맞춤 잔차 상한(깊이의 비율)
