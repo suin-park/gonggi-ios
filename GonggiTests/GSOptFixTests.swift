@@ -127,7 +127,7 @@ final class GSOptRenderTests: XCTestCase {
         // 화면에서 큰 근거리 가우시안(빨강)이 차지하는 면적: CPU 규칙은 크게 덮고(최적화·삽입이 '채워졌다'고 믿는다), 통일 규칙은 둘 다 그리지 않는다.
         func redFraction(_ img: [Float]) -> Float {
             var n = 0
-            for p in 0..<(viewW * viewH) where img[p * 3] - max(img[p * 3 + 1], img[p * 3 + 2]) > 0.3 { n += 1 }
+            for p in 0..<(viewW * viewH) where img[p * 3] - max(img[p * 3 + 1], img[p * 3 + 2]) > 0.3 || img[p * 3 + 1] - max(img[p * 3], img[p * 3 + 2]) > 0.3 { n += 1 }
             return Float(n) / Float(viewW * viewH)
         }
         GSOTest.log("renderRules", ["psnrLegacy": Double(psnrLegacy), "psnrUnified": Double(psnrNew), "redCPULegacy": Double(redFraction(cpuLegacy.image)),
