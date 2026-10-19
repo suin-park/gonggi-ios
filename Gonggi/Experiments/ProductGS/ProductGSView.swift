@@ -306,7 +306,7 @@ final class ProductSessionViewModel: ObservableObject {
             splats.publish(packed: [], count: 0)
             texStore.publish(loaded.layers)
             renderer.texStore = texStore
-            let b = TexLayerSelect.bounds(loaded.layers)
+            let b = TexLayerSelect.robustBounds(loaded.layers)
             RTViewerBounds.shared.bounds = b
             renderer.orbit = RTViewMath.fitOrbit(bounds: b)
             renderer.mode = .explore

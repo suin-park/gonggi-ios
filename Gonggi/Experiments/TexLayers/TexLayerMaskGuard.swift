@@ -191,7 +191,8 @@ final class TexLayerMaskGuard {
         for (i, p) in pix.enumerated() {
             if bad[i] { lab[p] = GSOProductMask.unknown; continue }
             if outlier[i] { continue }
-            if goodCount % 3 == 0 { good.append(pts[i]) }
+            // 핵에는 화소의 약 1/3만 넣는다(해시로 고르므로 격자 간격에 맞물려 가장자리 열이 빠지지 않는다).
+            if ((UInt64(p) &* 2654435761) >> 12) % 3 == 0 { good.append(pts[i]) }
             goodCount += 1
             let ab = TexLayerMaskGuard.lab(rgb[p * 3], rgb[p * 3 + 1], rgb[p * 3 + 2])
             palette[bin(ab.a, ab.b)] += 1; paletteTotal += 1
