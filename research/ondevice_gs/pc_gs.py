@@ -60,7 +60,7 @@ class GMap:
                      m_mu=(3, np.float32), v_mu=(3, np.float32), m_ls=(3, np.float32), v_ls=(3, np.float32),
                      m_q=(4, np.float32), v_q=(4, np.float32), m_o=(None, np.float32), v_o=(None, np.float32),
                      m_c=(3, np.float32), v_c=(3, np.float32), nvis=(None, np.int32), born=(None, np.int32), src=(None, np.int8),
-                     steps=(None, np.int32), ls0=(3, np.float32), mu0=(3, np.float32))
+                     steps=(None, np.int32), ls0=(3, np.float32), mu0=(3, np.float32), col0=(3, np.float32))
         for k, (dim, dt) in names.items():
             old = getattr(self, k, None)
             shape = (cap,) if dim is None else (cap, dim)
@@ -77,12 +77,12 @@ class GMap:
         s = slice(self.n, self.n + n)
         self.mu[s] = mu; self.logs[s] = logs; self.quat[s] = quat; self.col[s] = col; self.opa[s] = opa
         self.src[s] = src; self.born[s] = born
-        self.ls0[s] = logs; self.mu0[s] = mu
+        self.ls0[s] = logs; self.mu0[s] = mu; self.col0[s] = col
         self.n += n
 
     def keep(self, mask):
         idx = np.nonzero(mask[:self.n])[0]
-        for k in ['mu', 'logs', 'quat', 'col', 'opa', 'm_mu', 'v_mu', 'm_ls', 'v_ls', 'm_q', 'v_q', 'm_o', 'v_o', 'm_c', 'v_c', 'nvis', 'born', 'src', 'steps', 'ls0', 'mu0']:
+        for k in ['mu', 'logs', 'quat', 'col', 'opa', 'm_mu', 'v_mu', 'm_ls', 'v_ls', 'm_q', 'v_q', 'm_o', 'v_o', 'm_c', 'v_c', 'nvis', 'born', 'src', 'steps', 'ls0', 'mu0', 'col0']:
             a = getattr(self, k)
             a[:len(idx)] = a[idx]
         self.n = len(idx)
@@ -202,6 +202,8 @@ class Optimizer:
             upd(G.quat[:n], G.m_q[:n], G.v_q[:n], gquat, lr['q'], gm)
         # parameter ranges
         np.clip(G.col[:n], 0, 1, out=G.col[:n])
+        if self.cfg['color_bound'] > 0:
+            np.clip(G.col[:n], G.col0[:n] - self.cfg['color_bound'], G.col0[:n] + self.cfg['color_bound'], out=G.col[:n])
         np.clip(G.opa[:n], -4.0, 6.0, out=G.opa[:n])
         ls = G.logs[:n]
         np.clip(ls, G.ls0[:n] - self.cfg['scale_down'], G.ls0[:n] + self.cfg['scale_up'], out=ls)
@@ -345,7 +347,7 @@ def run(D, variant, cfg, out_dir=None, verbose=True):
 
 
 DEFAULT_CFG = dict(iters=24, win_recent=4, past_n=1, lam_d=0.8, geom_warm=6, ins_alpha=0.6, ins_budget=2400,
-                   lr_mu=2e-4, lr_ls=1e-3, lr_q=5e-4, lr_o=0.04, lr_c=0.012, scale_down=0.7, scale_up=0.5, mu_bound=3.0, smooth=1)
+                   lr_mu=2e-4, lr_ls=1e-3, lr_q=5e-4, lr_o=0.04, lr_c=0.012, scale_down=0.7, scale_up=0.5, mu_bound=3.0, smooth=1, color_bound=0.0)
 
 
 def summarize(res):

@@ -290,6 +290,11 @@ enum GSOSaver {
             manifest["server"] = false
             manifest["sceneOptimization"] = true           // 촬영 중 가우시안 파라미터를 반복 최적화한다(장면별 최적화). 완전 무학습이 아니다.
             manifest["pretrainedModelInference"] = "Depth Anything V2 Small (Core ML, 기기 내 추론만, 가중치 재학습 없음)"
+            manifest["depthModel"] = ["name": "DepthAnythingV2SmallF16.mlpackage", "source": "https://huggingface.co/apple/coreml-depth-anything-v2-small", "license": "Apache-2.0",
+                                      "pinnedSHA256": ["Manifest.json": "2883ae290c48fe916dc5ececac03a7d847fa277165a49ef5652fa1d2b9cb55f7",
+                                                       "model.mlmodel": "44ac97a3efcfd52113183fb2862ff59cd0368e9ec2e30a90a54980dd11407042",
+                                                       "weights/weight.bin": "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed"],
+                                      "input": "RGB image 518x392", "output": "grayscale depth image (relative; meaning verified per frame by fitting inverse-depth and depth hypotheses to stereo anchors)"]
             manifest["gaussians"] = persisted.count
             manifest["states"] = ["temporary": sc.temporary, "candidate": sc.candidate, "stable": sc.stable]
             manifest["geometryRevision"] = r.map.geometryRevision

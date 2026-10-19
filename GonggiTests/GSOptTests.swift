@@ -344,9 +344,11 @@ final class GSOptPipelineTests: XCTestCase {
 
     /// 모델 출력의 의미(역깊이 / 깊이)를 알 수 없을 때 두 가정으로 맞춰 더 잘 맞는 쪽을 고른다.
     func testAlignmentSelectsOutputMeaningForDepthLikeModel() {
-        // 깊이가 세 층 이상이어야 두 가정이 구분된다(두 층이면 어느 가정으로도 정확히 맞는다).
+        // 깊이가 세 층 이상이고 범위가 넓어야 두 가정이 구분된다(두 층이면 어느 가정으로도 정확히 맞고, 층이 가까우면 곡률이 허용 오차 안에 든다).
         var scene3 = scene
-        scene3.midPlane = (z: 1.3, cx: -0.35, cy: 0.0, hw: 0.3, hh: 0.5)
+        scene3.fgZ = 0.6
+        scene3.midPlane = (z: 1.4, cx: -0.35, cy: 0.0, hw: 0.3, hh: 0.5)
+        scene3.bgZ = 3.2
         let cfg = GSOTest.config(optimize: false)
         let p = GSOPipeline(config: cfg)
         let mono = GSOTest.SynthMono()

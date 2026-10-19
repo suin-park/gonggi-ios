@@ -714,6 +714,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let monoKFs = recs.filter { $0.denseSource == "mono" }.count, stereoOnly = recs.filter { $0.denseSource == "stereoOnly" }.count
         let fits = recs.compactMap { $0.fit }
         let fitRatio = RTStat.percentile(fits.map { Double($0.inlierRatio) }, 0.5)
+        let spaceInv = fits.filter { $0.space == .inverseDepth && !$0.carried }.count, spaceDep = fits.filter { $0.space == .depth && !$0.carried }.count
         let rollbacks = pipeline.rollbacks
         let ms = { (c: Double?) -> String in c.map { String(format: "%.1f", $0) } ?? "—" }
 
@@ -725,7 +726,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         t += "처음 도달 시각 (시작 후 초)\n  첫 입력 \(f(l.firstInputS, 2)) · 첫 정렬된 지도(단안 정렬) \(f(l.firstAlignedS, 2)) · 첫 후보 \(f(cp.map { $0 - startedHost }, 2)) · 첫 안정(독립 증거 3회) \(f(st.map { $0 - startedHost }, 2)) · 첫 표시 \(f(l.firstDisplayS, 2))\n\n"
         t += "지연 (캡처 시각 기준)\n  → 지도 반영 p50 \(f(p50)) / p95 \(f(p95)) ms (\(tm.count)개)\n  → 렌더용 게시 p50 \(f(q50)) / p95 \(f(q95)) ms (\(tp.count)개)\n  → 실제 화면 표시 p50 \(f(d50)) / p95 \(f(d95)) ms (\(td.count)개, 시각 출처: \(dsrc.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")); gpuEnd는 present 시각을 읽지 못해 GPU 완료 시각으로 근사한 값)\n"
         t += "  키프레임 단계 p50/p95(ms): " + stage.keys.sorted().map { "\($0) \(f(stage[$0]))/\(f(stage95[$0]))" }.joined(separator: ", ") + "\n  처리 대기열 최대 \(mq)\n\n"
-        t += "깊이\n  단안 모델 실행 \(tot.monoRuns)회, 밀집 깊이로 처리한 키프레임 \(monoKFs), 스테레오만 \(stereoOnly), 정렬 내부점 비율 중앙값 \(f(fitRatio.map { $0 * 100 }))%\n\n"
+        t += "깊이\n  단안 모델 실행 \(tot.monoRuns)회, 밀집 깊이로 처리한 키프레임 \(monoKFs), 스테레오만 \(stereoOnly), 정렬 내부점 비율 중앙값 \(f(fitRatio.map { $0 * 100 }))%\n  모델 출력 의미 판정(새로 맞춘 키프레임): 역깊이 가정 \(spaceInv) · 깊이 가정 \(spaceDep)\n\n"
         t += "가우시안 지도\n  \(l.gaussians)개 (임시 \(l.temporary) · 후보 \(l.candidate) · 안정 \(l.stable)); 누적 삽입 \(tot.inserted) (스테레오 확인 \(tot.stereoInserted) · 단안 \(tot.monoInserted)), 제거 \(tot.pruned), 상한으로 못 만든 \(tot.rejectedByCap)\n\n"
         t += "최적화\n  반복 \(tot.iterations)회(묶음 \(sl.count)개), 위치가 의미 있게 움직인 갱신 \(tot.moved), 비정상 gradient 건너뜀 \(tot.nonFinite), 롤백 \(rollbacks)회\n"
         t += "  반복당 p50/p95(ms): " + opt.keys.sorted().map { "\($0) \(f(opt[$0], 1))/\(f(opt95[$0], 1))" }.joined(separator: ", ") + "\n"
@@ -754,6 +755,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         d["lossFirst10"] = expNN(lossFirst.isEmpty ? nil : lossFirst.reduce(0, +) / Double(lossFirst.count))
         d["lossLast10"] = expNN(lossLast.isEmpty ? nil : lossLast.reduce(0, +) / Double(lossLast.count))
         d["monoKeyframes"] = monoKFs; d["stereoOnlyKeyframes"] = stereoOnly
+        d["monoSpace"] = ["inverseDepth": spaceInv, "depth": spaceDep, "inlierRatioP50": expNN(fitRatio)]
         d["footprintPeakMB"] = fp; d["thermalSeen"] = th; d["governorChanges"] = gov.count
         d["replay"] = ["frames": l.replayFrames, "bytes": l.replayBytes]
         if let r = render {
