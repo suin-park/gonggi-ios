@@ -85,6 +85,8 @@ struct SV2SynthScene {
     var bgHalfH: Float = 0.9
     var flatDisc: (cx: Float, cy: Float, r: Float)? = nil
     var hasForeground = true
+    /// 세 번째 깊이 층(가우시안 최적화 테스트용: 두 깊이만 있으면 affine 정렬이 역깊이/깊이 어느 가정으로도 정확히 맞아 의미를 구분할 수 없다). 기본값 nil이라 V2 테스트는 그대로다.
+    var midPlane: (z: Float, cx: Float, cy: Float, hw: Float, hh: Float)? = nil
 
     /// pose에서 광선(CV 카메라 방향 r, z=1)을 쏜 결과: 색과 camera-Z(광선 매개변수 t). 맞는 면이 없으면 z = inf.
     func shade(pose: RTPose, r: SIMD3<Float>) -> (color: SIMD3<Float>, z: Float) {
@@ -95,6 +97,13 @@ struct SV2SynthScene {
             if t > 0 {
                 let p = o + dir * t
                 if abs(p.x - fg.cx) < fg.hw && abs(p.y - fg.cy) < fg.hh { return (SV2Test.texture(p.x, p.y, seed: 11), t) }
+            }
+        }
+        if let m = midPlane, abs(dir.z) > 1e-6 {
+            let t = (m.z - o.z) / dir.z
+            if t > 0 {
+                let p = o + dir * t
+                if abs(p.x - m.cx) < m.hw && abs(p.y - m.cy) < m.hh { return (SV2Test.texture(p.x, p.y, seed: 23), t) }
             }
         }
         if abs(dir.z) > 1e-6 {

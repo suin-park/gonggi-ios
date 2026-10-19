@@ -344,6 +344,9 @@ final class GSOptPipelineTests: XCTestCase {
 
     /// 모델 출력의 의미(역깊이 / 깊이)를 알 수 없을 때 두 가정으로 맞춰 더 잘 맞는 쪽을 고른다.
     func testAlignmentSelectsOutputMeaningForDepthLikeModel() {
+        // 깊이가 세 층 이상이어야 두 가정이 구분된다(두 층이면 어느 가정으로도 정확히 맞는다).
+        var scene3 = scene
+        scene3.midPlane = (z: 1.3, cx: -0.35, cy: 0.0, hw: 0.3, hh: 0.5)
         let cfg = GSOTest.config(optimize: false)
         let p = GSOPipeline(config: cfg)
         let mono = GSOTest.SynthMono()
@@ -351,7 +354,7 @@ final class GSOptPipelineTests: XCTestCase {
         mono.a = -0.4; mono.b = 1.9
         var fits: [GSOAffineFit] = []
         for (i, pose) in GSOTest.trajectory(count: 8).enumerated() {
-            let r = GSOTest.feed(p, scene: scene, mono: mono, id: i + 1, pose: pose)
+            let r = GSOTest.feed(p, scene: scene3, mono: mono, id: i + 1, pose: pose)
             if let f = r.fit, !f.carried { fits.append(f) }
         }
         let last = try! XCTUnwrap(fits.last)
@@ -362,7 +365,7 @@ final class GSOptPipelineTests: XCTestCase {
         let p2 = GSOPipeline(config: cfg)
         let mono2 = GSOTest.SynthMono()
         var inv: GSOAffineFit?
-        for (i, pose) in GSOTest.trajectory(count: 8).enumerated() { if let f = GSOTest.feed(p2, scene: scene, mono: mono2, id: i + 1, pose: pose).fit, !f.carried { inv = f } }
+        for (i, pose) in GSOTest.trajectory(count: 8).enumerated() { if let f = GSOTest.feed(p2, scene: scene3, mono: mono2, id: i + 1, pose: pose).fit, !f.carried { inv = f } }
         XCTAssertEqual(inv?.space, .inverseDepth)
     }
 
@@ -483,9 +486,9 @@ final class GSOptPipelineTests: XCTestCase {
             errs.sort()
             return errs.isEmpty ? 0 : errs[errs.count / 2]
         }
-        let b = run(optimize: false)
-        let c = run(optimize: true, iters: 16)
-        let cc = run(optimize: true, geometry: false, iters: 16)
+        let b = run(optimize: false, frames: 12)
+        let c = run(optimize: true, iters: 12, frames: 12)
+        let cc = run(optimize: true, geometry: false, iters: 12, frames: 12)
         func score(_ r: (GSOPipeline, SV2SynthScene, GSOTest.SynthMono, [GSOKFRecord], GSOConfig)) -> (Double, Double) {
             var ps = 0.0, cv = 0.0
             for hp in heldOut { let s = GSOTest.heldOutPSNR(r.0, scene: scene, pose: hp, config: r.4); ps += Double(s.psnr); cv += Double(s.coverage) }
@@ -498,8 +501,11 @@ final class GSOptPipelineTests: XCTestCase {
                              "iters": Double(c.0.totalIterations)])
         XCTAssertGreaterThan(c.0.totalIterations, 100)
         XCTAssertEqual(b.0.totalIterations, 0)
-        XCTAssertGreaterThanOrEqual(sc.0, sb.0 - 0.3, "최적화가 평가 시점 품질을 떨어뜨림")
-        XCTAssertLessThanOrEqual(ec, eb * 1.1 + 0.002, "형상 최적화가 정답 평면에서 멀어지게 함")
+        // CI 첫 측정(합성): B 17.55 → C 25.40 dB, 평면 거리 오차 1.54 → 0.69 cm. 여유를 두고 개선을 요구한다.
+        XCTAssertGreaterThan(sc.0, sb.0 + 2.0, "최적화가 평가 시점(학습에 쓰지 않은) 품질을 충분히 올리지 못함")
+        XCTAssertLessThanOrEqual(ec, eb * 0.85, "형상 최적화가 정답 평면에 더 가깝게 만들지 못함")
+        XCTAssertGreaterThanOrEqual(sc.0, scc.0 - 0.3, "형상 갱신이 색·불투명도만 최적화한 것보다 나쁨")
+        XCTAssertEqual(ecc, eb, accuracy: 0.1 * eb + 0.001, "색·불투명도만 최적화했는데 형상이 변함")
     }
 }
 
@@ -525,6 +531,7 @@ final class GSOptCompareTests: XCTestCase {
         }
         XCTAssertEqual(b.iterations, 0)
         XCTAssertGreaterThan(c.iterations, 0)
+        XCTAssertGreaterThan(c.psnr, b.psnr + 1.0, "같은 입력·초기화에서 최적화가 전체 화면 PSNR을 올리지 못함")
         GSOTest.log("compareA", ["psnr": Double(a.psnr), "ssim": Double(a.ssim), "coverage": Double(a.coverage), "hole": Double(a.hole)])
         GSOTest.log("compareB", ["psnr": Double(b.psnr), "ssim": Double(b.ssim), "coverage": Double(b.coverage), "hole": Double(b.hole)])
         GSOTest.log("compareC", ["psnr": Double(c.psnr), "ssim": Double(c.ssim), "coverage": Double(c.coverage), "hole": Double(c.hole)])
