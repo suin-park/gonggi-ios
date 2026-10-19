@@ -34,7 +34,8 @@ struct TLVOut {
 vertex TLVOut tl_vertex(uint vid [[vertex_id]],
                         uint iid [[instance_id]],
                         const device float4 *corners [[buffer(0)]],
-                        constant TLUniforms &U [[buffer(1)]]) {
+                        constant TLUniforms &U [[buffer(1)]],
+                        constant float4 &clip [[buffer(2)]]) {
     TLVOut o;
     o.position = float4(2.0, 2.0, 0.0, 1.0);
     o.uvz = float3(0.0);
@@ -45,6 +46,9 @@ vertex TLVOut tl_vertex(uint vid [[vertex_id]],
     float3 c2 = corners[iid * 4 + 2].xyz;
     float3 nrm = cross(c1 - c0, c2 - c0);
     if (dot(nrm, c0 - U.camPos.xyz) <= 0.0) { return o; }
+    // 표시 범위 구 밖의 사각형은 그리지 않는다(제품에서 멀리 떨어진 조각)
+    float3 c3 = corners[iid * 4 + 3].xyz;
+    if (distance((c0 + c3) * 0.5, clip.xyz) > clip.w) { return o; }
     float3 pcs[4];
     for (uint k = 0; k < 4; k++) {
         float3 d = corners[iid * 4 + k].xyz - U.camPos.xyz;

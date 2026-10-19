@@ -249,6 +249,24 @@ final class GSOptTexLayerTests: XCTestCase {
         XCTAssertLessThanOrEqual(changes, 3, "작은 카메라 이동에서 선택이 자주 뒤집힘")
     }
 
+    func testClipSphereHidesFarFragmentsButKeepsTheProductAndNeverChangesTheFile() {
+        var layers = segmentScene
+        XCTAssertNil(TexLayerSelect.clipSphere(Array(layers.prefix(2))), "레이어가 3개 미만이면 범위 구를 쓰지 않는다")
+        let far = segmentLayer(id: 99, centerX: 0.5, segX: 5.0)      // 제품(x 0~1)에서 4 m 떨어진 조각
+        layers.append(far)
+        guard let clip = TexLayerSelect.clipSphere(layers) else { return XCTFail("범위 구 없음") }
+        XCTAssertGreaterThan(clip.radius, 0.5); XCTAssertLessThan(clip.radius, 2.0)
+        let k = RTIntrinsics(fx: 40, fy: 40, cx: 50, cy: 40, width: 100, height: 80)
+        let wide = RTIntrinsics(fx: 20, fy: 20, cx: 50, cy: 40, width: 100, height: 80)
+        let farCam = TexCamera(pose: SV2Test.pose(x: 4.0), k: wide)
+        XCTAssertTrue(TexLayerCPU.renderLayer(far, cam: farCam).z.contains { $0.isFinite }, "시험 전제(범위 구가 없으면 먼 조각이 보임)")
+        XCTAssertFalse(TexLayerCPU.renderLayer(far, cam: farCam, clip: clip).z.contains { $0.isFinite }, "범위 구 밖 조각이 그려짐")
+        XCTAssertTrue(TexLayerCPU.renderLayer(layers[5], cam: TexCamera(pose: SV2Test.pose(x: 0.5), k: k), clip: clip).z.contains { $0.isFinite }, "제품 쪽 레이어가 지워짐")
+        let sel = TexLayerSelect.coverage(layers, view: segmentView(x: 0.5), prev: [], clip: clip)
+        XCTAssertFalse(sel.picked.contains { $0.layer.id == 99 }, "범위 구 밖 레이어가 선택됨")
+        XCTAssertEqual(layers.count, 13, "레이어를 지우지 않는다")
+    }
+
     func testExposureRatioIsTheRatioOfTheSameSurfacePointsAndIgnoresSaturation() {
         let w = 32, h = 24
         let k = RTIntrinsics(fx: 30, fy: 30, cx: 16, cy: 12, width: w, height: h)

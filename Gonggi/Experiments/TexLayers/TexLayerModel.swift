@@ -25,6 +25,7 @@ enum TexLayerConst {
     static let sampleCap = 400           // 레이어당 선택용 표본 수
     static let selectBonus: Float = 0.1  // 직전 선택에 준 가산점(선택이 프레임마다 뒤집히는 것을 막는다)
     static let selectMinGain: Float = 0.012
+    static let clipFactor: Float = 2.0   // 표시 범위 구: 반경 = 이 값 × (표본의 중앙 중심에서 75 백분위 거리) + 5 cm
 }
 
 /// 한 키프레임의 텍스처 서펠 레이어(만든 뒤 바뀌지 않는다).
@@ -112,7 +113,26 @@ struct TexView {
     }
 }
 
+/// 표시 범위 구(보는 쪽 안전장치): 레이어 표본의 중앙값 중심과 75 백분위 거리로 정한다. 이 구 밖의 사각형(제품에서 멀리 떨어진 천·바닥 조각)은 그리지 않고 선택에도 세지 않는다.
+/// 파일의 레이어는 지우지 않는다. 임의로 줄인 제품 범위가 아니라 표본 분포에서 나온 바깥값 걸러내기이며, 레이어가 3개 미만이면 쓰지 않는다.
+struct TexClip: Equatable {
+    var center: SIMD3<Float>
+    var radius: Float
+}
+
 enum TexLayerSelect {
+    static func clipSphere(_ layers: [TexLayer]) -> TexClip? {
+        guard layers.count >= 3 else { return nil }
+        var pts: [SIMD3<Float>] = []
+        for l in layers { for s in stride(from: 0, to: l.samples.count, by: 5) { pts.append(l.samples[s]) } }
+        guard pts.count >= 12 else { return nil }
+        func med(_ f: (SIMD3<Float>) -> Float) -> Float { let v = pts.map(f).sorted(); return v[v.count / 2] }
+        let c = SIMD3<Float>(med { $0.x }, med { $0.y }, med { $0.z })
+        let d = pts.map { simd_length($0 - c) }.sorted()
+        let p75 = d[Int(0.75 * Float(d.count - 1))]
+        return TexClip(center: c, radius: TexLayerConst.clipFactor * p75 + 0.05)
+    }
+
     /// 구방식: 새 시점에 가까운 레이어 K개와 혼합 가중치. 점수 = 카메라 중심 거리 + 0.3 × (1 − 시선 내적).
     /// 시야의 표면을 덮는지는 보지 않으므로 앱은 쓰지 않는다(진단·대조용).
     static func pick(_ layers: [TexLayer], pose: RTPose, k: Int = TexLayerConst.blendK) -> [(layer: TexLayer, weight: Float)] {
@@ -143,7 +163,7 @@ enum TexLayerSelect {
     /// 2) 칸마다 가중치 합이 가장 큰 깊이를 그 칸의 표면으로 정하고(가장 가까운 깊이가 아니다), 그 표면에 동의하는 레이어가 2개 이상인 칸을 '확인된 표면'으로 본다.
     /// 3) 확인된 표면을 아직 덮지 못한 칸을 가장 많이(시점 가까움 가중) 덮는 레이어를 차례로 고른다. prev에 있던 레이어에는 가산점을 줘 선택이 뒤집히지 않게 한다.
     static func coverage(_ layers: [TexLayer], view: TexView, prev: Set<Int>, kmax: Int = TexLayerConst.blendMax, kmin: Int = TexLayerConst.blendMin,
-                         seedNearest seed: Int = TexLayerConst.seedNearest) -> Selection {
+                         seedNearest seed: Int = TexLayerConst.seedNearest, clip: TexClip? = nil) -> Selection {
         let n = layers.count
         guard n > 0 else { return Selection(picked: [], estimatedCoverage: 0, targetCells: 0) }
         let gx = TexLayerConst.gridX, gy = TexLayerConst.gridY, cellsN = gx * gy
@@ -162,6 +182,7 @@ enum TexLayerSelect {
             touched.removeAll(keepingCapacity: true)
             for s in 0..<l.samples.count {
                 let p = l.samples[s]
+                if let c = clip, simd_length(p - c.center) > c.radius { continue }
                 // 앞면: 법선·(사각형 중심 − 카메라) > 0 (촬영 시점에서 본 면)
                 if simd_dot(l.sampleNormals[s], p - pose.center) <= 0 { continue }
                 guard let v = view.project(p) else { continue }

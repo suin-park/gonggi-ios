@@ -88,12 +88,13 @@ final class TexLayerGPU {
     }
 
     /// 선택된 레이어를 각각 그린다(레이어마다 한 패스). 합성에 쓸 파라미터를 돌려준다. 대상 크기는 targetW×targetH × renderScale.
-    func encodeLayers(cmd: MTLCommandBuffer, picked: [(layer: TexLayer, weight: Float)], uniforms: RTUniforms, targetW: Int, targetH: Int) -> TLComposeParams? {
+    func encodeLayers(cmd: MTLCommandBuffer, picked: [(layer: TexLayer, weight: Float)], uniforms: RTUniforms, targetW: Int, targetH: Int, clip: TexClip? = nil) -> TLComposeParams? {
         guard ready, let layerPSO, let depthState, !picked.isEmpty else { return nil }
         let s = max(0.25, min(1, renderScale))
         let w = max(8, Int(Float(targetW) * s)), h = max(8, Int(Float(targetH) * s))
         guard ensureTargets(width: w, height: h), let colorArr, let zArr else { return nil }
         var u = uniforms
+        var clipv = clip.map { SIMD4<Float>($0.center.x, $0.center.y, $0.center.z, $0.radius) } ?? SIMD4<Float>(0, 0, 0, 1e9)
         var drawn = 0
         var params = TLComposeParams()
         var weights = [Float](repeating: 0, count: TexLayerConst.blendMax)
@@ -110,6 +111,7 @@ final class TexLayerGPU {
             enc.setRenderPipelineState(layerPSO); enc.setDepthStencilState(depthState)
             enc.setVertexBuffer(b.corners, offset: 0, index: 0)
             enc.setVertexBytes(&u, length: MemoryLayout<RTUniforms>.size, index: 1)
+            enc.setVertexBytes(&clipv, length: MemoryLayout<SIMD4<Float>>.size, index: 2)
             enc.setFragmentBuffer(b.tex, offset: 0, index: 0)
             enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: p.layer.count)
             enc.endEncoding()

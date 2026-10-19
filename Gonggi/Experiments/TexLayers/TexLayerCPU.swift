@@ -24,7 +24,7 @@ enum TexLayerCPU {
     static let near: Float = 0.05
 
     /// 한 레이어를 그린다: (색, 깊이). 깊이 .infinity = 비어 있음. cull = 촬영 시점 반대쪽(뒷면)에서 보이는 사각형을 버린다.
-    static func renderLayer(_ layer: TexLayer, cam: TexCamera, grow: Float = 0.04, cull: Bool = true) -> (rgb: [Float], z: [Float]) {
+    static func renderLayer(_ layer: TexLayer, cam: TexCamera, grow: Float = 0.04, cull: Bool = true, clip: TexClip? = nil) -> (rgb: [Float], z: [Float]) {
         let W = cam.k.width, H = cam.k.height
         var rgb = [Float](repeating: 0, count: W * H * 3)
         var zb = [Float](repeating: .infinity, count: W * H)
@@ -39,6 +39,7 @@ enum TexLayerCPU {
                 let c1 = SIMD3<Float>(layer.corners[qi * 4 + 1].x, layer.corners[qi * 4 + 1].y, layer.corners[qi * 4 + 1].z)
                 let c2 = SIMD3<Float>(layer.corners[qi * 4 + 2].x, layer.corners[qi * 4 + 2].y, layer.corners[qi * 4 + 2].z)
                 let c3 = SIMD3<Float>(layer.corners[qi * 4 + 3].x, layer.corners[qi * 4 + 3].y, layer.corners[qi * 4 + 3].z)
+                if let cl = clip, simd_length((c0 + c3) * 0.5 - cl.center) > cl.radius { continue }
                 var minX = Float.infinity, maxX = -Float.infinity, minY = Float.infinity, maxY = -Float.infinity
                 var ok = true
                 for cc in [c0, c1, c2, c3] {
@@ -171,9 +172,10 @@ enum TexLayerCPU {
 
     /// 레이어 선택(커버리지) → 각 레이어 그리기 → 합성. prev는 직전 선택의 레이어 ID(없으면 빈 집합).
     static func render(_ layers: [TexLayer], cam: TexCamera, prev: Set<Int> = []) -> (image: TexRender, selection: TexLayerSelect.Selection) {
-        let sel = TexLayerSelect.coverage(layers, view: TexView(pose: cam.pose, k: cam.k), prev: prev)
+        let clip = TexLayerSelect.clipSphere(layers)
+        let sel = TexLayerSelect.coverage(layers, view: TexView(pose: cam.pose, k: cam.k), prev: prev, clip: clip)
         let parts = sel.picked.map { (l, w) -> Part in
-            let r = renderLayer(l, cam: cam)
+            let r = renderLayer(l, cam: cam, clip: clip)
             return (r.rgb, r.z, w)
         }
         return (compose(parts, width: cam.k.width, height: cam.k.height), sel)
