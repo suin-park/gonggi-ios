@@ -106,7 +106,7 @@ targets:
         # 기록하기 › 실험 › 실시간 제품 3DGS(기기 내 마스크·최적화, 서버 없음)가 이 빌드에 들어 있다는 표식. IPA 점검이 확인한다.
         GonggiProductGSVersion: "1"
         # 기록하기 › 실험 › 실시간 제품 3DGS의 새 방식(텍스처 스플랫 레이어, .kmots)이 이 빌드에 들어 있다는 표식. IPA 점검이 확인한다.
-        GonggiTexLayersVersion: "1"
+        GonggiTexLayersVersion: "2"
         NSMotionUsageDescription: 센서 검사에서 기기 움직임(자이로·가속도) 수신 빈도를 확인하기 위해 사용합니다.
         # Internal TestFlight ONLY: bake pending-angular-rescue ON into this IPA.
         # Product default in Swift remains OFF when this key is removed/false.

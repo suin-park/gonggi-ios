@@ -85,6 +85,10 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
     private var texGPU: TexLayerGPU?
     private var texVersion = -1
     private var lastTexQuads = 0, lastTexTotal = 0
+    /// 직전 프레임의 레이어 선택(선택이 프레임마다 뒤집히지 않게 가산점을 준다). 메인 스레드에서만 쓴다.
+    private var texPrevSelection = Set<Int>()
+    private var texSelectionChanges = 0, texSelectionFrames = 0
+    private(set) var lastTexSelected = 0, lastTexCoverage: Float = 0
     var texLayersActive: Bool { lastTexTotal > 0 }
     private(set) var initError: String?
 
@@ -263,8 +267,13 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
             let snap = store.snapshot()
             if !snap.layers.isEmpty {
                 if snap.version != texVersion { tg.sync(layers: snap.layers); texVersion = snap.version }
-                tg.renderScale = mode == .live ? 0.5 : 1
-                texParams = tg.encodeLayers(cmd: cmd, picked: TexLayerSelect.pick(snap.layers, pose: pose), uniforms: u0, targetW: Int(vw), targetH: Int(vh))
+                tg.renderScale = mode == .live ? 0.5 : 0.75
+                let sel = TexLayerSelect.coverage(snap.layers, view: TexView(pose: pose, uniforms: u0), prev: texPrevSelection)
+                let ids = Set(sel.picked.map { $0.layer.id })
+                if !texPrevSelection.isEmpty { texSelectionFrames += 1; if ids != texPrevSelection { texSelectionChanges += 1 } }
+                texPrevSelection = ids
+                lastTexSelected = sel.picked.count; lastTexCoverage = sel.estimatedCoverage
+                texParams = tg.encodeLayers(cmd: cmd, picked: sel.picked, uniforms: u0, targetW: Int(vw), targetH: Int(vh))
                 lastTexQuads = tg.lastDrawnQuads
             }
             lastTexTotal = snap.layers.reduce(0) { $0 + $1.count }

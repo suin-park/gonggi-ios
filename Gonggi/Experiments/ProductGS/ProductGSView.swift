@@ -129,13 +129,13 @@ final class ProductSessionViewModel: ObservableObject {
         }
         guard let l = ExperimentRunLog(kind: .productGS, settings: ["optimize": optimize, "showCameraCompare": showCameraCompare, "recordReplay": recordReplay,
                                                                     "includeTemporary": showTemporary,
-                                                                    "note": "서버 없음. 제품 마스크는 기기 내 Vision. 사전학습 깊이 모델은 기기 내 추론만. 촬영 중 가우시안 파라미터를 반복 최적화한다(장면별 최적화). 렌더 FPS는 생성 속도가 아니다."]) else {
+                                                                    "note": textureLayers ? "서버 없음. 제품 마스크는 기기 내 Vision. 사전학습 깊이 모델은 기기 내 추론만. 텍스처 표면 레이어(가우시안·장면별 최적화 없음). 렌더 FPS는 생성 속도가 아니다." : "서버 없음. 제품 마스크는 기기 내 Vision. 사전학습 깊이 모델은 기기 내 추론만. 촬영 중 가우시안 파라미터를 반복 최적화한다(장면별 최적화). 렌더 FPS는 생성 속도가 아니다."]) else {
             message = "로그 파일을 만들 수 없어요. 저장 공간을 확인해 주세요."; gate.release(gateName); state = .idle; return
         }
         log = l
         let provider = VisionInstanceMaskProvider()
         var tcfg = GSOProductMaskTracker.Config()
-        tcfg.bandRadius = 4
+        tcfg.bandRadius = textureLayers ? 2 : 4     // 텍스처 레이어: 경계 띠를 좁혀(원본 6화소) 가장자리가 안으로 깎이지 않게 한다. PC 같은 입력 비교에서 4→2가 윤곽·가장자리 PSNR이 좋았다.
         let tracker = GSOProductMaskTracker(config: tcfg, targetID: 1)
         state = .selecting          // options()가 선택 단계의 카메라 배경 표시를 반영한다
         let e = GSOEngine(options: options(), config: textureLayers ? GSOConfig.productTexture() : GSOConfig.productDefault(), log: l, splats: splats, liveCam: liveCam, background: background, mono: mono,
@@ -206,7 +206,7 @@ final class ProductSessionViewModel: ObservableObject {
             return (s, sv)
         }.value
         var text = summary.text
-        if let item = saved.item { text += "\n저장: \(item.url.lastPathComponent) (가우시안 \(saved.gaussians)개, 훈련 시점 \(saved.views)개, \(item.bytes / 1024) KB)\n" }
+        if let item = saved.item { text += "\n저장: \(item.url.lastPathComponent) (" + (textureLayers ? "사각형 \(saved.gaussians)개, 레이어 \(saved.views)개" : "가우시안 \(saved.gaussians)개, 훈련 시점 \(saved.views)개") + ", \(item.bytes / 1024) KB)\n" }
         else if let e = saved.error { text += "\n저장 안 됨: \(e)\n" }
         var dict = summary.dict
         dict["saved"] = saved.item?.url.lastPathComponent ?? NSNull()
@@ -454,7 +454,7 @@ struct ProductGSView: View {
         case .idle: return "실시간 제품 3DGS"
         case .starting: return "시작하는 중"
         case .selecting: return "1/2 제품 선택 · 제품을 탭하세요"
-        case .running: return "촬영 중 · 가우시안만 표시"
+        case .running: return vm.textureLayers ? "촬영 중 · 텍스처 레이어만 표시" : "촬영 중 · 가우시안만 표시"
         case .paused: return "일시정지 · 둘러보기"
         case .finishing: return "저장하는 중"
         case .finished: return "완료 · 저장본을 다시 연 화면"
@@ -469,13 +469,19 @@ struct ProductGSView: View {
             Text("단계 \(l.phase) · 마스크 \(l.maskStatus) (신뢰 \(l.maskTrusted) · 불확실 \(l.maskUncertain) · p50 \(f(l.maskMsP50, 0))ms)")
             if !l.texText.isEmpty { Text(l.texText) }
             Text(l.coverageText)
-            Text("3D 범위 \(l.boundsText) · 제품 화소 \(l.productPixels) · 배경 누출 \(f(l.bgLeak.map { $0 * 100 }, 1))%")
-            Text("가우시안 \(l.gaussians) (안정 \(l.stable) · 후보 \(l.candidate) · 임시 \(l.temporary)) · 방금 +\(l.lastInserted) · 키프레임 \(f(l.keyframeHz, 1)) Hz · 처리 \(l.processed)/\(l.keyframes)")
-            Text("정밀화 진행: 제품 칸 \(f(l.refineCellsPct, 0))% · 가우시안 \(f(l.refineGaussiansPct, 0))% · 창 \(l.refineKind) · 원본 창 \(l.refineIterations)회 · 분할 \(l.splitsTotal) · 롤백 \(l.rollbacks)")
+            if l.texText.isEmpty {
+                Text("3D 범위 \(l.boundsText) · 제품 화소 \(l.productPixels) · 배경 누출 \(f(l.bgLeak.map { $0 * 100 }, 1))%")
+                Text("가우시안 \(l.gaussians) (안정 \(l.stable) · 후보 \(l.candidate) · 임시 \(l.temporary)) · 방금 +\(l.lastInserted) · 키프레임 \(f(l.keyframeHz, 1)) Hz · 처리 \(l.processed)/\(l.keyframes)")
+                Text("정밀화 진행: 제품 칸 \(f(l.refineCellsPct, 0))% · 가우시안 \(f(l.refineGaussiansPct, 0))% · 창 \(l.refineKind) · 원본 창 \(l.refineIterations)회 · 분할 \(l.splitsTotal) · 롤백 \(l.rollbacks)")
+            } else {
+                Text("키프레임 \(f(l.keyframeHz, 1)) Hz · 처리 \(l.processed)/\(l.keyframes) · 방금 +\(l.lastInserted)사각형")
+            }
             Text("모델: \(l.modelState)")
-            Text("최적화: \(l.optimizerState) · 정밀화: \(l.refineState)")
-            if !l.budgetText.isEmpty { Text(l.budgetText) }
-            if !l.lastRollbackReason.isEmpty { Text("마지막 롤백: \(l.lastRollbackReason)") }
+            if l.texText.isEmpty {
+                Text("최적화: \(l.optimizerState) · 정밀화: \(l.refineState)")
+                if !l.budgetText.isEmpty { Text(l.budgetText) }
+                if !l.lastRollbackReason.isEmpty { Text("마지막 롤백: \(l.lastRollbackReason)") }
+            }
             if !l.gapTop.isEmpty { Text("미생성 이유: \(l.gapTop)") }
             if !l.resolutionText.isEmpty { Text(l.resolutionText) }
             Text("지연(캡처→지도) p95 \(f(l.toMapP95)) ms · (→표시) p95 \(f(l.toDisplayP95)) ms · ARKit \(f(l.arHz)) Hz · 추적 \(l.tracking)")
@@ -551,7 +557,7 @@ struct ProductGSView: View {
                 if !vm.shareMissing.isEmpty {
                     Text("공유에서 빠진 것: " + vm.shareMissing.joined(separator: " · ")).font(.caption2).foregroundStyle(ExpTheme.warn).multilineTextAlignment(.center)
                 }
-                Text("한 손가락 = 회전 · 두 손가락 = 이동 · 핀치 = 확대 · 두 번 탭 = 처음 시점. 카메라 영상 없이 가우시안만 보여요.").font(.caption2).foregroundStyle(.white.opacity(0.8))
+                Text("한 손가락 = 회전 · 두 손가락 = 이동 · 핀치 = 확대 · 두 번 탭 = 처음 시점. 카메라 영상 없이 " + (vm.textureLayers ? "텍스처 레이어만" : "가우시안만") + " 보여요.").font(.caption2).foregroundStyle(.white.opacity(0.8))
             } else if vm.state == .paused {
                 Text("한 손가락 회전 · 두 손가락 이동 · 핀치 확대 · 두 번 탭 처음 시점. 비어 있는 면은 아직 비추지 않은 곳이에요.").font(.caption2).foregroundStyle(.white.opacity(0.8))
             } else if vm.state == .running {

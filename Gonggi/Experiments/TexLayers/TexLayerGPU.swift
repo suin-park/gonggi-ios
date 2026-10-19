@@ -2,11 +2,12 @@ import Foundation
 import Metal
 import simd
 
-/// Metal 경로: 가까운 K개 레이어를 각각 (색, 선형 깊이) 텍스처로 그린 뒤 합성한다. CPU 참조(TexLayerCPU)와 같은 규칙이다.
+/// Metal 경로: 선택된 레이어(최대 8개)를 각각 (색, 선형 깊이) 텍스처 배열의 한 칸에 그린 뒤 합성한다. CPU 참조(TexLayerCPU)와 같은 규칙이다.
 struct TLComposeParams {
     var w0 = SIMD4<Float>(0, 0, 0, 0)
-    var w1 = SIMD4<Float>(0, 0, TexLayerConst.depthTolerance, 0)
-    var scale = SIMD4<Float>(1, 0, 0, 0)
+    var w1 = SIMD4<Float>(0, 0, 0, 0)
+    var p0 = SIMD4<Float>(0, TexLayerConst.depthTolerance, TexLayerConst.hybridVariance, Float(TexLayerConst.minAgree))
+    var p1 = SIMD4<Float>(2, 1, 0, 0)
 }
 
 final class TexLayerGPU {
@@ -15,14 +16,15 @@ final class TexLayerGPU {
     private var layerPSO: MTLRenderPipelineState?
     private var composePSO: MTLRenderPipelineState?
     private var depthState: MTLDepthStencilState?
-    private var colorTex: [MTLTexture] = []
-    private var zTex: [MTLTexture] = []
+    private var colorArr: MTLTexture?
+    private var zArr: MTLTexture?
     private var depthTex: MTLTexture?
     private var texW = 0, texH = 0
     private var buffers: [Int: (corners: MTLBuffer, tex: MTLBuffer)] = [:]
     private(set) var lastDrawnQuads = 0
+    private(set) var lastLayerCount = 0
     private(set) var gpuBytes = 0
-    /// 라이브(움직이는 카메라)에서는 낮추고(0.5), 둘러보기에서는 1로 그린다.
+    /// 라이브(움직이는 카메라)에서는 낮추고(0.5), 둘러보기에서는 0.75로 그린다(레이어 8개 분량의 텍스처 메모리를 제한한다).
     var renderScale: Float = 1
 
     init(device: MTLDevice, library: MTLLibrary, colorFormat: MTLPixelFormat = .bgra8Unorm) {
@@ -35,7 +37,7 @@ final class TexLayerGPU {
             let d = MTLRenderPipelineDescriptor()
             d.vertexFunction = lv; d.fragmentFunction = lf
             d.colorAttachments[0].pixelFormat = .rgba8Unorm
-            d.colorAttachments[1].pixelFormat = .r32Float
+            d.colorAttachments[1].pixelFormat = .r16Float
             d.depthAttachmentPixelFormat = .depth32Float
             layerPSO = try device.makeRenderPipelineState(descriptor: d)
             let c = MTLRenderPipelineDescriptor()
@@ -69,21 +71,20 @@ final class TexLayerGPU {
     }
 
     private func ensureTargets(width: Int, height: Int) -> Bool {
-        if texW == width, texH == height, colorTex.count == TexLayerConst.blendK { return true }
-        colorTex.removeAll(); zTex.removeAll()
-        for _ in 0..<TexLayerConst.blendK {
-            let cd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: width, height: height, mipmapped: false)
-            cd.usage = [.renderTarget, .shaderRead]; cd.storageMode = .private
-            let zd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: width, height: height, mipmapped: false)
-            zd.usage = [.renderTarget, .shaderRead]; zd.storageMode = .private
-            guard let c = device.makeTexture(descriptor: cd), let z = device.makeTexture(descriptor: zd) else { return false }
-            colorTex.append(c); zTex.append(z)
-        }
+        if texW == width, texH == height, colorArr != nil, zArr != nil, depthTex != nil { return true }
+        colorArr = nil; zArr = nil; depthTex = nil
+        let cd = MTLTextureDescriptor()
+        cd.textureType = .type2DArray; cd.pixelFormat = .rgba8Unorm; cd.width = width; cd.height = height; cd.arrayLength = TexLayerConst.blendMax
+        cd.usage = [.renderTarget, .shaderRead]; cd.storageMode = .private
+        let zd = MTLTextureDescriptor()
+        zd.textureType = .type2DArray; zd.pixelFormat = .r16Float; zd.width = width; zd.height = height; zd.arrayLength = TexLayerConst.blendMax
+        zd.usage = [.renderTarget, .shaderRead]; zd.storageMode = .private
         let dd = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: width, height: height, mipmapped: false)
         dd.usage = .renderTarget; dd.storageMode = .private
-        depthTex = device.makeTexture(descriptor: dd)
+        guard let c = device.makeTexture(descriptor: cd), let z = device.makeTexture(descriptor: zd), let d = device.makeTexture(descriptor: dd) else { return false }
+        colorArr = c; zArr = z; depthTex = d
         texW = width; texH = height
-        return depthTex != nil
+        return true
     }
 
     /// 선택된 레이어를 각각 그린다(레이어마다 한 패스). 합성에 쓸 파라미터를 돌려준다. 대상 크기는 targetW×targetH × renderScale.
@@ -91,19 +92,19 @@ final class TexLayerGPU {
         guard ready, let layerPSO, let depthState, !picked.isEmpty else { return nil }
         let s = max(0.25, min(1, renderScale))
         let w = max(8, Int(Float(targetW) * s)), h = max(8, Int(Float(targetH) * s))
-        guard ensureTargets(width: w, height: h) else { return nil }
+        guard ensureTargets(width: w, height: h), let colorArr, let zArr else { return nil }
         var u = uniforms
         var drawn = 0
         var params = TLComposeParams()
-        var weights = [Float](repeating: 0, count: 5)
+        var weights = [Float](repeating: 0, count: TexLayerConst.blendMax)
         var count = 0
-        for p in picked.prefix(TexLayerConst.blendK) {
+        for p in picked.prefix(TexLayerConst.blendMax) {
             guard let b = buffer(for: p.layer) else { continue }
             let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[0].texture = colorTex[count]; pass.colorAttachments[0].loadAction = .clear
+            pass.colorAttachments[0].texture = colorArr; pass.colorAttachments[0].slice = count; pass.colorAttachments[0].loadAction = .clear
             pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0); pass.colorAttachments[0].storeAction = .store
-            pass.colorAttachments[1].texture = zTex[count]; pass.colorAttachments[1].loadAction = .clear
-            pass.colorAttachments[1].clearColor = MTLClearColor(red: 1e9, green: 0, blue: 0, alpha: 0); pass.colorAttachments[1].storeAction = .store
+            pass.colorAttachments[1].texture = zArr; pass.colorAttachments[1].slice = count; pass.colorAttachments[1].loadAction = .clear
+            pass.colorAttachments[1].clearColor = MTLClearColor(red: 60000, green: 0, blue: 0, alpha: 0); pass.colorAttachments[1].storeAction = .store
             pass.depthAttachment.texture = depthTex; pass.depthAttachment.loadAction = .clear; pass.depthAttachment.clearDepth = 1; pass.depthAttachment.storeAction = .dontCare
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { continue }
             enc.setRenderPipelineState(layerPSO); enc.setDepthStencilState(depthState)
@@ -116,23 +117,22 @@ final class TexLayerGPU {
             drawn += p.layer.count
         }
         guard count > 0 else { return nil }
-        // 쓰지 않은 칸은 첫 텍스처를 묶어 둔다(셰이더가 count로 건너뛴다).
         params.w0 = SIMD4<Float>(weights[0], weights[1], weights[2], weights[3])
-        params.w1 = SIMD4<Float>(weights[4], Float(count), TexLayerConst.depthTolerance, 0)
-        params.scale = SIMD4<Float>(s, 0, 0, 0)
+        params.w1 = SIMD4<Float>(weights[4], weights[5], weights[6], weights[7])
+        params.p0 = SIMD4<Float>(Float(count), TexLayerConst.depthTolerance, TexLayerConst.hybridVariance, count >= 3 ? Float(TexLayerConst.minAgree) : 1)
+        params.p1 = SIMD4<Float>(Float(max(1, Int((Float(w) / 160).rounded()))), s, 0, 0)
         lastDrawnQuads = drawn
+        lastLayerCount = count
         return params
     }
 
     /// 합성 패스(호출자가 만든 인코더 안에서, 대상은 그리기 대상과 같은 비율의 화면). 덮이지 않은 화소는 버린다.
     func encodeCompose(enc: MTLRenderCommandEncoder, params: TLComposeParams) {
-        guard let composePSO, colorTex.count == TexLayerConst.blendK else { return }
+        guard let composePSO, let colorArr, let zArr else { return }
         var p = params
         enc.setRenderPipelineState(composePSO)
-        for i in 0..<TexLayerConst.blendK {
-            enc.setFragmentTexture(colorTex[i], index: i)
-            enc.setFragmentTexture(zTex[i], index: 5 + i)
-        }
+        enc.setFragmentTexture(colorArr, index: 0)
+        enc.setFragmentTexture(zArr, index: 1)
         enc.setFragmentBytes(&p, length: MemoryLayout<TLComposeParams>.size, index: 0)
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
     }

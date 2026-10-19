@@ -80,14 +80,31 @@ final class RTMonoDepth {
             let stride = CVPixelBufferGetBytesPerRow(pb)
             let p = base.assumingMemoryBound(to: UInt8.self)
             let bgra = inputFormat == kCVPixelFormatType_32BGRA
+            // 입력보다 큰 영상(원본 창)은 상자 평균으로 줄인다(최근접 표본은 앨리어싱을 만든다). 작은 영상은 이전처럼 최근접으로 늘린다.
+            let rx = Float(srcW) / Float(inputW), ry = Float(srcH) / Float(inputH)
+            let area = rx > 1.2 || ry > 1.2
             for y in 0..<inputH {
-                let sy = min(srcH - 1, Int((Float(y) + 0.5) * Float(srcH) / Float(inputH)))
+                let sy = min(srcH - 1, Int((Float(y) + 0.5) * ry))
+                let sy0 = Int(Float(y) * ry), sy1 = max(sy0 + 1, min(srcH, Int(Float(y + 1) * ry)))
                 for x in 0..<inputW {
-                    let sx = min(srcW - 1, Int((Float(x) + 0.5) * Float(srcW) / Float(inputW)))
-                    let si = (sy * srcW + sx) * 3
                     let di = y * stride + x * 4
-                    if bgra { p[di] = rgb[si + 2]; p[di + 1] = rgb[si + 1]; p[di + 2] = rgb[si]; p[di + 3] = 255 }
-                    else { p[di] = 255; p[di + 1] = rgb[si]; p[di + 2] = rgb[si + 1]; p[di + 3] = rgb[si + 2] }
+                    var r: UInt8, g: UInt8, b: UInt8
+                    if area {
+                        let sx0 = Int(Float(x) * rx), sx1 = max(sx0 + 1, min(srcW, Int(Float(x + 1) * rx)))
+                        var sr = 0, sg = 0, sb = 0, n = 0
+                        for yy in sy0..<sy1 { for xx in sx0..<sx1 {
+                            let si = (yy * srcW + xx) * 3
+                            sr += Int(rgb[si]); sg += Int(rgb[si + 1]); sb += Int(rgb[si + 2]); n += 1
+                        }}
+                        n = max(n, 1)
+                        r = UInt8(sr / n); g = UInt8(sg / n); b = UInt8(sb / n)
+                    } else {
+                        let sx = min(srcW - 1, Int((Float(x) + 0.5) * rx))
+                        let si = (sy * srcW + sx) * 3
+                        r = rgb[si]; g = rgb[si + 1]; b = rgb[si + 2]
+                    }
+                    if bgra { p[di] = b; p[di + 1] = g; p[di + 2] = r; p[di + 3] = 255 }
+                    else { p[di] = 255; p[di + 1] = r; p[di + 2] = g; p[di + 3] = b }
                 }
             }
         }

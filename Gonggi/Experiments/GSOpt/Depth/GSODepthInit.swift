@@ -57,6 +57,14 @@ enum GSOMonoAlign {
         }
     }
 
+    /// 출력 의미를 역깊이로 고정한 정렬. Depth Anything V2는 상대 역깊이(클수록 가까움)를 내고, 텍스처 레이어 경로는 프레임마다 의미 판정이 뒤집혀
+    /// (한 촬영에서 역깊이 60 · 깊이 5) 인접 키프레임의 형상이 어긋나는 것을 막기 위해 의미를 고정한다. 깊이 가정은 비교 기록(alternativeInlierRatio)으로만 맞춘다.
+    static func fitInverse(mono: [Float], anchorZ: [Float], width w: Int, height h: Int, seed: UInt64 = 12345) -> GSOAffineFit? {
+        guard var inv = fit(mono: mono, anchorZ: anchorZ, width: w, height: h, space: .inverseDepth, seed: seed) else { return nil }
+        if let dep = fit(mono: mono, anchorZ: anchorZ, width: w, height: h, space: .depth, seed: seed &+ 1) { inv.alternativeInlierRatio = dep.inlierRatio }
+        return inv
+    }
+
     static func fit(mono: [Float], anchorZ: [Float], width w: Int, height h: Int, space: GSOMonoSpace, seed: UInt64) -> GSOAffineFit? {
         guard mono.count == w * h, anchorZ.count == w * h else { return nil }
         var ms: [Float] = [], rs: [Float] = []

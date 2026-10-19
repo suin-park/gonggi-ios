@@ -2,8 +2,9 @@
 using namespace metal;
 
 // 텍스처 스플랫 레이어 렌더링(실험).
-// 레이어 패스: 한 키프레임 레이어의 사각형(평면 4모서리 + 8×8 RGBA 텍스처)을 z-버퍼와 알파 테스트(< 0.5 버림)로 그려 (색, 선형 깊이)를 얻는다.
-// 합성 패스: K개 레이어 중 가장 가까운 유효 깊이를 기준으로 깊이가 일관된 레이어만 시점 가중치로 평균한다(CPU 참조 TexLayerCPU와 같은 규칙).
+// 레이어 패스: 한 키프레임 레이어의 사각형(평면 4모서리 + 8×8 RGBA 텍스처)을 앞면만, z-버퍼와 알파 테스트(< 0.5 버림)로 그려 (색, 선형 깊이)를 얻는다.
+// 합성 패스: 선택된 레이어(최대 8개)에서 화소마다 가중치 합이 가장 큰 깊이를 표면으로 정하고, 그 표면에 일치한 레이어만 시점 가중치로 혼합한다.
+// 일치한 색의 분산이 크면 대표 관측 하나만 쓴다. 같은 표면에 동의하는 레이어가 부족한 화소는 합의된 화소 옆(가장자리)일 때만 남긴다. CPU 참조 TexLayerCPU와 같은 규칙.
 
 struct TLUniforms {
     float4 rotRow0;   // 세계 -> CV 카메라 회전의 행 (xyz)
@@ -19,8 +20,9 @@ struct TLUniforms {
 
 struct TLCompose {
     float4 w0;        // 가중치 0..3
-    float4 w1;        // 가중치 4, 레이어 수, 깊이 허용 비율, 예약
-    float4 scale;     // x: 레이어 텍스처/그리기 대상 배율
+    float4 w1;        // 가중치 4..7
+    float4 p0;        // 레이어 수, 깊이 허용 비율, 색 분산 한계, 필요한 동의 레이어 수
+    float4 p1;        // x: 가장자리 확장 화소, y: 레이어 텍스처/그리기 대상 배율
 };
 
 struct TLVOut {
@@ -37,6 +39,12 @@ vertex TLVOut tl_vertex(uint vid [[vertex_id]],
     o.position = float4(2.0, 2.0, 0.0, 1.0);
     o.uvz = float3(0.0);
     o.quad = iid;
+    // 뒷면 버림: 촬영한 쪽(앞면)에서 보일 때만 그린다. 법선·(사각형 − 카메라) > 0
+    float3 c0 = corners[iid * 4 + 0].xyz;
+    float3 c1 = corners[iid * 4 + 1].xyz;
+    float3 c2 = corners[iid * 4 + 2].xyz;
+    float3 nrm = cross(c1 - c0, c2 - c0);
+    if (dot(nrm, c0 - U.camPos.xyz) <= 0.0) { return o; }
     float3 pcs[4];
     for (uint k = 0; k < 4; k++) {
         float3 d = corners[iid * 4 + k].xyz - U.camPos.xyz;
@@ -87,27 +95,88 @@ vertex float4 tl_compose_vertex(uint vid [[vertex_id]]) {
     return float4(p, 0.0, 1.0);
 }
 
-fragment float4 tl_compose_fragment(float4 pos [[position]],
-                                    texture2d<float> c0 [[texture(0)]], texture2d<float> c1 [[texture(1)]], texture2d<float> c2 [[texture(2)]],
-                                    texture2d<float> c3 [[texture(3)]], texture2d<float> c4 [[texture(4)]],
-                                    texture2d<float> z0 [[texture(5)]], texture2d<float> z1 [[texture(6)]], texture2d<float> z2 [[texture(7)]],
-                                    texture2d<float> z3 [[texture(8)]], texture2d<float> z4 [[texture(9)]],
-                                    constant TLCompose &P [[buffer(0)]]) {
-    uint w = c0.get_width(), h = c0.get_height();
-    uint2 xy = uint2(min(uint(pos.x * P.scale.x), w - 1), min(uint(pos.y * P.scale.x), h - 1));
-    float zs[5] = { z0.read(xy).x, z1.read(xy).x, z2.read(xy).x, z3.read(xy).x, z4.read(xy).x };
-    float4 cs[5] = { c0.read(xy), c1.read(xy), c2.read(xy), c3.read(xy), c4.read(xy) };
-    float ws[5] = { P.w0.x, P.w0.y, P.w0.z, P.w0.w, P.w1.x };
-    int count = int(P.w1.y + 0.5);
-    float dmin = 1e30;
-    for (int i = 0; i < 5; i++) { if (i < count && zs[i] < 1e8) { dmin = min(dmin, zs[i]); } }
-    if (dmin > 1e8) { discard_fragment(); }
-    float tol = P.w1.z * max(dmin, 0.3);
+struct TLCons {
+    float3 rgb;
+    float z;
+    int count;
+};
+
+// 한 화소의 합의(TexLayerCPU.consensus와 같은 규칙). 빈 깊이는 5e4 이상으로 지워 둔다(r16Float).
+static TLCons tl_consensus(int2 xy, texture2d_array<float> C, texture2d_array<float> Z, constant TLCompose &P) {
+    TLCons r;
+    r.rgb = float3(0.0); r.z = 1e30; r.count = 0;
+    int count = int(P.p0.x + 0.5);
+    float tol = P.p0.y;
+    float zs[8];
+    float3 cs[8];
+    float ws[8];
+    int nv = 0;
+    for (int i = 0; i < 8; i++) {
+        if (i >= count) { break; }
+        float z = Z.read(uint2(xy), uint(i)).x;
+        if (z < 50000.0) {
+            zs[nv] = z;
+            cs[nv] = C.read(uint2(xy), uint(i)).rgb;
+            ws[nv] = (i < 4) ? P.w0[i] : P.w1[i - 4];
+            nv++;
+        }
+    }
+    if (nv == 0) { return r; }
+    int bestK = 0;
+    float bestKey = -1e30;
+    for (int a = 0; a < nv; a++) {
+        float tolA = tol * max(zs[a], 0.3);
+        float support = 0.0;
+        for (int b = 0; b < nv; b++) { if (fabs(zs[b] - zs[a]) < tolA) { support += ws[b]; } }
+        float key = support - 1e-3 * zs[a];
+        if (key > bestKey) { bestKey = key; bestK = a; }
+    }
+    float zb = zs[bestK];
+    float tolB = tol * max(zb, 0.3);
     float3 num = float3(0.0);
     float den = 0.0;
-    for (int i = 0; i < 5; i++) {
-        if (i < count && zs[i] < 1e8 && fabs(zs[i] - dmin) < tol) { num += cs[i].rgb * ws[i]; den += ws[i]; }
+    int cnt = 0;
+    int repK = -1;
+    float repW = -1e30;
+    for (int b = 0; b < nv; b++) {
+        if (fabs(zs[b] - zb) < tolB) {
+            num += cs[b] * ws[b]; den += ws[b]; cnt++;
+            if (ws[b] > repW) { repW = ws[b]; repK = b; }
+        }
     }
-    if (den <= 0.0) { discard_fragment(); }
-    return float4(num / den, 1.0);
+    if (den <= 0.0 || repK < 0) { return r; }
+    float3 avg = num / den;
+    float spread = 0.0;
+    for (int b = 0; b < nv; b++) {
+        if (fabs(zs[b] - zb) < tolB) { float3 d = cs[b] - avg; spread += dot(d, d) * ws[b]; }
+    }
+    spread /= den;
+    r.rgb = (spread > P.p0.z) ? cs[repK] : avg;
+    r.z = zb; r.count = cnt;
+    return r;
+}
+
+fragment float4 tl_compose_fragment(float4 pos [[position]],
+                                    texture2d_array<float> C [[texture(0)]],
+                                    texture2d_array<float> Z [[texture(1)]],
+                                    constant TLCompose &P [[buffer(0)]]) {
+    int w = int(C.get_width()), h = int(C.get_height());
+    int2 xy = int2(min(int(pos.x * P.p1.y), w - 1), min(int(pos.y * P.p1.y), h - 1));
+    TLCons r = tl_consensus(xy, C, Z, P);
+    if (r.count == 0) { discard_fragment(); }
+    int need = max(1, int(P.p0.w + 0.5));
+    if (r.count < need) {
+        bool keep = false;
+        int fr = max(1, int(P.p1.x + 0.5));
+        const int dx[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
+        const int dy[8] = { -1, -1, -1, 0, 0, 1, 1, 1 };
+        for (int d = 0; d < 8; d++) {
+            int2 q = int2(xy.x + dx[d] * fr, xy.y + dy[d] * fr);
+            if (q.x < 0 || q.y < 0 || q.x >= w || q.y >= h) { continue; }
+            TLCons n = tl_consensus(q, C, Z, P);
+            if (n.count >= need) { keep = true; break; }
+        }
+        if (!keep) { discard_fragment(); }
+    }
+    return float4(r.rgb, 1.0);
 }

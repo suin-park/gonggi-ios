@@ -121,11 +121,16 @@ enum TexLayerFiles {
             manifest["quads"] = out.quads
             manifest["bytes"] = layers.reduce(0) { $0 + $1.bytes }
             manifest["cell"] = TexLayerConst.cell
-            manifest["blend"] = ["k": TexLayerConst.blendK, "decay": Double(TexLayerConst.selectDecay), "depthTolerance": Double(TexLayerConst.depthTolerance)]
+            manifest["blend"] = ["selection": "coverage(앞면·합의된 표면을 덮는 레이어, 최대 \(TexLayerConst.blendMax)개)", "max": TexLayerConst.blendMax, "decay": Double(TexLayerConst.selectDecay),
+                                 "depthTolerance": Double(TexLayerConst.depthTolerance), "hybridVariance": Double(TexLayerConst.hybridVariance), "minAgree": TexLayerConst.minAgree,
+                                 "backfaceCulled": true]
+            manifest["texLayersVersion"] = 2
             manifest["identifiers"] = "서펠 영구 ID = (레이어=키프레임 ID, 셀 번호). 가우시안 ID·상태·계보와 다른 체계다."
             manifest["config"] = ["depth": "\(config.depthW)x\(config.depthH)", "maxLayers": config.maxLayers, "useMono": config.useMono,
                                   "minProduct": Double(config.params.minProduct), "tau": Double(config.params.tau), "maxResid": Double(config.params.maxResid),
-                                  "minFrontal": Double(config.params.minFrontal)]
+                                  "minFrontal": Double(config.params.minFrontal),
+                                  "maskGuard": config.maskGuard, "exposureChain": config.exposureChain, "lockMonoInverse": config.lockMonoInverse,
+                                  "monoFromOriginalWindow": config.monoFromOriginalWindow, "gainClamp": [Double(config.gainClamp.lowerBound), Double(config.gainClamp.upperBound)]]
             manifest["coordinates"] = "ARKit 세계 좌표(중력 정렬, y 위, 단위 m). 레이어마다 촬영 포즈·K를 가진다."
             manifest["limits"] = "깊이는 단안 모델을 스테레오 앵커에 맞춘 추정이며 독립 기준으로 검증하지 않았다. 관측하지 않은 방향은 복원하지 않는다. 가까운 시점 사이를 잇는 표현이다."
             for (k, v) in extraMeta { manifest[k] = v }

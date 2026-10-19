@@ -306,7 +306,7 @@ def blend_tex(S, cam):
 
 
 @njit(cache=True, fastmath=True)
-def _raster_zb(order, corners, tex, W, H, fx, fy, cx, cy, Rt, C, grow):
+def _raster_zb(order, corners, tex, W, H, fx, fy, cx, cy, Rt, C, grow, cull=0):
     """GPU-equivalent per-layer pass: z-buffered, alpha-tested (alpha < 0.5 discarded), bilinear RGB. Returns colour (unpremultiplied), depth (inf = empty)."""
     img = np.zeros((H, W, 3), np.float32); zb = np.full((H, W), 1e9, np.float32)
     for oi in range(order.shape[0]):
@@ -329,6 +329,7 @@ def _raster_zb(order, corners, tex, W, H, fx, fy, cx, cy, Rt, C, grow):
         e11 = e1x * e1x + e1y * e1y + e1z * e1z; e22 = e2x * e2x + e2y * e2y + e2z * e2z; e12 = e1x * e2x + e1y * e2y + e1z * e2z
         det = e11 * e22 - e12 * e12
         if det < 1e-18: continue
+        if cull != 0 and (nx * (c[0, 0] - C[0]) + ny * (c[0, 1] - C[1]) + nz * (c[0, 2] - C[2])) <= 0: continue
         Tn = tex.shape[1]
         for py_ in range(y0, y1 + 1):
             for px_ in range(x0, x1 + 1):
@@ -354,8 +355,8 @@ def _raster_zb(order, corners, tex, W, H, fx, fy, cx, cy, Rt, C, grow):
     return img, zb
 
 
-def render_layer_zb(S, cam, W, H, grow=0.04):
+def render_layer_zb(S, cam, W, H, grow=0.04, cull=0):
     if len(S) == 0: return np.zeros((H, W, 3), np.float32), np.full((H, W), 1e9, np.float32)
     z = ((S.P - cam.C) @ cam.R)[:, 2]
     order = np.argsort(z).astype(np.int64)
-    return _raster_zb(order, S.corners.astype(np.float64), S.tex.astype(np.float32), W, H, cam.fx, cam.fy, cam.cx, cam.cy, cam.R.T.copy(), cam.C.astype(np.float64), grow)
+    return _raster_zb(order, S.corners.astype(np.float64), S.tex.astype(np.float32), W, H, cam.fx, cam.fy, cam.cx, cam.cy, cam.R.T.copy(), cam.C.astype(np.float64), grow, cull)

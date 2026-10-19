@@ -68,7 +68,7 @@ final class GSOptTexLayerTests: XCTestCase {
     func testLayerRerenderedFromItsOwnPoseReproducesTheSourcePhotoInsideTheProductMask() {
         let pose = SV2Test.pose(x: 0.1)
         let (layer, input, mask) = TexTest.build(pose: pose)
-        let r = TexLayerCPU.render([layer], cam: TexCamera(pose: pose, k: TexTest.K), k: 1)
+        let r = TexLayerCPU.render([layer], cam: TexCamera(pose: pose, k: TexTest.K)).image
         let src = input.rgbHi.map { Float($0) / 255 }
         let lab = mask.resampled(width: 480, height: 360)
         let region = (0..<(480 * 360)).map { lab[$0] == GSOProductMask.product }
@@ -104,7 +104,7 @@ final class GSOptTexLayerTests: XCTestCase {
         let (l1, _, _) = TexTest.build(pose: SV2Test.pose(x: 0.0), id: 1)
         let (l2, _, _) = TexTest.build(pose: SV2Test.pose(x: 0.16), id: 2)
         let novel = SV2Test.pose(x: 0.0753)      // 정수 화소가 아닌 이동(재표집 오차가 드러나게)
-        let r = TexLayerCPU.render([l1, l2], cam: TexCamera(pose: novel, k: TexTest.K))
+        let r = TexLayerCPU.render([l1, l2], cam: TexCamera(pose: novel, k: TexTest.K)).image
         let truth = TexTest.scene.render(pose: novel, K: TexTest.K).rgb.map { Float($0) / 255 }
         let gt = ProductTest.truthRegion(scene: TexTest.scene, pose: novel, K: TexTest.K, w: 480, h: 360)
         let inner = (0..<(480 * 360)).map { p -> Bool in
@@ -126,22 +126,222 @@ final class GSOptTexLayerTests: XCTestCase {
         XCTAssertTrue(TexLayerSelect.pick([], pose: .identity).isEmpty)
     }
 
-    func testComposeUsesOnlyDepthConsistentLayersAndNearestSurfaceWins() {
-        let red = TexTest.quadLayer(id: 1, z: 1.0, color: SIMD3<Float>(1, 0, 0)), green = TexTest.quadLayer(id: 2, z: 1.5, color: SIMD3<Float>(0, 1, 0))
+    private func parts(_ ls: [TexLayer], cam: TexCamera, weights: [Float]? = nil, cull: Bool = true) -> [TexLayerCPU.Part] {
+        ls.enumerated().map { i, l in let r = TexLayerCPU.renderLayer(l, cam: cam, cull: cull); return (rgb: r.rgb, z: r.z, weight: weights?[i] ?? 1) }
+    }
+
+    func testComposeBlendsOnlySameSurfaceLayersAndAveragesCloseColours() {
         let k = RTIntrinsics(fx: 100, fy: 100, cx: 32, cy: 24, width: 64, height: 48)
         let cam = TexCamera(pose: .identity, k: k)
-        func parts(_ ls: [TexLayer]) -> [(rgb: [Float], z: [Float], weight: Float)] {
-            ls.map { l in let r = TexLayerCPU.renderLayer(l, cam: cam); return (rgb: r.rgb, z: r.z, weight: Float(1)) }
-        }
-        let far = TexLayerCPU.compose(parts([red, green]), width: 64, height: 48)
         let c = (24 * 64 + 32) * 3
-        XCTAssertEqual(far.rgb[c], 1, accuracy: 0.01); XCTAssertEqual(far.rgb[c + 1], 0, accuracy: 0.01, "먼 레이어가 가까운 면 위로 섞임")
-        // 깊이가 일관되면(1.0 vs 1.04) 가중 평균
-        let green2 = TexTest.quadLayer(id: 3, z: 1.04, color: SIMD3<Float>(0, 1, 0))
-        let near = TexLayerCPU.compose(parts([red, green2]), width: 64, height: 48)
-        XCTAssertEqual(near.rgb[c], 0.5, accuracy: 0.02); XCTAssertEqual(near.rgb[c + 1], 0.5, accuracy: 0.02)
+        // 깊이가 1.0과 1.5로 다르면 서로 다른 표면: 같은 가중치면 더 가까운 쪽이 이긴다(동점).
+        let a = TexTest.quadLayer(id: 1, z: 1.0, color: SIMD3<Float>(0.8, 0.2, 0.2)), b = TexTest.quadLayer(id: 2, z: 1.5, color: SIMD3<Float>(0.2, 0.8, 0.2))
+        let far = TexLayerCPU.compose(parts([a, b], cam: cam), width: 64, height: 48)
+        XCTAssertEqual(far.rgb[c], 0.8, accuracy: 0.01); XCTAssertEqual(far.rgb[c + 1], 0.2, accuracy: 0.01, "먼 레이어가 가까운 면 위로 섞임")
+        // 같은 표면(1.0 vs 1.04)이고 색이 비슷하면 가중 평균
+        let b2 = TexTest.quadLayer(id: 3, z: 1.04, color: SIMD3<Float>(0.7, 0.3, 0.2))
+        let near = TexLayerCPU.compose(parts([a, b2], cam: cam), width: 64, height: 48)
+        XCTAssertEqual(near.rgb[c], 0.75, accuracy: 0.02); XCTAssertEqual(near.rgb[c + 1], 0.25, accuracy: 0.02)
+        XCTAssertEqual(near.agree[c / 3], 2)
+        // 같은 표면이지만 색이 크게 다르면 평균(회색 유령) 대신 가중치가 큰 대표 관측 하나
+        let r = TexTest.quadLayer(id: 4, z: 1.0, color: SIMD3<Float>(1, 0, 0)), g = TexTest.quadLayer(id: 5, z: 1.03, color: SIMD3<Float>(0, 1, 0))
+        let rep = TexLayerCPU.compose(parts([r, g], cam: cam, weights: [0.4, 0.9]), width: 64, height: 48)
+        XCTAssertEqual(rep.rgb[c], 0, accuracy: 0.01); XCTAssertEqual(rep.rgb[c + 1], 1, accuracy: 0.01, "색이 크게 다른 두 관측을 평균함")
         // 아무 레이어도 덮지 않은 화소는 비어 있다
         XCTAssertEqual(far.alpha[0], 0)
+    }
+
+    func testWrongNearestDepthDoesNotEraseTwoAgreeingLayers() {
+        // 가장 가까운 깊이 하나(0.8, 빨강)가 틀려도 같은 표면(1.0)에 동의하는 두 레이어(파랑)가 이긴다: 구방식은 가장 가까운 깊이를 표면으로 정해 파랑을 버렸다.
+        let k = RTIntrinsics(fx: 100, fy: 100, cx: 32, cy: 24, width: 64, height: 48)
+        let cam = TexCamera(pose: .identity, k: k)
+        let ls = [TexTest.quadLayer(id: 1, z: 0.8, color: SIMD3<Float>(1, 0, 0)), TexTest.quadLayer(id: 2, z: 1.0, color: SIMD3<Float>(0, 0, 1)), TexTest.quadLayer(id: 3, z: 1.02, color: SIMD3<Float>(0, 0.1, 0.9))]
+        let c = (24 * 64 + 32) * 3
+        let out = TexLayerCPU.compose(parts(ls, cam: cam), width: 64, height: 48)
+        XCTAssertLessThan(out.rgb[c], 0.1, "틀린 가까운 깊이가 정상 관측을 배제함"); XCTAssertGreaterThan(out.rgb[c + 2], 0.8)
+        let legacy = parts(ls, cam: cam)
+        var dmin = Float.infinity
+        for p in legacy { dmin = min(dmin, p.z[c / 3]) }
+        XCTAssertEqual(dmin, 0.8, accuracy: 0.01, "시험 전제(가장 가까운 깊이는 틀린 관측)")
+    }
+
+    func testPixelsSupportedByASingleLayerAreDroppedUnlessNextToAgreedPixels() {
+        // 레이어 3개: A·B가 가운데에서 같은 표면에 동의하고, C는 멀리 떨어진 곳에서 혼자 본다. 혼자 본 조각은 지운다(배경 조각·유령).
+        let k = RTIntrinsics(fx: 100, fy: 100, cx: 80, cy: 60, width: 160, height: 120)
+        let cam = TexCamera(pose: .identity, k: k)
+        func quadAt(_ id: Int, x: Float, half: Float) -> TexLayer {
+            let c = [SIMD4<Float>(x - half, -half, 1, 0), SIMD4<Float>(x + half, -half, 1, 0), SIMD4<Float>(x - half, half, 1, 0), SIMD4<Float>(x + half, half, 1, 0)]
+            var tex = [UInt8](repeating: 0, count: TexLayerConst.bytesPerQuad)
+            for i in 0..<64 { tex[i * 4] = 200; tex[i * 4 + 1] = 200; tex[i * 4 + 2] = 200; tex[i * 4 + 3] = 255 }
+            return TexLayer(id: id, timestamp: 0, pose: .identity, k: TexTest.K, corners: c, texels: tex, cells: [0], gain: SIMD3<Float>(repeating: 1))
+        }
+        let out = TexLayerCPU.compose(parts([quadAt(1, x: 0, half: 0.1), quadAt(2, x: 0, half: 0.1), quadAt(3, x: 0.5, half: 0.05)], cam: cam), width: 160, height: 120)
+        XCTAssertEqual(out.alpha[60 * 160 + 80], 1, "두 레이어가 동의한 가운데가 지워짐")
+        XCTAssertEqual(out.alpha[60 * 160 + 130], 0, "혼자 본 조각이 남음")
+        // 레이어가 2개 이하(시작 직후)면 단독 관측도 그린다
+        let early = TexLayerCPU.compose(parts([quadAt(1, x: 0.5, half: 0.05)], cam: cam), width: 160, height: 120)
+        XCTAssertEqual(early.alpha[60 * 160 + 130], 1)
+    }
+
+    func testBackFacingQuadsAreCulledFromTheOtherSide() {
+        let layer = TexTest.quadLayer(id: 1, z: 1.0, color: SIMD3<Float>(0.5, 0.5, 0.5))
+        let k = RTIntrinsics(fx: 100, fy: 100, cx: 32, cy: 24, width: 64, height: 48)
+        // 제품 뒤쪽(z=2)에서 −z 방향으로 본다: 촬영한 면의 뒷면이 보인다.
+        let behind = RTPose(rot: simd_float3x3(columns: (SIMD3<Float>(-1, 0, 0), SIMD3<Float>(0, 1, 0), SIMD3<Float>(0, 0, -1))), center: SIMD3<Float>(0, 0, 2))
+        let cam = TexCamera(pose: behind, k: k)
+        XCTAssertFalse(TexLayerCPU.renderLayer(layer, cam: cam, cull: true).z.contains { $0.isFinite }, "뒷면이 그려짐")
+        XCTAssertTrue(TexLayerCPU.renderLayer(layer, cam: cam, cull: false).z.contains { $0.isFinite }, "시험 전제(컬링을 끄면 보임)")
+        XCTAssertTrue(TexLayerCPU.renderLayer(layer, cam: TexCamera(pose: .identity, k: k), cull: true).z.contains { $0.isFinite }, "앞면이 지워짐")
+    }
+
+    // 선택 시험용: 한 사각형으로 된 레이어(이 사각형이 덮는 칸을 선택이 센다). 시점 중심은 centerX.
+    private func segmentLayer(id: Int, centerX: Float, segX: Float, half: Float = 0.09) -> TexLayer {
+        let c = [SIMD4<Float>(segX - half, -half, 1, 0), SIMD4<Float>(segX + half, -half, 1, 0), SIMD4<Float>(segX - half, half, 1, 0), SIMD4<Float>(segX + half, half, 1, 0)]
+        var tex = [UInt8](repeating: 0, count: TexLayerConst.bytesPerQuad)
+        for i in 0..<64 { tex[i * 4] = 180; tex[i * 4 + 1] = 180; tex[i * 4 + 2] = 180; tex[i * 4 + 3] = 255 }
+        return TexLayer(id: id, timestamp: 0, pose: RTPose(rot: matrix_identity_float3x3, center: SIMD3<Float>(centerX, 0, 0)), k: TexTest.K, corners: c, texels: tex, cells: [0], gain: SIMD3<Float>(repeating: 1))
+    }
+
+    private var segmentScene: [TexLayer] {
+        // 6개 구간(x = 0, 0.2, ... 1.0), 구간마다 약간 다른 두 시점에서 본 레이어 2개 = 12개
+        (0..<12).map { segmentLayer(id: $0, centerX: Float($0 / 2) * 0.2 + Float($0 % 2) * 0.02, segX: Float($0 / 2) * 0.2) }
+    }
+
+    private func segmentView(x: Float) -> TexView {
+        TexView(pose: SV2Test.pose(x: x), k: RTIntrinsics(fx: 40, fy: 40, cx: 50, cy: 40, width: 100, height: 80))
+    }
+
+    func testCoverageSelectionCoversSurfacesThatNearestPoseSelectionMisses() {
+        let layers = segmentScene
+        let view = segmentView(x: 0.5)
+        let nearest = TexLayerSelect.pick(layers, pose: view.pose, k: 5)
+        let nearestSegments = Set(nearest.map { $0.layer.id / 2 })
+        let sel = TexLayerSelect.coverage(layers, view: view, prev: [])
+        let segments = Set(sel.picked.map { $0.layer.id / 2 })
+        GSOTest.log("texSelect", ["nearestSegments": Double(nearestSegments.count), "coverageSegments": Double(segments.count), "picked": Double(sel.picked.count), "estCoverage": Double(sel.estimatedCoverage)])
+        XCTAssertLessThanOrEqual(nearestSegments.count, 4, "시험 전제(가까운 시점 선택은 일부만 덮는다)")
+        XCTAssertGreaterThanOrEqual(segments.count, 5, "커버리지 선택이 시야의 표면 구간을 덮지 못함")
+        XCTAssertLessThanOrEqual(sel.picked.count, TexLayerConst.blendMax)
+        XCTAssertGreaterThan(sel.estimatedCoverage, 0.9)
+    }
+
+    func testCoverageSelectionIgnoresSurfacesSeenFromTheBackAndEmptyInput() {
+        XCTAssertTrue(TexLayerSelect.coverage([], view: segmentView(x: 0.5), prev: []).picked.isEmpty)
+        // 뒤에서 본 시점: 앞면 판정이 실패해 확인된 표면이 없다 → 가까운 레이어를 최소 개수만 고른다(빈 화면 대신 최소 표시).
+        let behind = TexView(pose: RTPose(rot: simd_float3x3(columns: (SIMD3<Float>(-1, 0, 0), SIMD3<Float>(0, 1, 0), SIMD3<Float>(0, 0, -1))), center: SIMD3<Float>(0.5, 0, 2)),
+                             k: RTIntrinsics(fx: 40, fy: 40, cx: 50, cy: 40, width: 100, height: 80))
+        let sel = TexLayerSelect.coverage(segmentScene, view: behind, prev: [])
+        XCTAssertEqual(sel.targetCells, 0)
+        XCTAssertEqual(sel.picked.count, TexLayerConst.blendMin)
+    }
+
+    func testCoverageSelectionDoesNotFlickerUnderSmallCameraMotion() {
+        let layers = segmentScene
+        var prev = Set<Int>(); var changes = 0; var frames = 0
+        for step in 0..<41 {
+            let x = 0.48 + Float(step) * 0.001
+            let sel = TexLayerSelect.coverage(layers, view: segmentView(x: x), prev: prev)
+            let ids = Set(sel.picked.map { $0.layer.id })
+            if !prev.isEmpty { frames += 1; if ids != prev { changes += 1 } }
+            prev = ids
+        }
+        GSOTest.log("texSelectStability", ["changes": Double(changes), "frames": Double(frames)])
+        XCTAssertLessThanOrEqual(changes, 3, "작은 카메라 이동에서 선택이 자주 뒤집힘")
+    }
+
+    func testExposureRatioIsTheRatioOfTheSameSurfacePointsAndIgnoresSaturation() {
+        let w = 32, h = 24
+        let k = RTIntrinsics(fx: 30, fy: 30, cx: 16, cy: 12, width: w, height: h)
+        func img(_ v: SIMD3<Float>) -> [UInt8] { (0..<(w * h)).flatMap { _ in [UInt8(v.x * 255), UInt8(v.y * 255), UInt8(v.z * 255)] } }
+        let labels = [UInt8](repeating: GSOProductMask.product, count: w * h), z = [Float](repeating: 1, count: w * h)
+        let r = TexLayerPipeline.exposureRatio(rgb: img(SIMD3<Float>(0.5, 0.4, 0.3)), labels: labels, z: z, width: w, height: h, pose: .identity, k: k,
+                                               refRGB: img(SIMD3<Float>(0.4, 0.4, 0.36)), refLabels: labels, refPose: .identity, refK: k, refWidth: w, refHeight: h, minPoints: 50)
+        XCTAssertNotNil(r)
+        XCTAssertEqual(r?.x ?? 0, 0.8, accuracy: 0.02); XCTAssertEqual(r?.y ?? 0, 1.0, accuracy: 0.02); XCTAssertEqual(r?.z ?? 0, 1.2, accuracy: 0.03)
+        // 포화한 색은 비율에 쓰지 않는다 → 점이 부족해 nil
+        XCTAssertNil(TexLayerPipeline.exposureRatio(rgb: img(SIMD3<Float>(0.99, 0.99, 0.99)), labels: labels, z: z, width: w, height: h, pose: .identity, k: k,
+                                                    refRGB: img(SIMD3<Float>(0.5, 0.5, 0.5)), refLabels: labels, refPose: .identity, refK: k, refWidth: w, refHeight: h, minPoints: 50))
+    }
+
+    func testGainKeepsBrightHighlightsFromSaturating() {
+        XCTAssertEqual(TexLayerBuilder.applyGain(100, 1.15), 115, accuracy: 0.5)
+        XCTAssertEqual(TexLayerBuilder.applyGain(240, 1.4), 240, accuracy: 0.01, "하이라이트가 이득으로 포화됨")
+        XCTAssertEqual(TexLayerBuilder.applyGain(200, 1.4), 200 * (1 + 0.4 * (35.0 / 65.0)), accuracy: 0.5)
+        XCTAssertEqual(TexLayerBuilder.applyGain(120, 1), 120, accuracy: 0.001)
+    }
+
+    func testMonoOutputMeaningIsLockedToInverseDepth() {
+        // 깊이 가정이 더 잘 맞는 단안 출력(Z = a·m + b)이 들어와도 의미를 깊이로 판정하지 않는다.
+        let w = 40, h = 30
+        var anchor = [Float](repeating: 0, count: w * h), monoDepthLike = [Float](repeating: 0, count: w * h), monoInv = [Float](repeating: 0, count: w * h)
+        for y in 0..<h { for x in 0..<w {
+            let z = 1 + Float(x) / Float(w) + 0.5 * Float(y) / Float(h)
+            anchor[y * w + x] = z; monoDepthLike[y * w + x] = (z - 0.2) / 1.7; monoInv[y * w + x] = 0.6 * (1 / z) + 0.05
+        }}
+        let a = GSOMonoAlign.fitInverse(mono: monoDepthLike, anchorZ: anchor, width: w, height: h)
+        XCTAssertTrue(a == nil || a?.space == .inverseDepth)
+        let b = GSOMonoAlign.fitInverse(mono: monoInv, anchorZ: anchor, width: w, height: h)
+        XCTAssertEqual(b?.space, .inverseDepth)
+        XCTAssertGreaterThan(b?.inlierRatio ?? 0, 0.9)
+        XCTAssertGreaterThan(b?.alternativeInlierRatio ?? -1, -0.01, "깊이 가정 비교 기록이 없음")
+    }
+
+    func testMaskGuardRejectsFarContaminationAndKeepsTheProduct() {
+        let w = 64, h = 48
+        let k = RTIntrinsics(fx: 60, fy: 60, cx: 32, cy: 24, width: w, height: h)
+        let guardian = TexLayerMaskGuard()
+        func product(extra: ((Int, Int) -> Bool)? = nil) -> [UInt8] {
+            var l = [UInt8](repeating: GSOProductMask.background, count: w * h)
+            for y in 14..<34 { for x in 20..<44 { l[y * w + x] = GSOProductMask.product } }
+            if let e = extra { for y in 0..<h { for x in 0..<w where e(x, y) { l[y * w + x] = GSOProductMask.product } } }
+            return l
+        }
+        let rgb = [UInt8](repeating: 200, count: w * h * 3)
+        var z = [Float](repeating: 1.0, count: w * h)
+        for _ in 0..<14 { _ = guardian.process(labels: product(), z: z, width: w, height: h, pose: .identity, k: k, rgb: rgb) }
+        XCTAssertTrue(guardian.active, "핵이 만들어지지 않음")
+        // 제품에서 0.5 m 떨어진 곳(깊이 1.6)에 붙은 덩어리(오염)와, 떨어진 작은 조각(2D 연결성)
+        for y in 8..<16 { for x in 50..<60 { z[y * w + x] = 1.6 } }
+        let res = guardian.process(labels: product(extra: { x, y in (x >= 50 && x < 60 && y >= 8 && y < 16) || (x == 5 && y == 5) }), z: z, width: w, height: h, pose: .identity, k: k, rgb: rgb)
+        XCTAssertFalse(res.dropFrame)
+        XCTAssertEqual(res.labels[10 * w + 55], GSOProductMask.unknown, "멀리 붙은 덩어리가 제품으로 남음")
+        XCTAssertEqual(res.labels[5 * w + 5], GSOProductMask.unknown, "떨어진 작은 조각이 남음")
+        XCTAssertEqual(res.labels[24 * w + 32], GSOProductMask.product, "제품 안쪽이 지워짐")
+        XCTAssertGreaterThan(res.rejectedFar, 50)
+        // 마스크가 거의 전부 오염이면 그 프레임은 쓰지 않는다
+        var z2 = [Float](repeating: 1.0, count: w * h)
+        for y in 0..<h { for x in 0..<w { z2[y * w + x] = 2.4 } }
+        let bad = guardian.process(labels: product(), z: z2, width: w, height: h, pose: .identity, k: k, rgb: rgb)
+        XCTAssertTrue(bad.dropFrame)
+        XCTAssertFalse(bad.labels.contains(GSOProductMask.product))
+    }
+
+    func testMaskGuardColourSignalOnlyTightensGrowthNearTheProduct() {
+        let w = 64, h = 48
+        let k = RTIntrinsics(fx: 60, fy: 60, cx: 32, cy: 24, width: w, height: h)
+        var labels = [UInt8](repeating: GSOProductMask.background, count: w * h)
+        for y in 14..<34 { for x in 20..<44 { labels[y * w + x] = GSOProductMask.product } }
+        var grown = labels
+        for y in 20..<28 { for x in 47..<51 { grown[y * w + x] = GSOProductMask.product } }          // 제품 옆(약 8~12 cm) 같은 깊이의 덩어리
+        let z = [Float](repeating: 1.0, count: w * h)
+        func rgb(blue: Bool) -> [UInt8] {
+            var v = [UInt8](repeating: 0, count: w * h * 3)
+            for i in 0..<(w * h) {
+                let x = i % w
+                let c: (UInt8, UInt8, UInt8) = (blue && x >= 47) ? (40, 80, 210) : (205, 195, 185)
+                v[i * 3] = c.0; v[i * 3 + 1] = c.1; v[i * 3 + 2] = c.2
+            }
+            return v
+        }
+        func run(blue: Bool) -> TexLayerMaskGuard.Result {
+            let g = TexLayerMaskGuard()
+            for _ in 0..<14 { _ = g.process(labels: labels, z: z, width: w, height: h, pose: .identity, k: k, rgb: rgb(blue: false)) }
+            return g.process(labels: grown, z: z, width: w, height: h, pose: .identity, k: k, rgb: rgb(blue: blue))
+        }
+        let blue = run(blue: true), same = run(blue: false)
+        XCTAssertGreaterThan(blue.rejectedColour, 0, "채도 높은 낯선 색이 제품 옆에서 걸러지지 않음")
+        XCTAssertEqual(same.rejectedColour, 0, "제품과 같은 색의 자란 영역을 색 때문에 버림")
+        XCTAssertEqual(same.labels[24 * w + 49], GSOProductMask.product)
     }
 
     func testCodecAndSaveReopenKeepIDsPosesTexelsAndChecksums() throws {
@@ -170,7 +370,7 @@ final class GSOptTexLayerTests: XCTestCase {
         XCTAssertTrue((loaded.manifest["format"] as? String ?? "").contains("3DGS PLY가 아니"), "형식 설명이 일반 3DGS와 같다고 읽힘")
         // 재열기 렌더 == 저장 전 렌더(카메라 영상 없이)
         let novel = SV2Test.pose(x: 0.06)
-        let a = TexLayerCPU.render([l1, l2], cam: TexCamera(pose: novel, k: TexTest.K)), b = TexLayerCPU.render(loaded.layers, cam: TexCamera(pose: novel, k: TexTest.K))
+        let a = TexLayerCPU.render([l1, l2], cam: TexCamera(pose: novel, k: TexTest.K)).image, b = TexLayerCPU.render(loaded.layers, cam: TexCamera(pose: novel, k: TexTest.K)).image
         XCTAssertEqual(a.rgb, b.rgb); XCTAssertEqual(a.alpha, b.alpha)
         // 공유 묶음에는 PLY·상태 파일 누락 경고가 없고 본체·메타·요약이 있다
         let bundle = GSOStore.shareBundle(for: item, logsDirectory: dir)
@@ -193,7 +393,8 @@ final class GSOptTexLayerGPUTests: XCTestCase {
         XCTAssertTrue(gpu.ready, gpu.initError ?? "")
         let (l1, _, _) = TexTest.build(pose: SV2Test.pose(x: 0.0), id: 1)
         let (l2, _, _) = TexTest.build(pose: SV2Test.pose(x: 0.16), id: 2)
-        let layers = [l1, l2]
+        let (l3, _, _) = TexTest.build(pose: SV2Test.pose(x: 0.08), id: 3)
+        let layers = [l1, l2, l3]
         let novel = SV2Test.pose(x: 0.07, y: 0.01)
         let W = 480, H = 360, K = TexTest.K
         var u = RTViewMath.uniforms(pose: novel, fx: K.fx, fy: K.fy, cx: K.cx, cy: K.cy, imgW: Float(W), imgH: Float(H),
@@ -216,7 +417,9 @@ final class GSOptTexLayerGPUTests: XCTestCase {
         target.getBytes(&bytes, bytesPerRow: W * 4, from: MTLRegionMake2D(0, 0, W, H), mipmapLevel: 0)
         // CPU: Metal 프래그먼트 중심은 (x+0.5, y+0.5)이므로 주점을 0.5 줄인다.
         let kc = RTIntrinsics(fx: K.fx, fy: K.fy, cx: K.cx - 0.5, cy: K.cy - 0.5, width: W, height: H)
-        let cpu = TexLayerCPU.render(layers, cam: TexCamera(pose: novel, k: kc))
+        let picks = TexLayerSelect.pick(layers, pose: novel)
+        let cpuParts = picks.map { p -> TexLayerCPU.Part in let r = TexLayerCPU.renderLayer(p.layer, cam: TexCamera(pose: novel, k: kc)); return (r.rgb, r.z, p.weight) }
+        let cpu = TexLayerCPU.compose(cpuParts, width: W, height: H)
         var gpuCov = 0, cpuCov = 0, both = 0
         var se: Double = 0
         for p in 0..<(W * H) {
@@ -231,7 +434,7 @@ final class GSOptTexLayerGPUTests: XCTestCase {
         }
         let psnr = both > 0 ? -10 * log10(max(se / Double(both * 3), 1e-12)) : 0
         let iou = Double(both) / Double(max(1, gpuCov + cpuCov - both))
-        GSOTest.log("texGPUvsCPU", ["gpuCov": Double(gpuCov), "cpuCov": Double(cpuCov), "iou": iou, "psnr": psnr, "quads": Double(l1.count + l2.count)])
+        GSOTest.log("texGPUvsCPU", ["gpuCov": Double(gpuCov), "cpuCov": Double(cpuCov), "iou": iou, "psnr": psnr, "quads": Double(l1.count + l2.count + l3.count)])
         XCTAssertGreaterThan(gpuCov, 2000)
         XCTAssertGreaterThan(iou, 0.9, "Metal과 CPU가 덮는 화소가 다름")
         XCTAssertGreaterThan(psnr, 28, "Metal과 CPU의 색이 다름(\(psnr) dB)")
@@ -283,17 +486,43 @@ final class GSOptTexLayerPipelineTests: XCTestCase {
         XCTAssertEqual(p.layers.last?.id, p.layers.map { $0.id }.max(), "최신 레이어를 버림")
     }
 
-    func testExposureGainMatchesLaterFramesToTheCausalReference() {
+    /// 마스크를 깊이 격자(320×240)로 옮긴다(마스크 점검·노출 이득은 두 격자가 같을 때 작동한다).
+    private func gridMask(_ pose: RTPose, id: Int) -> GSOProductMask {
+        let m = ProductTest.mask(scene: scene, pose: pose, id: id)
+        return GSOProductMask(width: 320, height: 240, labels: m.resampled(width: 320, height: 240), trusted: true, iou: 1, areaFraction: m.areaFraction, targetID: 1, note: "synthetic320")
+    }
+
+    func testExposureGainStaysNearOneWhenExposureIsConstantAndStaysInsideTheClamp() {
         let p = TexLayerPipeline(config: .init())
         let mono = GSOTest.SynthMono()
         for i in 0..<9 {
             let pose = SV2Test.pose(x: -0.2 + 0.04 * Float(i))
-            // 처음 5장은 기준, 이후 프레임은 밝기 1.25배(자동 노출이 바뀐 경우)
-            _ = feed(p, mono: mono, id: i + 1, pose: pose, mask: ProductTest.mask(scene: scene, pose: pose, id: i + 1), scale: i >= 6 ? 1.25 : 1)
+            // 마지막 세 프레임은 자동 노출이 바뀐 경우(1.15배)
+            _ = feed(p, mono: mono, id: i + 1, pose: pose, mask: gridMask(pose, id: i + 1), scale: i >= 6 ? 1.15 : 1)
         }
-        GSOTest.log("texGain", ["gainR": Double(p.lastGain.x), "gainG": Double(p.lastGain.y), "gainB": Double(p.lastGain.z)])
-        XCTAssertLessThan(p.lastGain.x, 0.9, "밝아진 프레임에 노출 이득이 적용되지 않음")
-        XCTAssertGreaterThan(p.lastGain.x, 0.7)
+        GSOTest.log("texGain", ["gainMinR": Double(p.gainMin.x), "gainMaxR": Double(p.gainMax.x), "last": Double(p.lastGain.x), "layers": Double(p.layers.count)])
+        XCTAssertGreaterThanOrEqual(p.layers.count, 3)
+        XCTAssertGreaterThanOrEqual(p.gainMin.x, 0.88 - 1e-4); XCTAssertLessThanOrEqual(p.gainMax.x, 1.15 + 1e-4)
+        XCTAssertGreaterThan(p.gainMax.x, 0.97, "처음 프레임의 이득이 1보다 많이 낮음(제품 평균색을 노출로 오인)")
+    }
+
+    func testPipelineMaskGuardDropsAContaminatedMaskWithoutRemovingExistingLayers() {
+        let p = TexLayerPipeline(config: .init())
+        let mono = GSOTest.SynthMono()
+        for i in 0..<12 {
+            let pose = SV2Test.pose(x: -0.2 + 0.03 * Float(i))
+            _ = feed(p, mono: mono, id: i + 1, pose: pose, mask: gridMask(pose, id: i + 1))
+        }
+        let before = p.layers.count
+        XCTAssertGreaterThanOrEqual(before, 3)
+        // 배경(깊이 1.6)까지 전부 제품으로 표시한 오염 마스크: 제품 핵에서 멀어 대부분이 불확실로 바뀐다.
+        let pose = SV2Test.pose(x: 0.2)
+        let all = GSOProductMask(width: 320, height: 240, labels: [UInt8](repeating: GSOProductMask.product, count: 320 * 240), trusted: true, iou: 1, areaFraction: 1, targetID: 1, note: "contaminated")
+        let r = feed(p, mono: mono, id: 40, pose: pose, mask: all)
+        GSOTest.log("texGuard", ["skipped": r.skipped == "maskContaminated" ? 1 : 0, "layersBefore": Double(before), "layersAfter": Double(p.layers.count), "rejected": Double(p.guardRejectedPixels)])
+        XCTAssertGreaterThanOrEqual(p.layers.count, before, "기존 레이어가 사라짐")
+        XCTAssertGreaterThan(p.guardRejectedPixels, 0)
+        if r.skipped == nil { XCTAssertEqual(p.layers.count, before + 1) } else { XCTAssertEqual(r.skipped, "maskContaminated"); XCTAssertEqual(p.layers.count, before) }
     }
 
     func testTextureConfigDisablesGaussianOptimisationAndSplitting() {

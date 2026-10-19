@@ -317,10 +317,13 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         info["appVersion"] = GonggiBuildInfo.versionLine
         info["machine"] = ExpSys.machine
         info["server"] = false
-        info["sceneOptimization"] = true
+        info["sceneOptimization"] = texPipeline == nil
         info["pretrainedModelInference"] = "Depth Anything V2 Small (Core ML, 기기 내 추론만, 재학습 없음)"
         info["orientation"] = "capturedImage=sensorLandscapeRight, display=portrait(app locked)"
-        info["algorithm"] = "ARKit pose + stereo anchors + monocular depth aligned to anchors -> persistent gaussians -> on-device photometric optimisation (sparse Adam, CPU forward/backward)"
+        info["algorithm"] = texPipeline != nil
+            ? "ARKit pose + stereo anchors + monocular depth (inverse-depth locked) aligned to anchors -> mask guard -> per-keyframe textured surfel layers (8x8 texels per 8x8-pixel cell) -> coverage-based layer selection + same-surface consensus blend. No gaussians, no per-scene optimisation."
+            : "ARKit pose + stereo anchors + monocular depth aligned to anchors -> persistent gaussians -> on-device photometric optimisation (sparse Adam, CPU forward/backward)"
+        info["representation"] = texPipeline != nil ? "texture-layers" : "gaussians"
         if let pc = config.product {
             info["product"] = ["enabled": true, "minKeyframeIntervalS": pc.minKeyframeInterval, "bgAlphaWeight": Double(pc.bgAlphaWeight), "bgFloorLogit": Double(pc.bgFloorLogit),
                                "optDuty": pc.optDuty, "hiValidation": pc.hiValidation, "maskGrid": "\(tracker?.config.gridWidth ?? 0)x\(tracker?.config.gridHeight ?? 0)",
@@ -407,7 +410,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     /// 지금까지 모은 제품 3D 중심을 이 프레임에 투영한 센서 영상 정규화 좌표(마스크 추적에서 같은 대상을 고르는 단서).
     private func projectedProductCenter(_ job: SV2Engine.Job) -> SIMD2<Float>? {
         var centre = pipeline.productBounds.center
-        if let tp = texPipeline, let b = TexLayerSelect.bounds(tp.layers) { centre = (b.min + b.max) * 0.5 }
+        if let tp = texPipeline, let b = TexLayerSelect.robustBounds(tp.layers) { centre = (b.min + b.max) * 0.5 }
         guard let c = centre else { return nil }
         let p = job.pose.worldToCam(c)
         guard p.z > 0.05 else { return nil }
@@ -419,13 +422,13 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let pb = pipeline.productBounds
         var d: [String: Any] = ["productMode": true, "targetID": tracker?.targetID ?? 1, "productBoundsValid": pb.isValid]
         func arr(_ v: SIMD3<Float>) -> [Double] { [Double(v.x), Double(v.y), Double(v.z)] }
-        if let tp = texPipeline, let tb = TexLayerSelect.bounds(tp.layers) {
+        if let tp = texPipeline, let tb = TexLayerSelect.robustBounds(tp.layers) {
             d["productBounds"] = ["min": arr(tb.min), "max": arr(tb.max)]
             d["productCenter"] = arr((tb.min + tb.max) * 0.5)
             d["productExtentMeters"] = arr(tb.max - tb.min)
             d["productBoundsValid"] = true
             d["representation"] = "texture-layers"
-            d["textureLayers"] = ["layers": tp.layers.count, "quads": tp.quadCount, "bytes": tp.bytes, "removedForBudget": tp.removedForBudget, "maskSkipped": tp.maskSkipped, "depthSkipped": tp.depthSkipped]
+            d["textureLayers"] = texStatsDict(tp)
         } else if let b = pb.box {
             d["productBounds"] = ["min": arr(b.lo), "max": arr(b.hi)]
             d["productExtentMeters"] = arr(b.hi - b.lo)
@@ -609,7 +612,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         rec.toMapMs = (tDone - captureHost) * 1000
         if rec.skipped != nil {
             statLock.lock()
-            if rec.skipped == "maskUncertain" { for (k, v) in rec.gaps { extra.gapTotals[k, default: 0] += v } } else { blurRejected += 1 }
+            if rec.skipped == "maskUncertain" || rec.skipped == "maskContaminated" { for (k, v) in rec.gaps { extra.gapTotals[k, default: 0] += v } } else { blurRejected += 1 }
             statLock.unlock()
             return
         }
@@ -809,7 +812,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         statLock.unlock()
         pendingPublishCaptures.removeAll()
         lastPublishHost = now
-        if let tp = texPipeline { RTViewerBounds.shared.bounds = TexLayerSelect.bounds(tp.layers) } else { RTViewerBounds.shared.bounds = set.bounds() }
+        if let tp = texPipeline { RTViewerBounds.shared.bounds = TexLayerSelect.robustBounds(tp.layers) } else { RTViewerBounds.shared.bounds = set.bounds() }
     }
 
     // MARK: 모니터·거버너
@@ -927,7 +930,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             l.maskMsP50 = RTStat.percentile(maskSamples, 0.5)
             l.maskNote = maskNoteLast
             let pb = pipeline.productBounds
-            if let tp = texPipeline { l.texText = "텍스처 레이어 \(tp.layers.count)개 · 사각형 \(tp.quadCount)개 · 메모리 \(String(format: "%.1f", Double(tp.bytes) / 1_048_576)) MB · 마스크로 건너뜀 \(tp.maskSkipped) · 깊이 없어 건너뜀 \(tp.depthSkipped) · 예산으로 버린 레이어 \(tp.removedForBudget)" }
+            if let tp = texPipeline { l.texText = "텍스처 레이어 \(tp.layers.count)개 · 사각형 \(tp.quadCount)개 · 메모리 \(String(format: "%.1f", Double(tp.bytes) / 1_048_576)) MB · 건너뜀(마스크 \(tp.maskSkipped) · 마스크 오염 \(tp.maskContaminatedSkipped) · 깊이 없음 \(tp.depthSkipped)) · 마스크 점검으로 바꾼 화소 \(tp.guardRejectedPixels) · 예산으로 버린 레이어 \(tp.removedForBudget)" }
             l.boundsText = pb.isValid ? "확정(점 \(pb.points.count)개, 시점 \(pb.viewIDs.count)개)" : "모으는 중(점 \(pb.points.count)/\(pb.minPoints), 시점 \(pb.viewIDs.count)/\(pb.minViews))"
             l.coverageText = "관측한 방향 \(progressLatest.azimuthObserved)/\(progressLatest.azimuthBins) 방위 · \(progressLatest.directionCells)/\(progressLatest.directionBins) 칸 · 복원이 부족한 가우시안 \(Int(progressLatest.insufficientShare * 100))% (비추지 않은 방향은 복원하지 않아요)"
             l.refineCellsPct = progressLatest.cellsTotal > 0 ? Double(progressLatest.fractionCells) * 100 : nil
@@ -1001,14 +1004,27 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
     // MARK: 텍스처 레이어 요약
 
+    private func texStatsDict(_ tp: TexLayerPipeline) -> [String: Any] {
+        ["layers": tp.layers.count, "quads": tp.quadCount, "bytes": tp.bytes, "removedForBudget": tp.removedForBudget, "maskSkipped": tp.maskSkipped,
+         "maskContaminatedSkipped": tp.maskContaminatedSkipped, "depthSkipped": tp.depthSkipped, "blurSkipped": tp.blurSkipped,
+         "maskGuardActiveFrames": tp.guardFramesActive, "maskGuardRejectedPixels": tp.guardRejectedPixels, "maskGuardFramesDropped": tp.maskGuard.framesDropped,
+         "gainMin": [Double(tp.gainMin.x), Double(tp.gainMin.y), Double(tp.gainMin.z)], "gainMax": [Double(tp.gainMax.x), Double(tp.gainMax.y), Double(tp.gainMax.z)],
+         "monoSpaceLocked": tp.config.lockMonoInverse ? "inverseDepth" : "auto", "monoInverseFits": tp.monoInverseFits, "monoDepthWouldHaveWon": tp.monoDepthWouldWin,
+         "monoFromOriginalWindow": tp.config.monoFromOriginalWindow, "texLayersVersion": 2]
+    }
+
     private func texSummaryText(_ tp: TexLayerPipeline) -> String {
-        statLock.lock(); let ms = maskStats, msamples = maskSamples; statLock.unlock()
+        statLock.lock(); let ms = maskStats, msamples = maskSamples; let gt = (gaps: extra.gapTotals, candidates: extra.candidatePixels); statLock.unlock()
         var t = "텍스처 스플랫 레이어 (고정된 제품 + 움직이는 휴대폰)\n"
-        t += "  표현: 키프레임마다 제품 영역 전체를 8×8 원본 화소 셀의 평면 사각형 + 8×8 RGBA 텍스처로 유지하고, 새 시점에서는 가까운 \(TexLayerConst.blendK)개 레이어를 시점 방향 가중치와 깊이 일관성으로 혼합한다. 가우시안 지도·장면별 최적화(Adam)·분할을 쓰지 않았다. 일반 3DGS PLY가 아니다(.kmots).\n"
+        t += "  표현: 키프레임마다 제품 영역 전체를 8×8 원본 화소 셀의 평면 사각형 + 8×8 RGBA 텍스처로 유지한다. 새 시점에서는 시야의 실제 표면을 덮는 레이어를 최대 \(TexLayerConst.blendMax)개(앞면만) 골라, 화소마다 가중치가 가장 큰 깊이를 표면으로 정하고 그 표면에 일치하는 관측만 혼합한다(색이 서로 다르면 대표 관측 하나). 같은 표면에 동의하는 레이어가 2개 미만인 화소는 가장자리 근처만 남긴다. 가우시안 지도·장면별 최적화(Adam)·분할을 쓰지 않았다. 일반 3DGS PLY가 아니다(.kmots).\n"
         t += "  레이어 \(tp.layers.count)개 · 사각형 \(tp.quadCount)개 · 메모리 \(String(format: "%.1f", Double(tp.bytes) / 1_048_576)) MB · 예산(최대 \(tp.config.maxLayers))으로 버린 레이어 \(tp.removedForBudget)\n"
         t += "  마스크: 신뢰 \(ms.trusted)장 · 불확실 \(ms.uncertain)장(이 프레임은 레이어를 만들지 않음), 마스크 시간 p50 \(String(format: "%.0f", RTStat.percentile(msamples, 0.5) ?? 0))ms\n"
-        t += "  건너뜀: 마스크 \(tp.maskSkipped) · 깊이 없음 \(tp.depthSkipped) · 흐림 \(tp.blurSkipped)\n"
-        t += "  깊이는 스테레오 앵커에 맞춘 단안 모델 추정이며 독립 기준으로 검증하지 않았다(깊이 정확도 아님). 관측하지 않은 방향은 복원하지 않는다. 연구 기록: " + (recorder != nil ? "켜짐(자동 업로드 없음)" : "꺼짐 — 재생 자료 없음") + "\n\n"
+        t += "  마스크 점검(연결성·3D 공간 일관성·색 보조): 점검이 작동한 프레임 \(tp.guardFramesActive)장, 불확실로 바꾼 화소 \(tp.guardRejectedPixels)개, 오염이 커서 쓰지 않은 프레임 \(tp.maskContaminatedSkipped)장\n"
+        t += "  건너뜀: 마스크 \(tp.maskSkipped) · 마스크 오염 \(tp.maskContaminatedSkipped) · 깊이 없음 \(tp.depthSkipped) · 흐림 \(tp.blurSkipped)\n"
+        t += "  노출 이득(겹치는 같은 표면 점의 직전 프레임 색 비율을 이어 곱함, 적용 범위 0.88~1.15, 밝은 화소는 덜 적용): 최소 \(String(format: "%.2f", tp.gainMin.x))/\(String(format: "%.2f", tp.gainMin.y))/\(String(format: "%.2f", tp.gainMin.z)) · 최대 \(String(format: "%.2f", tp.gainMax.x))/\(String(format: "%.2f", tp.gainMax.y))/\(String(format: "%.2f", tp.gainMax.z))\n"
+        t += "  사용한 해상도: " + tp.resolutionInfo.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " · ") + "\n"
+        t += "  미생성·제외 이유(후보 셀 \(gt.candidates)개 중): " + gt.gaps.sorted { $0.value > $1.value }.map { "\($0.key) \($0.value)" }.joined(separator: " · ") + "\n"
+        t += "  깊이: 스테레오 앵커에 맞춘 단안 모델 추정이며 독립 기준으로 검증하지 않았다(깊이 정확도 아님). 단안 출력 의미는 역깊이로 고정했고(역깊이 정렬 \(tp.monoInverseFits)회, 깊이 가정이 더 잘 맞았을 참고 횟수 \(tp.monoDepthWouldWin)회), 단안 입력은 " + (tp.config.monoFromOriginalWindow ? "원본 창(960×720)에서 상자 평균으로 줄여 만들었다" : "작은 영상(320 폭)을 늘려 만들었다") + ". 관측하지 않은 방향은 복원하지 않는다. 연구 기록: " + (recorder != nil ? "켜짐(자동 업로드 없음)" : "꺼짐 — 재생 자료 없음") + "\n\n"
         return t
     }
 
@@ -1077,27 +1093,30 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let rollbacks = pipeline.rollbacks
         let ms = { (c: Double?) -> String in c.map { String(format: "%.1f", $0) } ?? "—" }
 
-        var t = "가우시안 최적화 실험 요약\n종료: \(endReason.label)\n\n"
-        t += "[구분] 서버를 쓰지 않았다. 사전학습 깊이 모델은 기기 내 추론만 했다(재학습 없음). 촬영 중 가우시안 파라미터를 반복 최적화했다(장면별 최적화이며 '완전 무학습'이 아니다). 렌더 FPS는 생성 속도나 화질 지표가 아니다.\n\n"
+        let isTex = texPipeline != nil
+        var t = (isTex ? "텍스처 레이어(제품) 실행 요약\n종료: \(endReason.label)\n\n" : "가우시안 최적화 실험 요약\n종료: \(endReason.label)\n\n")
+        t += isTex ? "[구분] 서버를 쓰지 않았다. 사전학습 깊이 모델은 기기 내 추론만 했다(재학습 없음). 이 실행은 가우시안을 만들지 않았고 장면별 최적화도 하지 않았다(텍스처 표면 레이어). 렌더 FPS는 생성 속도나 화질 지표가 아니다.\n\n" : "[구분] 서버를 쓰지 않았다. 사전학습 깊이 모델은 기기 내 추론만 했다(재학습 없음). 촬영 중 가우시안 파라미터를 반복 최적화했다(장면별 최적화이며 '완전 무학습'이 아니다). 렌더 FPS는 생성 속도나 화질 지표가 아니다.\n\n"
         t += "입력\n  ARKit 프레임 \(recv)개, 키프레임 채택 \(kfs)개, 처리 \(proc)개, 대기 중 버려진 것 \(dropped)개, 흐림으로 거부 \(blur)개\n"
         t += "  키프레임 거부 사유: \(rejects.sorted { $0.value > $1.value }.map { "\($0.key)=\($0.value)" }.joined(separator: ", "))\n"
         t += "  추적 상태 전환 \(trans)회, 세그먼트 \(segs)개 (\(events.joined(separator: ", ")))\n\n"
         t += "처음 도달 시각 (시작 후 초)\n  첫 입력 \(f(l.firstInputS, 2)) · 첫 정렬된 지도(단안 정렬) \(f(l.firstAlignedS, 2)) · 첫 후보 \(f(cp.map { $0 - startedHost }, 2)) · 첫 안정(독립 증거 3회) \(f(st.map { $0 - startedHost }, 2)) · 첫 표시 \(f(l.firstDisplayS, 2))\n\n"
         t += "지연 (캡처 시각 기준)\n  → 지도 반영 p50 \(f(p50)) / p95 \(f(p95)) ms (\(tm.count)개)\n  → 렌더용 게시 p50 \(f(q50)) / p95 \(f(q95)) ms (\(tp.count)개)\n  → 실제 화면 표시 p50 \(f(d50)) / p95 \(f(d95)) ms (\(td.count)개, 시각 출처: \(dsrc.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")); gpuEnd는 present 시각을 읽지 못해 GPU 완료 시각으로 근사한 값)\n"
         t += "  키프레임 단계 p50/p95(ms): " + stage.keys.sorted().map { "\($0) \(f(stage[$0]))/\(f(stage95[$0]))" }.joined(separator: ", ") + "\n  처리 대기열 최대 \(mq)\n\n"
-        t += "깊이\n  단안 모델 실행 \(tot.monoRuns)회, 밀집 깊이로 처리한 키프레임 \(monoKFs), 스테레오만 \(stereoOnly), 정렬 내부점 비율 중앙값 \(f(fitRatio.map { $0 * 100 }))%\n  모델 출력 의미 판정(새로 맞춘 키프레임): 역깊이 가정 \(spaceInv) · 깊이 가정 \(spaceDep)\n\n"
+        t += "깊이\n  단안 모델 실행 \(tot.monoRuns)회, 밀집 깊이로 처리한 키프레임 \(monoKFs), 스테레오만 \(stereoOnly), 정렬 내부점 비율 중앙값 \(f(fitRatio.map { $0 * 100 }))%\n  모델 출력 의미 판정(새로 맞춘 키프레임): 역깊이 가정 \(spaceInv) · 깊이 가정 \(spaceDep)" + (isTex ? " (텍스처 레이어 경로는 역깊이로 고정)" : "") + "\n\n"
         let ex = extra
-        t += "정밀화·검증\n  원본 고해상도 창 정밀화 반복 \(ex.refineIterations)회(묶음 \(ex.refineSlices)개, \(f(ex.refineMs / 1000, 1))초), 선택적 분할 \(ex.splits)개, 앞쪽 오표면 의심 \(ex.suspect)개\n"
-        t += "  갱신 전후 검증 \(ex.validatedSlices)묶음(공백 \(ex.validationSkipped), 검증 시간 합 \(f(ex.validationMs / 1000, 1))초), 롤백 \(pipeline.rollbacks)회: " + (ex.rollbackReasons.isEmpty ? "없음" : ex.rollbackReasons.map { "\($0.key) \($0.value)" }.joined(separator: ", ")) + "\n"
-        t += "  미생성 이유(삽입 후보 화소 \(ex.candidatePixels)개 중): " + ex.gapTotals.sorted { $0.value > $1.value }.map { "\($0.key) \($0.value)" }.joined(separator: " · ") + "\n"
-        t += "  열·메모리 제한으로 최적화를 쉰 시간 \(f(ex.thermalSkipMs, 1))초, 중지·재개 기록 \(ex.pauseEvents.count)건 " + ex.pauseEvents.map { "[\($0.event)]" }.joined(separator: "") + "\n"
-        t += "  사용한 해상도: \(l.resolutionText)\n  원본 고해상도 보관 \(f(l.hiCacheMB, 1)) MB\n\n"
-        t += "가우시안 지도\n  \(l.gaussians)개 (임시 \(l.temporary) · 후보 \(l.candidate) · 안정 \(l.stable)); 누적 삽입 \(tot.inserted) (스테레오 확인 \(tot.stereoInserted) · 단안 \(tot.monoInserted)), 제거 \(tot.pruned), 상한으로 못 만든 \(tot.rejectedByCap)\n\n"
-        t += "최적화\n  반복 \(tot.iterations)회(묶음 \(sl.count)개), 위치가 의미 있게 움직인 갱신 \(tot.moved), 비정상 gradient 건너뜀 \(tot.nonFinite), 롤백 \(rollbacks)회\n"
-        t += "  반복당 p50/p95(ms): " + opt.keys.sorted().map { "\($0) \(f(opt[$0], 1))/\(f(opt95[$0], 1))" }.joined(separator: ", ") + "\n"
-        t += "  훈련 시점의 광도 손실(Charbonnier): 처음 묶음 \(f(lossFirst.isEmpty ? nil : lossFirst.reduce(0, +) / Double(lossFirst.count), 4)) → 마지막 묶음 \(f(lossLast.isEmpty ? nil : lossLast.reduce(0, +) / Double(lossLast.count), 4)) (훈련에 쓴 사진의 손실이며 화질 증거가 아니다)\n\n"
+        if !isTex {
+            t += "정밀화·검증\n  원본 고해상도 창 정밀화 반복 \(ex.refineIterations)회(묶음 \(ex.refineSlices)개, \(f(ex.refineMs / 1000, 1))초), 선택적 분할 \(ex.splits)개, 앞쪽 오표면 의심 \(ex.suspect)개\n"
+            t += "  갱신 전후 검증 \(ex.validatedSlices)묶음(공백 \(ex.validationSkipped), 검증 시간 합 \(f(ex.validationMs / 1000, 1))초), 롤백 \(pipeline.rollbacks)회: " + (ex.rollbackReasons.isEmpty ? "없음" : ex.rollbackReasons.map { "\($0.key) \($0.value)" }.joined(separator: ", ")) + "\n"
+            t += "  미생성 이유(삽입 후보 화소 \(ex.candidatePixels)개 중): " + ex.gapTotals.sorted { $0.value > $1.value }.map { "\($0.key) \($0.value)" }.joined(separator: " · ") + "\n"
+            t += "  열·메모리 제한으로 최적화를 쉰 시간 \(f(ex.thermalSkipMs, 1))초, 중지·재개 기록 \(ex.pauseEvents.count)건 " + ex.pauseEvents.map { "[\($0.event)]" }.joined(separator: "") + "\n"
+            t += "  사용한 해상도: \(l.resolutionText)\n  원본 고해상도 보관 \(f(l.hiCacheMB, 1)) MB\n\n"
+            t += "가우시안 지도\n  \(l.gaussians)개 (임시 \(l.temporary) · 후보 \(l.candidate) · 안정 \(l.stable)); 누적 삽입 \(tot.inserted) (스테레오 확인 \(tot.stereoInserted) · 단안 \(tot.monoInserted)), 제거 \(tot.pruned), 상한으로 못 만든 \(tot.rejectedByCap)\n\n"
+            t += "최적화\n  반복 \(tot.iterations)회(묶음 \(sl.count)개), 위치가 의미 있게 움직인 갱신 \(tot.moved), 비정상 gradient 건너뜀 \(tot.nonFinite), 롤백 \(rollbacks)회\n"
+            t += "  반복당 p50/p95(ms): " + opt.keys.sorted().map { "\($0) \(f(opt[$0], 1))/\(f(opt95[$0], 1))" }.joined(separator: ", ") + "\n"
+            t += "  훈련 시점의 광도 손실(Charbonnier): 처음 묶음 \(f(lossFirst.isEmpty ? nil : lossFirst.reduce(0, +) / Double(lossFirst.count), 4)) → 마지막 묶음 \(f(lossLast.isEmpty ? nil : lossLast.reduce(0, +) / Double(lossLast.count), 4)) (훈련에 쓴 사진의 손실이며 화질 증거가 아니다)\n\n"
+        }
         if let r = render {
-            t += "렌더 (마지막 1초)\n  \(String(format: "%.1f", r.fps)) fps, CPU p50/p95 \(ms(r.cpuMsP50))/\(ms(r.cpuMsP95)) ms, GPU p50/p95 \(ms(r.gpuMsP50))/\(ms(r.gpuMsP95)) ms, 그린 가우시안 \(r.drawn)/\(r.total)\n\n"
+            t += "렌더 (마지막 1초)\n  \(String(format: "%.1f", r.fps)) fps, CPU p50/p95 \(ms(r.cpuMsP50))/\(ms(r.cpuMsP95)) ms, GPU p50/p95 \(ms(r.gpuMsP50))/\(ms(r.gpuMsP95)) ms, 그린 \(isTex ? "사각형" : "가우시안") \(r.drawn)/\(r.total)\n\n"
         }
         t += "자원\n  메모리 피크 \(f(fp)) MB, 열 상태 \(th.joined(separator: ", ")), 거버너 변경 \(gov.count)회\n  재생 자료 \(l.replayFrames)장 \(l.replayBytes / 1_048_576) MB\n\n"
         if let tp = texPipeline { t += texSummaryText(tp) } else if config.product != nil { t += productSummaryText(ex: ex, f: f) }
@@ -1130,7 +1149,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         if let r = render {
             d["render"] = ["fps": r.fps, "cpuMsP50": r.cpuMsP50, "cpuMsP95": r.cpuMsP95, "gpuMsP50": r.gpuMsP50, "gpuMsP95": r.gpuMsP95, "drawn": r.drawn, "total": r.total]
         }
-        if let tp = texPipeline { d["textureLayers"] = ["layers": tp.layers.count, "quads": tp.quadCount, "bytes": tp.bytes, "removedForBudget": tp.removedForBudget, "maskSkipped": tp.maskSkipped, "depthSkipped": tp.depthSkipped, "blurSkipped": tp.blurSkipped] } else if config.product != nil { d["product"] = productDict(ex: ex) }
+        if let tp = texPipeline { d["textureLayers"] = texStatsDict(tp) } else if config.product != nil { d["product"] = productDict(ex: ex) }
         return (t, d)
     }
 }

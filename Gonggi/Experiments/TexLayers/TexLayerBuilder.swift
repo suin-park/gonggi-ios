@@ -20,6 +20,12 @@ enum TexLayerBuilder {
         var skipped: [String: Int] = [:]
     }
 
+    /// 노출 이득(밝은 곳 보존): 화소값 v(0...255)에 이득 g를 곱하되 밝은 화소(170 이상)일수록 덜 적용해 하이라이트가 포화되지 않게 한다(235 이상은 원본 그대로).
+    @inline(__always) static func applyGain(_ v: Float, _ g: Float) -> Float {
+        let knee = max(0, min(1, (235 - v) / 65))
+        return v * (1 + (g - 1) * knee)
+    }
+
     /// z: 깊이 격자(zw×zh, 카메라 Z, 0 = 없음). labels: 마스크 격자(mw×mh, 1 제품). rgb: width×height×3.
     static func build(id: Int, timestamp: Double, pose: RTPose, k: RTIntrinsics, rgb: [UInt8], width: Int, height: Int,
                       z: [Float], zw: Int, zh: Int, labels: [UInt8], mw: Int, mh: Int, gain: SIMD3<Float>, params p: Params = Params()) -> Result {
@@ -118,9 +124,9 @@ enum TexLayerBuilder {
                         let px = x0 + tx, py = y0 + ty
                         let o = (ty * cell + tx) * 4
                         let si = (py * width + px) * 3
-                        tex[o] = UInt8(max(0, min(255, Float(rgb[si]) * gain.x)))
-                        tex[o + 1] = UInt8(max(0, min(255, Float(rgb[si + 1]) * gain.y)))
-                        tex[o + 2] = UInt8(max(0, min(255, Float(rgb[si + 2]) * gain.z)))
+                        tex[o] = UInt8(max(0, min(255, applyGain(Float(rgb[si]), gain.x))))
+                        tex[o + 1] = UInt8(max(0, min(255, applyGain(Float(rgb[si + 1]), gain.y))))
+                        tex[o + 2] = UInt8(max(0, min(255, applyGain(Float(rgb[si + 2]), gain.z))))
                         if labelAt(px, py) == 1 {
                             let tz = depthAt(Float(px), Float(py))
                             let d = ray(Float(px), Float(py))

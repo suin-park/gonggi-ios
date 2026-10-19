@@ -105,10 +105,10 @@ def check_product_gs(zf: zipfile.ZipFile, app_prefix: str, info: dict) -> None:
             fail(f"product experiment string {needle.decode('utf-8')!r} not found in the app executable")
     ok("product experiment entry point strings found in the app executable")
     tex = info.get("GonggiTexLayersVersion")
-    if str(tex).strip() != "1":
-        fail(f"GonggiTexLayersVersion is {tex!r}, expected '1'")
+    if str(tex).strip() != "2":
+        fail(f"GonggiTexLayersVersion is {tex!r}, expected '2'")
     ok(f"GonggiTexLayersVersion == {tex}")
-    for needle in ("텍스처 스플랫 레이어".encode("utf-8"), "일반 3DGS PLY가 아니".encode("utf-8")):
+    for needle in ("텍스처 스플랫 레이어".encode("utf-8"), "일반 3DGS PLY가 아니".encode("utf-8"), "텍스처 레이어(제품) 실행 요약".encode("utf-8"), "마스크 점검(연결성·3D 공간 일관성·색 보조)".encode("utf-8")):
         if needle not in binary:
             fail(f"texture-layer string {needle.decode('utf-8')!r} not found in the app executable")
     ok("texture-layer experiment strings found in the app executable")
