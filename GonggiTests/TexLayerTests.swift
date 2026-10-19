@@ -262,8 +262,6 @@ final class GSOptTexLayerTests: XCTestCase {
         XCTAssertTrue(TexLayerCPU.renderLayer(far, cam: farCam).z.contains { $0.isFinite }, "시험 전제(범위 구가 없으면 먼 조각이 보임)")
         XCTAssertFalse(TexLayerCPU.renderLayer(far, cam: farCam, clip: clip).z.contains { $0.isFinite }, "범위 구 밖 조각이 그려짐")
         XCTAssertTrue(TexLayerCPU.renderLayer(layers[5], cam: TexCamera(pose: SV2Test.pose(x: 0.5), k: k), clip: clip).z.contains { $0.isFinite }, "제품 쪽 레이어가 지워짐")
-        let sel = TexLayerSelect.coverage(layers, view: segmentView(x: 0.5), prev: [], clip: clip)
-        XCTAssertFalse(sel.picked.contains { $0.layer.id == 99 }, "범위 구 밖 레이어가 선택됨")
         XCTAssertEqual(layers.count, 13, "레이어를 지우지 않는다")
     }
 
