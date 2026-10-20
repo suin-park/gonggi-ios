@@ -80,6 +80,7 @@ jobs:
               BENCHMARK=1 /tmp/msplat/build/msplat /tmp/ds -o $d/scene.ply -n $it -d 1 --sh-degree 0 --eval --val-render $d/renders --bg-color 0.55 0.5 0.47 $extra > $d/log.txt 2>&1
               echo "$name it=$it exit=$? wall=$(( $(date +%s) - s ))s"
               grep -E "PSNR:|Gaussians|wall:|median:" $d/log.txt | tail -4
+              echo "renders: $(ls $d/renders 2>/dev/null | wc -l)"; ls $d | head -5
             done
           done
       - name: Upload renders and logs (synthetic only)
