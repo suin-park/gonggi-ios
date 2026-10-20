@@ -5,6 +5,22 @@ import simd
 // 입력 → 밀집 깊이(스테레오 앵커 + 단안 정렬) → 지속적인 가우시안 지도 → 최근/과거 키프레임 렌더링 오차 최적화 + 원본 고해상도 창 정밀화·선택적 분할.
 // 서버를 쓰지 않는다. 사전학습 깊이 모델은 기기 내 추론만 하고 재학습하지 않는다. 가우시안 파라미터는 촬영 중 반복 최적화한다(장면별 최적화).
 
+/// 원본 해상도 실험 모드(공간 가우시안 경로 전용, 기존 방식은 그대로 둔다).
+/// - 학습 RGB·단안 모델 입력을 이미 줄인 small(320) 영상이 아니라 원본에서 직접 만든 키프레임 영상(hi)에서 만든다.
+/// - 키프레임 보관 영상 폭을 센서 원본 쪽으로 올린다(hiWidthMax: 1920 = 센서 4:3 최대, 3840 = 4K 원본).
+/// - 고해상도 정밀화 창(원본 화소 그대로 192×144)을 오차가 큰 곳만이 아니라 관측한 영상 전체에 배분한다(오차 우선 / 아직 안 한 칸 / 오래된 칸).
+/// 장면별 최적화(가우시안 파라미터 반복 최적화)는 그대로 한다(무학습이 아니다).
+struct GSONativeRes: Equatable {
+    var trainWidth = 240
+    var hiWidthMax = 1920
+    var hiCacheCount = 100
+    var requestHighestFormat = true
+    var monoFromHi = true
+    var trainFromHi = true
+    var tileRefine = true
+    var label: String { hiWidthMax >= 3840 ? "원본 최대(4K 보관)" : "원본 1920" }
+}
+
 struct GSOConfig: Equatable {
     var trainWidth = 160                    // 최적화·삽입 해상도. 스테레오 격자와 달라도 동작한다(앵커를 칸당 한 화소로 옮긴다)
     var smallWidth = 320
@@ -50,6 +66,8 @@ struct GSOConfig: Equatable {
     var product: GSOProductConfig?
     /// 텍스처 스플랫 레이어 경로(실험): 가우시안 지도·장면별 최적화 대신 키프레임별 텍스처 레이어를 만든다. 제품 모드에서만 쓴다.
     var textureLayers = false
+    /// 원본 해상도 실험 모드(공간 경로). nil이면 기존 방식(원본 960 → small 320 → 학습 160).
+    var native: GSONativeRes?
 
     /// 실시간 제품 3DGS 기본 설정(공통 엔진 + 제품 마스크 + 형상·재방문 보존 수정 + 원본 고해상도 정밀화/선택적 분할).
     static func productDefault() -> GSOConfig {
@@ -62,6 +80,18 @@ struct GSOConfig: Equatable {
         c.opt.bgOpacityLogitMin = pc.bgFloorLogit
         c.refineEverySlices = 1
         c.maxViews = 120
+        return c
+    }
+
+    /// 공간 GS 원본 해상도 실험 설정(학습 폭·키프레임 보관 폭을 올리고 학습/단안 입력을 원본에서 직접 만든다).
+    static func spaceNative(hiWidthMax: Int = 1920, trainWidth: Int = 240) -> GSOConfig {
+        var c = GSOConfig()
+        var n = GSONativeRes()
+        n.hiWidthMax = hiWidthMax; n.trainWidth = trainWidth
+        n.hiCacheCount = hiWidthMax >= 3840 ? 40 : 100
+        c.native = n
+        c.trainWidth = trainWidth
+        c.hiCacheCount = n.hiCacheCount
         return c
     }
 
@@ -381,7 +411,10 @@ final class GSOPipeline {
         let frame = RTFrame(id: input.id, segment: input.segment, timestamp: input.timestamp, pose: input.pose, kSmall: kSmall,
                             grayS: g.gray, rgbS: small.rgb, kHi: kSmall, rgbHi: [], sharpness: g.sharpness, meanLuma: g.mean)
         let tw = config.trainWidth
-        let train = SV2Image.resizeAreaRGB(small.rgb, width: small.width, height: small.height, outW: tw)
+        // 원본 해상도 모드: 학습 RGB도 원본(hi)에서 직접 줄인다. 기존: hi → small(320) → train(160)으로 두 번 줄인다.
+        let trainFromHi = config.native?.trainFromHi == true
+        let train = trainFromHi ? SV2Image.resizeAreaRGB(input.rgbHi, width: input.hiWidth, height: input.hiHeight, outW: tw)
+                                : SV2Image.resizeAreaRGB(small.rgb, width: small.width, height: small.height, outW: tw)
         let kTrain = input.kFull.scaled(toWidth: train.width, height: train.height)
         let cam = GSOCamera(pose: input.pose, k: kTrain)
         let kHi = input.kFull.scaled(toWidth: input.hiWidth, height: input.hiHeight)
@@ -426,7 +459,7 @@ final class GSOPipeline {
         rec.hiMs = (nowHost() - t1) * 1000
         rec.resolutions = ["sensorW": input.kFull.width, "sensorH": input.kFull.height, "hiW": input.hiWidth, "hiH": input.hiHeight,
                            "smallW": small.width, "smallH": small.height, "trainW": train.width, "trainH": train.height,
-                           "cropW": config.refineCropW, "cropH": config.refineCropH]
+                           "cropW": config.refineCropW, "cropH": config.refineCropH, "trainFromHi": trainFromHi ? 1 : 0]
         if resolutionInfo.isEmpty { resolutionInfo = rec.resolutions }
 
         // 2. 스테레오 앵커(과거 키프레임만 참조)
@@ -490,7 +523,17 @@ final class GSOPipeline {
         var monoVals: [Float]?
         let monoReady = config.useMono && (mono?.isReady ?? false)
         if monoReady, let mono {
-            monoVals = mono.predict(rgb: small.rgb, srcW: small.width, srcH: small.height, outW: train.width, outH: train.height)
+            // 원본 해상도 모드: 모델 입력(518×392)을 원본 키프레임 영상에서 상자 평균으로 직접 만든다(기존: 320 영상을 늘려 씀).
+            if config.native?.monoFromHi == true {
+                monoVals = mono.predict(rgb: input.rgbHi, srcW: input.hiWidth, srcH: input.hiHeight, outW: train.width, outH: train.height)
+                rec.resolutions["monoSrcW"] = input.hiWidth; rec.resolutions["monoSrcH"] = input.hiHeight
+            } else {
+                monoVals = mono.predict(rgb: small.rgb, srcW: small.width, srcH: small.height, outW: train.width, outH: train.height)
+                rec.resolutions["monoSrcW"] = small.width; rec.resolutions["monoSrcH"] = small.height
+            }
+            if let isz = mono.inputSize { rec.resolutions["monoInW"] = isz.w; rec.resolutions["monoInH"] = isz.h }
+            if let osz = mono.lastOutputSize { rec.resolutions["monoOutW"] = osz.w; rec.resolutions["monoOutH"] = osz.h }
+            rec.resolutions["monoGridW"] = train.width; rec.resolutions["monoGridH"] = train.height
             rec.monoRan = monoVals != nil
         }
         let t3 = nowHost()
@@ -1066,9 +1109,9 @@ final class GSOPipeline {
         guard !withHi.isEmpty else { rec.refineSkipped = "noHiRes"; return [] }
         let view: GSOView
         var bestCell = 0
-        if config.product != nil {
-            // 제품 모드: 오차 우선만 반복하지 않고 아직 정밀화되지 않은 칸과 오래 갱신하지 않은 칸에도 배분한다(제품 비율이 낮은 칸은 제외).
-            guard let pick = pickRefineTarget(withHi) else { rec.refineSkipped = "noProductCell"; return [] }
+        if config.product != nil || config.native?.tileRefine == true {
+            // 제품·원본 해상도 모드: 오차 우선만 반복하지 않고 아직 정밀화되지 않은 칸과 오래 갱신하지 않은 칸에도 배분한다(제품 비율이 낮은 칸은 제외).
+            guard let pick = pickRefineTarget(withHi) else { rec.refineSkipped = config.product != nil ? "noProductCell" : "noCell"; return [] }
             view = pick.view; bestCell = pick.cell; rec.refineCell = pick.kind
         } else {
             view = (sliceCounter / config.refineEverySlices) % 2 == 0 ? withHi.last! : withHi[nextRandom() % withHi.count]
@@ -1195,13 +1238,14 @@ final class GSOPipeline {
 
     /// 제품 정밀화 창 선택. 4번에 2번은 오차 우선(이미 많이 한 칸은 감점), 1번은 아직 정밀화되지 않은 칸, 1번은 가장 오래 갱신하지 않은 칸이다.
     private func pickRefineTarget(_ cands: [GSOView]) -> (view: GSOView, cell: Int, kind: String)? {
-        guard let pc = config.product else { return nil }
+        guard config.product != nil || config.native?.tileRefine == true else { return nil }
+        let minFrac: Float = config.product?.refineMinProductFraction ?? 0      // 공간 경로: 칸 전체(제품 비율 개념 없음, cellProduct = 1)
         refineCounter += 1
         let now = Float(sliceCounter)
         func scan(_ slot: Int) -> (GSOView, Int)? {
             var best: (v: GSOView, c: Int, score: Float)?
             for v in cands {
-                for c in 0..<v.errCells.count where v.cellProduct[c] >= pc.refineMinProductFraction {
+                for c in 0..<v.errCells.count where v.cellProduct[c] >= minFrac {
                     let last = v.refineLast[c]
                     let score: Float
                     switch slot {
@@ -1230,9 +1274,10 @@ final class GSOPipeline {
     /// 제품 정밀화 진행: 고해상도가 있는 시점들의 제품 칸 중 정밀화된 비율과, 정밀화에서 gradient를 받은 가우시안 비율.
     func refineProgress() -> GSORefineProgress {
         var p = GSORefineProgress()
-        guard let pc = config.product else { return p }
+        guard config.product != nil || config.native != nil else { return p }
+        let minFrac: Float = config.product?.refineMinProductFraction ?? 0
         for v in views where v.kHi != nil && hiStore.has(v.id) {
-            for c in 0..<v.refineCells.count where v.cellProduct[c] >= pc.refineMinProductFraction {
+            for c in 0..<v.refineCells.count where v.cellProduct[c] >= minFrac {
                 p.cellsTotal += 1
                 if v.refineCells[c] > 0 { p.cellsRefined += 1 }
             }

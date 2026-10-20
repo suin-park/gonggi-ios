@@ -23,6 +23,8 @@ final class GSOSessionViewModel: ObservableObject {
     @Published var optimize = true { didSet { applyOptions() } }
     @Published var geometryOptimization = true
     @Published var useMono = true
+    /// 해상도 방식: 0 = 기존(원본 960 → 320 → 학습 160), 1 = 원본 해상도 실험(1920 보관), 2 = 원본 최대(4K 보관, 느림). 기존 방식과 저장본은 그대로다.
+    @Published var resolutionMode = 0
     @Published var showDiagnostics = true
     @Published var savedItems: [GSOStore.Item] = []
     @Published var viewingTitle: String?
@@ -105,12 +107,13 @@ final class GSOSessionViewModel: ObservableObject {
         }
         let o = options()
         guard let l = ExperimentRunLog(kind: .gaussianOpt, settings: ["optimize": optimize, "geometryOptimization": geometryOptimization, "useMono": useMono,
-                                                                    "showCameraCompare": showCameraCompare, "recordReplay": recordReplay, "includeTemporary": showTemporary,
+                                                                    "showCameraCompare": showCameraCompare, "recordReplay": recordReplay, "includeTemporary": showTemporary, "resolutionMode": resolutionMode,
                                                                     "note": "서버 없음. 사전학습 깊이 모델은 기기 내 추론만. 촬영 중 가우시안 파라미터를 반복 최적화한다(장면별 최적화). 렌더 FPS는 생성 속도가 아니다."]) else {
             message = "로그 파일을 만들 수 없어요. 저장 공간을 확인해 주세요."; gate.release(gateName); state = .idle; return
         }
         log = l
-        let e = GSOEngine(options: o, log: l, splats: splats, liveCam: liveCam, background: background, mono: mono)
+        let cfg: GSOConfig = resolutionMode == 0 ? GSOConfig() : GSOConfig.spaceNative(hiWidthMax: resolutionMode == 2 ? 3840 : 1920, trainWidth: 240)
+        let e = GSOEngine(options: o, config: cfg, log: l, splats: splats, liveCam: liveCam, background: background, mono: mono)
         e.onLive = { [weak self] live in Task { @MainActor in self?.live = live } }
         e.onAutoStop = { [weak self] reason in Task { @MainActor in self?.finish(reason: reason) } }
         engine = e
@@ -399,6 +402,13 @@ struct GaussianOptView: View {
 
     private var optionsPanel: some View {
         VStack(spacing: 6) {
+            Picker("해상도 방식", selection: $vm.resolutionMode) {
+                Text("기존 (960→320→160)").tag(0)
+                Text("원본 1920 (실험)").tag(1)
+                Text("원본 최대 4K (실험, 느림)").tag(2)
+            }
+            .pickerStyle(.segmented)
+            Text("원본 해상도 실험: 학습·단안 입력을 원본에서 직접 만들고 정밀화 창을 영상 전체에 배분해요. 가우시안 파라미터 최적화는 그대로 해요(무학습이 아니에요).").font(.caption2).foregroundStyle(.white.opacity(0.7))
             Toggle("촬영 중 가우시안 최적화 (끄면 초기화만)", isOn: $vm.optimize)
             Toggle("형상(위치·크기·회전)도 최적화", isOn: $vm.geometryOptimization)
             Toggle("단안 깊이 모델 사용 (기기 내 추론)", isOn: $vm.useMono)

@@ -273,15 +273,34 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
 
     // MARK: 시작·일시정지·재개·종료
 
+    /// ARKit이 알려 주는 영상 형식 선택 기록(원본 해상도 모드에서 어떤 형식을 왜 골랐는지).
+    private(set) var videoFormatChoice: [String: Any] = [:]
+
     private func makeConfig() -> ARWorldTrackingConfiguration {
         let c = ARWorldTrackingConfiguration()
         c.worldAlignment = .gravity
         c.planeDetection = []
         c.isLightEstimationEnabled = false
-        let fmts = ARWorldTrackingConfiguration.supportedVideoFormats.filter {
-            $0.framesPerSecond <= 30 && abs($0.imageResolution.width / $0.imageResolution.height - 4.0 / 3.0) < 0.02
+        let all = ARWorldTrackingConfiguration.supportedVideoFormats
+        var reason = "기본: 4:3 형식 중 30fps 이하에서 가장 큰 폭"
+        var chosen: ARConfiguration.VideoFormat?
+        if let nat = config.native, nat.requestHighestFormat {
+            // 원본 해상도 모드: 4:3 제한을 풀고 30fps 이하 연속 촬영 형식 중 화소 수가 가장 큰 것(지원하면 16:9 4K 3840×2160).
+            let cand = all.filter { $0.framesPerSecond <= 30 && $0.framesPerSecond >= 24 }
+            func px(_ f: ARConfiguration.VideoFormat) -> CGFloat { f.imageResolution.width * f.imageResolution.height }
+            if let best = cand.max(by: { px($0) < px($1) }) {
+                chosen = best
+                reason = best.imageResolution.width >= 3800 ? "4K 연속 촬영 형식을 지원해 선택" : "4K 연속 촬영 형식 미지원 → 지원되는 가장 큰 형식(\(Int(best.imageResolution.width))×\(Int(best.imageResolution.height)))으로 내림"
+            }
         }
-        if let best = fmts.max(by: { $0.imageResolution.width < $1.imageResolution.width }) { c.videoFormat = best }
+        if chosen == nil {
+            let fmts = all.filter { $0.framesPerSecond <= 30 && abs($0.imageResolution.width / $0.imageResolution.height - 4.0 / 3.0) < 0.02 }
+            chosen = fmts.max(by: { $0.imageResolution.width < $1.imageResolution.width })
+        }
+        if let best = chosen { c.videoFormat = best }
+        videoFormatChoice = ["supported": all.map { "\(Int($0.imageResolution.width))x\(Int($0.imageResolution.height))@\($0.framesPerSecond)" },
+                             "chosen": "\(Int(c.videoFormat.imageResolution.width))x\(Int(c.videoFormat.imageResolution.height))@\(c.videoFormat.framesPerSecond)", "reason": reason,
+                             "native": config.native != nil]
         return c
     }
 
@@ -308,6 +327,8 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         }
         var info: [String: Any] = [:]
         info["videoFormat"] = ["w": cfg.videoFormat.imageResolution.width, "h": cfg.videoFormat.imageResolution.height, "fps": cfg.videoFormat.framesPerSecond]
+        info["videoFormatChoice"] = videoFormatChoice
+        info["nativeResolution"] = config.native.map { ["label": $0.label, "trainWidth": $0.trainWidth, "hiWidthMax": $0.hiWidthMax, "hiCacheCount": $0.hiCacheCount, "monoFromHi": $0.monoFromHi, "trainFromHi": $0.trainFromHi, "tileRefine": $0.tileRefine] as [String: Any] } ?? NSNull()
         info["options"] = ["showCamera": options.showCamera, "recordReplay": options.recordReplay, "includeTemporary": options.includeTemporary,
                            "optimize": options.optimize, "geometryOptimization": options.geometryOptimization, "useMono": options.useMono]
         info["config"] = ["trainWidth": config.trainWidth, "smallWidth": config.smallWidth, "maxGaussians": config.maxGaussians, "winRecent": config.winRecent,
@@ -585,7 +606,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let tStart = ExpSys.hostNow()
         // 원본(센서 1920×1440 등)에서 직접 960폭 영상을 만든다. 정밀화(고해상도 창)는 연구 기록 옵션과 무관하게 이 영상을 쓰고,
         // 연구 기록은 같은 영상을 디스크에 저장할지만 정한다.
-        let width = 960
+        // 원본 해상도 모드: 보관 폭을 센서 폭(최대 hiWidthMax)까지 올린다. 기본은 960.
+        var width = 960
+        if let nat = config.native { width = max(960, min(nat.hiWidthMax, CVPixelBufferGetWidthOfPlane(job.pb, 0))) }
         guard let input = SV2Engine.makeInput(job: job, hiWidth: width, clockDelta: clockDelta) else { return }
         let tConv = ExpSys.hostNow()
         // 제품 모드: 같은 ARFrame의 원본 버퍼에서 기기 내 Vision 마스크를 만들고 대상 ID를 유지하며 갱신한다(RGB·포즈·K·시각·노출·마스크가 같은 프레임).
@@ -1002,6 +1025,32 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         return out
     }
 
+    // MARK: 원본 해상도 모드 요약
+
+    /// 실제로 쓴 해상도 표(센서·보관·스테레오·단안 모델 입력/출력·최적화 목표·정밀화 창·화면)와 정밀화 배분. 숫자가 커졌다는 것과 원본 정보가 전달됐다는 것을 구분해 적는다.
+    private func nativeSummary(_ nat: GSONativeRes, processed proc: Int) -> String {
+        statLock.lock(); let ds = displaySizeText; statLock.unlock()
+        let r = pipeline.resolutionInfo
+        let prog = pipeline.refineProgress()
+        let dur = max(1.0, ExpSys.hostNow() - startedHost)
+        func n(_ k: String) -> Int { r[k] ?? 0 }
+        var t = "원본 해상도 모드(\(nat.label)) — 실제 해상도\n"
+        t += "  센서 \(n("sensorW"))×\(n("sensorH")) · 보관(hi) \(n("hiW"))×\(n("hiH")) · 스테레오·정렬 입력 \(n("smallW"))×\(n("smallH"))\n"
+        t += "  단안 모델: 원천 \(n("monoSrcW"))×\(n("monoSrcH")) → 모델 입력 \(n("monoInW"))×\(n("monoInH")) → 출력 \(n("monoOutW"))×\(n("monoOutH")) → 학습 격자 \(n("monoGridW"))×\(n("monoGridH"))"
+        t += "(출력을 학습 격자로 리샘플한 것이며 깊이 세부가 새로 생긴 것이 아니다)\n"
+        let fromHi = n("trainFromHi") == 1 ? "원본(hi)에서 직접" : "small에서"
+        t += "  최적화 목표 \(n("trainW"))×\(n("trainH")) (\(fromHi) 만듦) · 정밀화 창 \(n("cropW"))×\(n("cropH")) (보관 영상에서 원본 화소 그대로) · 화면 drawable \(ds)\n"
+        let fmt = (videoFormatChoice["chosen"] as? String) ?? "—"
+        let why = (videoFormatChoice["reason"] as? String) ?? ""
+        t += "  영상 형식: \(fmt) — \(why)\n"
+        let rate = String(format: "%.2f", Double(proc) / dur)
+        t += "  키프레임 처리율 \(rate)개/초(상한 3개/초는 목표). 화면 FPS와 지도 갱신 속도는 별개이며 위 '렌더'·'지연' 항목을 본다.\n"
+        let pct = String(format: "%.0f", Double(prog.fractionCells) * 100)
+        t += "  정밀화 창 배분: 칸 \(prog.cellsRefined)/\(prog.cellsTotal) (\(pct)%) — 오차 우선·미정밀화 칸·오래된 칸에 나눠 배분. 가우시안 갱신 \(prog.gaussiansRefined)/\(prog.gaussiansTotal)\n"
+        t += "  저해상도(학습 격자) 전체 최적화는 기존처럼 병행하고, 고해상도 창 정밀화는 묶음마다 3회 반복(고해상도 비중은 위 정밀화 반복 수 참조). 설정 변경(학습 폭 \(nat.trainWidth))과 해상도 경로 변경(원본 직접 입력)의 효과는 같은 입력 PC 비교로만 구분했다.\n\n"
+        return t
+    }
+
     // MARK: 텍스처 레이어 요약
 
     private func texStatsDict(_ tp: TexLayerPipeline) -> [String: Any] {
@@ -1133,6 +1182,9 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         t += "  키프레임 단계 p50/p95(ms): " + stage.keys.sorted().map { "\($0) \(f(stage[$0]))/\(f(stage95[$0]))" }.joined(separator: ", ") + "\n  처리 대기열 최대 \(mq)\n\n"
         t += "깊이\n  단안 모델 실행 \(tot.monoRuns)회, 밀집 깊이로 처리한 키프레임 \(monoKFs), 스테레오만 \(stereoOnly), 정렬 내부점 비율 중앙값 \(f(fitRatio.map { $0 * 100 }))%\n  모델 출력 의미 판정(새로 맞춘 키프레임): 역깊이 가정 \(spaceInv) · 깊이 가정 \(spaceDep)" + (isTex ? " (텍스처 레이어 경로는 역깊이로 고정)" : "") + "\n\n"
         let ex = extra
+        if let nat = config.native, !isTex {
+            t += nativeSummary(nat, processed: proc)
+        }
         if !isTex {
             t += "정밀화·검증\n  원본 고해상도 창 정밀화 반복 \(ex.refineIterations)회(묶음 \(ex.refineSlices)개, \(f(ex.refineMs / 1000, 1))초), 선택적 분할 \(ex.splits)개, 앞쪽 오표면 의심 \(ex.suspect)개\n"
             t += "  갱신 전후 검증 \(ex.validatedSlices)묶음(공백 \(ex.validationSkipped), 검증 시간 합 \(f(ex.validationMs / 1000, 1))초), 롤백 \(pipeline.rollbacks)회: " + (ex.rollbackReasons.isEmpty ? "없음" : ex.rollbackReasons.map { "\($0.key) \($0.value)" }.joined(separator: ", ")) + "\n"

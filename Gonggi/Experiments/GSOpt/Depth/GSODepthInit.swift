@@ -6,6 +6,14 @@ protocol GSOMonoProvider: AnyObject {
     var isReady: Bool { get }
     /// 상대 역깊이(클수록 가까움, 미터 단위 아님)를 outW×outH 격자로 돌려준다.
     func predict(rgb: [UInt8], srcW: Int, srcH: Int, outW: Int, outH: Int) -> [Float]?
+    /// 모델 입력 크기와 마지막 출력 크기(해상도 기록용). 알 수 없으면 nil.
+    var inputSize: (w: Int, h: Int)? { get }
+    var lastOutputSize: (w: Int, h: Int)? { get }
+}
+
+extension GSOMonoProvider {
+    var inputSize: (w: Int, h: Int)? { nil }
+    var lastOutputSize: (w: Int, h: Int)? { nil }
 }
 
 extension RTMonoDepth: GSOMonoProvider {}

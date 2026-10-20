@@ -20,6 +20,10 @@ final class RTMonoDepth {
     private(set) var loadMs: Double = 0
 
     var isReady: Bool { model != nil }
+    /// 해상도 기록용: 모델 입력 크기, 마지막 추론의 출력 버퍼 크기(리샘플 전).
+    var inputSize: (w: Int, h: Int)? { model == nil ? nil : (inputW, inputH) }
+    private(set) var lastOutW = 0, lastOutH = 0
+    var lastOutputSize: (w: Int, h: Int)? { lastOutW > 0 ? (lastOutW, lastOutH) : nil }
 
     /// 백그라운드에서 부른다. 성공하면 true.
     @discardableResult
@@ -113,6 +117,7 @@ final class RTMonoDepth {
             let input = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: pb)])
             let out = try model.prediction(from: input)
             guard let obuf = out.featureValue(for: outName)?.imageBufferValue else { return nil }
+            lastOutW = CVPixelBufferGetWidth(obuf); lastOutH = CVPixelBufferGetHeight(obuf)
             return Self.resample(obuf, outW: outW, outH: outH)
         } catch {
             status = "추론 실패: \(error.localizedDescription)"
