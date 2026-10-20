@@ -487,7 +487,16 @@ final class TexLayerAligner {
             let cons = TexLayerAlign.consensusScales(layer: moved, neighbours: nbV)
             if cons.moved > 0 { moved = TexLayerAlign.apply(moved, scale: cons.scale); supported = cons.moved }
         }
-        let dev = (0..<target.count).map { abs((moved.alignScale?[$0 * 4] ?? 1) / ((target.alignVersion == 2 ? target.alignScale?[$0 * 4] : nil) ?? 1) - 1) }.sorted()
+        var devList: [Float] = []
+        devList.reserveCapacity(target.count)
+        let movedScale: [Float] = moved.alignScale ?? []
+        let prevScale: [Float] = target.alignVersion == 2 ? (target.alignScale ?? []) : []
+        for q in 0..<target.count {
+            let a: Float = q * 4 < movedScale.count ? movedScale[q * 4] : 1
+            let b: Float = q * 4 < prevScale.count ? prevScale[q * 4] : 1
+            devList.append(abs(a / b - 1))
+        }
+        let dev = devList.sorted()
         var r = TexAlignResult(layer: moved)
         r.neighbours = nbL.count; r.informative = infoCount; r.cells = target.count; r.supported = supported
         r.medianShift = dev.isEmpty ? 0 : dev[dev.count / 2]
