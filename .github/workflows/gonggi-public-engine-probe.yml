@@ -1,0 +1,60 @@
+name: Gonggi public engine probe
+
+# 공개 Metal 3DGS 엔진(msplat-ios, 고정 커밋)의 요구사항 분리 검증. 앱 타깃·최소 iOS는 건드리지 않는다.
+# 사용자 사진/포즈/깊이는 사용하지 않는다(합성 장면만). 서명·업로드 없음.
+on:
+  push:
+    branches:
+      - feat/gs-quality-engine
+    paths:
+      - '.github/workflows/gonggi-public-engine-probe.yml'
+      - 'research/public_engine/**'
+
+concurrency:
+  group: gonggi-public-engine-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  MSPLAT_SHA: e8611098583059b82e0b7d35259fb4e9c42df248
+
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned msplat-ios
+        run: |
+          git clone https://github.com/frs0n/msplat-ios.git /tmp/msplat
+          git -C /tmp/msplat checkout "$MSPLAT_SHA"
+          git -C /tmp/msplat rev-parse HEAD
+      - name: Toolchain
+        run: |
+          xcodebuild -version; xcrun -sdk iphoneos metal --version || true; sw_vers; sysctl -n machdep.cpu.brand_string
+      - name: GPU visible to the runner?
+        run: |
+          cat > /tmp/probe.swift <<'EOF'
+          import Metal
+          let ds = MTLCopyAllDevices()
+          print("devices:", ds.count)
+          for d in ds {
+            print(d.name, "lowPower", d.isLowPower, "unifiedMemory", d.hasUnifiedMemory)
+            for f in [("apple7", MTLGPUFamily.apple7), ("apple8", .apple8), ("apple9", .apple9), ("metal3", .metal3)] { print(" ", f.0, d.supportsFamily(f.1)) }
+          }
+          EOF
+          swiftc -o /tmp/probe /tmp/probe.swift && /tmp/probe
+      - name: Compile msplat kernels per language standard (iOS device SDK and macOS)
+        run: |
+          set +e
+          SRC=/tmp/msplat/core/metal/msplat_metal.metal
+          for sdk in iphoneos macosx; do
+            for std in metal3.0 metal3.1 metal3.2 metal4.0; do
+              if [ "$sdk" = iphoneos ]; then min="-mios-version-min=17.0"; else min="-mmacosx-version-min=14.0"; fi
+              xcrun -sdk $sdk metal -std=$std $min -I /tmp/msplat/core/include -I /tmp/msplat/core/metal -c $SRC -o /tmp/k_${sdk}_${std}.air > /tmp/k_${sdk}_${std}.log 2>&1
+              echo "sdk=$sdk std=$std min=${min#*=} -> exit $?  errors: $(grep -c 'error:' /tmp/k_${sdk}_${std}.log)"
+              grep -m3 'error:' /tmp/k_${sdk}_${std}.log | cut -c1-220
+            done
+          done
