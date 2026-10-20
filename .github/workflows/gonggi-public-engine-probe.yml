@@ -58,3 +58,38 @@ jobs:
               grep -m3 'error:' /tmp/k_${sdk}_${std}.log | cut -c1-220
             done
           done
+      - name: Build msplat CLI (macOS slice, kernels at metal3.2 because Xcode 16.4 has no metal4.0)
+        run: |
+          python3 research/public_engine/patch_msplat.py /tmp/msplat
+          cmake -S /tmp/msplat -B /tmp/msplat/build -DCMAKE_BUILD_TYPE=Release -DMSPLAT_METAL_LANGUAGE_STANDARD=metal3.2 > /tmp/cmake.log 2>&1 || { tail -30 /tmp/cmake.log; exit 1; }
+          cmake --build /tmp/msplat/build -j 4 > /tmp/build.log 2>&1 || { tail -40 /tmp/build.log; exit 1; }
+          ls -la /tmp/msplat/build | head -20
+      - name: Synthetic control dataset (no user data)
+        run: |
+          python3 -m pip install --quiet numpy opencv-python-headless scipy
+          python3 research/public_engine/make_dataset.py /tmp/ds
+      - name: Run msplat on the synthetic scene (equal iterations; sh0; same initial points)
+        continue-on-error: true
+        run: |
+          mkdir -p /tmp/out
+          for cfg in "frozen:--refine-every 1000000" "default:--warmup-length 100 --refine-every 50"; do
+            name="${cfg%%:*}"; extra="${cfg#*:}"
+            for it in 200 800 1500; do
+              d=/tmp/out/${name}_${it}; mkdir -p $d
+              s=$(date +%s)
+              BENCHMARK=1 /tmp/msplat/build/msplat /tmp/ds -o $d/scene.ply -n $it -d 1 --sh-degree 0 --eval --val-render $d/renders --bg-color 0.55 0.5 0.47 $extra > $d/log.txt 2>&1
+              echo "$name it=$it exit=$? wall=$(( $(date +%s) - s ))s"
+              grep -E "PSNR:|Gaussians|wall:|median:" $d/log.txt | tail -4
+            done
+          done
+      - name: Upload renders and logs (synthetic only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msplat-synthetic
+          path: |
+            /tmp/out/**/renders/*.png
+            /tmp/out/**/log.txt
+            /tmp/k_*.log
+            /tmp/cmake.log
+            /tmp/build.log
