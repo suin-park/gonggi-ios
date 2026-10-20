@@ -77,7 +77,7 @@ jobs:
             for it in 200 800 1500; do
               d=/tmp/out/${name}_${it}; mkdir -p $d
               s=$(date +%s)
-              BENCHMARK=1 /tmp/msplat/build/msplat /tmp/ds -o $d/scene.ply -n $it -d 1 --sh-degree 0 --eval --val-render $d/renders --bg-color 0.55 0.5 0.47 $extra > $d/log.txt 2>&1
+              MSPLAT_RENDER_DIR=$d/renders BENCHMARK=1 /tmp/msplat/build/msplat /tmp/ds -o $d/scene.ply -n $it -d 1 --sh-degree 0 --eval --bg-color 0.55 0.5 0.47 $extra > $d/log.txt 2>&1
               echo "$name it=$it exit=$? wall=$(( $(date +%s) - s ))s"
               grep -E "PSNR:|Gaussians|wall:|median:" $d/log.txt | tail -4
               echo "renders: $(ls $d/renders 2>/dev/null | wc -l)"; ls $d | head -5
