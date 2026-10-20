@@ -1,6 +1,6 @@
 """Minimal, documented patch of the pinned msplat-ios CLI (control harness only; engine code untouched):
  1) --eval splits train/test by image-name prefix ('t_' = test) instead of every-Nth, so held-out and rotation-path views are never trained on;
- 2) every evaluated view's render is written to $MSPLAT_RENDER_DIR/<image name> with the engine's own renderer."""
+ 2) evaluation renders/compares at full resolution (numDownscales=0 after training); 3) every evaluated view's render is written to $MSPLAT_RENDER_DIR/<image name> with the engine's own renderer."""
 import sys
 p = sys.argv[1] + '/cli/msplat.cpp'; s = open(p, encoding='utf-8').read()
 a = "auto [train, test] = inputData.splitTrainTestIndices(testEvery);"
@@ -22,4 +22,8 @@ s = s.replace(b, """if (const char* rd = std::getenv("MSPLAT_RENDER_DIR")) {
                     if (fp) { fwrite(outImg.data.data(), sizeof(float), outImg.data.size(), fp); fclose(fp); }
                 }
                 """ + b)
+c = "// Evaluation"
+assert c in s
+s = s.replace(c, "model.numDownscales = 0;  // evaluation always at full 640x480, whatever the training supervision resolution was
+        " + c, 1)
 open(p, 'w', encoding='utf-8').write(s); print('patched', p)

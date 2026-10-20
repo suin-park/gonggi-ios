@@ -72,16 +72,20 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p /tmp/out
-          for cfg in "frozen:--refine-every 1000000" "default:--warmup-length 100 --refine-every 50"; do
-            name="${cfg%%:*}"; extra="${cfg#*:}"
-            for it in 200 800 1500; do
-              d=/tmp/out/${name}_${it}; mkdir -p $d
-              s=$(date +%s)
-              MSPLAT_RENDER_DIR=$d/renders BENCHMARK=1 /tmp/msplat/build/msplat /tmp/ds -o $d/scene.ply -n $it -d 1 --sh-degree 0 --eval --bg-color 0.55 0.5 0.47 $extra > $d/log.txt 2>&1
-              echo "$name it=$it exit=$? wall=$(( $(date +%s) - s ))s"
-              grep -E "PSNR:|Gaussians|wall:|median:" $d/log.txt | tail -4
-              echo "renders: $(ls $d/renders 2>/dev/null | wc -l)"; ls $d | head -5
-            done
+          # supervision resolution via downscale factor (4 -> 160x120, 2 -> 320x240, 1 -> 640x480); constant for the whole run (resolution schedule disabled)
+          run() { # name sup_w factor extra iters
+            d=/tmp/out/$1_$5; mkdir -p $d; s=$(date +%s)
+            MSPLAT_RENDER_DIR=$d/renders BENCHMARK=1 /tmp/msplat/build/msplat /tmp/ds -o $d/scene.ply -n $5 -d 1 --num-downscales $3 --resolution-schedule 100000000 --sh-degree 0 --eval --bg-color 0.55 0.5 0.47 $4 > $d/log.txt 2>&1
+            echo "$1 it=$5 exit=$? wall=$(( $(date +%s) - s ))s $(grep -E 'PSNR:  ' $d/log.txt | tail -1)"
+          }
+          for it in 200 800 1500; do
+            run frozen_sup160 160 2 "--refine-every 1000000" $it
+            run frozen_sup320 320 1 "--refine-every 1000000" $it
+            run frozen_sup640 640 0 "--refine-every 1000000" $it
+          done
+          for it in 800 1500; do
+            run default_sup320 320 1 "--warmup-length 100 --refine-every 50" $it
+            run default_sup640 640 0 "--warmup-length 100 --refine-every 50" $it
           done
       - name: Convert renders to PNG
         if: always()
