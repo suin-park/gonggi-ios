@@ -1010,7 +1010,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
          "maskGuardActiveFrames": tp.guardFramesActive, "maskGuardRejectedPixels": tp.guardRejectedPixels, "maskGuardFramesDropped": tp.maskGuard.framesDropped,
          "gainMin": [Double(tp.gainMin.x), Double(tp.gainMin.y), Double(tp.gainMin.z)], "gainMax": [Double(tp.gainMax.x), Double(tp.gainMax.y), Double(tp.gainMax.z)],
          "monoSpaceLocked": tp.config.lockMonoInverse ? "inverseDepth" : "auto", "monoInverseFits": tp.monoInverseFits, "monoDepthWouldHaveWon": tp.monoDepthWouldWin,
-         "monoFromOriginalWindow": tp.config.monoFromOriginalWindow, "texLayersVersion": 3, "registration": registrationDict(tp)]
+         "monoFromOriginalWindow": tp.config.monoFromOriginalWindow, "texLayersVersion": 4, "registration": registrationDict(tp)]
     }
 
     private func registrationDict(_ tp: TexLayerPipeline) -> [String: Any] {
@@ -1023,7 +1023,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
                 "consensusCells": r.supportedCells,
                 "medianShift": r.medianShifts.isEmpty ? 0 : Double(r.medianShifts.sorted()[r.medianShifts.count / 2]),
                 "finalDone": r.finalDone, "finalLayers": r.finalLayers, "finalMs": r.finalMs, "finalMedianShift": Double(r.finalMedianShift),
-                "method": "photo registration (ZNCC against neighbour layer photos, 3x3 cell aggregation) + one cross-layer consensus pass; cells move only along their own camera rays; textures untouched"]
+                "method": "photo registration (ZNCC against neighbour layer photos, 3x3 cell aggregation), vertices shared between adjacent cells; consensus pass off; corners move only along their own camera rays; textures untouched"]
     }
 
     /// 촬영을 마친 뒤 한 번 호출한다(저장 전): 양쪽 이웃이 모인 상태로 전체 레이어를 다시 정합하고 렌더용으로 다시 게시한다.
@@ -1043,7 +1043,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         let rg = tp.registration
         if tp.config.registration {
             func ms2(_ a: [Double], _ q: Double) -> String { String(format: "%.0f", RTStat.percentile(a, q) ?? 0) }
-            t += "  레이어 정합(사진 증거로 같은 표면을 같은 3D 위치에 놓음): 촬영 중 \(rg.liveLayers)장 정합(이웃 부족으로 건너뜀 \(rg.liveSkipped)장), 레이어당 시간 p50/p95 \(ms2(rg.liveMs, 0.5))/\(ms2(rg.liveMs, 0.95)) ms, 사진이 확인한 셀 \(rg.totalCells > 0 ? String(format: "%.0f", 100 * Double(rg.informativeCells) / Double(rg.totalCells)) : "0")%, 교차 합의로 움직인 셀 \(rg.supportedCells)개. 마감 전체 정합: " + (rg.finalDone ? "\(rg.finalLayers)장, \(String(format: "%.1f", rg.finalMs / 1000))초, 중앙 이동 \(String(format: "%.1f", rg.finalMedianShift * 100))%" : "하지 않음") + ". 셀은 자기 카메라 광선 위에서만 움직였고 텍스처는 바뀌지 않았다. 깊이를 정답으로 보지 않으며 사진이 구별하지 못한 셀(질감 없음)은 주변 값을 퍼뜨리거나 그대로 뒀다.\n"
+            t += "  레이어 정합(사진 증거로 같은 표면을 같은 3D 위치에 놓음): 촬영 중 \(rg.liveLayers)장 정합(이웃 부족으로 건너뜀 \(rg.liveSkipped)장), 레이어당 시간 p50/p95 \(ms2(rg.liveMs, 0.5))/\(ms2(rg.liveMs, 0.95)) ms, 사진이 확인한 셀 \(rg.totalCells > 0 ? String(format: "%.0f", 100 * Double(rg.informativeCells) / Double(rg.totalCells)) : "0")%, 교차 합의 끔(옵션). 이웃 셀이 꼭짓점을 공유해 면이 이어진 채 이동. 마감 전체 정합: " + (rg.finalDone ? "\(rg.finalLayers)장, \(String(format: "%.1f", rg.finalMs / 1000))초, 중앙 이동 \(String(format: "%.1f", rg.finalMedianShift * 100))%" : "하지 않음") + ". 셀은 자기 카메라 광선 위에서만 움직였고 텍스처는 바뀌지 않았다. 깊이를 정답으로 보지 않으며 사진이 구별하지 못한 셀(질감 없음)은 주변 값을 퍼뜨리거나 그대로 뒀다.\n"
         } else {
             t += "  레이어 정합: 꺼짐\n"
         }

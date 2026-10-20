@@ -25,9 +25,10 @@ final class TexLayerAlignTests: XCTestCase {
         var before: [Float] = [], after: [Float] = []
         for (i, l) in out.layers.enumerated() {
             guard let s = l.alignScale else { XCTFail("정합 정보 없음: 레이어 \(l.id)"); continue }
-            XCTAssertEqual(s.count, l.count)
+            XCTAssertEqual(s.count, l.count * 4, "배율은 모서리당 1개")
+            XCTAssertEqual(l.alignVersion, 2)
             XCTAssertGreaterThan(l.revision, layers[i].revision, "정합하면 판이 오른다(사진 정합 + 교차 합의로 2 이상)")
-            for q in 0..<l.count { before.append(abs(errs[i] - 1)); after.append(abs(errs[i] * s[q] - 1)) }
+            for q in 0..<l.count { before.append(abs(errs[i] - 1)); after.append(abs(errs[i] * (s[q * 4] + s[q * 4 + 1] + s[q * 4 + 2] + s[q * 4 + 3]) / 4 - 1)) }
         }
         let mb = median(before), ma = median(after)
         XCTAssertGreaterThan(mb, 0.04)
@@ -98,7 +99,7 @@ final class TexLayerAlignTests: XCTestCase {
             for q in 0..<b.count {
                 for k in 0..<4 {
                     let p = b.corners[q * 4 + k], o = orig.corners[q * 4 + k]
-                    let back = b.center + (SIMD3<Float>(p.x, p.y, p.z) - b.center) / s[q]
+                    let back = b.center + (SIMD3<Float>(p.x, p.y, p.z) - b.center) / s[q * 4 + k]
                     XCTAssertLessThan(simd_length(back - SIMD3<Float>(o.x, o.y, o.z)), 2e-4)
                 }
             }
@@ -199,5 +200,56 @@ final class TexLayerAlignTests: XCTestCase {
         let excluded = TexLayerCPU.compose(ps, width: 64, height: 48)
         XCTAssertEqual(excluded.alpha[mid], 0, "거의 꺼진 레이어가 합의 개수에 들어가 단독 관측이 남음")
         XCTAssertEqual(excluded.agree[mid], 0, "지운 화소의 합의 개수는 기록하지 않는다")
+    }
+
+    // MARK: 면 연속성(꼭짓점 공유)·이전 저장본 복구
+
+    /// 같은 레이어의 가로로 맞닿은 두 셀의 공유 경계(모서리 1·3 ↔ 0·2) 거리 중앙값(m).
+    private func seamMedian(_ l: TexLayer) -> Float {
+        let cols = l.k.width / TexLayerConst.cell
+        var idx: [Int: Int] = [:]
+        for (q, c) in l.cells.enumerated() { idx[Int(c)] = q }
+        var gaps: [Float] = []
+        for (q, c) in l.cells.enumerated() {
+            guard Int(c) % cols != cols - 1, let j = idx[Int(c) + 1] else { continue }
+            func p(_ i: Int, _ k: Int) -> SIMD3<Float> { let v = l.corners[i * 4 + k]; return SIMD3<Float>(v.x, v.y, v.z) }
+            gaps.append(0.5 * (simd_length(p(q, 1) - p(j, 0)) + simd_length(p(q, 3) - p(j, 2))))
+        }
+        return median(gaps)
+    }
+
+    func testAdjacentCellsStayConnectedAfterRegistration() {
+        // 셀마다 다른 배율을 사각형 전체에 곱하면(3.0(26)) 정합 전 대비 경계 틈이 6배 이상 벌어졌다. 꼭짓점을 공유하면 틈이 거의 늘지 않아야 한다.
+        let layers = wrongLayers()
+        let out = TexLayerAligner().registerAll(layers)
+        for (a, b) in zip(layers, out.layers) {
+            let before = seamMedian(a), after = seamMedian(b)
+            XCTAssertLessThan(after, max(before * 1.5, before + 0.003), "인접 셀 경계가 벌어짐(레이어 \(a.id): \(before) → \(after) m)")
+        }
+    }
+
+    func testRestoreOriginalUndoesRegistrationExactlyAndLegacyCellScalesDecode() throws {
+        let layers = wrongLayers()
+        let out = TexLayerAligner().registerAll(layers)
+        for (a, b) in zip(layers, out.layers) {
+            let r = TexLayerAlign.restoreOriginal(b)
+            XCTAssertNil(r.alignScale)
+            for i in 0..<a.corners.count { XCTAssertLessThan(simd_length(a.corners[i] - r.corners[i]), 2e-4) }
+            XCTAssertEqual(r.texels, a.texels)
+        }
+        // 3.0(26) 셀별 배율(ALN1)을 읽는다: 버전 1, 셀당 1개
+        var d = Data(TexLayerCodec.alignMagicV1)
+        func put<T>(_ v: T) { var x = v; withUnsafeBytes(of: &x) { d.append(contentsOf: $0) } }
+        put(UInt32(1)); put(Int32(7)); put(UInt32(3)); put(Float(0.9)); put(Float(0.95)); put(Float(1.0))
+        let dec = TexLayerCodec.decodeAlign(d)
+        XCTAssertEqual(dec.version, 1); XCTAssertEqual(dec.scales[7], [0.9, 0.95, 1.0])
+        // 셀별 배율 레이어를 복구하면 모서리 ÷ 셀 배율
+        let l = layers[0]
+        let legacy = TexLayer(id: l.id, timestamp: l.timestamp, pose: l.pose, k: l.k, corners: l.corners, texels: l.texels, cells: l.cells, gain: l.gain,
+                              revision: 1, alignScale: [Float](repeating: 0.9, count: l.count), alignVersion: 1)
+        let back = TexLayerAlign.restoreOriginal(legacy)
+        let p = l.corners[0], q = back.corners[0]
+        let expect = l.center + (SIMD3<Float>(p.x, p.y, p.z) - l.center) / 0.9
+        XCTAssertLessThan(simd_length(SIMD3<Float>(q.x, q.y, q.z) - expect), 2e-4)
     }
 }

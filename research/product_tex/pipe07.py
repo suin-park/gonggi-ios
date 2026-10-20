@@ -7,3 +7,10 @@ def register(L, passes=1, cons=True, verbose=False, damp=0.0, sigma=0.0):
     if cons:
         for _ in range(passes): L1 = A.consensus_pass(L1, tau=0.10, min_supp=2, alpha=0.5)
     return L1
+
+
+def register_vertex(L, cons=True):
+    """photo registration + consensus with SHARED vertex scales (surface stays connected)."""
+    ph, CV = A.cost_volumes(L, SC); S = A.solve(L, CV, SC, agg=3, med=3); L1 = A.apply_vertex(L, S)
+    if cons: L1 = A.consensus_pass_vertex(L1, tau=0.10, min_supp=2, alpha=0.5)
+    return L1

@@ -50,7 +50,8 @@ enum TexLayerCodec {
 }
 
 extension TexLayerCodec {
-    static let alignMagic: [UInt8] = Array("ALN1".utf8)
+    static let alignMagic: [UInt8] = Array("ALN2".utf8)         // 모서리별 배율(셀당 4개)
+    static let alignMagicV1: [UInt8] = Array("ALN1".utf8)       // 3.0(26) 셀별 배율(셀당 1개)
 
     /// 정합 배율 묶음(선택 항목, 컨테이너의 align.bin). 레이어 파일(TSL1)은 바꾸지 않으므로 이전 앱 판도 모서리를 그대로 읽는다(정합된 위치로).
     /// 모서리는 이미 정합된 위치로 저장되고, 이 배율(카메라 중심 기준)로 정합 전 원본 모서리를 되돌릴 수 있다.
@@ -68,8 +69,11 @@ extension TexLayerCodec {
         return d
     }
 
-    static func decodeAlign(_ data: Data) -> [Int: [Float]] {
-        guard data.count >= 8, Array(data.prefix(4)) == alignMagic else { return [:] }
+    static func decodeAlign(_ data: Data) -> (version: Int, scales: [Int: [Float]]) {
+        guard data.count >= 8 else { return (0, [:]) }
+        let head = Array(data.prefix(4))
+        let version = head == alignMagic ? 2 : (head == alignMagicV1 ? 1 : 0)
+        guard version != 0 else { return (0, [:]) }
         var off = 4
         func get<T>(_: T.Type) -> T { let v = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: off, as: T.self) }; off += MemoryLayout<T>.size; return v }
         let n = Int(get(UInt32.self))
@@ -83,7 +87,7 @@ extension TexLayerCodec {
             off += c * 4
             out[id] = arr
         }
-        return out
+        return (version, out)
     }
 }
 
@@ -128,10 +132,11 @@ enum TexLayerFiles {
         layers.sort { $0.id < $1.id }
         // 정합 배율(있으면): 모서리는 이미 정합된 위치이고, 배율은 원본으로 되돌리는 정보다.
         if r.order.contains("align.bin"), let ad = try? r.read("align.bin") {
-            let scales = TexLayerCodec.decodeAlign(ad)
+            let dec = TexLayerCodec.decodeAlign(ad)
             layers = layers.map { l in
-                guard let s = scales[l.id], s.count == l.count else { return l }
-                return TexLayer(id: l.id, timestamp: l.timestamp, pose: l.pose, k: l.k, corners: l.corners, texels: l.texels, cells: l.cells, gain: l.gain, revision: l.revision, alignScale: s)
+                guard let s = dec.scales[l.id], s.count == (dec.version == 2 ? l.count * 4 : l.count) else { return l }
+                return TexLayer(id: l.id, timestamp: l.timestamp, pose: l.pose, k: l.k, corners: l.corners, texels: l.texels, cells: l.cells, gain: l.gain,
+                                revision: l.revision, alignScale: s, alignVersion: dec.version)
             }
         }
         return Loaded(layers: layers, manifest: manifest, checksumOK: ok)
@@ -170,7 +175,7 @@ enum TexLayerFiles {
             manifest["blend"] = ["selection": "coverage(앞면·합의된 표면을 덮는 레이어, 최대 \(TexLayerConst.blendMax)개)", "max": TexLayerConst.blendMax, "decay": Double(TexLayerConst.selectDecay),
                                  "depthTolerance": Double(TexLayerConst.depthTolerance), "hybridVariance": Double(TexLayerConst.hybridVariance), "minAgree": TexLayerConst.minAgree,
                                  "backfaceCulled": true]
-            manifest["texLayersVersion"] = 3
+            manifest["texLayersVersion"] = 4
             manifest["identifiers"] = "서펠 영구 ID = (레이어=키프레임 ID, 셀 번호). 가우시안 ID·상태·계보와 다른 체계다."
             manifest["config"] = ["depth": "\(config.depthW)x\(config.depthH)", "maxLayers": config.maxLayers, "useMono": config.useMono,
                                   "minProduct": Double(config.params.minProduct), "tau": Double(config.params.tau), "maxResid": Double(config.params.maxResid),
@@ -195,11 +200,11 @@ enum TexLayerFiles {
                 let alignedLayers = layers.filter { $0.alignScale != nil }.count
                 if let ad = TexLayerCodec.encodeAlign(layers) {
                     try w.add("align.bin", ad)
-                    manifest["registration"] = ["version": 1, "alignedLayers": alignedLayers, "scaleFile": "align.bin",
-                                                "meaning": "layers/*.bin의 모서리는 정합된 위치다. align.bin의 셀별 배율(카메라 중심 기준 균일 배율, 누적)로 나누면 정합 전 원본 모서리를 되돌릴 수 있다. 텍스처는 바뀌지 않았다.",
-                                                "method": "사진 정합(이웃 레이어 사진 재투영 ZNCC, 3×3 셀 합산) + 교차 합의 1회. 서버·LiDAR·신경망 학습 없음."]
+                    manifest["registration"] = ["version": 2, "alignedLayers": alignedLayers, "scaleFile": "align.bin",
+                                                "meaning": "layers/*.bin의 모서리는 정합된 위치다. align.bin(ALN2)의 모서리별 누적 배율(카메라 중심 기준 광선 위 이동, 인접 셀이 꼭짓점을 공유)로 나누면 정합 전 원본 모서리를 되돌릴 수 있다. 3.0(26) 저장본(ALN1)은 셀당 배율 1개였고 열 때 원본으로 되돌려 다시 정합한다. 텍스처는 바뀌지 않았다.",
+                                                "method": "사진 정합(이웃 레이어 사진 재투영 ZNCC, 3×3 셀 합산), 꼭짓점 공유 이동. 교차 합의는 끔. 서버·LiDAR·신경망 학습 없음."]
                 } else {
-                    manifest["registration"] = ["version": 1, "alignedLayers": 0]
+                    manifest["registration"] = ["version": 2, "alignedLayers": 0]
                 }
                 try w.add("manifest.json", try JSONSerialization.data(withJSONObject: expJSONSafe(manifest), options: [.sortedKeys, .prettyPrinted]))
                 try w.add("cameras.json", try JSONSerialization.data(withJSONObject: expJSONSafe(["layers": cams]), options: [.sortedKeys]))

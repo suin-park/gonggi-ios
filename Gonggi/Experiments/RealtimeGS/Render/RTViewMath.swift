@@ -85,9 +85,10 @@ enum RTViewMath {
         }
     }
 
-    static func orbitUniforms(_ o: Orbit, viewW: Float, viewH: Float, tintProvisional: Bool) -> RTUniforms {
+    /// centerY: 화면에서 회전 중심이 오는 세로 위치(0...1). 결과 화면은 아래쪽 절반을 설정 패널이 덮으므로 0.5가 아니라 위쪽 보이는 영역의 가운데로 둔다.
+    static func orbitUniforms(_ o: Orbit, viewW: Float, viewH: Float, tintProvisional: Bool, centerY: Float = 0.5) -> RTUniforms {
         let f = 0.5 * viewH / tan(o.fovDeg * .pi / 360)
-        return uniforms(pose: o.pose, fx: f, fy: f, cx: viewW / 2, cy: viewH / 2, imgW: viewW, imgH: viewH,
+        return uniforms(pose: o.pose, fx: f, fy: f, cx: viewW / 2, cy: viewH * centerY, imgW: viewW, imgH: viewH,
                         mapping: Mapping(m00: 1, m01: 0, m10: 0, m11: 1, tx: 0, ty: 0), viewW: viewW, viewH: viewH,
                         tintProvisional: tintProvisional)
     }

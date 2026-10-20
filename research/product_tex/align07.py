@@ -267,3 +267,33 @@ def consensus_pass(L, kmax=6, tau=0.15, min_supp=1, alpha=1.0, only=None):
         if only is not None: s = np.where(only[i], s, 1.0)
         nl = {k: v for k, v in li.items() if k != '_S'}; c = li['C']; nl['corners'] = (c + (li['corners'] - c) * s[:, None, None]).astype(np.float32); out.append(nl)
     return out
+
+
+def vertex_scale_corners(l, s_cell):
+    """Per-cell scales -> per-vertex scales (mean of the adjacent existing cells) -> new corners. Neighbouring cells then share the scale of their shared vertices,
+    so the surface stays connected (a per-cell homothety tears it apart)."""
+    cols = l['w'] // CELL; rows = l['h'] // CELL; cells = l['cells'].astype(np.int64); r = cells // cols; c = cells % cols
+    num = np.zeros((rows + 1, cols + 1), np.float64); den = np.zeros((rows + 1, cols + 1), np.float64)
+    for dr, dc in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        np.add.at(num, (r + dr, c + dc), s_cell); np.add.at(den, (r + dr, c + dc), 1.0)
+    sv = np.where(den > 0, num / np.maximum(den, 1), 1.0)
+    out = l['corners'].copy(); C = l['C']
+    for k, (dr, dc) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1))):
+        sk = sv[r + dr, c + dc].astype(np.float32); out[:, k] = C + (l['corners'][:, k] - C) * sk[:, None]
+    return out.astype(np.float32)
+
+
+def apply_vertex(L, S):
+    out = []
+    for l, s in zip(L, S):
+        nl = {k: v for k, v in l.items() if k != '_S'}; nl['corners'] = vertex_scale_corners(l, s); out.append(nl)
+    return out
+
+
+def consensus_pass_vertex(L, **kw):
+    """same decision as consensus_pass but applied per vertex"""
+    Lc = consensus_pass(L, **kw); out = []
+    for l, lc in zip(L, Lc):
+        c = l['C']; s_cell = (np.linalg.norm(lc['corners'][:, 0] - c, axis=1) / np.maximum(np.linalg.norm(l['corners'][:, 0] - c, axis=1), 1e-9)).astype(np.float32)
+        nl = {k: v for k, v in l.items() if k != '_S'}; nl['corners'] = vertex_scale_corners(l, s_cell); out.append(nl)
+    return out

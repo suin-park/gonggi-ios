@@ -91,6 +91,8 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
     private var texFade: [Int: (f: Float, w: Float)] = [:]
     private var texFadeHost = 0.0
     var texCrossfade = true
+    /// 둘러보기에서 회전 중심의 세로 화면 위치(0.5 = 가운데). 결과 화면은 패널 때문에 위쪽 영역으로 올린다.
+    var orbitCenterY: Float = 0.5
     private var texClip: TexClip?
     /// 둘러보기 기록(연구 기록): 카메라가 움직이거나 선택이 바뀔 때 0.25초 간격으로 한 줄(가상 카메라·선택 레이어·렌더 해상도·제외 사유).
     var onBrowse: (([String: Any]) -> Void)?
@@ -200,7 +202,7 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
                                         mapping: m, viewW: viewW, viewH: viewH, tintProvisional: tintProvisional), c.pose)
         case .explore:
             var o = orbit; o.clamp()
-            return (RTViewMath.orbitUniforms(o, viewW: viewW, viewH: viewH, tintProvisional: tintProvisional), o.pose)
+            return (RTViewMath.orbitUniforms(o, viewW: viewW, viewH: viewH, tintProvisional: tintProvisional, centerY: orbitCenterY), o.pose)
         }
     }
 

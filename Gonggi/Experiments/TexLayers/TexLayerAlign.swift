@@ -29,6 +29,8 @@ enum TexAlignConst {
     static let consensusTau: Float = 0.10
     static let consensusMinSupport = 2
     static let consensusAlpha: Float = 0.5
+    /// 교차 합의 단계는 끈다(비교용 실험 옵션). 테스트_08 보류 프레임 비교에서 사진 정합만 한 쪽이 PSNR·고주파가 같거나 높았다.
+    static let useConsensus = false
 }
 
 struct TexAlignParams: Equatable {
@@ -38,7 +40,7 @@ struct TexAlignParams: Equatable {
     var aggregate = 3
     var medianK = 3
     var sigma: Float = 1.2
-    var consensus = true
+    var consensus = TexAlignConst.useConsensus
 
     static func linspace(_ a: Float, _ b: Float, _ n: Int) -> [Float] { (0..<n).map { a + (b - a) * Float($0) / Float(max(1, n - 1)) } }
     /// 촬영 중 새 레이어마다(기기 예산을 아끼는 작은 탐색).
@@ -404,22 +406,51 @@ enum TexLayerAlign {
 
     // MARK: 적용
 
-    /// 셀 사각형을 레이어 카메라 중심 기준으로 셀마다 균일 배율한다. 텍스처·셀 번호·포즈는 그대로다. 합성 배율은 alignScale에 누적한다.
+    /// 셀별 배율을 꼭짓점 배율로 바꿔(꼭짓점 = 맞닿은 셀 배율의 평균) 모서리를 카메라 중심 기준 광선 위에서 옮긴다. 이웃 셀이 꼭짓점을 같은 배율로 옮기므로 면이 이어진 채 유지된다
+    /// (셀마다 사각형 전체에 다른 배율을 곱하면 인접 셀 경계가 벌어진다 — 3.0(26)의 회귀). 텍스처·셀 번호·포즈는 그대로다. 누적 배율은 alignScale(모서리별)에 곱해 둔다.
     static func apply(_ l: TexLayer, scale: [Float]) -> TexLayer {
         let c = l.pose.center
-        var corners = l.corners
-        var total = l.alignScale ?? [Float](repeating: 1, count: l.count)
+        let cols = max(1, l.k.width / TexLayerConst.cell), rows = max(1, l.k.height / TexLayerConst.cell)
+        let vw = cols + 1
+        var num = [Float](repeating: 0, count: vw * (rows + 1)), den = [Float](repeating: 0, count: vw * (rows + 1))
         for q in 0..<l.count {
-            let s = scale[q]
-            total[q] *= s
+            let cell = Int(l.cells[q]); let r = cell / cols, cc = cell % cols
+            guard r < rows else { continue }
+            for k in 0..<4 { let vi = (r + (k >> 1)) * vw + cc + (k & 1); num[vi] += scale[q]; den[vi] += 1 }
+        }
+        var corners = l.corners
+        var total = (l.alignVersion == 2 ? l.alignScale : nil) ?? [Float](repeating: 1, count: l.count * 4)
+        for q in 0..<l.count {
+            let cell = Int(l.cells[q]); let r = cell / cols, cc = cell % cols
             for k in 0..<4 {
+                var s: Float = 1
+                if r < rows { let vi = (r + (k >> 1)) * vw + cc + (k & 1); if den[vi] > 0 { s = num[vi] / den[vi] } }
+                total[q * 4 + k] *= s
                 let p = l.corners[q * 4 + k]
                 let v = c + (SIMD3<Float>(p.x, p.y, p.z) - c) * s
                 corners[q * 4 + k] = SIMD4<Float>(v.x, v.y, v.z, p.w)
             }
         }
         return TexLayer(id: l.id, timestamp: l.timestamp, pose: l.pose, k: l.k, corners: corners, texels: l.texels, cells: l.cells, gain: l.gain,
-                        revision: l.revision + 1, alignScale: total)
+                        revision: l.revision + 1, alignScale: total, alignVersion: 2)
+    }
+
+    /// 저장된 정합 배율로 정합 전 원본 모서리를 되돌린다(3.0(26)의 셀별 배율 저장본은 셀당 1개, 새 판은 모서리당 1개). 텍스처는 그대로.
+    static func restoreOriginal(_ l: TexLayer) -> TexLayer {
+        guard let s = l.alignScale else { return l }
+        let c = l.pose.center
+        var corners = l.corners
+        for q in 0..<l.count {
+            for k in 0..<4 {
+                let idx = l.alignVersion == 1 ? q : q * 4 + k
+                guard idx < s.count, s[idx] > 1e-4 else { continue }
+                let p = l.corners[q * 4 + k]
+                let v = c + (SIMD3<Float>(p.x, p.y, p.z) - c) / s[idx]
+                corners[q * 4 + k] = SIMD4<Float>(v.x, v.y, v.z, p.w)
+            }
+        }
+        return TexLayer(id: l.id, timestamp: l.timestamp, pose: l.pose, k: l.k, corners: corners, texels: l.texels, cells: l.cells, gain: l.gain,
+                        revision: l.revision + 1, alignScale: nil, alignVersion: 2)
     }
 }
 
@@ -456,7 +487,7 @@ final class TexLayerAligner {
             let cons = TexLayerAlign.consensusScales(layer: moved, neighbours: nbV)
             if cons.moved > 0 { moved = TexLayerAlign.apply(moved, scale: cons.scale); supported = cons.moved }
         }
-        let dev = (0..<target.count).map { abs((moved.alignScale?[$0] ?? 1) / (target.alignScale?[$0] ?? 1) - 1) }.sorted()
+        let dev = (0..<target.count).map { abs((moved.alignScale?[$0 * 4] ?? 1) / ((target.alignVersion == 2 ? target.alignScale?[$0 * 4] : nil) ?? 1) - 1) }.sorted()
         var r = TexAlignResult(layer: moved)
         r.neighbours = nbL.count; r.informative = infoCount; r.cells = target.count; r.supported = supported
         r.medianShift = dev.isEmpty ? 0 : dev[dev.count / 2]
@@ -491,7 +522,7 @@ final class TexLayerAligner {
             progress?(i + 1, cur.count)
             if let up = onUpdate, (i + 1) % 6 == 0 { up(cur) }
         }
-        if !cancelled() {
+        if TexAlignConst.useConsensus, !cancelled() {
             for i in 0..<cur.count {
                 if cancelled() { break }
                 if let c = consensusOnly(cur[i], among: cur, params: TexAlignParams.full) {

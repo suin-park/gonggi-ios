@@ -42,17 +42,18 @@ final class TexLayer {
     let cells: [UInt16]                  // 셀 번호(row * cols + col). 영구 서펠 ID = (id, cell)
     let gain: SIMD3<Float>               // 색 원본에 곱한 노출·백색 보정
     let revision: Int                    // 정합으로 모서리가 바뀔 때마다 1씩 오른다(GPU 버퍼 갱신 키)
-    let alignScale: [Float]?             // 셀별 정합 배율(누적, 카메라 중심 기준 균일 배율). nil = 정합 전. 원본 모서리 = 중심 + (모서리 − 중심) ÷ 배율
+    let alignScale: [Float]?             // 모서리별 정합 배율(누적, 카메라 중심 기준 광선 위 이동, 사각형 q의 모서리 k = q*4+k). nil = 정합 전. 원본 모서리 = 중심 + (모서리 − 중심) ÷ 배율
+    let alignVersion: Int                // 1 = 3.0(26) 셀별 배율(셀당 1개, 인접 셀이 벌어짐) · 2 = 꼭짓점 공유 정합(모서리당 1개)
     let bounds: (lo: SIMD3<Float>, hi: SIMD3<Float>)
     /// 선택용 표본(사각형 중심과 법선). 그리기에는 쓰지 않는다.
     let samples: [SIMD3<Float>]
     let sampleNormals: [SIMD3<Float>]
 
     init(id: Int, timestamp: Double, pose: RTPose, k: RTIntrinsics, corners: [SIMD4<Float>], texels: [UInt8], cells: [UInt16], gain: SIMD3<Float>,
-         revision: Int = 0, alignScale: [Float]? = nil) {
+         revision: Int = 0, alignScale: [Float]? = nil, alignVersion: Int = 2) {
         self.id = id; self.timestamp = timestamp; self.pose = pose; self.k = k
         self.corners = corners; self.texels = texels; self.cells = cells; self.gain = gain
-        self.revision = revision; self.alignScale = alignScale
+        self.revision = revision; self.alignScale = alignScale; self.alignVersion = alignVersion
         count = cells.count
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for c in corners { lo = simd_min(lo, SIMD3<Float>(c.x, c.y, c.z)); hi = simd_max(hi, SIMD3<Float>(c.x, c.y, c.z)) }

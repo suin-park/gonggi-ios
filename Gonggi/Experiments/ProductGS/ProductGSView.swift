@@ -31,7 +31,10 @@ extension GSOProductMask {
 /// 실시간 제품 3DGS 화면의 상태. 대상 선택 → 마스크 확인 → 촬영(가우시안만 표시) → 일시정지(둘러보기) → 이어서 촬영 → 종료·저장 → 저장본 재열기·공유 → (선택) 같은 입력 비교.
 @MainActor
 final class ProductSessionViewModel: ObservableObject {
-    @Published var state: ProductRunState = .idle
+    @Published var state: ProductRunState = .idle {
+        // 결과 화면(종료·저장본 보기)은 아래쪽 절반을 설정 패널이 덮는다: 3D 회전 중심을 위쪽 보이는 영역으로 올린다. 일시정지 둘러보기는 패널이 작다.
+        didSet { renderer.orbitCenterY = (state == .finished || state == .idle) ? 0.27 : (state == .paused ? 0.42 : 0.5) }
+    }
     @Published var live = GSOLive()
     @Published var renderStats = RTRenderStats()
     @Published var message = ""
@@ -322,11 +325,12 @@ final class ProductSessionViewModel: ObservableObject {
             let startKind: String
             if let st = TexLayerSelect.observedStart(loaded.layers, target: orbit.target) { orbit.yaw = st.yaw; orbit.pitch = st.pitch; orbit.distance = st.distance; startKind = "observedCapture" } else { startKind = "appDefault" }
             renderer.orbit = orbit
-            let alignedAtOpen = loaded.layers.filter { $0.alignScale != nil }.count
+            let alignedAtOpen = loaded.layers.filter { $0.alignScale != nil && $0.alignVersion == 2 }.count
             browseSink.use(file: TexBrowseLog(url: TexBrowseLog.url(forSaved: item.url)), runLog: nil)
             browseSink.write(["event": "browse_open", "file": item.url.lastPathComponent, "layers": loaded.layers.count, "layersAligned": alignedAtOpen, "start": startKind,
                               "appVersion": GonggiBuildInfo.versionLine, "buildSHA": GonggiBuildInfo.buildSHA, "t": ExpSys.hostNow()])
             renderer.mode = .explore
+            if !announce { let bd = GSOStore.shareBundle(for: item); shareItems = bd.urls; shareMissing = bd.missing }   // 둘러보기 기록 파일이 만들어진 뒤의 공유 묶음(저장 직후 묶음에는 빠져 있었다)
             startReopenRegistration(loaded.layers)
             viewingTitle = item.url.lastPathComponent
             let quads = loaded.layers.reduce(0) { $0 + $1.count }
@@ -346,8 +350,11 @@ final class ProductSessionViewModel: ObservableObject {
     /// 저장본에 정합 정보가 없는 레이어(3.0(25) 이전에 만든 저장본 등)는 열 때 메모리에서만 정합한다(저장본 파일은 바꾸지 않는다). 하는 동안 정합된 레이어부터 화면에 반영된다.
     private func startReopenRegistration(_ layers: [TexLayer]) {
         registerTask?.cancel()
+        // 3.0(26)의 셀별 배율 저장본은 인접 셀 경계가 벌어져 있다: 원본 모서리로 되돌려(메모리에서만) 꼭짓점 공유 정합을 다시 한다. 파일은 바꾸지 않는다.
+        let layers = layers.map { $0.alignVersion == 1 && $0.alignScale != nil ? TexLayerAlign.restoreOriginal($0) : $0 }
         guard layers.count >= 3, layers.contains(where: { $0.alignScale == nil }) else { return }
         let store = texStore
+        store.publish(layers)
         let sink = browseSink
         let t0 = ExpSys.hostNow()
         registerTask = Task.detached(priority: .utility) { [weak self] in

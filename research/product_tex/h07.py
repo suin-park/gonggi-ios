@@ -129,3 +129,17 @@ def pair_stats(L, step=3, gaps=(1, 2, 4)):
         r = rows[rows[:, 0] == g]
         if len(r): out[g] = (float(np.median(r[:, 1]) * 100), float(np.median(r[:, 2]) * 100), float(np.median(r[:, 3])))
     return out
+
+
+def seam_stats(L):
+    """gap between the shared edges of adjacent cells of the SAME layer (mm): the surface-continuity measure from the external audit."""
+    gaps = []
+    for l in L:
+        cols = l['w'] // 8; cells = l['cells'].astype(np.int64); idx = {int(c): i for i, c in enumerate(cells)}; cr = l['corners']
+        for i, c in enumerate(cells):
+            j = idx.get(int(c) + 1) if (int(c) % cols) != cols - 1 else None
+            if j is not None: gaps.append(0.5 * (np.linalg.norm(cr[i, 1] - cr[j, 0]) + np.linalg.norm(cr[i, 3] - cr[j, 2])))
+            j = idx.get(int(c) + cols)
+            if j is not None: gaps.append(0.5 * (np.linalg.norm(cr[i, 2] - cr[j, 0]) + np.linalg.norm(cr[i, 3] - cr[j, 1])))
+    g = np.array(gaps) * 1000
+    return dict(pairs=len(g), median_mm=float(np.median(g)), p95_mm=float(np.percentile(g, 95)), over10mm=float((g > 10).mean()))
