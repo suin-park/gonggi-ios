@@ -11,7 +11,7 @@ KM = r'C:\Users\emili\Downloads\테스트_07\product-tex-20261020-070707-product
 Ls = F.load_kmots(KM); c = cams07.product_center(Ls)
 Cs = np.array([l['C'] for l in Ls]); rel, hor, az, pit = cams07.path_stats(Cs, c); R = float(np.median(hor))
 t0 = time.time(); Lr = P.register(Ls); print('registered in', round(time.time() - t0), 's', flush=True)
-W, H = 400, 300; fx = 720.37 * W / 960
+W, H = 512, 384; fx = 720.37 * W / 960
 SA = [F.layer_samples(l) for l in Ls]; SB = [F.layer_samples(l) for l in Lr]
 
 

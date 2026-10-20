@@ -197,7 +197,7 @@ final class TexLayerAlignTests: XCTestCase {
         XCTAssertEqual(counted.agree[mid], 2, "시험 전제: 가중치와 무관하게 세면 2")
         XCTAssertEqual(counted.alpha[mid], 1)
         let excluded = TexLayerCPU.compose(ps, width: 64, height: 48)
-        XCTAssertEqual(excluded.agree[mid], 1, "거의 꺼진 레이어가 합의 개수에 들어감")
-        XCTAssertEqual(excluded.alpha[mid], 0)
+        XCTAssertEqual(excluded.alpha[mid], 0, "거의 꺼진 레이어가 합의 개수에 들어가 단독 관측이 남음")
+        XCTAssertEqual(excluded.agree[mid], 0, "지운 화소의 합의 개수는 기록하지 않는다")
     }
 }
