@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import numpy as np, cv2
 import tex_data, fix06 as F, fix06_final as FF, regen, study, masksan
 
-NPZ = os.path.join(os.path.dirname(__file__), 'cache', 't07_320.npz')
+NPZ = os.environ.get('NPZ07') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache', 't07_320.npz')
 
 
 def relabel(lab, band, src_band=4):
@@ -79,11 +79,11 @@ def render(L, S, cam, W, H, kmax=8, seed=5):
     return im, A, rgb[sel], z[sel], w, sel
 
 
-def heldout(env, L, label='', verbose=False):
+def heldout(env, L, label='', verbose=False, eval_M=None):
     S = [F.layer_samples(l) for l in L]; rows = []
     for i in sorted(env.held):
         if not env.D['TRUST'][i] or (env.D['MASK'][i] == 1).sum() < 100: continue
-        f = env.fr[i]; cam = env.cam_of(f); gt, lab = study.gt_and_labels(f, env.M[i])
+        f = env.fr[i]; cam = env.cam_of(f); gt, lab = study.gt_and_labels(f, (env.M if eval_M is None else eval_M)[i])
         im, A, *_ = render(L, S, cam, study.EW, study.EH)
         s = study.score(np.clip(im, 0, 1), A, gt, lab)
         if s is None: continue

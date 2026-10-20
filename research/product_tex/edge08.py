@@ -14,8 +14,8 @@ syn = E.Syn()
 W, H = 480, 360
 
 
-def build(alpha_mode, min_prod):
-    os.environ['ALPHA_SOFT'] = alpha_mode; os.environ['MIN_PROD'] = str(min_prod)
+def build(alpha_mode, min_prod, ext='0'):
+    os.environ['ALPHA_SOFT'] = alpha_mode; os.environ['MIN_PROD'] = str(min_prod); os.environ['EDGE_EXT'] = ext
     return syn.build(Zuse=syn.Zgt)
 
 
@@ -48,7 +48,8 @@ def gt_cov(cam, W, H, ss=3):
     if key not in _GT:
         c = F.Cam(cam.R, cam.C, cam.fx * ss, cam.fy * ss, (cam.cx + .5) * ss - .5, (cam.cy + .5) * ss - .5)
         rgb, z, hit = S.render(c.R, c.C, c.fx, c.fy, c.cx, c.cy, W * ss, H * ss)
-        _GT[key] = cv2.resize(hit.astype(np.float32), (W, H), interpolation=cv2.INTER_AREA)
+        cov_ = cv2.resize(hit.astype(np.float32), (W, H), interpolation=cv2.INTER_AREA); rgbp = cv2.resize(rgb * hit[..., None], (W, H), interpolation=cv2.INTER_AREA)
+        _GT[key] = (cov_, rgbp)
     return _GT[key]
 
 

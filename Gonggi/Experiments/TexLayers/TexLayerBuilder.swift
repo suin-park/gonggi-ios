@@ -11,6 +11,8 @@ enum TexLayerBuilder {
         var maxResid: Float = 0.03         // 평면 맞춤 잔차 상한(깊이의 비율)
         var minFrontal: Float = 0.2        // 시선과 법선이 이루는 |cos| 하한(스치는 면은 건너뜀)
         var minAlpha: Float = 0.25         // 셀 평균 알파 하한
+        var extendEdgeColour = true        // 알파가 0.5 미만인 텍셀의 색을 같은 셀의 가장 가까운 거의 완전히 덮인(알파 0.75 이상) 텍셀 색으로 바꾼다(윤곽에서 배경색이 섞여 어두운 테두리가 생기는 것을 막는다)
+        var softAlpha = true               // 텍셀 알파를 마스크(320×240)를 쌍선형으로 늘린 값으로 둔다(최근접 늘림의 3×3 계단을 없앤다). false면 0/255(이전 방식).
     }
 
     struct Result {
@@ -39,6 +41,14 @@ enum TexLayerBuilder {
             let mx = min(mw - 1, Int((Float(x) + 0.5) * Float(mw) / Float(width)))
             let my = min(mh - 1, Int((Float(y) + 0.5) * Float(mh) / Float(height)))
             return labels[my * mw + mx]
+        }
+        /// 원본 화소 (x, y) 중심의 제품(확실) 비율: 마스크 격자를 쌍선형으로 늘린 값(0...1). 마스크 한 화소(원본 약 3화소) 안에서 윤곽이 부드럽게 이어진다.
+        @inline(__always) func coverageAt(_ x: Int, _ y: Int) -> Float {
+            let fx = (Float(x) + 0.5) * Float(mw) / Float(width) - 0.5, fy = (Float(y) + 0.5) * Float(mh) / Float(height) - 0.5
+            let x0 = Int(fx.rounded(.down)), y0 = Int(fy.rounded(.down))
+            let tx = fx - Float(x0), ty = fy - Float(y0)
+            @inline(__always) func v(_ xx: Int, _ yy: Int) -> Float { labels[min(mh - 1, max(0, yy)) * mw + min(mw - 1, max(0, xx))] == 1 ? 1 : 0 }
+            return (v(x0, y0) * (1 - tx) + v(x0 + 1, y0) * tx) * (1 - ty) + (v(x0, y0 + 1) * (1 - tx) + v(x0 + 1, y0 + 1) * tx) * ty
         }
         /// 원본 화소 좌표의 깊이(깊이 격자 쌍선형, 네 모서리 중 하나라도 무효면 0).
         @inline(__always) func depthAt(_ x: Float, _ y: Float) -> Float {
@@ -127,18 +137,31 @@ enum TexLayerBuilder {
                         tex[o] = UInt8(max(0, min(255, applyGain(Float(rgb[si]), gain.x))))
                         tex[o + 1] = UInt8(max(0, min(255, applyGain(Float(rgb[si + 1]), gain.y))))
                         tex[o + 2] = UInt8(max(0, min(255, applyGain(Float(rgb[si + 2]), gain.z))))
-                        if labelAt(px, py) == 1 {
+                        let cov: Float = p.softAlpha ? coverageAt(px, py) : (labelAt(px, py) == 1 ? 1 : 0)
+                        if cov > 0 {
                             let tz = depthAt(Float(px), Float(py))
                             let d = ray(Float(px), Float(py))
                             let den = simd_dot(n, d)
                             if tz > 0, abs(den) > 1e-6 {
                                 let tpl = nd / den
-                                if abs(tz - tpl) < p.tau * 1.6 * zc { tex[o + 3] = 255; alphaSum += 1 }
+                                if abs(tz - tpl) < p.tau * 1.6 * zc { tex[o + 3] = UInt8((cov * 255).rounded()); alphaSum += cov >= 0.5 ? 1 : 0 }
                             }
                         }
                     }
                 }
                 if Float(alphaSum) / area < p.minAlpha { res.skipped["lowAlpha", default: 0] += 1; continue }
+                if p.extendEdgeColour {
+                    var inside: [Int] = []
+                    for t in 0..<64 where tex[t * 4 + 3] >= 191 { inside.append(t) }
+                    if !inside.isEmpty {
+                        for t in 0..<64 where tex[t * 4 + 3] < 128 {
+                            let tx = t % 8, ty = t / 8
+                            var best = inside[0], bd = Int.max
+                            for q in inside { let dx = q % 8 - tx, dy = q / 8 - ty; let d = dx * dx + dy * dy; if d < bd { bd = d; best = q } }
+                            tex[t * 4] = tex[best * 4]; tex[t * 4 + 1] = tex[best * 4 + 1]; tex[t * 4 + 2] = tex[best * 4 + 2]
+                        }
+                    }
+                }
                 for q in cs { corners.append(SIMD4<Float>(q.x, q.y, q.z, 0)) }
                 texels.append(contentsOf: tex)
                 cellIDs.append(UInt16(r * cols + c))

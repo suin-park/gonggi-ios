@@ -156,6 +156,12 @@ def build_from_frame(fr, Zlo, lab, born, scale=3.0, cell=T, reg_tau=0.05, min_pr
         a = (prod[y0:y0 + cell, x0:x0 + cell] & okd).astype(np.float32) if soft is None else (soft[y0:y0 + cell, x0:x0 + cell] * okd).astype(np.float32)
         if a.mean() < 0.25: keep[k] = False; continue
         tex[k, ..., :3] = patch; tex[k, ..., 3] = a
+        if _os.environ.get('EDGE_EXT', '0') != '0':
+            inside = a >= 0.99
+            if inside.any() and not inside.all():
+                iy, ix = np.nonzero(inside); oy, ox = np.nonzero(~inside)
+                d2 = (oy[:, None] - iy[None]) ** 2 + (ox[:, None] - ix[None]) ** 2; nn = d2.argmin(1)
+                tex[k, oy, ox, :3] = patch[iy[nn], ix[nn]]
         g = gray[y0:y0 + cell, x0:x0 + cell]
         front = abs(n @ ((fr.C - ctr) / np.linalg.norm(fr.C - ctr)))
         q[k] = (0.05 + float(np.abs(np.diff(g, axis=0)).mean() + np.abs(np.diff(g, axis=1)).mean())) * front * (1.0 / (1 + 0.15 * zc))

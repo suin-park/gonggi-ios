@@ -54,8 +54,7 @@ final class TexAlignView {
     let layer: TexLayer
     let w: Int, h: Int, cols: Int, rows: Int
     let cellIndex: [Int32]          // 격자 칸 → 사각형 번호(없으면 -1)
-    let gray: [Float]               // 사각형 × 64 텍셀, 0...1
-    let valid: [Bool]               // 텍셀 알파 ≥ 0.5
+    let gray: [UInt8]               // 사각형 × 64 텍셀, 0...255(메모리를 아끼려 1바이트). 유효 여부는 레이어 텍셀 알파(≥ 128)로 읽는다.
 
     init(_ l: TexLayer) {
         layer = l
@@ -65,15 +64,13 @@ final class TexAlignView {
         var idx = [Int32](repeating: -1, count: cols * rows)
         for (q, cell) in l.cells.enumerated() where Int(cell) < cols * rows { idx[Int(cell)] = Int32(q) }
         cellIndex = idx
-        var g = [Float](repeating: 0, count: l.count * 64)
-        var v = [Bool](repeating: false, count: l.count * 64)
+        var g = [UInt8](repeating: 0, count: l.count * 64)
         l.texels.withUnsafeBufferPointer { t in
             for i in 0..<(l.count * 64) {
-                g[i] = (0.299 * Float(t[i * 4]) + 0.587 * Float(t[i * 4 + 1]) + 0.114 * Float(t[i * 4 + 2])) / 255
-                v[i] = t[i * 4 + 3] >= 128
+                g[i] = UInt8(max(0, min(255, (0.299 * Float(t[i * 4]) + 0.587 * Float(t[i * 4 + 1]) + 0.114 * Float(t[i * 4 + 2])).rounded())))
             }
         }
-        gray = g; valid = v
+        gray = g
     }
 
     /// 화소 (x, y)의 텍셀 번호(유효하지 않으면 -1).
@@ -84,7 +81,7 @@ final class TexAlignView {
         let q = Int(cellIndex[cell])
         guard q >= 0 else { return -1 }
         let i = q * 64 + (y & 7) * 8 + (x & 7)
-        return valid[i] ? i : -1
+        return layer.texels[i * 4 + 3] >= 128 ? i : -1
     }
 
     /// 쌍선형 그레이(화소 중심이 정수 좌표). 네 이웃 중 하나라도 유효하지 않으면 nil.
@@ -94,7 +91,8 @@ final class TexAlignView {
         let a = texel(x0, y0), b = texel(x0 + 1, y0), c = texel(x0, y0 + 1), d = texel(x0 + 1, y0 + 1)
         guard a >= 0, b >= 0, c >= 0, d >= 0 else { return nil }
         let tx = u - fx, ty = v - fy
-        return (gray[a] * (1 - tx) + gray[b] * tx) * (1 - ty) + (gray[c] * (1 - tx) + gray[d] * tx) * ty
+        let ga = Float(gray[a]), gb = Float(gray[b]), gc = Float(gray[c]), gd = Float(gray[d])
+        return ((ga * (1 - tx) + gb * tx) * (1 - ty) + (gc * (1 - tx) + gd * tx) * ty) * (1.0 / 255.0)
     }
 
     /// 화소 (x, y)를 덮는 사각형 번호(없으면 -1).
