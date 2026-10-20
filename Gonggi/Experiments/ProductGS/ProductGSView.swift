@@ -65,6 +65,8 @@ final class ProductSessionViewModel: ObservableObject {
     private let gateName = "product-gs"
     private var log: ExperimentRunLog?
     private var finishTask: Task<Void, Never>?
+    private var registerTask: Task<Void, Never>?
+    private let browseSink = TexBrowseSink()
     private var lastBudgetChange = Date.distantPast
 
     init() {
@@ -73,6 +75,8 @@ final class ProductSessionViewModel: ObservableObject {
         renderer.nearZ = rules.nearZ
         if case .cullFraction(let f) = rules.cap { renderer.radiusCapFraction = f }
         renderer.onStats = { [weak self] s in Task { @MainActor in self?.handleRenderStats(s) } }
+        let sink = browseSink
+        renderer.onBrowse = { d in sink.write(d) }
         renderer.onPresented = { [weak self] version, uptime, source in
             Task { @MainActor in self?.engine?.notePresented(version: version, uptime: uptime, source: source) }
         }
@@ -176,7 +180,10 @@ final class ProductSessionViewModel: ObservableObject {
     func pauseAndExplore() {
         guard state == .running, let e = engine else { return }
         e.pause()
-        renderer.orbit = RTViewMath.fitOrbit(bounds: RTViewerBounds.shared.bounds)
+        var orbit = RTViewMath.fitOrbit(bounds: RTViewerBounds.shared.bounds)
+        if textureLayers, let st = TexLayerSelect.observedStart(e.texStore.snapshot().layers, target: orbit.target) { orbit.yaw = st.yaw; orbit.pitch = st.pitch; orbit.distance = st.distance }
+        renderer.orbit = orbit
+        browseSink.use(file: nil, runLog: log)
         renderer.mode = .explore
         state = .paused
     }
@@ -200,6 +207,7 @@ final class ProductSessionViewModel: ObservableObject {
         let render = renderStats
         let (summary, saved) = await Task.detached(priority: .userInitiated) { () -> ((text: String, dict: [String: Any]), GSOSaveResult) in
             engine.stop()
+            engine.finalizeRegistration()
             let s = engine.summary(endReason: reason, render: render)
             let sv = engine.save(summaryText: s.text)
             if sv.item == nil { engine.discardReplay() }
@@ -298,6 +306,7 @@ final class ProductSessionViewModel: ObservableObject {
 
     /// 텍스처 레이어 저장본을 열어 카메라 영상 없이 둘러본다(저장 == 재열기).
     private func loadAndShowTexture(_ item: GSOStore.Item, announce: Bool) async {
+        registerTask?.cancel()
         let result = await Task.detached(priority: .userInitiated) { () -> Result<TexLayerFiles.Loaded, Error> in
             do { return .success(try TexLayerFiles.load(url: item.url)) } catch { return .failure(error) }
         }.value
@@ -308,8 +317,17 @@ final class ProductSessionViewModel: ObservableObject {
             renderer.texStore = texStore
             let b = TexLayerSelect.robustBounds(loaded.layers)
             RTViewerBounds.shared.bounds = b
-            renderer.orbit = RTViewMath.fitOrbit(bounds: b)
+            // 시작 시점: 앱 기본(pitch 11.5°)이 아니라 실제로 관측한 촬영 시점(사각형이 가장 많은 레이어의 방위·높이·거리). 회전 범위는 제한하지 않는다.
+            var orbit = RTViewMath.fitOrbit(bounds: b)
+            let startKind: String
+            if let st = TexLayerSelect.observedStart(loaded.layers, target: orbit.target) { orbit.yaw = st.yaw; orbit.pitch = st.pitch; orbit.distance = st.distance; startKind = "observedCapture" } else { startKind = "appDefault" }
+            renderer.orbit = orbit
+            let alignedAtOpen = loaded.layers.filter { $0.alignScale != nil }.count
+            browseSink.use(file: TexBrowseLog(url: TexBrowseLog.url(forSaved: item.url)), runLog: nil)
+            browseSink.write(["event": "browse_open", "file": item.url.lastPathComponent, "layers": loaded.layers.count, "layersAligned": alignedAtOpen, "start": startKind,
+                              "appVersion": GonggiBuildInfo.versionLine, "buildSHA": GonggiBuildInfo.buildSHA, "t": ExpSys.hostNow()])
             renderer.mode = .explore
+            startReopenRegistration(loaded.layers)
             viewingTitle = item.url.lastPathComponent
             let quads = loaded.layers.reduce(0) { $0 + $1.count }
             var extra = ""
@@ -322,6 +340,31 @@ final class ProductSessionViewModel: ObservableObject {
             }
         case .failure(let error):
             message = "열 수 없어요: \(error)"
+        }
+    }
+
+    /// 저장본에 정합 정보가 없는 레이어(3.0(25) 이전에 만든 저장본 등)는 열 때 메모리에서만 정합한다(저장본 파일은 바꾸지 않는다). 하는 동안 정합된 레이어부터 화면에 반영된다.
+    private func startReopenRegistration(_ layers: [TexLayer]) {
+        registerTask?.cancel()
+        guard layers.count >= 3, layers.contains(where: { $0.alignScale == nil }) else { return }
+        let store = texStore
+        let sink = browseSink
+        let t0 = ExpSys.hostNow()
+        registerTask = Task.detached(priority: .utility) { [weak self] in
+            let aligner = TexLayerAligner()
+            let out = aligner.registerAll(layers, progress: { i, n in
+                if i % 4 == 0 || i == n { Task { @MainActor in self?.message = "표면 정합 중 (\(i)/\(n))… 원본 파일은 바꾸지 않아요" } }
+            }, onUpdate: { cur in store.publish(cur) }, cancelled: { Task.isCancelled })
+            if Task.isCancelled { return }
+            store.publish(out.layers)
+            let done = out.results.count
+            let sec = ExpSys.hostNow() - t0
+            let b = TexLayerSelect.robustBounds(out.layers)
+            sink.write(["event": "browse_registered", "layers": out.layers.count, "registered": done, "seconds": sec, "t": ExpSys.hostNow()])
+            await MainActor.run {
+                RTViewerBounds.shared.bounds = b
+                self?.message = "표면 정합을 적용했어요 (레이어 \(done)장, \(String(format: "%.1f", sec))초). 저장본 파일은 그대로예요."
+            }
         }
     }
 

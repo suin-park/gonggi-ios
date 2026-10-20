@@ -631,7 +631,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         toMap.append(rec.toMapMs); if toMap.count > 2000 { toMap.removeFirst() }
         func add(_ key: String, _ v: Double) { stageSamples[key, default: []].append(v); if stageSamples[key]!.count > 600 { stageSamples[key]!.removeFirst() } }
         add("convert", rec.convertMs); add("stereo", rec.stereoMs); add("mono", rec.monoMs); add("align", rec.alignMs)
-        add("insert", rec.insertMs); add("evidence", rec.evidenceMs); add("total", rec.totalMs)
+        add("insert", rec.insertMs); add("register", rec.registerMs); add("evidence", rec.evidenceMs); add("total", rec.totalMs)
         totals.inserted += rec.inserted; totals.stereoInserted += rec.insertedStereo; totals.monoInserted += rec.insertedMono
         totals.rejectedByCap += rec.rejectedByCap
         if rec.monoRan { totals.monoRuns += 1 }
@@ -662,7 +662,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         var d: [String: Any] = [:]
         d["id"] = r.id
         d["toMapMs"] = r.toMapMs
-        d["ms"] = ["convert": r.convertMs, "stereo": r.stereoMs, "mono": r.monoMs, "align": r.alignMs, "insert": r.insertMs, "evidence": r.evidenceMs, "total": r.totalMs]
+        d["ms"] = ["convert": r.convertMs, "stereo": r.stereoMs, "mono": r.monoMs, "align": r.alignMs, "insert": r.insertMs, "register": r.registerMs, "evidence": r.evidenceMs, "total": r.totalMs]
         d["refs"] = r.refs; d["anchors"] = r.anchors; d["monoRan"] = r.monoRan; d["denseSource"] = r.denseSource
         if let f = r.fit {
             d["fit"] = ["a": Double(f.a), "b": Double(f.b), "inlierRatio": Double(f.inlierRatio), "anchors": f.anchorCount, "inliers": f.inlierCount,
@@ -1010,7 +1010,29 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
          "maskGuardActiveFrames": tp.guardFramesActive, "maskGuardRejectedPixels": tp.guardRejectedPixels, "maskGuardFramesDropped": tp.maskGuard.framesDropped,
          "gainMin": [Double(tp.gainMin.x), Double(tp.gainMin.y), Double(tp.gainMin.z)], "gainMax": [Double(tp.gainMax.x), Double(tp.gainMax.y), Double(tp.gainMax.z)],
          "monoSpaceLocked": tp.config.lockMonoInverse ? "inverseDepth" : "auto", "monoInverseFits": tp.monoInverseFits, "monoDepthWouldHaveWon": tp.monoDepthWouldWin,
-         "monoFromOriginalWindow": tp.config.monoFromOriginalWindow, "texLayersVersion": 2]
+         "monoFromOriginalWindow": tp.config.monoFromOriginalWindow, "texLayersVersion": 3, "registration": registrationDict(tp)]
+    }
+
+    private func registrationDict(_ tp: TexLayerPipeline) -> [String: Any] {
+        let r = tp.registration
+        let alignedNow = tp.layers.filter { $0.alignScale != nil }.count
+        func pct(_ a: [Double], _ q: Double) -> Double { RTStat.percentile(a, q) ?? 0 }
+        return ["enabled": tp.config.registration, "liveLayers": r.liveLayers, "liveSkipped": r.liveSkipped, "alignedLayersNow": alignedNow,
+                "liveMsP50": pct(r.liveMs, 0.5), "liveMsP95": pct(r.liveMs, 0.95),
+                "informativeCellShare": r.totalCells > 0 ? Double(r.informativeCells) / Double(r.totalCells) : 0,
+                "consensusCells": r.supportedCells,
+                "medianShift": r.medianShifts.isEmpty ? 0 : Double(r.medianShifts.sorted()[r.medianShifts.count / 2]),
+                "finalDone": r.finalDone, "finalLayers": r.finalLayers, "finalMs": r.finalMs, "finalMedianShift": Double(r.finalMedianShift),
+                "method": "photo registration (ZNCC against neighbour layer photos, 3x3 cell aggregation) + one cross-layer consensus pass; cells move only along their own camera rays; textures untouched"]
+    }
+
+    /// 촬영을 마친 뒤 한 번 호출한다(저장 전): 양쪽 이웃이 모인 상태로 전체 레이어를 다시 정합하고 렌더용으로 다시 게시한다.
+    func finalizeRegistration() {
+        procQueue.sync {
+            guard let tp = self.texPipeline else { return }
+            tp.finalizeRegistration()
+            self.publish(force: true)
+        }
     }
 
     private func texSummaryText(_ tp: TexLayerPipeline) -> String {
@@ -1018,6 +1040,13 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
         var t = "텍스처 스플랫 레이어 (고정된 제품 + 움직이는 휴대폰)\n"
         t += "  표현: 키프레임마다 제품 영역 전체를 8×8 원본 화소 셀의 평면 사각형 + 8×8 RGBA 텍스처로 유지한다. 새 시점에서는 시야의 실제 표면을 덮는 레이어를 최대 \(TexLayerConst.blendMax)개(앞면만) 골라, 화소마다 가중치가 가장 큰 깊이를 표면으로 정하고 그 표면에 일치하는 관측만 혼합한다(색이 서로 다르면 대표 관측 하나). 같은 표면에 동의하는 레이어가 2개 미만인 화소는 가장자리 근처만 남긴다. 가우시안 지도·장면별 최적화(Adam)·분할을 쓰지 않았다. 일반 3DGS PLY가 아니다(.kmots).\n"
         t += "  레이어 \(tp.layers.count)개 · 사각형 \(tp.quadCount)개 · 메모리 \(String(format: "%.1f", Double(tp.bytes) / 1_048_576)) MB · 예산(최대 \(tp.config.maxLayers))으로 버린 레이어 \(tp.removedForBudget)\n"
+        let rg = tp.registration
+        if tp.config.registration {
+            func ms2(_ a: [Double], _ q: Double) -> String { String(format: "%.0f", RTStat.percentile(a, q) ?? 0) }
+            t += "  레이어 정합(사진 증거로 같은 표면을 같은 3D 위치에 놓음): 촬영 중 \(rg.liveLayers)장 정합(이웃 부족으로 건너뜀 \(rg.liveSkipped)장), 레이어당 시간 p50/p95 \(ms2(rg.liveMs, 0.5))/\(ms2(rg.liveMs, 0.95)) ms, 사진이 확인한 셀 \(rg.totalCells > 0 ? String(format: "%.0f", 100 * Double(rg.informativeCells) / Double(rg.totalCells)) : "0")%, 교차 합의로 움직인 셀 \(rg.supportedCells)개. 마감 전체 정합: " + (rg.finalDone ? "\(rg.finalLayers)장, \(String(format: "%.1f", rg.finalMs / 1000))초, 중앙 이동 \(String(format: "%.1f", rg.finalMedianShift * 100))%" : "하지 않음") + ". 셀은 자기 카메라 광선 위에서만 움직였고 텍스처는 바뀌지 않았다. 깊이를 정답으로 보지 않으며 사진이 구별하지 못한 셀(질감 없음)은 주변 값을 퍼뜨리거나 그대로 뒀다.\n"
+        } else {
+            t += "  레이어 정합: 꺼짐\n"
+        }
         t += "  마스크: 신뢰 \(ms.trusted)장 · 불확실 \(ms.uncertain)장(이 프레임은 레이어를 만들지 않음), 마스크 시간 p50 \(String(format: "%.0f", RTStat.percentile(msamples, 0.5) ?? 0))ms\n"
         t += "  마스크 점검(연결성·3D 공간 일관성·색 보조): 점검이 작동한 프레임 \(tp.guardFramesActive)장, 불확실로 바꾼 화소 \(tp.guardRejectedPixels)개, 오염이 커서 쓰지 않은 프레임 \(tp.maskContaminatedSkipped)장\n"
         t += "  건너뜀: 마스크 \(tp.maskSkipped) · 마스크 오염 \(tp.maskContaminatedSkipped) · 깊이 없음 \(tp.depthSkipped) · 흐림 \(tp.blurSkipped)\n"

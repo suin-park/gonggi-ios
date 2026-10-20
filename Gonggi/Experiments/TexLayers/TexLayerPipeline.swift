@@ -20,6 +20,8 @@ final class TexLayerPipeline {
         var chainClamp: ClosedRange<Float> = 0.8...1.25     // 누적 이득의 범위
         var gainClamp: ClosedRange<Float> = 0.88...1.15     // 텍스처에 실제로 적용하는 이득의 범위(보수적)
         var minExposurePoints = 100
+        var registration = true            // 레이어 정합(사진 증거로 같은 표면을 같은 3D 위치에 놓는다)
+        var registerLive: TexAlignParams = .live
     }
 
     /// 직전에 처리한 프레임(노출 비율을 재는 기준).
@@ -52,6 +54,17 @@ final class TexLayerPipeline {
     private var exposureRef: ExposureRef?
     let maskGuard: TexLayerMaskGuard
     private(set) var removedForBudget = 0
+    let aligner = TexLayerAligner()
+    /// 정합 통계(실행 요약·로그용)
+    struct RegistrationStats {
+        var liveLayers = 0, liveSkipped = 0                  // 촬영 중 정합한 레이어 / 이웃이 모자라 건너뛴 레이어
+        var liveMs: [Double] = []
+        var informativeCells = 0, totalCells = 0, supportedCells = 0
+        var medianShifts: [Float] = [], p90Shifts: [Float] = []
+        var finalLayers = 0, finalMs = 0.0, finalDone = false  // 마지막 한 번 전체 정합
+        var finalMedianShift: Float = 0
+    }
+    private(set) var registration = RegistrationStats()
 
     init(config: Config = Config()) {
         self.config = config
@@ -254,7 +267,22 @@ final class TexLayerPipeline {
         rec.candidatePixels = built.cellsConsidered
         for (k, v) in built.skipped { rec.gaps[k, default: 0] += v }
         rec.productPixels = mk.productCount
-        if let l = built.layer {
+        if var l = built.layer {
+            if config.registration {
+                // 새 레이어를 이웃 레이어 사진에 맞춘다(비동기 큐가 아니라 이 처리 큐 안에서 예산을 재며 한다).
+                let tR = nowHost()
+                if let r = aligner.register(l, among: layers, params: config.registerLive) {
+                    l = r.layer
+                    registration.liveLayers += 1
+                    registration.informativeCells += r.informative; registration.totalCells += r.cells; registration.supportedCells += r.supported
+                    registration.medianShifts.append(r.medianShift); registration.p90Shifts.append(r.p90Shift)
+                    rec.registered = true
+                } else {
+                    registration.liveSkipped += 1
+                }
+                rec.registerMs = (nowHost() - tR) * 1000
+                registration.liveMs.append(rec.registerMs)
+            }
             layers.append(l)
             rec.inserted = built.cellsBuilt; rec.insertedMono = rec.denseSource == "mono" ? built.cellsBuilt : 0; rec.insertedStereo = rec.denseSource == "stereoOnly" ? built.cellsBuilt : 0
             enforceBudget()
@@ -265,6 +293,19 @@ final class TexLayerPipeline {
         rec.count = quadCount
         rec.totalMs = (nowHost() - t0) * 1000
         return rec
+    }
+
+    /// 촬영을 마친 뒤 한 번: 모든 레이어를 양쪽 이웃이 모인 상태로 다시 정합한다(처음 레이어는 이웃이 없어 정합되지 못했다). 처리 큐에서 부른다.
+    func finalizeRegistration(cancelled: () -> Bool = { false }) {
+        guard config.registration, layers.count >= 3, !registration.finalDone else { return }
+        let t0 = ExpSys.hostNow()
+        let out = aligner.registerAll(layers, cancelled: cancelled)
+        layers = out.layers
+        registration.finalLayers = out.results.count
+        registration.finalMs = (ExpSys.hostNow() - t0) * 1000
+        let dev = out.results.map { $0.medianShift }.sorted()
+        registration.finalMedianShift = dev.isEmpty ? 0 : dev[dev.count / 2]
+        registration.finalDone = true
     }
 
     /// 레이어 수 상한: 가장 가까운 다른 레이어와 거의 같은 시점인(가장 중복되는) 오래된 레이어부터 버린다. 최신 레이어는 지키고, 시점 범위는 유지한다.
@@ -281,6 +322,7 @@ final class TexLayerPipeline {
             }
             guard best >= 0 else { break }
             layers.remove(at: best); removedForBudget += 1
+            aligner.prune(keeping: layers)
         }
     }
 }

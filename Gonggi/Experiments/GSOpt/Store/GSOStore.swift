@@ -220,6 +220,10 @@ enum GSOStore {
             }
         } else { missing.append("메타(.meta.json) 없음") }
         if let s = item.summaryURL { urls.append(s) } else { missing.append("요약(.summary.txt) 없음") }
+        if isTexLayers {
+            let browse = TexBrowseLog.url(forSaved: item.url)       // 둘러보기 기록(있을 때만): 가상 카메라 경로·선택 레이어
+            if fm.fileExists(atPath: browse.path) { urls.append(browse) }
+        }
         if let r = item.replayURL { urls.append(r) } else if replayRecorded { missing.append("재생 자료(.kmoreplay)가 기록됐다고 되어 있으나 파일이 없음") }
         if let id = runId, !id.isEmpty {
             let jsonl = logsDirectory.appendingPathComponent(id + ".jsonl")

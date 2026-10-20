@@ -184,6 +184,8 @@ struct GSOKFRecord {
     var monoMs = 0.0
     var alignMs = 0.0
     var insertMs = 0.0
+    var registerMs = 0.0                // 텍스처 레이어 정합 시간(ms)
+    var registered = false
     var evidenceMs = 0.0
     var hiMs = 0.0
     var totalMs = 0.0

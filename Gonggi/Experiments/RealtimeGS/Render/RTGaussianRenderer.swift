@@ -88,6 +88,11 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
     /// 직전 프레임의 레이어 선택(선택이 프레임마다 뒤집히지 않게 가산점을 준다). 메인 스레드에서만 쓴다.
     private var texPrevSelection = Set<Int>()
     private var texClip: TexClip?
+    /// 둘러보기 기록(연구 기록): 카메라가 움직이거나 선택이 바뀔 때 0.25초 간격으로 한 줄(가상 카메라·선택 레이어·렌더 해상도·제외 사유).
+    var onBrowse: (([String: Any]) -> Void)?
+    private var lastBrowseHost = 0.0
+    private var lastBrowseOrbit: RTViewMath.Orbit?
+    private var lastBrowseIDs = Set<Int>()
     private var texSelectionChanges = 0, texSelectionFrames = 0
     private(set) var lastTexSelected = 0, lastTexCoverage: Float = 0
     var texLayersActive: Bool { lastTexTotal > 0 }
@@ -276,6 +281,19 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
                 lastTexSelected = sel.picked.count; lastTexCoverage = sel.estimatedCoverage
                 texParams = tg.encodeLayers(cmd: cmd, picked: sel.picked, uniforms: u0, targetW: Int(vw), targetH: Int(vh), clip: texClip)
                 lastTexQuads = tg.lastDrawnQuads
+                if mode == .explore, let cb = onBrowse {
+                    let now = ExpSys.hostNow()
+                    let o = orbit
+                    if (o != lastBrowseOrbit || ids != lastBrowseIDs), now - lastBrowseHost >= 0.25 {
+                        lastBrowseHost = now; lastBrowseOrbit = o; lastBrowseIDs = ids
+                        cb(["event": "tex_browse", "t": now, "yaw": Double(o.yaw), "pitch": Double(o.pitch), "distance": Double(o.distance), "fovDeg": Double(o.fovDeg),
+                            "target": [Double(o.target.x), Double(o.target.y), Double(o.target.z)], "view": [Int(vw), Int(vh)], "renderScale": Double(tg.renderScale),
+                            "selected": sel.picked.map { $0.layer.id }, "weights": sel.picked.map { Double($0.weight) }, "coverage": Double(sel.estimatedCoverage),
+                            "targetCells": sel.targetCells, "observedCells": sel.observedCells, "disagreeCells": sel.disagreeCells, "unobservedCells": sel.unobservedCells,
+                            "clipExcludedSamples": sel.clipExcludedSamples, "backfaceSamples": sel.backfaceSamples, "quadsDrawn": tg.lastDrawnQuads,
+                            "layersTotal": snap.layers.count, "layersAligned": snap.layers.filter { $0.alignScale != nil }.count])
+                    }
+                }
             }
             lastTexTotal = snap.layers.reduce(0) { $0 + $1.count }
         }

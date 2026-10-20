@@ -56,17 +56,17 @@ final class TexLayerGPU {
 
     /// 현재 레이어 목록에 없는 GPU 버퍼를 지운다.
     func sync(layers: [TexLayer]) {
-        let ids = Set(layers.map { $0.id })
+        let ids = Set(layers.map { $0.key })
         for k in buffers.keys where !ids.contains(k) { buffers[k] = nil }
         gpuBytes = buffers.values.reduce(0) { $0 + $1.corners.length + $1.tex.length }
     }
 
     private func buffer(for l: TexLayer) -> (corners: MTLBuffer, tex: MTLBuffer)? {
-        if let b = buffers[l.id] { return b }
+        if let b = buffers[l.key] { return b }
         guard l.count > 0,
               let cb = l.corners.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: l.corners.count * 16, options: .storageModeShared) }),
               let tb = l.texels.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: l.texels.count, options: .storageModeShared) }) else { return nil }
-        buffers[l.id] = (cb, tb)
+        buffers[l.key] = (cb, tb)
         return (cb, tb)
     }
 

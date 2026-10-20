@@ -39,14 +39,18 @@ final class TexLayer {
     let texels: [UInt8]                  // 사각형마다 8×8 RGBA8 (행 우선)
     let cells: [UInt16]                  // 셀 번호(row * cols + col). 영구 서펠 ID = (id, cell)
     let gain: SIMD3<Float>               // 색 원본에 곱한 노출·백색 보정
+    let revision: Int                    // 정합으로 모서리가 바뀔 때마다 1씩 오른다(GPU 버퍼 갱신 키)
+    let alignScale: [Float]?             // 셀별 정합 배율(누적, 카메라 중심 기준 균일 배율). nil = 정합 전. 원본 모서리 = 중심 + (모서리 − 중심) ÷ 배율
     let bounds: (lo: SIMD3<Float>, hi: SIMD3<Float>)
     /// 선택용 표본(사각형 중심과 법선). 그리기에는 쓰지 않는다.
     let samples: [SIMD3<Float>]
     let sampleNormals: [SIMD3<Float>]
 
-    init(id: Int, timestamp: Double, pose: RTPose, k: RTIntrinsics, corners: [SIMD4<Float>], texels: [UInt8], cells: [UInt16], gain: SIMD3<Float>) {
+    init(id: Int, timestamp: Double, pose: RTPose, k: RTIntrinsics, corners: [SIMD4<Float>], texels: [UInt8], cells: [UInt16], gain: SIMD3<Float>,
+         revision: Int = 0, alignScale: [Float]? = nil) {
         self.id = id; self.timestamp = timestamp; self.pose = pose; self.k = k
         self.corners = corners; self.texels = texels; self.cells = cells; self.gain = gain
+        self.revision = revision; self.alignScale = alignScale
         count = cells.count
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for c in corners { lo = simd_min(lo, SIMD3<Float>(c.x, c.y, c.z)); hi = simd_max(hi, SIMD3<Float>(c.x, c.y, c.z)) }
@@ -72,6 +76,8 @@ final class TexLayer {
 
     var center: SIMD3<Float> { pose.center }
     var forward: SIMD3<Float> { pose.forward }
+    /// 버퍼·캐시 키: 레이어 id + 정합 판(같은 id의 정합 전/후 모서리를 구별한다).
+    var key: Int { id &* 256 &+ (revision & 255) }
     var bytes: Int { corners.count * 16 + texels.count + cells.count * 2 }
 }
 
@@ -156,6 +162,13 @@ enum TexLayerSelect {
         var picked: [(layer: TexLayer, weight: Float)]
         var estimatedCoverage: Float     // 합의된(2개 이상이 같은 표면에 동의한) 격자 칸 중 선택한 레이어가 덮는 비율
         var targetCells: Int
+        /// 둘러보기 진단(거친 격자 기준): 이 시점에서 앞면으로 관측된 칸 / 관측했지만 같은 표면에 동의한 레이어가 부족한 칸(정합 실패 후보) /
+        /// 표시 범위 구 안인데 이쪽 면으로는 한 번도 관측하지 못한 칸(미관측) / 표시 범위 구 밖이라 제외된 표본 / 뒷면이라 제외된 표본.
+        var observedCells = 0
+        var disagreeCells = 0
+        var unobservedCells = 0
+        var clipExcludedSamples = 0
+        var backfaceSamples = 0
     }
 
     /// 시야의 실제 표면을 덮는 레이어를 고른다(최대 kmax개).
@@ -166,6 +179,7 @@ enum TexLayerSelect {
                          seedNearest seed: Int = TexLayerConst.seedNearest, clip: TexClip? = nil) -> Selection {
         let n = layers.count
         guard n > 0 else { return Selection(picked: [], estimatedCoverage: 0, targetCells: 0) }
+        var clipExcluded = 0, backface = 0
         let gx = TexLayerConst.gridX, gy = TexLayerConst.gridY, cellsN = gx * gy
         let pose = view.pose
         var score = [Float](repeating: 0, count: n), weight = [Float](repeating: 0, count: n)
@@ -182,9 +196,9 @@ enum TexLayerSelect {
             touched.removeAll(keepingCapacity: true)
             for s in 0..<l.samples.count {
                 let p = l.samples[s]
-                if let c = clip, simd_length(p - c.center) > c.radius { continue }
+                if let c = clip, simd_length(p - c.center) > c.radius { clipExcluded += 1; continue }
                 // 앞면: 법선·(사각형 중심 − 카메라) > 0 (촬영 시점에서 본 면)
-                if simd_dot(l.sampleNormals[s], p - pose.center) <= 0 { continue }
+                if simd_dot(l.sampleNormals[s], p - pose.center) <= 0 { backface += 1; continue }
                 guard let v = view.project(p) else { continue }
                 if v.x < 0 || v.y < 0 || v.x >= view.width || v.y >= view.height { continue }
                 let cx = min(gx - 1, Int(v.x * Float(gx) / view.width)), cy = min(gy - 1, Int(v.y * Float(gy) / view.height))
@@ -256,7 +270,22 @@ enum TexLayerSelect {
         var coveredTargets = 0
         for c in 0..<cellsN where isTarget[c] && covered[c] { coveredTargets += 1 }
         let est: Float = targetCount > 0 ? Float(coveredTargets) / Float(targetCount) : 1
-        return Selection(picked: chosen.map { (layers[$0], weight[$0]) }, estimatedCoverage: est, targetCells: targetCount)
+        var sel = Selection(picked: chosen.map { (layers[$0], weight[$0]) }, estimatedCoverage: est, targetCells: targetCount)
+        // 진단: 관측/불일치/미관측 칸 수(표시 범위 구가 화면에 투영되는 원 안에서만 '미관측'을 센다)
+        var observed = 0
+        for c in 0..<cellsN where !perCell[c].isEmpty { observed += 1 }
+        sel.observedCells = observed; sel.disagreeCells = observed - targetCount
+        if let cl = clip, let pc = view.project(cl.center) {
+            let rpx = view.fx * cl.radius / max(pc.z, 0.1) * abs(view.m00 != 0 ? view.m00 : view.m01)
+            var empty = 0
+            for c in 0..<cellsN where perCell[c].isEmpty {
+                let cx = (Float(c % gx) + 0.5) * view.width / Float(gx), cy = (Float(c / gx) + 0.5) * view.height / Float(gy)
+                if (cx - pc.x) * (cx - pc.x) + (cy - pc.y) * (cy - pc.y) <= rpx * rpx { empty += 1 }
+            }
+            sel.unobservedCells = empty
+        }
+        sel.clipExcludedSamples = clipExcluded; sel.backfaceSamples = backface
+        return sel
     }
 
     /// 레이어 표본의 2~98 백분위 상자(둘러보기 시작 시점·제품 중심·저장 메타용). 마스크 오염이나 떨어진 조각 몇 개가 상자와 회전 중심을 끌고 가지 않게 한다.
@@ -268,6 +297,22 @@ enum TexLayerSelect {
         func q(_ v: [Float], _ f: Float) -> Float { v[min(v.count - 1, max(0, Int(f * Float(v.count - 1))))] }
         let pad = SIMD3<Float>(repeating: 0.02)
         return (SIMD3<Float>(q(xs, 0.02), q(ys, 0.02), q(zs, 0.02)) - pad, SIMD3<Float>(q(xs, 0.98), q(ys, 0.98), q(zs, 0.98)) + pad)
+    }
+
+    /// 저장본 둘러보기의 시작 시점: 실제로 관측한 촬영 시점 중 사각형이 가장 많은 한 장(가장 많은 표면을 담은 시점)의 방위·높이·거리를 쓴다.
+    /// 앱 기본(pitch 0.2 rad ≈ 11.5°)은 이번 촬영의 40~61° 위쪽 시점보다 훨씬 낮아 관측하지 않은 방향부터 보이기 때문이다. 시점 범위는 제한하지 않는다.
+    static func observedStart(_ layers: [TexLayer], target: SIMD3<Float>) -> (yaw: Float, pitch: Float, distance: Float)? {
+        var best: (Int, TexLayer)?
+        for l in layers {
+            let rel = l.center - target
+            let d = simd_length(rel)
+            guard d > 0.15, d < 3, l.count > 0 else { continue }
+            if best == nil || l.count > best!.0 { best = (l.count, l) }
+        }
+        guard let b = best?.1 else { return nil }
+        let rel = b.center - target
+        let hd = (rel.x * rel.x + rel.z * rel.z).squareRoot()
+        return (atan2(rel.x, rel.z), atan2(rel.y, hd), max(0.3, simd_length(rel) * 1.05))
     }
 
     /// 모든 레이어의 경계 상자(둘러보기 시작 시점용).

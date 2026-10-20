@@ -25,5 +25,5 @@ def build_layers(D, gains=None, Zuse=None, masks=None, trust=None, skip=()):
         b = TS.build_from_frame(fm, Z.astype(np.float32), mask, born=i, scale=3.0)
         if b is None: continue
         L.append(dict(id=f['id'], R=f['R'], C=f['C'], fx=f['fx'], fy=f['fy'], cx=f['cx'], cy=f['cy'], w=f['img'].shape[1], h=f['img'].shape[0],
-                      gain=np.ones(3, np.float32) if gains is None else gains[i].astype(np.float32), corners=b['corners'].astype(np.float32), tex=b['tex'].astype(np.float32), idx=i))
+                      gain=np.ones(3, np.float32) if gains is None else gains[i].astype(np.float32), corners=b['corners'].astype(np.float32), tex=b['tex'].astype(np.float32), idx=i, cells=(b['cell'][:, 0] * (f['img'].shape[1] // 8) + b['cell'][:, 1]).astype(np.uint16)))
     return L
