@@ -106,7 +106,7 @@ def target(v, w, h, crop=None):
     t = cv2.resize(hi_train[v], (w, h), interpolation=cv2.INTER_AREA).astype(np.float32) / 255 if crop is None else hi_train[v][crop[1]:crop[1] + crop[3], crop[0]:crop[0] + crop[2]].astype(np.float32) / 255
     return t
 def run_variant(name, sup, iters, roi=False, split=False, time_budget=None, checkpoints=(100, 200, 400, 600, 800, 1200, 1500)):
-    G = clone(G0); cfg = dict(pc_gs.DEFAULT_CFG); opt = pc_gs.Optimizer(cfg); rng = np.random.RandomState(7); rules = pc_abc.DISPLAY
+    G = clone(G0); cfg = dict(pc_gs.DEFAULT_CFG); cfg.update({k: float(v) for k, v in (kv.split('=') for kv in os.environ.get('CFG_SET', '').split(',') if kv)}); opt = pc_gs.Optimizer(cfg); rng = np.random.RandomState(7); rules = pc_abc.DISPLAY
     dummy = pc_abc.Run(ctx, 'C'); dummy.G = G; tiles = np.zeros((NF, 48), np.int32); res = {}; t_start = time.time(); sup_pix = 0; roi_pix = 0; roi_n = 0; splits0 = 0
     w, h = {'low': (160, 120), 'mid': (320, 240), 'orig': (640, 480)}[sup]
     _cam = ctx.cam_scaled(train_ids[0], w, h); _t = target(train_ids[0], w, h)
