@@ -205,7 +205,7 @@ def nanbox(g, k):
     return np.where(den > 0, num / np.maximum(den, 1e-6), np.nan)
 
 
-def solve(L, CV, scales, agg=3, prior=None, lam=0.3, min_conf=0.02, max_cost=0.5, fill_iters=6, med=3, want_info=False, sigma=0.0):
+def solve(L, CV, scales, agg=3, prior=None, lam=0.3, min_conf=0.02, max_cost=0.5, fill_iters=6, med=3, want_info=False, sigma=0.0, edge_damp=0.0):
     """per layer: aggregate cost volume over agg x agg cells, add prior penalty, argmin (+parabola), keep only informative cells, diffuse into the rest, median-smooth."""
     res = []; infos = []
     for i, l in enumerate(L):
@@ -235,7 +235,12 @@ def solve(L, CV, scales, agg=3, prior=None, lam=0.3, min_conf=0.02, max_cost=0.5
             msk = np.zeros(sg.shape, np.float32); msk[l['cells'] // cols, l['cells'] % cols] = 1
             num = cv2.GaussianBlur(sg * msk, (0, 0), sigma); den = cv2.GaussianBlur(msk, (0, 0), sigma)
             sg = np.where(den > 1e-3, num / np.maximum(den, 1e-3), sg)
-        res.append(sg[l['cells'] // cols, l['cells'] % cols].astype(np.float32))
+        out_s = sg[l['cells'] // cols, l['cells'] % cols].astype(np.float32)
+        if edge_damp > 0:
+            m_ = np.zeros(sg.shape, np.float32); m_[l['cells'] // cols, l['cells'] % cols] = 1
+            nb_ = cv2.filter2D(m_, -1, np.ones((3, 3), np.float32), borderType=cv2.BORDER_CONSTANT)[l['cells'] // cols, l['cells'] % cols]
+            w_ = np.where(nb_ < 9, 1 - edge_damp, 1.0); out_s = 1 + (out_s - 1) * w_
+        res.append(out_s)
     return (res, infos) if want_info else res
 
 

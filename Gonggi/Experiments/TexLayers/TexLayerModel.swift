@@ -25,6 +25,8 @@ enum TexLayerConst {
     static let sampleCap = 400           // 레이어당 선택용 표본 수
     static let selectBonus: Float = 0.1  // 직전 선택에 준 가산점(선택이 프레임마다 뒤집히는 것을 막는다)
     static let selectMinGain: Float = 0.012
+    static let countMinWeightRel: Float = 0.05   // 합의 개수를 셀 때 가중치가 가장 큰 레이어의 이 비율 미만인 레이어(크로스페이드로 사라지는/나타나는 중)는 세지 않는다
+    static let fadeSeconds: Float = 0.25          // 선택이 바뀔 때 가중치를 서서히 넘기는 시간(둘러보기·라이브 공통)
     static let clipFactor: Float = 2.0   // 표시 범위 구: 반경 = 이 값 × (표본의 중앙 중심에서 75 백분위 거리) + 5 cm
 }
 
@@ -313,6 +315,29 @@ enum TexLayerSelect {
         let rel = b.center - target
         let hd = (rel.x * rel.x + rel.z * rel.z).squareRoot()
         return (atan2(rel.x, rel.z), atan2(rel.y, hd), max(0.3, simd_length(rel) * 1.05))
+    }
+
+    /// 선택 전환 크로스페이드: 새로 선택된 레이어는 0에서 1로, 선택에서 빠진 레이어는 1에서 0으로 `seconds` 동안 가중치 배율을 옮긴다(서로 다른 깊이의 표면은 합성 단계가
+    /// 가중치 합이 가장 큰 깊이 하나만 표면으로 정하므로 섞이지 않는다). 상태가 비어 있으면(첫 프레임·저장본을 막 열었을 때) 바로 1로 시작한다.
+    /// 반환 목록은 최대 blendMax개: 선택된 레이어가 우선이고 남는 칸에만 사라지는 레이어를 둔다(칸이 모자라면 가장 약한 사라지는 레이어부터 바로 뺀다).
+    static func crossfade(selected: [(layer: TexLayer, weight: Float)], layers: [TexLayer], state: inout [Int: (f: Float, w: Float)], dt: Float, seconds: Float) -> [(layer: TexLayer, weight: Float)] {
+        let step = seconds > 0 ? dt / seconds : 1
+        let first = state.isEmpty
+        let selIDs = Set(selected.map { $0.layer.id })
+        for (id, v) in state where !selIDs.contains(id) { state[id] = (max(0, v.f - step), v.w) }
+        for p in selected {
+            let cur = state[p.layer.id]?.f ?? (first ? 1 : 0)
+            state[p.layer.id] = (min(1, cur + step), p.weight)
+        }
+        let live = Set(layers.map { $0.id })
+        state = state.filter { $0.value.f > 0 && live.contains($0.key) }
+        var out: [(layer: TexLayer, weight: Float)] = selected.map { ($0.layer, $0.weight * (state[$0.layer.id]?.f ?? 1)) }
+        let byID = Dictionary(layers.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let fading = state.filter { !selIDs.contains($0.key) }.sorted { $0.value.f * $0.value.w > $1.value.f * $1.value.w }
+        for (id, v) in fading where out.count < TexLayerConst.blendMax {
+            if let l = byID[id] { out.append((l, v.w * v.f)) }
+        }
+        return out
     }
 
     /// 모든 레이어의 경계 상자(둘러보기 시작 시점용).

@@ -87,6 +87,10 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
     private var lastTexQuads = 0, lastTexTotal = 0
     /// 직전 프레임의 레이어 선택(선택이 프레임마다 뒤집히지 않게 가산점을 준다). 메인 스레드에서만 쓴다.
     private var texPrevSelection = Set<Int>()
+    /// 크로스페이드: 레이어 id → (현재 가중치 배율 0...1, 마지막 시점 가중치). 선택에 들어온 레이어는 서서히 켜지고 빠진 레이어는 서서히 꺼진다.
+    private var texFade: [Int: (f: Float, w: Float)] = [:]
+    private var texFadeHost = 0.0
+    var texCrossfade = true
     private var texClip: TexClip?
     /// 둘러보기 기록(연구 기록): 카메라가 움직이거나 선택이 바뀔 때 0.25초 간격으로 한 줄(가상 카메라·선택 레이어·렌더 해상도·제외 사유).
     var onBrowse: (([String: Any]) -> Void)?
@@ -279,7 +283,14 @@ final class RTGaussianRenderer: NSObject, MTKViewDelegate {
                 if !texPrevSelection.isEmpty { texSelectionFrames += 1; if ids != texPrevSelection { texSelectionChanges += 1 } }
                 texPrevSelection = ids
                 lastTexSelected = sel.picked.count; lastTexCoverage = sel.estimatedCoverage
-                texParams = tg.encodeLayers(cmd: cmd, picked: sel.picked, uniforms: u0, targetW: Int(vw), targetH: Int(vh), clip: texClip)
+                var picked = sel.picked
+                if texCrossfade {
+                    let nowF = ExpSys.hostNow()
+                    let dt = texFadeHost > 0 ? Float(min(0.2, max(0, nowF - texFadeHost))) : 1
+                    texFadeHost = nowF
+                    picked = TexLayerSelect.crossfade(selected: sel.picked, layers: snap.layers, state: &texFade, dt: dt, seconds: TexLayerConst.fadeSeconds)
+                }
+                texParams = tg.encodeLayers(cmd: cmd, picked: picked, uniforms: u0, targetW: Int(vw), targetH: Int(vh), clip: texClip)
                 lastTexQuads = tg.lastDrawnQuads
                 if mode == .explore, let cb = onBrowse {
                     let now = ExpSys.hostNow()

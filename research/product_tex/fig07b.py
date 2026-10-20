@@ -7,12 +7,12 @@ Cs = np.array([l['C'] for l in Ls]); rel, hor, az, pit = cams07.path_stats(Cs, c
 W, H = 640, 480; fx = 720.37 * W / 960
 variants = {'saved': Ls}
 import pipe07 as P
-variants['photo'] = P.register(Ls, cons=False)
 variants['photo+cons'] = P.register(Ls)
+variants['+edge damp .7 sigma1.2'] = P.register(Ls, damp=0.7, sigma=1.2)
 def lab(img, t):
     img = np.ascontiguousarray((np.clip(img, 0, 1) * 255).astype(np.uint8)); cv2.rectangle(img, (0, 0), (img.shape[1], 18), (0, 0, 0), -1); cv2.putText(img, t, (4, 13), 0, 0.45, (255, 255, 255), 1, cv2.LINE_AA); return img
 rows = []
-for pitch, azs in ((54, (0, 90)), (11.5, (30, 150))):
+for pitch, azs in ((54, (0, 90)), (11.5, (30, 68))):
     for a in azs:
         cam = cams07.orbit(c, R, [a], pitch, fx, W, H)[0]; ims = []
         for k, L in variants.items():

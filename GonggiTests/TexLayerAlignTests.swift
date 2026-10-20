@@ -26,7 +26,7 @@ final class TexLayerAlignTests: XCTestCase {
         for (i, l) in out.layers.enumerated() {
             guard let s = l.alignScale else { XCTFail("정합 정보 없음: 레이어 \(l.id)"); continue }
             XCTAssertEqual(s.count, l.count)
-            XCTAssertEqual(l.revision, layers[i].revision + 1, "한 번 정합하면 판이 1 오른다")
+            XCTAssertGreaterThan(l.revision, layers[i].revision, "정합하면 판이 오른다(사진 정합 + 교차 합의로 2 이상)")
             for q in 0..<l.count { before.append(abs(errs[i] - 1)); after.append(abs(errs[i] * s[q] - 1)) }
         }
         let mb = median(before), ma = median(after)
@@ -159,5 +159,45 @@ final class TexLayerAlignTests: XCTestCase {
         XCTAssertEqual(obj?["event"] as? String, "tex_browse")
         XCTAssertEqual(obj?["selected"] as? [Int], [1, 2, 3])
         XCTAssertFalse(text.contains("jpg"), "사진·마스크 같은 사용자 자료를 담지 않는다")
+    }
+
+    // MARK: 크로스페이드·합의 개수
+
+    func testCrossfadeRampsWeightsInAndOutAndNeverExceedsTheSlotLimit() {
+        let ls = (1...3).map { TexTest.quadLayer(id: $0, z: 1.0, color: SIMD3<Float>(0.5, 0.5, 0.5)) }
+        var state: [Int: (f: Float, w: Float)] = [:]
+        let first = TexLayerSelect.crossfade(selected: [(ls[0], 1.0), (ls[1], 0.8)], layers: ls, state: &state, dt: 0.033, seconds: 0.25)
+        XCTAssertEqual(first.map { $0.weight }, [1.0, 0.8], "처음 선택(상태 없음)은 바로 전체 가중치")
+        // 선택이 [2, 3]으로 바뀜: 1은 서서히 꺼지고 3은 서서히 켜진다
+        let a = TexLayerSelect.crossfade(selected: [(ls[1], 0.8), (ls[2], 0.9)], layers: ls, state: &state, dt: 0.1, seconds: 0.25)
+        let w = Dictionary(uniqueKeysWithValues: a.map { ($0.layer.id, $0.weight) })
+        XCTAssertEqual(w[1] ?? -1, 1.0 * 0.6, accuracy: 1e-4, "빠진 레이어가 서서히 꺼지지 않음")
+        XCTAssertEqual(w[3] ?? -1, 0.9 * 0.4, accuracy: 1e-4, "새 레이어가 서서히 켜지지 않음")
+        XCTAssertEqual(w[2] ?? -1, 0.8, accuracy: 1e-4)
+        let b = TexLayerSelect.crossfade(selected: [(ls[1], 0.8), (ls[2], 0.9)], layers: ls, state: &state, dt: 0.2, seconds: 0.25)
+        XCTAssertFalse(b.contains { $0.layer.id == 1 }, "다 꺼진 레이어가 목록에 남음")
+        XCTAssertEqual(b.first { $0.layer.id == 3 }?.weight ?? -1, 0.9, accuracy: 1e-4)
+        // 선택이 가득 찬 8개면 사라지는 레이어에 줄 칸이 없다(칸 상한 유지)
+        let many = (1...9).map { TexTest.quadLayer(id: $0, z: 1.0, color: SIMD3<Float>(0.5, 0.5, 0.5)) }
+        var st2: [Int: (f: Float, w: Float)] = [:]
+        _ = TexLayerSelect.crossfade(selected: many.prefix(8).map { ($0, 1.0) }, layers: many, state: &st2, dt: 0.033, seconds: 0.25)
+        let c = TexLayerSelect.crossfade(selected: many.suffix(8).map { ($0, 1.0) }, layers: many, state: &st2, dt: 0.033, seconds: 0.25)
+        XCTAssertLessThanOrEqual(c.count, TexLayerConst.blendMax)
+    }
+
+    func testNearZeroWeightLayerIsNotCountedAsAgreement() {
+        // 같은 표면의 두 레이어 중 하나가 크로스페이드로 거의 꺼졌다(가중치 1%): 합의 개수는 1이어야 하고, 3개 이상일 때 필요한 2에 못 미쳐 단독 관측으로 지운다.
+        let k = RTIntrinsics(fx: 100, fy: 100, cx: 32, cy: 24, width: 64, height: 48)
+        let cam = TexCamera(pose: .identity, k: k)
+        let a = TexTest.quadLayer(id: 1, z: 1.0, color: SIMD3<Float>(0.5, 0.5, 0.5)), b = TexTest.quadLayer(id: 2, z: 1.0, color: SIMD3<Float>(0.5, 0.5, 0.5))
+        let c = TexTest.quadLayer(id: 3, z: 3.0, color: SIMD3<Float>(0.5, 0.5, 0.5))
+        let ps = [a, b, c].enumerated().map { i, l -> TexLayerCPU.Part in let r = TexLayerCPU.renderLayer(l, cam: cam); return (rgb: r.rgb, z: r.z, weight: [1.0, 0.01, 1.0][i]) }
+        let mid = 24 * 64 + 32
+        let counted = TexLayerCPU.compose(ps, width: 64, height: 48, countMinRel: 0)
+        XCTAssertEqual(counted.agree[mid], 2, "시험 전제: 가중치와 무관하게 세면 2")
+        XCTAssertEqual(counted.alpha[mid], 1)
+        let excluded = TexLayerCPU.compose(ps, width: 64, height: 48)
+        XCTAssertEqual(excluded.agree[mid], 1, "거의 꺼진 레이어가 합의 개수에 들어감")
+        XCTAssertEqual(excluded.alpha[mid], 0)
     }
 }

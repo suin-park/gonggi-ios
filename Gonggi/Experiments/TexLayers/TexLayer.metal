@@ -138,13 +138,16 @@ static TLCons tl_consensus(int2 xy, texture2d_array<float> C, texture2d_array<fl
     float zb = zs[bestK];
     float tolB = tol * max(zb, 0.3);
     float tolAgree = P.p1.z * max(zb, 0.3);
+    float wmaxAll = 0.0;
+    for (int i = 0; i < 8; i++) { if (i >= count) { break; } wmaxAll = max(wmaxAll, (i < 4) ? P.w0[i] : P.w1[i - 4]); }
+    float wCountMin = P.p1.w * wmaxAll;
     float3 num = float3(0.0);
     float den = 0.0;
     int cnt = 0;
     int repK = -1;
     float repW = -1e30;
     for (int b = 0; b < nv; b++) {
-        if (fabs(zs[b] - zb) < tolAgree) { cnt++; }
+        if (fabs(zs[b] - zb) < tolAgree && ws[b] >= wCountMin) { cnt++; }
         if (fabs(zs[b] - zb) < tolB) {
             num += cs[b] * ws[b]; den += ws[b];
             if (ws[b] > repW) { repW = ws[b]; repK = b; }

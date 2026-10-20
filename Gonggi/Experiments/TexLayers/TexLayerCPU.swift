@@ -97,7 +97,8 @@ enum TexLayerCPU {
 
     /// 한 화소의 합의: 가중치 합이 가장 큰 깊이를 표면으로 정하고 그 표면에 일치한(tol) 관측을 혼합한다. count = 그 표면에 agreeTol 안으로 동의한 레이어 수.
     static func consensus(_ parts: [Part], pixel p: Int, tolerance tol: Float, agreeTolerance agreeTol: Float = TexLayerConst.agreeTolerance,
-                          hybridVariance hv: Float) -> (rgb: SIMD3<Float>, depth: Float, count: Int)? {
+                          hybridVariance hv: Float, countMinRel: Float = 0) -> (rgb: SIMD3<Float>, depth: Float, count: Int)? {
+        let wmax = parts.map { $0.weight }.max() ?? 0
         var valid: [Int] = []
         for k in 0..<parts.count where parts[k].z[p].isFinite { valid.append(k) }
         guard !valid.isEmpty else { return nil }
@@ -114,7 +115,7 @@ enum TexLayerCPU {
         var count = 0, repK = -1
         var repW = -Float.infinity
         for b in valid {
-            if abs(parts[b].z[p] - zb) < agreeTol * max(zb, 0.3) { count += 1 }
+            if abs(parts[b].z[p] - zb) < agreeTol * max(zb, 0.3), parts[b].weight >= countMinRel * wmax { count += 1 }
             guard abs(parts[b].z[p] - zb) < tol * max(zb, 0.3) else { continue }
             let c = SIMD3<Float>(parts[b].rgb[p * 3], parts[b].rgb[p * 3 + 1], parts[b].rgb[p * 3 + 2])
             num += c * parts[b].weight; den += parts[b].weight
@@ -136,14 +137,14 @@ enum TexLayerCPU {
 
     /// 선택된 레이어들을 합성한다.
     static func compose(_ parts: [Part], width W: Int, height H: Int, tolerance: Float = TexLayerConst.depthTolerance, agreeTolerance: Float = TexLayerConst.agreeTolerance,
-                        hybridVariance: Float = TexLayerConst.hybridVariance, minAgree: Int = TexLayerConst.minAgree) -> TexRender {
+                        hybridVariance: Float = TexLayerConst.hybridVariance, minAgree: Int = TexLayerConst.minAgree, countMinRel: Float = TexLayerConst.countMinWeightRel) -> TexRender {
         var out = TexRender(width: W, height: H, rgb: [Float](repeating: 0, count: W * H * 3), alpha: [Float](repeating: 0, count: W * H),
                             depth: [Float](repeating: .infinity, count: W * H), agree: [UInt8](repeating: 0, count: W * H))
         var colors = [SIMD3<Float>](repeating: .zero, count: W * H)
         var counts = [Int](repeating: 0, count: W * H)
         var depths = [Float](repeating: .infinity, count: W * H)
         for p in 0..<(W * H) {
-            guard let r = consensus(parts, pixel: p, tolerance: tolerance, agreeTolerance: agreeTolerance, hybridVariance: hybridVariance) else { continue }
+            guard let r = consensus(parts, pixel: p, tolerance: tolerance, agreeTolerance: agreeTolerance, hybridVariance: hybridVariance, countMinRel: countMinRel) else { continue }
             colors[p] = r.rgb; counts[p] = r.count; depths[p] = r.depth
         }
         let need = parts.count >= 3 ? max(1, minAgree) : 1
