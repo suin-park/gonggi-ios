@@ -68,24 +68,33 @@ jobs:
         run: |
           python3 -m venv /tmp/venv && /tmp/venv/bin/pip install --quiet numpy opencv-python-headless scipy
           /tmp/venv/bin/python research/public_engine/make_dataset.py /tmp/ds
+          /tmp/venv/bin/python research/public_engine/make_dataset.py /tmp/ds320 map_points_g320.npy
       - name: Run msplat on the synthetic scene (equal iterations; sh0; same initial points)
         continue-on-error: true
         run: |
           mkdir -p /tmp/out
           # supervision resolution via downscale factor (4 -> 160x120, 2 -> 320x240, 1 -> 640x480); constant for the whole run (resolution schedule disabled)
           run() { # name sup_w factor extra iters
-            d=/tmp/out/$1_$5; mkdir -p $d; s=$(date +%s)
-            MSPLAT_RENDER_DIR=$d/renders BENCHMARK=1 /tmp/msplat/build/msplat /tmp/ds -o $d/scene.ply -n $5 -d 1 --num-downscales $3 --resolution-schedule 100000000 --sh-degree 0 --eval --bg-color 0.55 0.5 0.47 $4 > $d/log.txt 2>&1
+            DS=${DS:-/tmp/ds}; d=/tmp/out/$1_$5; mkdir -p $d; s=$(date +%s)
+            MSPLAT_RENDER_DIR=$d/renders BENCHMARK=1 /tmp/msplat/build/msplat $DS -o $d/scene.ply -n $5 -d 1 --num-downscales $3 --resolution-schedule 100000000 --sh-degree 0 --eval --bg-color 0.55 0.5 0.47 $4 > $d/log.txt 2>&1
             echo "$1 it=$5 exit=$? wall=$(( $(date +%s) - s ))s $(grep -E 'PSNR:  ' $d/log.txt | tail -1)"
           }
+          # (A) initial map = 7139 points (grid 160), frozen topology; (B) densification with the opacity reset moved past the end of training
           for it in 200 800 1500; do
             run frozen_sup160 160 2 "--refine-every 1000000" $it
             run frozen_sup320 320 1 "--refine-every 1000000" $it
             run frozen_sup640 640 0 "--refine-every 1000000" $it
           done
+          for it in 800 1500 3000; do
+            run dens_sup320 320 1 "--warmup-length 100 --refine-every 50 --reset-alpha-every 100000" $it
+            run dens_sup640 640 0 "--warmup-length 100 --refine-every 50 --reset-alpha-every 100000" $it
+          done
+          # (C) initial map = 25566 points (grid 320), frozen topology: same Gaussian count as the PC study's 25.5k runs
+          export DS=/tmp/ds320
           for it in 800 1500; do
-            run default_sup320 320 1 "--warmup-length 100 --refine-every 50" $it
-            run default_sup640 640 0 "--warmup-length 100 --refine-every 50" $it
+            run g320_frozen_sup160 160 2 "--refine-every 1000000" $it
+            run g320_frozen_sup320 320 1 "--refine-every 1000000" $it
+            run g320_frozen_sup640 640 0 "--refine-every 1000000" $it
           done
       - name: Convert renders to PNG
         if: always()

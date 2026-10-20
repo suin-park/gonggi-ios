@@ -1,6 +1,6 @@
 """Regenerates the synthetic exact-geometry control dataset (COLMAP text) from synth3d.py + map_points.npy (the initial map of the PC reference engine, 7139 points).
 No user data. Train views f###.png (30), held-out views t_h##.png (6, the same i%6==3 frames as the PC study), rotation-path views t_p##.png (40, never trained).
-Images are 640x480 (area-downsampled from 960x720 renders). Usage: python make_dataset.py OUT_DIR"""
+Images are 640x480 (area-downsampled from 960x720 renders). Usage: python make_dataset.py OUT_DIR [map_points file]"""
 import os, sys, json
 import numpy as np, cv2
 from scipy.spatial.transform import Rotation as Rot
@@ -28,7 +28,7 @@ for n, i in enumerate(train): k += 1; add(k, cams[i], f'f{n:03d}.png', 'train')
 for i in held: k += 1; add(k, cams[i], f't_h{i:02d}.png', 'held')
 for m, c in enumerate(path): k += 1; add(k, c, f't_p{m:02d}.png', 'path')
 open(os.path.join(sp, 'images.txt'), 'w').write('\n'.join(lines) + '\n'); json.dump(meta, open(os.path.join(out, 'cams.json'), 'w'))
-P = np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'map_points.npy'))
+P = np.load(os.path.join(os.path.dirname(os.path.abspath(__file__)), sys.argv[2] if len(sys.argv) > 2 else 'map_points.npy'))
 with open(os.path.join(sp, 'points3D.txt'), 'w') as f:
     for n, p in enumerate(P):
         c = (np.clip(p[3:6], 0, 1) * 255).astype(int); f.write(f'{n + 1} {p[0]:.6f} {p[1]:.6f} {p[2]:.6f} {c[0]} {c[1]} {c[2]} 0.1\n')
