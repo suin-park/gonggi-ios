@@ -22,7 +22,7 @@ s = s.replace(b, """if (const char* rd = std::getenv("MSPLAT_RENDER_DIR")) {
                     if (fp) { fwrite(outImg.data.data(), sizeof(float), outImg.data.size(), fp); fclose(fp); }
                 }
                 """ + b)
-c = "// Evaluation"
+c = "        // Evaluation" + chr(10) + "        if (evalMode && !testCams.empty()) {"
 assert c in s
-s = s.replace(c, "model.numDownscales = 0;  // evaluation always at full 640x480, whatever the training supervision resolution was" + chr(10) + "        " + c, 1)
+s = s.replace(c, "        model.numDownscales = 0;  // evaluation always at full 640x480, whatever the training supervision resolution was" + chr(10) + c, 1)
 open(p, 'w', encoding='utf-8').write(s); print('patched', p)
