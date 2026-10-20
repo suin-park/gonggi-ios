@@ -7,6 +7,7 @@ on:
     branches:
       - feat/ondevice-gs-optimizer
       - feat/realtime-product-gs
+      - feat/surface-align
     paths:
       - 'Gonggi/Experiments/**'
       - 'GonggiTests/GSOpt*'
@@ -109,6 +110,7 @@ jobs:
             -only-testing:GonggiTests/GSOptTexLayerTests \
             -only-testing:GonggiTests/GSOptTexLayerGPUTests \
             -only-testing:GonggiTests/GSOptTexLayerPipelineTests \
+            -only-testing:GonggiTests/TexLayerAlignTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild-gso.log
           STATUS=${PIPESTATUS[0]}
