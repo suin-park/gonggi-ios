@@ -83,6 +83,9 @@ jobs:
               echo "renders: $(ls $d/renders 2>/dev/null | wc -l)"; ls $d | head -5
             done
           done
+      - name: Convert renders to PNG
+        if: always()
+        run: /tmp/venv/bin/python research/public_engine/f32_to_png.py /tmp/out; find /tmp/out -name '*.png' | wc -l
       - name: Upload renders and logs (synthetic only)
         if: always()
         uses: actions/upload-artifact@v4

@@ -17,7 +17,9 @@ s = s.replace(b, """if (const char* rd = std::getenv("MSPLAT_RENDER_DIR")) {
                     Image outImg; outImg.width = (int)rgb_cpu.size(1); outImg.height = (int)rgb_cpu.size(0);
                     outImg.data.resize(outImg.width * outImg.height * 3);
                     memcpy(outImg.ptr(), rgb_cpu.data_ptr(), outImg.data.size() * sizeof(float));
-                    imwriteRGB((fs::path(rd) / fs::path(testCam.filePath).filename()).string(), outImg);
+                    // msplat's imwriteRGB() makes a 3-byte/pixel CGBitmapContext, which CoreGraphics rejects (null context, no file, no error): write raw float32 RGB instead
+                    FILE* fp = fopen((fs::path(rd) / (fs::path(testCam.filePath).filename().string() + ".f32")).c_str(), "wb");
+                    if (fp) { fwrite(outImg.data.data(), sizeof(float), outImg.data.size(), fp); fclose(fp); }
                 }
                 """ + b)
 open(p, 'w', encoding='utf-8').write(s); print('patched', p)
