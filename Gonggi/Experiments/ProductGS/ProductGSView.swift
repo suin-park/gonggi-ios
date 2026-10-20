@@ -139,7 +139,7 @@ final class ProductSessionViewModel: ObservableObject {
         log = l
         let provider = VisionInstanceMaskProvider()
         var tcfg = GSOProductMaskTracker.Config()
-        tcfg.bandRadius = textureLayers ? 2 : 4     // 텍스처 레이어: 경계 띠를 좁혀(원본 6화소) 가장자리가 안으로 깎이지 않게 한다. PC 같은 입력 비교에서 4→2가 윤곽·가장자리 PSNR이 좋았다.
+        tcfg.bandRadius = textureLayers ? 1 : 4     // 텍스처 레이어: 경계 띠를 좁혀(마스크 1화소 = 원본 약 3화소) 가장자리가 안으로 깎이지 않게 한다. PC 같은 입력 비교에서 테스트_07 재생 보류 프레임에서 띠 2→1이 PSNR +1.2 dB·윤곽 IoU·구멍이 모두 좋았다(4→2도 같은 방향).
         let tracker = GSOProductMaskTracker(config: tcfg, targetID: 1)
         state = .selecting          // options()가 선택 단계의 카메라 배경 표시를 반영한다
         let e = GSOEngine(options: options(), config: textureLayers ? GSOConfig.productTexture() : GSOConfig.productDefault(), log: l, splats: splats, liveCam: liveCam, background: background, mono: mono,

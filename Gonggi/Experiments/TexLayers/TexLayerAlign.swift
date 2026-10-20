@@ -67,7 +67,10 @@ final class TexAlignView {
         var g = [UInt8](repeating: 0, count: l.count * 64)
         l.texels.withUnsafeBufferPointer { t in
             for i in 0..<(l.count * 64) {
-                g[i] = UInt8(max(0, min(255, (0.299 * Float(t[i * 4]) + 0.587 * Float(t[i * 4 + 1]) + 0.114 * Float(t[i * 4 + 2])).rounded())))
+                let r: Float = Float(t[i * 4]), gg: Float = Float(t[i * 4 + 1]), b: Float = Float(t[i * 4 + 2])
+                let lum: Float = 0.299 * r + 0.587 * gg + 0.114 * b
+                let clamped: Float = Swift.min(255, Swift.max(0, lum.rounded()))
+                g[i] = UInt8(clamped)
             }
         }
         gray = g
