@@ -1,0 +1,144 @@
+{
+ "initial_map_gaussians": 7139,
+ "init": {
+  "psnr": 15.669064124425253,
+  "ssim": 0.7262771228949229,
+  "plate": 8.31121951341629,
+  "text_edges": 9.189833005269369,
+  "slope": 11.329104900360107,
+  "rod": 14.375635385513306,
+  "sphere": 18.785693446795147,
+  "occl_boundary": 10.75554927190145,
+  "coverage": 0.9751171875
+ },
+ "config": {
+  "frames": 36,
+  "train": 30,
+  "held": 6,
+  "grid": [
+   160,
+   120
+  ],
+  "iterations": 60
+ },
+ "S0 low 160x120": {
+  "60": {
+   "psnr": 21.583943764368694,
+   "ssim": 0.8190165857474009,
+   "plate": 12.182733615239462,
+   "text_edges": 10.7066481312116,
+   "slope": 12.677982648213705,
+   "rod": 15.324120918909708,
+   "sphere": 18.400912483533222,
+   "occl_boundary": 13.528087536493937,
+   "coverage": 0.9919504123263888,
+   "iters": 60,
+   "seconds": 6.796690940856934,
+   "gaussians": 7139,
+   "supervised_pixels_full": 1152000,
+   "roi_pixels": 0,
+   "roi_windows": 0,
+   "splits": 0
+  }
+ },
+ "S1 mid 320x240": {
+  "60": {
+   "psnr": 24.060439666112263,
+   "ssim": 0.839185486237208,
+   "plate": 13.920348485310873,
+   "text_edges": 11.170366406440735,
+   "slope": 13.247200647989908,
+   "rod": 15.816541115442911,
+   "sphere": 23.114054600397747,
+   "occl_boundary": 16.073426405588787,
+   "coverage": 0.9969162326388888,
+   "iters": 60,
+   "seconds": 2.210059642791748,
+   "gaussians": 7139,
+   "supervised_pixels_full": 4608000,
+   "roi_pixels": 0,
+   "roi_windows": 0,
+   "splits": 0
+  }
+ },
+ "S2 orig-derived 640x480": {
+  "60": {
+   "psnr": 24.286224047342937,
+   "ssim": 0.8435583114624023,
+   "plate": 13.74979039033254,
+   "text_edges": 10.778225064277649,
+   "slope": 13.307556311289469,
+   "rod": 15.770376722017923,
+   "sphere": 24.785425265630085,
+   "occl_boundary": 16.500895420710247,
+   "coverage": 0.9976226128472222,
+   "iters": 60,
+   "seconds": 4.483469009399414,
+   "gaussians": 7139,
+   "supervised_pixels_full": 18432000,
+   "roi_pixels": 0,
+   "roi_windows": 0,
+   "splits": 0
+  }
+ },
+ "S3 low + hi-res ROI tiles": {
+  "60": {
+   "psnr": 21.70448899269104,
+   "ssim": 0.7709761559963226,
+   "plate": 12.517916560173035,
+   "text_edges": 10.80071767171224,
+   "slope": 12.709100445111593,
+   "rod": 15.301674008369446,
+   "sphere": 20.293554663658142,
+   "occl_boundary": 14.1987411181132,
+   "coverage": 0.9932183159722223,
+   "iters": 60,
+   "seconds": 2.6236331462860107,
+   "gaussians": 7139,
+   "supervised_pixels_full": 1152000,
+   "roi_pixels": 2488320,
+   "roi_windows": 90,
+   "splits": 0
+  }
+ },
+ "S4 low + ROI tiles + split": {
+  "60": {
+   "psnr": 21.697107156117756,
+   "ssim": 0.7699842055638632,
+   "plate": 12.502771814664206,
+   "text_edges": 10.782487392425537,
+   "slope": 12.709100445111593,
+   "rod": 15.300698479016622,
+   "sphere": 20.29355525970459,
+   "occl_boundary": 14.17483925819397,
+   "coverage": 0.9931933593750001,
+   "iters": 60,
+   "seconds": 2.2670657634735107,
+   "gaussians": 7179,
+   "supervised_pixels_full": 1152000,
+   "roi_pixels": 2488320,
+   "roi_windows": 90,
+   "splits": 40
+  }
+ },
+ "S0 time-matched": {
+  "282": {
+   "psnr": 22.544989983240765,
+   "ssim": 0.8736792703469595,
+   "plate": 12.7058211962382,
+   "text_edges": 10.41175146897634,
+   "slope": 13.37593118349711,
+   "rod": 15.669422547022501,
+   "sphere": 17.15825875600179,
+   "occl_boundary": 14.674609303474426,
+   "coverage": 0.9961263020833333,
+   "iters": 282,
+   "seconds": 5.133861064910889,
+   "gaussians": 7139,
+   "supervised_pixels_full": 5414400,
+   "roi_pixels": 0,
+   "roi_windows": 0,
+   "splits": 0
+  }
+ }
+}

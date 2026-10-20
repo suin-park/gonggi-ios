@@ -1,0 +1,48 @@
+C:\projects\gonggi-ios-gs3\research\gs_ref\synth3d.py:58: RuntimeWarning: invalid value encountered in remainder
+  stripe = ((np.floor(p[:, 1] / 0.012) % 2) * 190 + 40).astype(np.float32); put(t, np.stack([stripe, 40 + 0 * stripe, 40 + 0 * stripe], 1), inside, 3)
+C:\projects\gonggi-ios-gs3\research\gs_ref\synth3d.py:62: RuntimeWarning: invalid value encountered in matmul
+  nrm_s = (p - c) / 0.07; shade = 0.5 + 0.5 * np.clip(nrm_s @ np.array([0.4, -0.6, -0.7], np.float32), 0, 1)
+C:\projects\gonggi-ios-gs3\research\gs_ref\synth3d.py:63: RuntimeWarning: invalid value encountered in sin
+  noise = 0.8 + 0.2 * np.sin(p[:, 0] * 90) * np.sin(p[:, 1] * 90 + p[:, 2] * 40)
+C:\projects\gonggi-ios-gs3\research\gs_ref\synth3d.py:63: RuntimeWarning: invalid value encountered in add
+  noise = 0.8 + 0.2 * np.sin(p[:, 0] * 90) * np.sin(p[:, 1] * 90 + p[:, 2] * 40)
+rendered GT in 15 s
+initial map 7139 gaussians; STATS {'untrusted_normals': 0, 'inserted': 7139, 'rejected_update_rows': 0, 'nonfinite_inserts_dropped': 0}
+initial map (no optimisation) held-out: {'psnr': 15.669, 'ssim': 0.726, 'plate': 8.311, 'text_edges': 9.19, 'slope': 11.329, 'rod': 14.376, 'sphere': 18.786, 'occl_boundary': 10.756, 'coverage': 0.975}
+S0 low 160x120                   it   100 t    2.4s N 7139 psnr 21.91 ssim 0.835 plate 12.47 textedge 10.72 slope 12.92 rod 15.47 occl 13.90
+S0 low 160x120                   it   200 t    4.7s N 7139 psnr 22.31 ssim 0.860 plate 12.72 textedge 10.54 slope 13.17 rod 15.63 occl 14.46
+S0 low 160x120                   it   400 t    8.7s N 7139 psnr 22.73 ssim 0.889 plate 12.70 textedge 10.34 slope 13.47 rod 15.75 occl 14.87
+S0 low 160x120                   it   600 t   12.6s N 7139 psnr 22.77 ssim 0.905 plate 12.40 textedge 9.87 slope 13.31 rod 15.60 occl 14.82
+S0 low 160x120                   it   800 t   16.9s N 7139 psnr 22.75 ssim 0.915 plate 12.13 textedge 9.50 slope 13.15 rod 15.55 occl 14.92
+S0 low 160x120                   it  1200 t   24.3s N 7139 psnr 22.82 ssim 0.926 plate 11.75 textedge 9.08 slope 13.15 rod 15.44 occl 14.95
+S0 low 160x120                   it  1500 t   30.4s N 7139 psnr 22.86 ssim 0.931 plate 11.56 textedge 8.87 slope 13.28 rod 15.42 occl 15.02
+S1 mid 320x240                   it   100 t    3.2s N 7139 psnr 24.78 ssim 0.866 plate 14.60 textedge 11.60 slope 13.67 rod 15.95 occl 17.11
+S1 mid 320x240                   it   200 t    6.4s N 7139 psnr 25.63 ssim 0.907 plate 15.18 textedge 11.97 slope 14.51 rod 16.41 occl 18.31
+S1 mid 320x240                   it   400 t   12.2s N 7139 psnr 26.57 ssim 0.943 plate 16.12 textedge 12.74 slope 15.43 rod 16.76 occl 19.14
+S1 mid 320x240                   it   600 t   18.3s N 7139 psnr 27.03 ssim 0.955 plate 16.59 textedge 13.15 slope 15.89 rod 16.82 occl 19.37
+S1 mid 320x240                   it   800 t   24.3s N 7139 psnr 27.37 ssim 0.962 plate 16.81 textedge 13.42 slope 16.35 rod 16.77 occl 19.43
+S1 mid 320x240                   it  1200 t   36.0s N 7139 psnr 27.69 ssim 0.967 plate 16.92 textedge 13.51 slope 16.91 rod 16.97 occl 19.47
+S1 mid 320x240                   it  1500 t   45.0s N 7139 psnr 27.88 ssim 0.969 plate 16.97 textedge 13.59 slope 17.20 rod 17.23 occl 19.49
+S2 orig-derived 640x480          it   100 t    7.2s N 7139 psnr 24.93 ssim 0.873 plate 14.36 textedge 11.21 slope 13.66 rod 16.01 occl 17.44
+S2 orig-derived 640x480          it   200 t   15.2s N 7139 psnr 25.64 ssim 0.916 plate 14.83 textedge 11.66 slope 14.37 rod 16.47 occl 18.49
+S2 orig-derived 640x480          it   400 t   29.6s N 7139 psnr 26.61 ssim 0.951 plate 15.78 textedge 12.47 slope 15.34 rod 16.80 occl 19.38
+S2 orig-derived 640x480          it   600 t   44.4s N 7139 psnr 27.43 ssim 0.963 plate 16.68 textedge 13.34 slope 16.14 rod 16.92 occl 20.15
+S2 orig-derived 640x480          it   800 t   60.1s N 7139 psnr 27.91 ssim 0.968 plate 17.16 textedge 13.78 slope 16.63 rod 17.01 occl 20.52
+S2 orig-derived 640x480          it  1200 t   91.2s N 7139 psnr 28.50 ssim 0.973 plate 17.72 textedge 14.38 slope 17.29 rod 17.37 occl 20.92
+S2 orig-derived 640x480          it  1500 t  115.0s N 7139 psnr 28.76 ssim 0.975 plate 17.93 textedge 14.59 slope 17.60 rod 17.59 occl 21.09
+S3 low + hi-res ROI tiles        it   100 t    3.3s N 7139 psnr 22.04 ssim 0.772 plate 12.64 textedge 10.98 slope 12.89 rod 15.61 occl 14.40
+S3 low + hi-res ROI tiles        it   200 t    6.7s N 7139 psnr 22.46 ssim 0.781 plate 13.52 textedge 11.30 slope 13.24 rod 15.78 occl 15.62
+S3 low + hi-res ROI tiles        it   400 t   12.7s N 7139 psnr 23.34 ssim 0.808 plate 14.25 textedge 11.34 slope 13.75 rod 16.00 occl 16.75
+S3 low + hi-res ROI tiles        it   600 t   18.8s N 7139 psnr 23.68 ssim 0.826 plate 14.59 textedge 11.64 slope 13.96 rod 15.83 occl 17.00
+S3 low + hi-res ROI tiles        it   800 t   25.2s N 7139 psnr 24.26 ssim 0.850 plate 14.81 textedge 11.66 slope 14.33 rod 16.08 occl 17.83
+S3 low + hi-res ROI tiles        it  1200 t   37.0s N 7139 psnr 25.06 ssim 0.884 plate 15.33 textedge 12.05 slope 14.62 rod 16.25 occl 18.41
+S3 low + hi-res ROI tiles        it  1500 t   46.2s N 7139 psnr 25.70 ssim 0.906 plate 15.47 textedge 12.21 slope 15.36 rod 16.28 occl 18.66
+S4 low + ROI tiles + split       it   100 t    3.3s N 7219 psnr 22.03 ssim 0.770 plate 12.63 textedge 10.96 slope 12.88 rod 15.63 occl 14.40
+S4 low + ROI tiles + split       it   200 t    6.6s N 7339 psnr 22.45 ssim 0.777 plate 13.52 textedge 11.30 slope 13.25 rod 15.82 occl 15.66
+S4 low + ROI tiles + split       it   400 t   12.9s N 7539 psnr 23.33 ssim 0.801 plate 14.26 textedge 11.36 slope 13.81 rod 15.97 occl 16.82
+S4 low + ROI tiles + split       it   600 t   19.4s N 7732 psnr 23.71 ssim 0.823 plate 14.56 textedge 11.60 slope 14.09 rod 15.93 occl 17.04
+S4 low + ROI tiles + split       it   800 t   25.9s N 7929 psnr 24.33 ssim 0.847 plate 14.85 textedge 11.70 slope 14.49 rod 16.21 occl 17.94
+S4 low + ROI tiles + split       it  1200 t   40.8s N 8112 psnr 25.17 ssim 0.882 plate 15.25 textedge 12.00 slope 14.87 rod 16.26 occl 18.38
+S4 low + ROI tiles + split       it  1500 t   51.5s N 8112 psnr 25.82 ssim 0.907 plate 15.41 textedge 12.17 slope 15.57 rod 16.32 occl 18.78
+S0 low, time-matched to S2       it  6741 t  115.7s N 7139 psnr 22.96 ssim 0.945 plate 10.83 textedge 8.22 slope 13.82 rod 16.49 occl 14.97
+done
