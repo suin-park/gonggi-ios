@@ -24,6 +24,5 @@ s = s.replace(b, """if (const char* rd = std::getenv("MSPLAT_RENDER_DIR")) {
                 """ + b)
 c = "// Evaluation"
 assert c in s
-s = s.replace(c, "model.numDownscales = 0;  // evaluation always at full 640x480, whatever the training supervision resolution was
-        " + c, 1)
+s = s.replace(c, "model.numDownscales = 0;  // evaluation always at full 640x480, whatever the training supervision resolution was" + chr(10) + "        " + c, 1)
 open(p, 'w', encoding='utf-8').write(s); print('patched', p)
