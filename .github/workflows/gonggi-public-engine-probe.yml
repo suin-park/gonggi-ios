@@ -66,8 +66,8 @@ jobs:
           ls -la /tmp/msplat/build | head -20
       - name: Synthetic control dataset (no user data)
         run: |
-          python3 -m pip install --quiet numpy opencv-python-headless scipy
-          python3 research/public_engine/make_dataset.py /tmp/ds
+          python3 -m venv /tmp/venv && /tmp/venv/bin/pip install --quiet numpy opencv-python-headless scipy
+          /tmp/venv/bin/python research/public_engine/make_dataset.py /tmp/ds
       - name: Run msplat on the synthetic scene (equal iterations; sh0; same initial points)
         continue-on-error: true
         run: |

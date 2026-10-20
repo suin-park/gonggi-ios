@@ -1,0 +1,31 @@
+C:\projects\gonggi-ios-gs3\research\gs_ref\synth3d.py:58: RuntimeWarning: invalid value encountered in remainder
+  stripe = ((np.floor(p[:, 1] / 0.012) % 2) * 190 + 40).astype(np.float32); put(t, np.stack([stripe, 40 + 0 * stripe, 40 + 0 * stripe], 1), inside, 3)
+C:\projects\gonggi-ios-gs3\research\gs_ref\synth3d.py:62: RuntimeWarning: invalid value encountered in matmul
+  nrm_s = (p - c) / 0.07; shade = 0.5 + 0.5 * np.clip(nrm_s @ np.array([0.4, -0.6, -0.7], np.float32), 0, 1)
+C:\projects\gonggi-ios-gs3\research\gs_ref\synth3d.py:63: RuntimeWarning: invalid value encountered in sin
+  noise = 0.8 + 0.2 * np.sin(p[:, 0] * 90) * np.sin(p[:, 1] * 90 + p[:, 2] * 40)
+C:\projects\gonggi-ios-gs3\research\gs_ref\synth3d.py:63: RuntimeWarning: invalid value encountered in add
+  noise = 0.8 + 0.2 * np.sin(p[:, 0] * 90) * np.sin(p[:, 1] * 90 + p[:, 2] * 40)
+rendered GT in 15 s
+initial map 7146 gaussians; STATS {'untrusted_normals': 0, 'inserted': 7146, 'rejected_update_rows': 0, 'nonfinite_inserts_dropped': 0}
+initial map (no optimisation) held-out: {'psnr': 14.151, 'ssim': 0.706, 'plate': 7.707, 'text_edges': 8.758, 'slope': 10.891, 'rod': 14.796, 'sphere': 19.093, 'occl_boundary': 10.529, 'coverage': 0.975}
+S0 low 160x120                   it   100 t    2.2s N 7146 psnr 19.88 ssim 0.806 plate 11.74 textedge 10.46 slope 12.66 rod 15.50 occl 13.36
+S0 low 160x120                   it   200 t    4.5s N 7146 psnr 21.75 ssim 0.814 plate 12.44 textedge 10.48 slope 13.07 rod 15.67 occl 14.04
+S0 low 160x120                   it   400 t    8.3s N 7146 psnr 22.13 ssim 0.827 plate 12.68 textedge 10.53 slope 13.42 rod 15.83 occl 14.47
+S0 low 160x120                   it   600 t   12.1s N 7146 psnr 21.94 ssim 0.826 plate 12.46 textedge 10.24 slope 13.42 rod 15.92 occl 14.40
+S0 low 160x120                   it   800 t   15.9s N 7146 psnr 21.78 ssim 0.831 plate 12.22 textedge 9.92 slope 13.38 rod 15.85 occl 14.36
+S1 mid 320x240                   it   100 t    3.3s N 7146 psnr 22.71 ssim 0.840 plate 14.21 textedge 11.60 slope 13.50 rod 15.98 occl 16.56
+S1 mid 320x240                   it   200 t    6.6s N 7146 psnr 25.00 ssim 0.855 plate 14.99 textedge 11.90 slope 14.25 rod 16.39 occl 17.92
+S1 mid 320x240                   it   400 t   12.4s N 7146 psnr 25.83 ssim 0.876 plate 15.63 textedge 12.42 slope 15.30 rod 16.76 occl 18.57
+S1 mid 320x240                   it   600 t   18.1s N 7146 psnr 26.13 ssim 0.882 plate 16.09 textedge 12.92 slope 15.81 rod 17.00 occl 18.83
+S1 mid 320x240                   it   800 t   24.1s N 7146 psnr 26.19 ssim 0.892 plate 16.14 textedge 13.01 slope 16.15 rod 17.03 occl 18.71
+S2 orig-derived 640x480          it   100 t    7.3s N 7146 psnr 23.56 ssim 0.850 plate 14.57 textedge 11.65 slope 13.68 rod 16.14 occl 17.37
+S2 orig-derived 640x480          it   200 t   14.6s N 7146 psnr 25.42 ssim 0.866 plate 15.02 textedge 11.87 slope 14.30 rod 16.62 occl 18.48
+S2 orig-derived 640x480          it   400 t   29.1s N 7146 psnr 26.18 ssim 0.887 plate 15.75 textedge 12.52 slope 15.20 rod 16.95 occl 19.20
+S2 orig-derived 640x480          it   600 t   43.2s N 7146 psnr 26.80 ssim 0.895 plate 16.48 textedge 13.26 slope 16.03 rod 17.12 occl 19.62
+S2 orig-derived 640x480          it   800 t   57.3s N 7146 psnr 27.16 ssim 0.906 plate 16.76 textedge 13.51 slope 16.61 rod 17.22 occl 20.15
+S0 low, time-matched to S2       it  3489 t   58.0s N 7146 psnr 20.95 ssim 0.846 plate 11.01 textedge 8.67 slope 12.93 rod 15.81 occl 14.41
+Traceback (most recent call last):
+  File "C:\projects\gonggi-ios-gs3\research\gs_ref\expB.py", line 145, in <module>
+    e, im = evaluate(runs[name], keep=True)
+KeyError: 'S4 low + ROI tiles + split'
