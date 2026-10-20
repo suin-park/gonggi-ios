@@ -35,7 +35,10 @@ final class GSOptProductStageTraceTests: XCTestCase {
         let stages = json["stages"] as! [[String: Any]]
         let s1 = stages.first { ($0["stage"] as? String) == "S1 init-REF" }!
         XCTAssertGreaterThan(s1["candidatePixels"] as? Int ?? 0, 0)
-        XCTAssertGreaterThan(s1["inserted"] as? Int ?? 0, 0, "기준 프레임에서 삽입이 없음")
+        // 제품 모드는 이미 지도가 설명하는 표면에는 새로 만들지 않는다(실제 기기 로그도 키프레임당 삽입 중앙값 7개): 삽입 0도 정상이며, 결정이 기록되었는지만 본다.
+        let decided = (s1["inserted"] as? Int ?? 0) + (s1["explainedByExistingSurface"] as? Int ?? 0) + (s1["rejectedByCap"] as? Int ?? 0)
+        XCTAssertGreaterThan(decided, 0, "기준 프레임의 삽입·생략 결정이 기록되지 않음")
+        XCTAssertNotNil(stages.first { ($0["stage"] as? String) == "S2 optim-REF" }?["view9.productSSIM"], "SSIM이 기록되지 않음")
         XCTAssertNotNil(s1["explainedByExistingSurface"]); XCTAssertNotNil(s1["rejectedByCap"])
         XCTAssertEqual(json["deterministicTwoRuns"] as? Bool, true)
         let g0 = stages.first { ($0["stage"] as? String) == "S0 before-REF" }!["gaussians"] as? Int ?? -1

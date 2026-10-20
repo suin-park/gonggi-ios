@@ -206,7 +206,7 @@ enum ProductStageTrace {
             var sp = 0.0, sn = 0
             for i in prodIdx { for c in 0..<3 { let d = Double(st.image[i * 3 + c] - v.target[i * 3 + c]); sp += d * d }; sn += 3 }
             stats[key + ".productPSNR"] = sn == 0 ? 0 : -10 * log10(max(sp / Double(sn), 1e-12))
-            stats[key + ".productSSIM"] = GSOProductEval.maskedSSIM(st.image, v.target, labels: v.labels, width: cam.width, height: cam.height)
+            stats[key + ".productSSIM"] = Double(GSOProductEval.maskedSSIM(st.image, v.target, labels: v.labels, width: cam.width, height: cam.height))
             // 분석 전용: 모든 개별 불투명도를 1로 가정했을 때의 화면 알파(불투명도가 아니라 덮임이 한계인지 구분). 지도는 바꾸지 않는다.
             var g1 = g
             for i in 0..<g1.count { g1.opacityLogit[i] = 12 }
@@ -372,9 +372,29 @@ enum ProductStageTrace {
             }
         }
         // 단계별 몽타주(제품 크롭 ×2) + 글자 크롭 개별 저장(×4)
+        func headTiles(_ v: EvalView, _ d: GSOKFDiag?) -> [(label: String, rgba: [UInt8], width: Int, height: Int)] {
+            // 몽타주 맨 앞: 원본(평가폭으로 줄인 것) → 실제 학습 입력(최근접 확대). 단계 타일과 같은 상자·같은 배율.
+            var out: [(label: String, rgba: [UInt8], width: Int, height: Int)] = []
+            let n = v.camera.width * v.camera.height
+            let orig = crop(rgba(fromFloat: v.target, count: n), width: v.camera.width, height: v.camera.height, box: v.productBox, scale: 2)
+            out.append((label: "original (eval \(v.camera.width)w) · view \(v.id)", rgba: orig.rgba, width: orig.width, height: orig.height))
+            if let d = d {
+                var up = [Float](repeating: 0, count: n * 3)
+                for y in 0..<v.camera.height {
+                    let sy = min(d.height - 1, y * d.height / max(1, v.camera.height))
+                    for x in 0..<v.camera.width {
+                        let sx = min(d.width - 1, x * d.width / max(1, v.camera.width))
+                        for c in 0..<3 { up[(y * v.camera.width + x) * 3 + c] = d.target[(sy * d.width + sx) * 3 + c] }
+                    }
+                }
+                let tr = crop(rgba(fromFloat: up, count: n), width: v.camera.width, height: v.camera.height, box: v.productBox, scale: 2)
+                out.append((label: "train input \(d.width)x\(d.height) · view \(v.id)", rgba: tr.rgba, width: tr.width, height: tr.height))
+            }
+            return out
+        }
         let tiles = a.snapshots.flatMap { $0.images }
-        let refTiles = tiles.filter { $0.label.hasSuffix("view \(rv.id)") }
-        let nbTiles = tiles.filter { $0.label.hasSuffix("view \(nv.id)") }
+        let refTiles = headTiles(rv, a.diagRef) + tiles.filter { $0.label.hasSuffix("view \(rv.id)") }
+        let nbTiles = headTiles(nv, a.diagNB) + tiles.filter { $0.label.hasSuffix("view \(nv.id)") }
         if let m = montage(refTiles, columns: 3) { try write(m.rgba, m.width, m.height, "10_stages_product_crop_REF_view\(rv.id)") }
         if let m = montage(nbTiles, columns: 3) { try write(m.rgba, m.width, m.height, "11_stages_product_crop_NB_view\(nv.id)") }
         for s in a.snapshots { for t in s.texts { try write(t.rgba, t.width, t.height, "20_" + t.name.replacingOccurrences(of: " ", with: "_")) } }
