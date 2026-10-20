@@ -1,0 +1,9 @@
+C:\projects\gonggi-ios-ondevice-gs\research\ondevice_gs\pc_gs.py:145: RuntimeWarning: invalid value encountered in divide
+  t1 = np.cross(nc, a); t1 /= np.linalg.norm(t1, axis=1, keepdims=True)
+C:\projects\gonggi-ios-ondevice-gs\research\ondevice_gs\pc_gs.py:145: RuntimeWarning: invalid value encountered in divide
+  t1 = np.cross(nc, a); t1 /= np.linalg.norm(t1, axis=1, keepdims=True)
+C:\projects\gonggi-ios-ondevice-gs\research\ondevice_gs\pc_gs.py:145: RuntimeWarning: invalid value encountered in divide
+  t1 = np.cross(nc, a); t1 /= np.linalg.norm(t1, axis=1, keepdims=True)
+orig modules from C:\projects\gonggi-ios-ondevice-gs\research\ondevice_gs 118096794288 54105b136871
+orig B {"psnr": 18.022, "ssim": 0.431, "psnr_edge": 16.065, "coverage": 0.928, "hole": 0.052, "dark": 0.223, "past_degradation_db": -0.425, "past_frames": 2, "worst_psnr": 15.532} N 17508 non-finite 1582 STATS {} 19s
+orig C {"psnr": 17.614, "ssim": 0.417, "psnr_edge": 15.752, "coverage": 0.926, "hole": 0.053, "dark": 0.23, "past_degradation_db": -0.316, "past_frames": 2, "worst_psnr": 15.301} N 19729 non-finite 1586 STATS {} 21s
