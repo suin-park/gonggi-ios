@@ -424,6 +424,40 @@ final class ProductSessionViewModel: ObservableObject {
             message = res.1 != nil ? "비교를 마쳤어요. 결과를 확인하세요." : res.0
         }
     }
+
+    /// 진단 전용(화질 개선 아님): 저장한 연구 기록으로 같은 프레임의 원본 → 학습 입력 → 초기화 직후 → 최적화 후 → 이웃 추가 후를 같은 카메라·해상도로 저장한다.
+    /// 실제 Swift 엔진(GSOPipeline)을 ProductCompare와 같은 순서로 돌린다. 결과 파일은 앱 문서 폴더의 product-gs/diag-stage-* 에 저장되고 사용자가 직접 공유한다.
+    func runStageTrace(_ src: CompareSource) {
+        guard state == .idle || state == .finished, compareProgress == nil else { return }
+        compareProgress = 0
+        compareText = nil
+        message = "단계별 진단 중… (같은 입력을 2회 재생해 재현도 확인합니다. 수 분 걸릴 수 있어요)"
+        let env = "\(ExpSys.machine) · iOS · \(GonggiBuildInfo.versionLine) (\(GonggiBuildInfo.buildSHA)) · 열 \(ExpSys.thermal)"
+        Task {
+            let res = await Task.detached(priority: .userInitiated) { () -> (String, [URL]) in
+                do {
+                    let source = try GSOProductReplaySource(url: src.url)
+                    let mono = RTMonoDepth()
+                    _ = mono.load()
+                    let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
+                    try? GSOStore.ensureDirectory(ProductGSStore.directory)
+                    let dir = ProductGSStore.directory.appendingPathComponent("diag-stage-" + stamp, isDirectory: true)
+                    let r = try ProductStageTrace.run(source: source, config: GSOConfig.productDefault(), monoFactory: { mono }, iterationsPerKeyframe: 24,
+                                                      heldOut: { GSOCompare.isHeldOut(index: $0) }, evalWidth: 640, repeatCheck: true, outDir: dir, environment: env,
+                                                      inputDescription: "\(src.url.lastPathComponent) (\(source.count)장)") { d in
+                        Task { @MainActor in self.compareProgress = d }
+                    }
+                    return (r.summary, r.files)
+                } catch {
+                    return ("단계별 진단 실패: \(error)", [])
+                }
+            }.value
+            compareProgress = nil
+            compareText = res.0
+            compareShare = res.1
+            message = res.1.isEmpty ? res.0 : "진단을 마쳤어요. 결과 파일 \(res.1.count)개를 공유할 수 있어요."
+        }
+    }
 }
 
 struct ProductGSView: View {
@@ -672,6 +706,7 @@ struct ProductGSView: View {
                     if items.isEmpty { Text("비교에 쓸 연구 기록이 없어요. 연구 기록을 켜고 제품을 촬영·저장하세요.").foregroundStyle(.secondary) }
                     ForEach(items) { s in
                         Button { vm.runCompare(s) } label: { Text(s.title).font(.subheadline) }.disabled(vm.compareProgress != nil)
+                        Button { vm.runStageTrace(s) } label: { Text("단계별 진단 (진단 전용 · 화질 개선 아님): " + s.title).font(.caption) }.disabled(vm.compareProgress != nil)
                     }
                 }
             }

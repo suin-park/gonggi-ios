@@ -332,8 +332,28 @@ struct GSORefineProgress {
     var fractionGaussians: Float { gaussiansTotal > 0 ? Float(gaussiansRefined) / Float(gaussiansTotal) : 0 }
 }
 
+/// 진단 전용: 한 키프레임 처리에 실제로 쓰인 입력(파이프라인 동작에는 영향이 없다). diagCapture가 켜졌을 때만 채운다.
+struct GSOKFDiag {
+    var id: Int
+    var width: Int, height: Int          // 학습 격자
+    var target: [Float]                  // 학습 입력 RGB(0...1, 노출 이득 적용 후)
+    var dense: [Float]                   // 삽입에 쓴 밀집 깊이(m, 0 = 없음)
+    var anchors: [Float]                 // 스테레오 앵커 깊이(학습 격자)
+    var anchorFlags: [Bool]
+    var labels: [UInt8]?                 // 제품 마스크 라벨(학습 격자)
+    var select: [Bool]                   // 삽입 후보로 선택된 화소(상한 적용 전)
+    var denseSource: String
+    var camera: GSOCamera                // 학습 격자 카메라
+    var gain: Float
+    var kHi: RTIntrinsics
+    var hiWidth: Int, hiHeight: Int
+}
+
 final class GSOPipeline {
     let config: GSOConfig
+    /// 진단 전용: 켜면 process가 lastDiag에 입력 사본을 남긴다(기본 꺼짐, 동작 불변).
+    var diagCapture = false
+    private(set) var lastDiag: GSOKFDiag?
     let map = GSOMap()
     let optimizer: GSOOptimizer
     let hiStore: GSOHiStore
@@ -643,6 +663,11 @@ final class GSOPipeline {
                 if n.stereoAnchored { rec.insertedStereo += 1 } else { rec.insertedMono += 1 }
             }
             rec.inserted = news.count
+            if diagCapture {
+                // 진단 전용(읽기만 한다): 이 키프레임에서 실제로 쓰인 학습 입력·밀집 깊이·앵커·라벨·삽입 후보 화소.
+                lastDiag = GSOKFDiag(id: input.id, width: train.width, height: train.height, target: target, dense: dense, anchors: anchorsTrain, anchorFlags: flagsTrain,
+                                     labels: labels, select: select, denseSource: rec.denseSource, camera: cam, gain: gain, kHi: kHi, hiWidth: input.hiWidth, hiHeight: input.hiHeight)
+            }
             if !news.isEmpty { map.geometryRevision += 1 }
             if firstSurfaceKF == nil, map.count > 0 { firstSurfaceKF = input.id }
         } else {
