@@ -7,6 +7,8 @@ os.environ.setdefault('GS_W', '160'); os.environ.setdefault('GS_H', '120')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np, cv2
 import pc_gs, gsref, pc_abc
+def imwrite(path, bgr):
+    ok, buf = cv2.imencode('.png', bgr); buf.tofile(path)   # cv2.imwrite fails silently on non-ASCII Windows paths
 
 d = sys.argv[1]; out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(d, 'pc_parity'); os.makedirs(out, exist_ok=True)
 J = json.load(open(os.path.join(d, 'stage_trace.json'), encoding='utf-8')); R = J['inputs']['ref']; W, H = R['trainW'], R['trainH']
@@ -27,14 +29,14 @@ if gg is not None:
     # evaluation camera = REF eval camera: K scaled from the training K (same optical centre convention)
     EW = J['evalWidth']; s = EW / W; EH = int(round(H * s)); ecam = dict(Rcw=Rcw, C=C, fx=fx * s, fy=fy * s, cx=(cx + .5) * s - .5, cy=(cy + .5) * s - .5, W=EW, H=EH)
     img, dep, Tf, st = gsref.render(mu, logs, quat, col, opa, ecam, **pc_abc.DISPLAY)
-    cv2.imwrite(os.path.join(out, 'pc_ref_born_only_full.png'), cv2.cvtColor((np.clip(img, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+    imwrite(os.path.join(out, 'pc_ref_born_only_full.png'), cv2.cvtColor((np.clip(img, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
     x0, y0, x1, y1 = J['textBoxREF']; crop = (np.clip(img[y0:y1, x0:x1], 0, 1) * 255).astype(np.uint8)
-    cv2.imwrite(os.path.join(out, 'pc_ref_born_only_textcrop_x4.png'), cv2.cvtColor(cv2.resize(crop, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST), cv2.COLOR_RGB2BGR))
+    imwrite(os.path.join(out, 'pc_ref_born_only_textcrop_x4.png'), cv2.cvtColor(cv2.resize(crop, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST), cv2.COLOR_RGB2BGR))
     print('PC render alpha in text crop %.3f' % float((1 - Tf)[y0:y1, x0:x1].mean()), '| device render alpha refBornOnly:', [s for s in J['stages'] if s['stage'] == 'S1 init-REF'][0].get(f"view{J['refID']}.textCropAlpha.refBornOnly"))
     dev = glob.glob(os.path.join(d, '20_S1_init-REF__ref_born_only.png'))
     if dev:
-        a = cv2.cvtColor(cv2.imread(dev[0]), cv2.COLOR_BGR2RGB).astype(np.float32) / 255; b = cv2.resize(crop, (a.shape[1], a.shape[0]), interpolation=cv2.INTER_NEAREST).astype(np.float32) / 255
-        mse = float(((a - b) ** 2).mean()); print('device vs PC render of the same Gaussians (text crop x4): PSNR %.2f dB' % (-10 * np.log10(max(mse, 1e-12))))
+        a = cv2.cvtColor(cv2.imdecode(np.fromfile(dev[0], np.uint8), cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB).astype(np.float32) / 255; b = cv2.resize(crop, (a.shape[1], a.shape[0]), interpolation=cv2.INTER_NEAREST).astype(np.float32) / 255
+        mse = float(((a - b) ** 2).mean()); print('device ref-born png', a.shape, 'PC crop', crop.shape); print('device vs PC render of the same Gaussians (text crop x4): PSNR %.2f dB' % (-10 * np.log10(max(mse, 1e-12))))
     else: print('device ref-born-only crop not found')
     # parameter parity summary for the PC Gaussians (positions/sizes/opacity as the Swift side logs them)
     print('PC Gaussians: sigma_t median %.4f m, sigma_n median %.4f m, opacity logit %.2f' % (float(np.median(np.exp(logs[:, 0]))), float(np.median(np.exp(logs[:, 2]))), float(np.median(opa))))

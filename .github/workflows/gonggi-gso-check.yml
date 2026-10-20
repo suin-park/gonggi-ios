@@ -114,6 +114,7 @@ jobs:
             -only-testing:GonggiTests/GSOptTexLayerPipelineTests \
             -only-testing:GonggiTests/GSOptNativeResTests \
             -only-testing:GonggiTests/GSOptProductStageTraceTests \
+            -only-testing:GonggiTests/GSOptProductEarlyTraceTests \
             -only-testing:GonggiTests/TexLayerAlignTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild-gso.log

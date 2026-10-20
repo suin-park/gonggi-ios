@@ -411,6 +411,27 @@ final class GSOPipeline {
         return Int(truncatingIfNeeded: rng >> 33)
     }
 
+    /// 진단 전용(읽기만, 동작 불변): 지도뿐 아니라 Adam 모멘트·관측 이력(nObs/state/표/지지)·분할·정밀화 카운터·난수·학습률 배율·반복 카운터의 지문.
+    /// 두 번의 재생이 '같은 변경 직전 상태'에서 출발하는지 확인하는 데 쓴다(가우시안 배열만 같은 것으로는 부족하다).
+    func stateFingerprint() -> String {
+        var h: UInt64 = 14695981039346656037
+        func mix(_ v: UInt64) { h = (h ^ v) &* 1099511628211 }
+        func f(_ v: Float) { mix(UInt64(v.bitPattern)) }
+        func f3(_ a: [SIMD3<Float>]) { mix(UInt64(a.count)); for v in a { f(v.x); f(v.y); f(v.z) } }
+        func f4(_ a: [SIMD4<Float>]) { mix(UInt64(a.count)); for v in a { f(v.x); f(v.y); f(v.z); f(v.w) } }
+        func f1(_ a: [Float]) { mix(UInt64(a.count)); for v in a { f(v) } }
+        func i<T: BinaryInteger>(_ a: [T]) { mix(UInt64(a.count)); for v in a { mix(UInt64(truncatingIfNeeded: Int64(v))) } }
+        let m = map
+        f3(m.g.mu); f3(m.g.logScale); f4(m.g.quat); f3(m.g.color); f1(m.g.opacityLogit)
+        f3(m.mMu); f3(m.vMu); f3(m.mLs); f3(m.vLs); f4(m.mQ); f4(m.vQ); f1(m.mO); f1(m.vO); f3(m.mC); f3(m.vC)
+        i(m.steps); i(m.nObs); i(m.state); i(m.indep); i(m.bornKF); i(m.lastKF); i(m.revision); i(m.conflictVotes); i(m.splitCount); i(m.bgCount); i(m.refineCount); i(m.voteKF)
+        f1(m.splitAccum); f3(m.supportPos); f3(m.supportDir); i(m.supportKF)
+        mix(UInt64(m.insertedTotal)); mix(UInt64(m.removedTotal)); mix(UInt64(m.splitTotal)); mix(UInt64(m.version)); mix(UInt64(m.geometryRevision))
+        mix(rng); mix(UInt64(iterCounter)); mix(UInt64(sliceCounter)); mix(UInt64(processed)); mix(UInt64(rollbacks)); mix(UInt64(splitRollbacks)); mix(UInt64(totalIterations)); mix(UInt64(totalSplits))
+        f(optimizer.lrScale); mix(UInt64(optimizer.updates)); mix(UInt64(refineCounter)); mix(UInt64(views.count))
+        return String(h, radix: 16)
+    }
+
     // MARK: 입력 처리
 
     /// 한 키프레임을 처리한다(깊이·삽입·증거·고해상도 보관). 최적화는 optimizeSlice로 따로 한다.
