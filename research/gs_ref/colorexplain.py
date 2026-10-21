@@ -6,7 +6,7 @@ Arm A (fork): both arms share the prefix state built with the baseline rule up t
 Arm B (whole run): the rule active at every keyframe vs baseline, held-out frames i%10==5 never used for insertion/optimisation.
 Regions: eyes/nose = dark blobs (V<70) of each view's own photo inside the product mask (3 largest), face patch = their dilated hull; overlays saved for visual verification. No auto text crop."""
 import os, sys, json, time, copy
-os.environ['DATA'] = '09'; os.environ.setdefault('REF', '41'); os.environ.setdefault('NB', '42'); os.environ['APP_LIKE'] = '1'
+os.environ.setdefault('DATA', '09'); os.environ.setdefault('REF', '41'); os.environ.setdefault('NB', '42'); os.environ['APP_LIKE'] = '1'
 import numpy as np, cv2
 import stlib
 from stlib import pc_abc, pc_gs, ctx, fr, EW, EH, POL, REF, NB, render_view, state_hash

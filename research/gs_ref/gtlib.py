@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); sys.path.insert(
 import numpy as np, cv2
 import gsref, pc_abc, tex_data
 DISPLAY = pc_abc.DISPLAY
-RP = sorted(glob.glob('C:/Users/emili/Downloads/테스트_09/*.kmoreplay'))[0]; KM = sorted(glob.glob('C:/Users/emili/Downloads/테스트_09/*.kmogs'))[0]
+_D = os.environ.get('DATA', '09'); RP = sorted(glob.glob('C:/Users/emili/Downloads/테스트_' + _D + '/*.kmoreplay'))[0]; _k = sorted(glob.glob('C:/Users/emili/Downloads/테스트_' + _D + '/*.kmogs')); KM = _k[0] if _k else None
 EW, EH = 640, 480
 held = lambda i: i % 10 == 5
 def imwrite(path, rgb01): cv2.imencode('.png', cv2.cvtColor((np.clip(rgb01, 0, 1) * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))[1].tofile(path)
