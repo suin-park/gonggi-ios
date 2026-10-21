@@ -15,8 +15,8 @@ from skimage.metrics import structural_similarity
 REF = int(os.environ.get('REF', '28')); NB = int(os.environ.get('NB', '29'))
 import glob
 DATA = os.environ.get('DATA', '08')
-RP = sorted(glob.glob('C:/Users/emili/Downloads/테스트_' + DATA + '/*.kmoreplay'))[0]; NPZ = 'C:/projects/gonggi-ios-tex3/research/product_tex/cache/t' + DATA + '_320.npz'
-n = 48; GW, GH = 160, 120
+RP = sorted(glob.glob('C:/Users/emili/Downloads/테스트_' + DATA + '/*.kmoreplay'))[0]; NPZ = os.environ.get('NPZ_PATH', 'C:/projects/gonggi-ios-tex3/research/product_tex/cache/t' + DATA + '_320.npz')
+n = int(os.environ.get('N_FRAMES', '48')); GW, GH = 160, 120
 fr = tex_data.load(RP); d = np.load(NPZ); n = min(n, len(fr), len(d['Z']))
 hi = [fr[i]['img'] for i in range(n)]; K960 = np.array([[fr[i]['fx'], fr[i]['fy'], fr[i]['cx'], fr[i]['cy']] for i in range(n)]); s_ = GW / 960.0
 imgs = np.stack([cv2.resize(h, (GW, GH), interpolation=cv2.INTER_AREA) for h in hi])
