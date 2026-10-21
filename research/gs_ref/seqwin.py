@@ -12,8 +12,9 @@ import colorexplain as ce
 from colorexplain import ctx, ColorRun, kf_step, held
 import gtlib as g
 import gsref
-arm = sys.argv[1]; TAU = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
-OUT = os.environ.get('OUTDIR', 'out_seq'); os.makedirs(OUT, exist_ok=True); TAG = f'{arm}_t{TAU:g}'
+MAIN = __name__ == '__main__'
+arm = sys.argv[1] if MAIN else 'win'; TAU = float(sys.argv[2]) if MAIN and len(sys.argv) > 2 else 0.0; APPOPT = os.environ.get('APPOPT') == '1'   # APPOPT=1: refinement steps go through the SAME pc_gs.Optimizer as the baseline (shared Adam moments + step counters, warm-up, fixed creation bounds, no re-anchoring) like the app's refine path
+OUT = os.environ.get('OUTDIR', 'out_seq'); os.makedirs(OUT, exist_ok=True); TAG = f'{arm}{"_app" if APPOPT else ""}{"_rh" if os.environ.get("REH") == "1" else ""}{"_guard" if os.environ.get("GUARD") == "1" else ""}_t{TAU:g}'
 P = g.Photos(); LR = dict(mu=2e-4, ls=1e-3, q=5e-4, o=0.04, c=0.012); FW, FH = 160, 120; WW, WH = 192, 144
 CKS = [9, 19, 29, 39, 47]
 cache = {}
@@ -25,7 +26,7 @@ def data(i):
     return cache[i]
 
 class Refiner:
-    def __init__(s): s.m = {}; s.v = {}; s.gid = np.zeros(0, np.int64); s.t = np.zeros(0, np.int32); s.vis_win = np.zeros(0, np.int32); s.slot = 0; s.rng = np.random.RandomState(5); s.wrng = np.random.RandomState(11)
+    def __init__(s, opt=None): s.opt = opt; s.m = {}; s.v = {}; s.gid = np.zeros(0, np.int64); s.t = np.zeros(0, np.int32); s.vis_win = np.zeros(0, np.int32); s.slot = 0; s.rng = np.random.RandomState(5); s.wrng = np.random.RandomState(11)
     def grow(s, G):
         """Re-index the per-Gaussian refiner state by the Gaussian's persistent id (the baseline prunes/compacts the map between refinements)."""
         n = G.n; gid = G.gid[:n].copy(); old_gid = getattr(s, 'gid', np.zeros(0, np.int64)); shapes = dict(mu=(n, 3), ls=(n, 3), q=(n, 4), o=(n,), c=(n, 3))
@@ -54,14 +55,32 @@ class Refiner:
         gr = gsref.backward(mu, logs, quat, col, opa, cam, st, Tf, dLdC, dLdD, dLdA); gmu, glogs, gquat, gopa, gcol = [np.array(a) for a in gr[:5]]; vis = st['proj'][:, 0] > 0.5
         fin = np.isfinite(gmu).all(1) & np.isfinite(glogs).all(1) & np.isfinite(gquat).all(1) & np.isfinite(gopa) & np.isfinite(gcol).all(1); vis = vis & fin
         for a in (gmu, glogs, gquat, gcol): a[~fin] = 0
-        gopa[~fin] = 0; s.adam(G, dict(mu=gmu, ls=glogs, q=gquat, o=gopa, c=gcol), vis); return st, vis, int(m.sum())
+        gopa[~fin] = 0
+        if s.opt is not None: s.opt.step(G, (gmu, glogs, gquat, gopa, gcol), True, vis)
+        else: s.adam(G, dict(mu=gmu, ls=glogs, q=gquat, o=gopa, c=gcol), vis)
+        return st, vis, int(m.sum())
     def pick_view(s, train):
         recent = train[-3:]; past = train[:-3]; slot = s.slot % 5; s.slot += 1
-        if slot >= 3 and past: return past[s.rng.randint(len(past))]
+        if slot >= 3 and past:
+            if getattr(s, 'rh', None) is not None:
+                if s.slot % 25 == 4 or not getattr(s, 'pool', None): s.pool = s.rh.forget_pool(k=8, take=3)
+                if s.pool: return s.pool[s.rng.randint(len(s.pool))]
+            return past[s.rng.randint(len(past))]
         return recent[slot % len(recent)]
     def refine(s, G, train, tau, arm):
-        cnt = dict(steps=0, window_steps=0, rendered_px=0, supervised_px=0); n = G.n; s.grow(G); t0 = time.time()
+        cnt = dict(steps=0, window_steps=0, rendered_px=0, supervised_px=0, guard_rollbacks=0); n = G.n; s.grow(G); t0 = time.time(); blk = None; since = 0
+        def close_block():
+            nonlocal blk
+            if blk is None: return
+            s.rh.guard_checks += 1
+            if s.rh.guard_bad(blk['pool'], blk['before']) and s.rh.restore(blk['snap']): s.rh.guard_rollbacks += 1; cnt['guard_rollbacks'] += 1; s.rh.lr_scale = max(0.125, s.rh.lr_scale * 0.5); [s.rh.opt.LR.__setitem__(k, s.rh.opt.base_lr[k] * s.rh.lr_scale) for k in s.rh.opt.LR]
+            blk = None
         while time.time() - t0 < tau:
+            if GUARD and getattr(s, 'rh', None) is not None and s.opt is not None:
+                if since % 40 == 0:
+                    close_block(); pool = s.rh.forget_pool(k=8, take=2)
+                    if pool: blk = dict(snap=s.rh.snapshot(), pool=pool, before={v: s.rh.val_metric(v)[0] for v in pool}); s.rh.extra_fwd += len(pool)
+                since += 1
             i = s.pick_view(train); d = data(i)
             if arm == 'full640':
                 s.step(G, P.cam(i), d['gt640'], d['m640'], d['bg640']); cnt['steps'] += 1; cnt['rendered_px'] += g.EW * g.EH; cnt['supervised_px'] += int(d['m640'].sum())
@@ -79,9 +98,36 @@ class Refiner:
                 _, x0, y0, inw = best; cam = dict(P.cam(i, 960, 720)); cam['cx'] -= x0; cam['cy'] -= y0; cam['W'] = WW; cam['H'] = WH
                 _, vis, sp = s.step(G, cam, P.hi[i][y0:y0 + WH, x0:x0 + WW].astype(np.float32) / 255, d['m960'][y0:y0 + WH, x0:x0 + WW], d['bg960'][y0:y0 + WH, x0:x0 + WW]); s.vis_win[:n][vis[:n]] += 1
                 cnt['steps'] += 1; cnt['window_steps'] += 1; cnt['rendered_px'] += WW * WH; cnt['supervised_px'] += sp
-        G.mu0[:n] = G.mu[:n]; G.ls0[:n] = G.logs[:n]; G.col0[:n] = G.col[:n]      # re-anchor the baseline optimiser's bound references to the refined values
+        if GUARD and getattr(s, 'rh', None) is not None: close_block()
+        if s.opt is None: G.mu0[:n] = G.mu[:n]; G.ls0[:n] = G.logs[:n]; G.col0[:n] = G.col[:n]      # re-anchor the baseline optimiser's bound references to the refined values
         return cnt
 
+REH = os.environ.get('REH') == '1'; GUARD = os.environ.get('GUARD') == '1'   # GUARD=1 (implies the forgetting pool): a baseline slice / a 40-step refinement block is ROLLED BACK (params + Adam moments + step counters, lr scale halved) if any of the most-forgotten past views got worse by > max(0.012, 8%) in 160x120 loss
+class RH(ColorRun):
+    """Candidate: loss-prioritised past replay. Each baseline slice (and each refinement block) draws K random past views, scores them by the INCREASE of their 160x120 loss over the best loss that view had when it was freshly fitted
+    (forgetting score) and replays the most-forgotten ones in the past slots (instead of uniformly random past views). Everything else (loss, rates, bounds, budgets) is unchanged. Extra cost = K forward renders at 160x120 per slice/block (counted)."""
+    def __init__(self, *a, **k): super().__init__(*a, **k); self.min_loss = {}; self.pool = []; self.extra_fwd = 0
+    def forget_pool(self, k=6, take=2):
+        past = self.train_ids[:-self.cfg['win_recent']]
+        if not past: return []
+        cand = list(dict.fromkeys(past[self.rng.randint(len(past))] for _ in range(k))); sc = []
+        for v in cand:
+            L = self.val_metric(v)[0]; self.extra_fwd += 1; m = self.min_loss.get(v, L); self.min_loss[v] = min(m, L); sc.append(((L - m) / max(m, 1e-3), v))
+        sc.sort(reverse=True); return [v for _, v in sc[:take]]
+    guard_rollbacks = 0; guard_checks = 0
+    def guard_bad(self, pool, before):
+        after = {v: self.val_metric(v)[0] for v in pool}; self.extra_fwd += len(pool); return any(after[v] - before[v] > max(0.012, 0.08 * before[v]) for v in pool)
+    def optimize_slice(self):
+        self.pool = self.forget_pool()
+        if not (GUARD and self.pool): return super().optimize_slice()
+        snap = self.snapshot(); before = {v: self.val_metric(v)[0] for v in self.pool}; self.extra_fwd += len(self.pool); super().optimize_slice(); self.guard_checks += 1
+        if self.guard_bad(self.pool, before) and self.restore(snap):
+            self.guard_rollbacks += 1; self.lr_scale = max(0.125, self.lr_scale * 0.5)
+            for k in self.opt.LR: self.opt.LR[k] = self.opt.base_lr[k] * self.lr_scale
+    def choose_view(self):
+        cfg = self.cfg; window = self.train_ids[-cfg['win_recent']:]; past = self.train_ids[:-cfg['win_recent']]; cyc = cfg['win_recent'] + cfg['past_n']; slot = self.iter_counter % cyc; self.iter_counter += 1
+        if slot >= cfg['win_recent'] and past: return self.pool[(slot - cfg['win_recent']) % len(self.pool)] if self.pool else past[self.rng.randint(len(past))]
+        return window[slot % len(window)]
 def Mview(G): n = G.n; return dict(mu=G.mu[:n], logs=G.logs[:n], quat=G.quat[:n], col=G.col[:n], opa=G.opa[:n])
 def evaluate(G, frames):
     out = {}
@@ -96,11 +142,13 @@ def evaluate(G, frames):
     return out, img
 
 def run():
-    r = ColorRun(ctx, 'B'); r.cfg['ins_budget'] = 10 ** 9; r.th = None; R = Refiner(); tot = dict(steps=0, window_steps=0, rendered_px=0, supervised_px=0); t_base = 0.0; t_ref = 0.0; ckrows = {}; frames_done = []
+    r = (RH if (REH or GUARD) else ColorRun)(ctx, 'B'); r.cfg['ins_budget'] = 10 ** 9; r.th = None; R = Refiner(r.opt if APPOPT else None); R.rh = r if (REH or GUARD) else None; tot = dict(steps=0, window_steps=0, rendered_px=0, supervised_px=0); t_base = 0.0; t_ref = 0.0; ckrows = {}; frames_done = []
     HELD = [5, 15, 25, 35, 45]; keyimgs = {}
     for i in range(ctx.n):
         if held(i) or ctx.D['Z'][i].max() <= 0: continue
-        t0 = time.time(); kf_step(r, i); t_base += time.time() - t0; frames_done.append(i)
+        t0 = time.time(); kf_step(r, i)
+        if (REH or GUARD) and r.G.n > 0: r.min_loss[i] = r.val_metric(i)[0]
+        t_base += time.time() - t0; frames_done.append(i)
         if TAU > 0 and r.G.n > 0:
             t1 = time.time(); c = R.refine(r.G, [j for j in r.train_ids if P.mask[j].sum() > 50] or r.train_ids, TAU, arm); t_ref += time.time() - t1
             for k in tot: tot[k] += c[k]
@@ -116,6 +164,6 @@ def run():
             if i == CKS[-1]:
                 for v in (2, 45, 47):
                     if v < ctx.n: im, _ = g.render(Mview(r.G), P.cam(v))[:2] + (None,) if False else (g.render(Mview(r.G), P.cam(v))[0], None); g.imwrite(os.path.join(OUT, f'render_{TAG}_view{v}.png'), im)
-    S = dict(arm=arm, tau=TAU, tag=TAG, depth='PC-estimated causal depth (NOT the device depth)', start='empty map', baseline_seconds=t_base, refine_seconds=t_ref, totals=tot, checkpoints=ckrows, gaussians=int(r.G.n), rollbacks=int(r.stats['rollbacks']))
+    S = dict(arm=arm, tau=TAU, tag=TAG, depth='PC-estimated causal depth (NOT the device depth)', start='empty map', baseline_seconds=t_base, refine_seconds=t_ref, rehearsal_extra_forwards=int(getattr(r, 'extra_fwd', 0)), guard_rollbacks=int(getattr(r, 'guard_rollbacks', 0)), guard_checks=int(getattr(r, 'guard_checks', 0)), totals=tot, checkpoints=ckrows, gaussians=int(r.G.n), rollbacks=int(r.stats['rollbacks']))
     json.dump(S, open(os.path.join(OUT, f'seq_{TAG}.json'), 'w'), indent=1, default=float); print(json.dumps({k: v for k, v in S.items() if k != 'checkpoints'}, default=float))
-run()
+if MAIN: run()
