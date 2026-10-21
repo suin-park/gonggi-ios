@@ -9,10 +9,10 @@ import os, sys, json, time
 import numpy as np, cv2
 import gtlib as g
 import gsref
-os.makedirs('out_pj', exist_ok=True); TOTAL = int(os.environ.get('TOTAL', 6000)); ROUNDS = int(os.environ.get('ROUNDS', 3))
+TAG = os.environ.get('TAG', ''); SMOOTH = float(os.environ.get('SMOOTH', 0)); REUSE = os.environ.get('REUSE_BASE') == '1'; os.makedirs('out_pj', exist_ok=True); TOTAL = int(os.environ.get('TOTAL', 6000)); ROUNDS = int(os.environ.get('ROUNDS', 3))
 os.environ.setdefault('NPZ_PATH', 'x')
-P = g.Photos(); n = P.n; views = [i for i in range(n) if P.mask[i].sum() > 50]; held = [i for i in views if i % 10 == 5]; train = [i for i in views if i % 10 != 5]
-z_ = np.load('out_ub/map_gsmax_P1.npz'); START = {k: z_[k].copy() for k in z_.files}
+P = g.Photos(); n = P.n; views = [i for i in range(n) if P.mask[i].sum() > 50]; ALL = os.environ.get('ALL') == '1'; held = [] if ALL else [i for i in views if i % 10 == 5]; train = views if ALL else [i for i in views if i % 10 != 5]
+z_ = np.load(os.environ.get('STARTMAP', 'out_ub/map_gsmax_P1.npz')); START = {k: z_[k].copy() for k in z_.files}
 LR0 = dict(mu=2e-4, ls=1e-3, q=5e-4, o=0.04, c=0.012); dil = {i: cv2.dilate(P.mask[i].astype(np.uint8), np.ones((31, 31), np.uint8)) > 0 for i in views}
 def rotvec(r):
     th = np.linalg.norm(r)
@@ -65,15 +65,23 @@ def evaluate(M, ids, pose_of):
     return {k: float(np.nanmean([o[k] for o in out if k in o])) for k in out[0]}
 t0 = time.time(); log = {}
 # ---------------- BASE
-MB = {k: v.copy() for k, v in START.items()}; fit(MB, TOTAL, 1); t_base = time.time() - t0; print('base fit done', int(t_base), flush=True)
+if REUSE: MB = {k: v for k, v in np.load('out_pj/map_base.npz').items()}; t_base = 0.0
+else: MB = {k: v.copy() for k, v in START.items()}; fit(MB, TOTAL, 1); t_base = time.time() - t0
+print('base ready', int(t_base), flush=True)
 # ---------------- JOINT
 MJ = {k: v.copy() for k, v in START.items()}; t1 = time.time(); rounds = []
 for r in range(ROUNDS):
     tp = time.time()
     for i in train: POSE[i] = refine_pose(i, MJ, POSE[i])
+    if SMOOTH > 0:      # temporal smoothing of the pose corrections along the capture order (ARKit drift is slow; per-frame jitter is overfitting to the map)
+        ids = np.array(train); D = np.stack([POSE[i] for i in train]); Ds = np.stack([np.sum([np.exp(-0.5 * ((ids - i) / SMOOTH) ** 2)[:, None] * D for _ in [0]], 0).sum(0) / np.exp(-0.5 * ((ids - i) / SMOOTH) ** 2).sum() for i in train])
+        for k, i in enumerate(train): POSE[i] = Ds[k]
     mag = [(float(np.degrees(np.linalg.norm(POSE[i][:3]))), float(100 * np.linalg.norm(POSE[i][3:]))) for i in train]; fit(MJ, TOTAL // ROUNDS, 10 + r)
     rounds.append(dict(round=r + 1, pose_mean_deg=float(np.mean([m[0] for m in mag])), pose_mean_cm=float(np.mean([m[1] for m in mag])), seconds=time.time() - tp)); print(rounds[-1], flush=True)
 t_joint = time.time() - t1
+if ALL:
+    np.savez_compressed(f'out_pj/all_map_base.npz', **MB); np.savez_compressed(f'out_pj/all_map_joint.npz', **MJ); json.dump({str(k): v.tolist() for k, v in POSE.items()}, open('out_pj/all_poses_refined.json', 'w'))
+    r_ = dict(train_base=evaluate(MB, train[::3], lambda i: np.zeros(6)), train_joint=evaluate(MJ, train[::3], lambda i: POSE[i]), rounds=rounds, seconds=dict(base=t_base, joint=t_joint)); print(json.dumps(r_, indent=1)); json.dump(r_, open('out_pj/posejoint_all.json', 'w'), indent=1); sys.exit(0)
 # ---------------- test-time alignment of the held-out cameras against each final map (same procedure for both)
 def tt_pose(M): return {i: refine_pose(i, M, np.zeros(6)) for i in held}
 ttB = tt_pose(MB); ttJ = tt_pose(MJ)
@@ -81,7 +89,7 @@ res = dict(
     BASE=dict(heldout_arkit=evaluate(MB, held, lambda i: np.zeros(6)), heldout_aligned=evaluate(MB, held, lambda i: ttB[i]), train=evaluate(MB, train[::3], lambda i: np.zeros(6))),
     JOINT=dict(heldout_arkit=evaluate(MJ, held, lambda i: np.zeros(6)), heldout_aligned=evaluate(MJ, held, lambda i: ttJ[i]), train_with_refined_poses=evaluate(MJ, train[::3], lambda i: POSE[i]), train_with_arkit=evaluate(MJ, train[::3], lambda i: np.zeros(6))),
     start=dict(heldout_arkit=evaluate(START, held, lambda i: np.zeros(6)), train=evaluate(START, train[::3], lambda i: np.zeros(6))), rounds=rounds, seconds=dict(base_fit=t_base, joint_total=t_joint), total_iters=TOTAL)
-print(json.dumps(res, indent=1)); json.dump(res, open('out_pj/posejoint.json', 'w'), indent=1)
-np.savez_compressed('out_pj/map_base.npz', **MB); np.savez_compressed('out_pj/map_joint.npz', **MJ); json.dump({str(k): v.tolist() for k, v in POSE.items()}, open('out_pj/poses_refined.json', 'w'))
+print(json.dumps(res, indent=1)); json.dump(res, open(f'out_pj/posejoint{TAG}.json', 'w'), indent=1)
+np.savez_compressed('out_pj/map_base.npz', **MB) if not REUSE else None; np.savez_compressed(f'out_pj/map_joint{TAG}.npz', **MJ); json.dump({'tt_base': {str(k): v.tolist() for k, v in ttB.items()}, 'tt_joint': {str(k): v.tolist() for k, v in ttJ.items()}}, open(f'out_pj/tt_poses{TAG}.json', 'w')); json.dump({str(k): v.tolist() for k, v in POSE.items()}, open(f'out_pj/poses_refined{TAG}.json', 'w'))
 for i in (45, 75, 105):
-    if i in held: g.imwrite(f'out_pj/held{i}_base.png', g.render(MB, cam_of(i, ttB[i]))[0]); g.imwrite(f'out_pj/held{i}_joint.png', g.render(MJ, cam_of(i, ttJ[i]))[0])
+    if i in held: g.imwrite(f'out_pj/held{i}{TAG}_base.png', g.render(MB, cam_of(i, ttB[i]))[0]); g.imwrite(f'out_pj/held{i}{TAG}_joint.png', g.render(MJ, cam_of(i, ttJ[i]))[0])
