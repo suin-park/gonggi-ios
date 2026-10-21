@@ -20,9 +20,10 @@ def rotvec(r):
     k = r / th; K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]]); return np.eye(3) + np.sin(th) * K + (1 - np.cos(th)) * K @ K
 POSE = {i: np.zeros(6) for i in views}
 def cam_of(i, p, w=g.EW, h=g.EH): c = dict(P.cam(i, w, h)); c['Rcw'] = rotvec(p[:3]) @ c['Rcw']; c['C'] = c['C'] + p[3:]; return c
-def small(i): return cv2.resize(P.gt[i], (320, 240), interpolation=cv2.INTER_AREA), cv2.resize(P.mask[i].astype(np.uint8), (320, 240), interpolation=cv2.INTER_NEAREST) > 0
+RW_ = int(os.environ.get('RES', 320)); RH_ = RW_ * 3 // 4
+def small(i): return cv2.resize(P.gt[i], (RW_, RH_), interpolation=cv2.INTER_AREA), cv2.resize(P.mask[i].astype(np.uint8), (RW_, RH_), interpolation=cv2.INTER_NEAREST) > 0
 def residual(i, p, gts, ms, M):
-    img, dep, Tf, st = gsref.render(M['mu'], M['logs'], M['quat'], M['col'], M['opa'], cam_of(i, p, 320, 240), **g.DISPLAY); return ((img - gts) * ms[..., None]).ravel()
+    img, dep, Tf, st = gsref.render(M['mu'], M['logs'], M['quat'], M['col'], M['opa'], cam_of(i, p, RW_, RH_), **g.DISPLAY); return ((img - gts) * ms[..., None]).ravel()
 def refine_pose(i, M, p0, iters=8):
     gts, ms = small(i); p = p0.copy(); lam = 1e-2; r = residual(i, p, gts, ms, M); f = float(r @ r); steps = np.array([0.002] * 6)
     for _ in range(iters):
