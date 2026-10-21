@@ -11,7 +11,7 @@ import gtlib as g
 import gsref
 TAG = os.environ.get('TAG', ''); SMOOTH = float(os.environ.get('SMOOTH', 0)); REUSE = os.environ.get('REUSE_BASE') == '1'; os.makedirs('out_pj', exist_ok=True); TOTAL = int(os.environ.get('TOTAL', 6000)); ROUNDS = int(os.environ.get('ROUNDS', 3))
 os.environ.setdefault('NPZ_PATH', 'x')
-P = g.Photos(); n = P.n; views = [i for i in range(n) if P.mask[i].sum() > 50]; ALL = os.environ.get('ALL') == '1'; held = [] if ALL else [i for i in views if i % 10 == 5]; train = views if ALL else [i for i in views if i % 10 != 5]
+P = g.Photos(); n = P.n; views = [i for i in range(n) if P.mask[i].sum() > 50]; DTAG = '' if os.environ.get('DATA', '09') == '09' else os.environ['DATA'] + '_'; ALL = os.environ.get('ALL') == '1'; held = [] if ALL else [i for i in views if i % 10 == 5]; train = views if ALL else [i for i in views if i % 10 != 5]
 z_ = np.load(os.environ.get('STARTMAP', 'out_ub/map_gsmax_P1.npz')); START = {k: z_[k].copy() for k in z_.files}
 LR0 = dict(mu=2e-4, ls=1e-3, q=5e-4, o=0.04, c=0.012); dil = {i: cv2.dilate(P.mask[i].astype(np.uint8), np.ones((31, 31), np.uint8)) > 0 for i in views}
 def rotvec(r):
@@ -80,8 +80,8 @@ for r in range(ROUNDS):
     rounds.append(dict(round=r + 1, pose_mean_deg=float(np.mean([m[0] for m in mag])), pose_mean_cm=float(np.mean([m[1] for m in mag])), seconds=time.time() - tp)); print(rounds[-1], flush=True)
 t_joint = time.time() - t1
 if ALL:
-    np.savez_compressed(f'out_pj/all_map_base.npz', **MB); np.savez_compressed(f'out_pj/all_map_joint.npz', **MJ); json.dump({str(k): v.tolist() for k, v in POSE.items()}, open('out_pj/all_poses_refined.json', 'w'))
-    r_ = dict(train_base=evaluate(MB, train[::3], lambda i: np.zeros(6)), train_joint=evaluate(MJ, train[::3], lambda i: POSE[i]), rounds=rounds, seconds=dict(base=t_base, joint=t_joint)); print(json.dumps(r_, indent=1)); json.dump(r_, open('out_pj/posejoint_all.json', 'w'), indent=1); sys.exit(0)
+    np.savez_compressed(f'out_pj/{DTAG}all_map_base.npz', **MB); np.savez_compressed(f'out_pj/{DTAG}all_map_joint.npz', **MJ); json.dump({str(k): v.tolist() for k, v in POSE.items()}, open(f'out_pj/{DTAG}all_poses_refined.json', 'w'))
+    r_ = dict(train_base=evaluate(MB, train[::3], lambda i: np.zeros(6)), train_joint=evaluate(MJ, train[::3], lambda i: POSE[i]), rounds=rounds, seconds=dict(base=t_base, joint=t_joint)); print(json.dumps(r_, indent=1)); json.dump(r_, open(f'out_pj/{DTAG}posejoint_all.json', 'w'), indent=1); sys.exit(0)
 # ---------------- test-time alignment of the held-out cameras against each final map (same procedure for both)
 def tt_pose(M): return {i: refine_pose(i, M, np.zeros(6)) for i in held}
 ttB = tt_pose(MB); ttJ = tt_pose(MJ)
