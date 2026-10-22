@@ -42,7 +42,7 @@ final class BmSession: ObservableObject {
         requestRender(preview: false); schedulePersist()
     } }
     @Published var highQuality = false { didSet { if oldValue != highQuality { requestRender(preview: false); schedulePersist() } } }
-    @Published private(set) var orbit = BmOrbit()
+    @Published private(set) var orbit = BmOrbit() { didSet { shared.set(orbit: orbit) } }
     @Published private(set) var image: CGImage?
     @Published private(set) var statusLine = ""
     @Published private(set) var preparedText = ""
@@ -58,8 +58,9 @@ final class BmSession: ObservableObject {
     private let log = BmLog()
     private var cancel = BmCancelToken()
     private var openStart = CFAbsoluteTimeGetCurrent()
-    private var gestureActive = false
-    private var renderBusy = false
+    private var gestureActive = false { didSet { shared.set(busy: gestureActive || renderBusy) } }
+    private var renderBusy = false { didSet { shared.set(busy: gestureActive || renderBusy) } }
+    private let shared = BmSharedState()
     private var renderDirty = false
     private var latestPreview = false
     private var idleWork: DispatchWorkItem?
@@ -324,11 +325,11 @@ final class BmSession: ObservableObject {
     private func startBackground() {
         guard bmAvailable, !bgRunning, let engine = engine, let space = viewSpace else { return }
         bgRunning = true
-        let token = cancel, log = self.log
+        let token = cancel, log = self.log, shared = self.shared
         bgQueue.async { [weak self] in
             while !token.isCancelled {
                 // 현재 카메라에서 가까운 미준비 사진부터.
-                let (orbit, active): (BmOrbit, Bool) = DispatchQueue.main.sync { MainActor.assumeIsolated { (self?.orbit ?? BmOrbit(), (self?.gestureActive ?? false) || (self?.renderBusy ?? false)) } }
+                let (orbit, active) = shared.read()
                 if ExpSys.thermalIsSevere { Thread.sleep(forTimeInterval: 2); continue }
                 if active { Thread.sleep(forTimeInterval: 0.15); continue }
                 let target = space.camera(orbit, width: 640, height: 480)

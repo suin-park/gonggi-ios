@@ -8,6 +8,16 @@ final class BmCancelToken {
     func cancel() { lock.lock(); flag = true; lock.unlock() }
 }
 
+/// 메인 스레드의 둘러보기 상태를 백그라운드 준비 루프가 읽을 수 있게 하는 잠금 보관소.
+final class BmSharedState {
+    private let lock = NSLock()
+    private var orbit = BmOrbit()
+    private var busy = false
+    func set(orbit o: BmOrbit) { lock.lock(); orbit = o; lock.unlock() }
+    func set(busy b: Bool) { lock.lock(); busy = b; lock.unlock() }
+    func read() -> (BmOrbit, Bool) { lock.lock(); defer { lock.unlock() }; return (orbit, busy) }
+}
+
 /// 실기기 측정 기록(첫 화면 시간, 단계 시간, 프레임 시간, 메모리, 열 상태, 설정). 사진·지도 내용은 담지 않는다.
 /// PC 시간으로 A15 성능을 예측하지 않기 위해 기기에서 직접 잰 값만 쓴다.
 final class BmLog {
