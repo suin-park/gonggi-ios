@@ -10,11 +10,13 @@ on:
       - feat/surface-align
       - feat/gs-native-res
       - feat/gs-quality-engine
+      - feat/product-bm-view
     paths:
       - 'Gonggi/Experiments/**'
       - 'GonggiTests/GSOpt*'
       - 'GonggiTests/ProductGS*'
       - 'GonggiTests/TexLayer*'
+      - 'GonggiTests/BmTests.swift'
       - 'project.yml'
       - '.github/workflows/gonggi-gso-check.yml'
   workflow_dispatch:
@@ -116,6 +118,12 @@ jobs:
             -only-testing:GonggiTests/GSOptProductStageTraceTests \
             -only-testing:GonggiTests/GSOptProductEarlyTraceTests \
             -only-testing:GonggiTests/TexLayerAlignTests \
+            -only-testing:GonggiTests/GSOptBmGeometryTests \
+            -only-testing:GonggiTests/GSOptBmImageOpsTests \
+            -only-testing:GonggiTests/GSOptBmRenderTests \
+            -only-testing:GonggiTests/GSOptBmEngineTests \
+            -only-testing:GonggiTests/GSOptBmStoreTests \
+            -only-testing:GonggiTests/GSOptBmSessionTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild-gso.log
           STATUS=${PIPESTATUS[0]}
