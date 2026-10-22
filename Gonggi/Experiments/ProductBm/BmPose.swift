@@ -22,13 +22,20 @@ enum BmPose {
         let W = 320, H = 240
         var gt = [Float](repeating: 0, count: W * H * 3)
         photo.rgb.withUnsafeBufferPointer { s in
-            for y in 0..<H { for x in 0..<W {
-                for c in 0..<3 {
-                    let a = Int(s[((2 * y) * 640 + 2 * x) * 3 + c]) + Int(s[((2 * y) * 640 + 2 * x + 1) * 3 + c])
-                    let b = Int(s[((2 * y + 1) * 640 + 2 * x) * 3 + c]) + Int(s[((2 * y + 1) * 640 + 2 * x + 1) * 3 + c])
-                    gt[(y * W + x) * 3 + c] = Float(a + b) / (4 * 255)
+            for y in 0..<H {
+                for x in 0..<W {
+                    let r0 = (2 * y) * 640 + 2 * x
+                    let r1 = (2 * y + 1) * 640 + 2 * x
+                    for c in 0..<3 {
+                        var acc = 0
+                        acc += Int(s[r0 * 3 + c])
+                        acc += Int(s[(r0 + 1) * 3 + c])
+                        acc += Int(s[r1 * 3 + c])
+                        acc += Int(s[(r1 + 1) * 3 + c])
+                        gt[(y * W + x) * 3 + c] = Float(acc) / 1020
+                    }
                 }
-            } }
+            }
         }
         var idx: [Int] = []
         for i in 0..<(W * H) where photo.mask320.count == W * H && photo.mask320[i] == 1 { idx.append(i) }

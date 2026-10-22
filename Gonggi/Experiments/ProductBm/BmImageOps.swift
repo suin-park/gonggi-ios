@@ -6,6 +6,14 @@ import simd
 // 이 파일의 어떤 연산도 PC 시간으로 A15 성능을 예측하지 않는다.
 
 enum BmImageOps {
+    /// 0...1 값을 0...255 바이트로(반올림, 범위 밖은 잘라냄).
+    @inline(__always) static func byte(_ v: Float) -> UInt8 {
+        let x = v * 255 + 0.5
+        if x <= 0 { return 0 }
+        if x >= 255 { return 255 }
+        return UInt8(x)
+    }
+
     // MARK: 크기 변환
 
     /// 쌍선형 크기 변환(픽셀 중심 규약: sx = (x + 0.5)·src/dst − 0.5, 가장자리 복제). cv2.resize INTER_LINEAR와 같은 규약.
@@ -23,7 +31,9 @@ enum BmImageOps {
                 for k in 0..<c {
                     let v00 = src[(ya * w + xa) * c + k], v01 = src[(ya * w + xb) * c + k]
                     let v10 = src[(yb * w + xa) * c + k], v11 = src[(yb * w + xb) * c + k]
-                    out[(y * dw + x) * c + k] = (v00 * (1 - tx) + v01 * tx) * (1 - ty) + (v10 * (1 - tx) + v11 * tx) * ty
+                    let top: Float = v00 * (1 - tx) + v01 * tx
+                    let bot: Float = v10 * (1 - tx) + v11 * tx
+                    out[(y * dw + x) * c + k] = top * (1 - ty) + bot * ty
                 }
             }
         }
@@ -233,8 +243,10 @@ enum BmImageOps {
         let er = erodeSquare(hd, width: gw, height: gh, radius: 3), di = dilateSquare(hd, width: gw, height: gh, radius: 3)
         var q = [Float](repeating: 0, count: n)
         for i in 0..<n {
-            var v = min(max(ba[i] * guide[i] + bb[i], 0), 1)
-            let t = min(max((v - 0.3) / 0.4, 0), 1)
+            var v: Float = ba[i] * guide[i] + bb[i]
+            v = min(max(v, 0), 1)
+            var t: Float = (v - 0.3) / 0.4
+            t = min(max(t, 0), 1)
             v = t * t * (3 - 2 * t)
             if er[i] != 0 { v = 1 }
             if di[i] == 0 { v = 0 }
@@ -293,7 +305,8 @@ enum BmImageOps {
         var a2 = [Float](repeating: 0, count: n)
         var rgb = [Float](repeating: 0, count: n * 3)
         for i in 0..<n {
-            let t = min(max((b[i] - lo) / (hi - lo), 0), 1)
+            var t: Float = (b[i] - lo) / (hi - lo)
+            t = min(max(t, 0), 1)
             let s = t * t * (3 - 2 * t)
             a2[i] = s
             rgb[i * 3] = col[i * 3] * s; rgb[i * 3 + 1] = col[i * 3 + 1] * s; rgb[i * 3 + 2] = col[i * 3 + 2] * s

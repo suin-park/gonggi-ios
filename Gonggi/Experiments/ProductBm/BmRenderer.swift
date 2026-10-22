@@ -59,7 +59,10 @@ final class BmRenderer {
 
     /// 목표 카메라 대비 원본 순위(가까운 순). 거리 + 0.004 × 각도.
     static func ranked(_ sources: [BmSource], target: GSOCamera) -> [(key: Float, source: BmSource)] {
-        sources.map { (BmGeo.rankKey(source: $0.camera, target: target).key, $0) }.sorted { $0.0 < $1.0 }.map { (key: $0.0, source: $0.1) }
+        var list: [(key: Float, source: BmSource)] = []
+        for s in sources { list.append((key: BmGeo.rankKey(source: s.camera, target: target).key, source: s)) }
+        list.sort { $0.key < $1.key }
+        return list
     }
 
     /// 한 원본을 목표 격자(hw×hh)로 재투영한다. 깊이 시험으로 가까운 점이 이긴다. 각 점은 원본/목표 배율 비(rho)에 맞춘 2~6 화소 정사각 발자국으로 찍는다.
@@ -194,10 +197,10 @@ final class BmRenderer {
         var covered = 0
         for i in 0..<(W * H) {
             let a = min(max(sil.alpha[i], 0), 1)
-            out[i * 4] = UInt8(min(255, max(0, sil.rgb[i * 3] * 255 + 0.5)))
-            out[i * 4 + 1] = UInt8(min(255, max(0, sil.rgb[i * 3 + 1] * 255 + 0.5)))
-            out[i * 4 + 2] = UInt8(min(255, max(0, sil.rgb[i * 3 + 2] * 255 + 0.5)))
-            out[i * 4 + 3] = UInt8(min(255, max(0, a * 255 + 0.5)))
+            out[i * 4] = BmImageOps.byte(sil.rgb[i * 3])
+            out[i * 4 + 1] = BmImageOps.byte(sil.rgb[i * 3 + 1])
+            out[i * 4 + 2] = BmImageOps.byte(sil.rgb[i * 3 + 2])
+            out[i * 4 + 3] = BmImageOps.byte(a)
             if a > 0.5 { covered += 1 }
         }
         let t1 = CFAbsoluteTimeGetCurrent()

@@ -11,16 +11,27 @@ enum BmGeo {
         if th < 1e-12 { return matrix_identity_double3x3 }
         let k = r / th
         let K = simd_double3x3(columns: (SIMD3<Double>(0, k.z, -k.y), SIMD3<Double>(-k.z, 0, k.x), SIMD3<Double>(k.y, -k.x, 0)))
-        return matrix_identity_double3x3 + Foundation.sin(th) * K + (1 - Foundation.cos(th)) * (K * K)
+        let a = Foundation.sin(th)
+        let b = 1 - Foundation.cos(th)
+        let K2 = K * K
+        var R = matrix_identity_double3x3
+        R = R + a * K
+        R = R + b * K2
+        return R
+    }
+
+    /// 배정밀 행렬 → 단정밀 행렬.
+    static func toFloat(_ d: simd_double3x3) -> simd_float3x3 {
+        var out = simd_float3x3()
+        for c in 0..<3 { for r in 0..<3 { out[c][r] = Float(d[c][r]) } }
+        return out
     }
 
     /// 포즈 보정량 p = [회전 벡터(3), 이동(3)]을 카메라에 적용한다: Rcw' = rotvec(p[:3]) · Rcw, C' = C + p[3:]. (PC posejoint/e2e_device와 같은 규약)
     static func apply(_ cam: GSOCamera, delta p: [Double]) -> GSOCamera {
         guard p.count == 6 else { return cam }
         let rd = rotvec(SIMD3<Double>(p[0], p[1], p[2]))
-        let rf = simd_float3x3(columns: (SIMD3<Float>(Float(rd.columns.0.x), Float(rd.columns.0.y), Float(rd.columns.0.z)),
-                                         SIMD3<Float>(Float(rd.columns.1.x), Float(rd.columns.1.y), Float(rd.columns.1.z)),
-                                         SIMD3<Float>(Float(rd.columns.2.x), Float(rd.columns.2.y), Float(rd.columns.2.z))))
+        let rf = toFloat(rd)
         var c = cam
         c.rcw = rf * cam.rcw
         c.center = cam.center + SIMD3<Float>(Float(p[3]), Float(p[4]), Float(p[5]))
@@ -107,7 +118,9 @@ struct BmViewSpace: Equatable {
         azimuth0 = Foundation.atan2(dir.x, dir.z)
         elevation0 = Foundation.asin(min(1, max(-1, dir.y)))
         baseDist = dist
-        let k640 = startCamera.intrinsics.scaled(toWidth: 640, height: max(1, Int((640.0 * Double(startCamera.height) / Double(max(1, startCamera.width))).rounded())))
+        let ratio = Double(startCamera.height) / Double(max(1, startCamera.width))
+        let h640 = max(1, Int((640.0 * ratio).rounded()))
+        let k640 = startCamera.intrinsics.scaled(toWidth: 640, height: h640)
         baseFocal640 = k640.fx
     }
 
@@ -119,7 +132,8 @@ struct BmViewSpace: Equatable {
         let up = SIMD3<Float>(0, 1, 0)
         let a = azimuth0 + o.yaw
         let e = min(max(elevation0 + o.pitch, -1.35), 1.35)
-        let dir = SIMD3<Float>(Foundation.cos(e) * Foundation.sin(a), Foundation.sin(e), Foundation.cos(e) * Foundation.cos(a))
+        let ce = Foundation.cos(e), se = Foundation.sin(e), ca = Foundation.cos(a), sa = Foundation.sin(a)
+        let dir = SIMD3<Float>(ce * sa, se, ce * ca)
         let z = -dir
         var right = simd_cross(z, up)
         right = simd_length(right) > 1e-6 ? simd_normalize(right) : SIMD3<Float>(1, 0, 0)

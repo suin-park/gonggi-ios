@@ -61,8 +61,11 @@ final class BmPhotoSet {
         var gray = [UInt8](repeating: 0, count: inp.hiWidth * inp.hiHeight)
         inp.rgbHi.withUnsafeBufferPointer { s in
             for p in 0..<(inp.hiWidth * inp.hiHeight) {
-                let g = 0.299 * Float(s[p * 3]) + 0.587 * Float(s[p * 3 + 1]) + 0.114 * Float(s[p * 3 + 2])
-                gray[p] = UInt8(min(255, max(0, g.rounded())))
+                let r = Float(s[p * 3]), g = Float(s[p * 3 + 1]), b = Float(s[p * 3 + 2])
+                var v: Float = 0.299 * r
+                v += 0.587 * g
+                v += 0.114 * b
+                gray[p] = UInt8(min(Float(255), max(Float(0), v.rounded())))
             }
         }
         let small = SV2Image.resizeAreaRGB(inp.rgbHi, width: inp.hiWidth, height: inp.hiHeight, outW: W)

@@ -17,8 +17,12 @@ enum BmTest {
         for iy in 0..<30 {
             for ix in 0..<40 {
                 let x = -0.39 + 0.02 * Float(ix), y = -0.29 + 0.02 * Float(iy)
-                let c = SIMD3<Float>(0.5 + 0.4 * sin(25 * x + 3 * y), 0.5 + 0.35 * sin(30 * y) * cos(18 * x), 0.45 + 0.3 * cos(22 * x - 20 * y))
-                g.append(mu: SIMD3<Float>(x, y, 1.0), logScale: SIMD3<Float>(log(0.0125), log(0.0125), log(0.003)), quat: SIMD4<Float>(0, 0, 0, 1), color: c, opacityLogit: 4)
+                let r1: Float = sin(25 * x + 3 * y)
+                let g1: Float = sin(30 * y) * cos(18 * x)
+                let b1: Float = cos(22 * x - 20 * y)
+                let c = SIMD3<Float>(0.5 + 0.4 * r1, 0.5 + 0.35 * g1, 0.45 + 0.3 * b1)
+                let ls = SIMD3<Float>(Float(log(0.0125)), Float(log(0.0125)), Float(log(0.003)))
+                g.append(mu: SIMD3<Float>(x, y, 1.0), logScale: ls, quat: SIMD4<Float>(0, 0, 0, 1), color: c, opacityLogit: 4)
             }
         }
         return g
@@ -32,7 +36,7 @@ enum BmTest {
     static func input(id: Int, g: GSOGaussians, pose: RTPose) -> (SV2Input, GSOProductMask) {
         let st = render(g, pose: pose)
         var rgb = [UInt8](repeating: 0, count: 640 * 480 * 3)
-        for i in 0..<(640 * 480) { for c in 0..<3 { rgb[i * 3 + c] = UInt8(min(255, max(0, st.image[i * 3 + c] * 255 + 0.5))) } }
+        for i in 0..<(640 * 480) { for c in 0..<3 { rgb[i * 3 + c] = BmImageOps.byte(st.image[i * 3 + c]) } }
         var labels = [UInt8](repeating: GSOProductMask.background, count: 320 * 240)
         var area = 0
         for y in 0..<240 { for x in 0..<320 {
@@ -300,9 +304,7 @@ final class GSOptBmEngineTests: XCTestCase {
         let truth = BmTest.pose(x: 0.03)
         let (inp, mask) = BmTest.input(id: 1, g: g, pose: truth)
         let rot = BmGeo.rotvec(SIMD3<Double>(0, 0.007, 0))                                  // 약 0.4°
-        let rf = simd_float3x3(columns: (SIMD3<Float>(Float(rot.columns.0.x), Float(rot.columns.0.y), Float(rot.columns.0.z)),
-                                         SIMD3<Float>(Float(rot.columns.1.x), Float(rot.columns.1.y), Float(rot.columns.1.z)),
-                                         SIMD3<Float>(Float(rot.columns.2.x), Float(rot.columns.2.y), Float(rot.columns.2.z))))
+        let rf = BmGeo.toFloat(rot)
         var bad = inp
         bad.pose = RTPose(rot: rf * truth.rot, center: truth.center + SIMD3<Float>(0.008, -0.005, 0.006))
         guard let photo = BmPhotoSet.makePhoto(index: 0, input: bad, mask: mask) else { return XCTFail("사진 생성 실패") }
@@ -565,7 +567,9 @@ final class GSOptBmStepExportTests: XCTestCase {
             let d = try map(pre)
             XCTAssertEqual(String(decoding: d.prefix(4), as: UTF8.self), "GSD1")
             let n = Int(d.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self) })
-            let expect = 8 + n * (4 * (3 + 3 + 4 + 3 + 1) + 4 * (3 + 3 + 3 + 3 + 4 + 4 + 3 + 3 + 1 + 1) + 4 + 4 * (3 + 3) + 1 + 4)
+            let paramFloats = 14, momentFloats = 28, boundFloats = 6
+            let perGaussian = 4 * (paramFloats + momentFloats + boundFloats) + 4 + 1 + 4
+            let expect = 8 + n * perGaussian
             XCTAssertEqual(d.count, expect, "\(pre) 크기가 형식과 다름")
         }
         XCTAssertNotEqual(try map("full_pre_map.bin"), try map("full_post_map.bin"))
@@ -574,7 +578,8 @@ final class GSOptBmStepExportTests: XCTestCase {
         XCTAssertEqual(String(decoding: g.prefix(4), as: UTF8.self), "GGR1")
         let gn = Int(g.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self) })
         XCTAssertEqual(gn, full["gradientCount"] as? Int)
-        XCTAssertEqual(g.count, 8 + gn * (4 + 4 * (3 + 3 + 4 + 1 + 3)))
+        let perGrad = 4 + 4 * 14
+        XCTAssertEqual(g.count, 8 + gn * perGrad)
         // 학습 영상: 학습 격자 크기와 같다
         let cam = full["camera"] as? [String: Any]
         let w = cam?["width"] as? Int ?? 0, h = cam?["height"] as? Int ?? 0

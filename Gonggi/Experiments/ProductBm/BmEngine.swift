@@ -118,10 +118,10 @@ final class BmEngine {
         var covered = 0
         for i in 0..<(W * H) {
             let a = min(max(1 - st.transmittance[i], 0), 1)
-            out[i * 4] = UInt8(min(255, max(0, st.image[i * 3] * 255 + 0.5)))
-            out[i * 4 + 1] = UInt8(min(255, max(0, st.image[i * 3 + 1] * 255 + 0.5)))
-            out[i * 4 + 2] = UInt8(min(255, max(0, st.image[i * 3 + 2] * 255 + 0.5)))
-            out[i * 4 + 3] = UInt8(min(255, max(0, a * 255 + 0.5)))
+            out[i * 4] = BmImageOps.byte(st.image[i * 3])
+            out[i * 4 + 1] = BmImageOps.byte(st.image[i * 3 + 1])
+            out[i * 4 + 2] = BmImageOps.byte(st.image[i * 3 + 2])
+            out[i * 4 + 3] = BmImageOps.byte(a)
             if a > 0.5 { covered += 1 }
         }
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000

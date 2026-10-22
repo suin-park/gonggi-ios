@@ -219,7 +219,11 @@ final class BmSession: ObservableObject {
 
     func rotate(dx: CGFloat, dy: CGFloat) {
         orbit.yaw -= Float(dx) * 0.008
-        orbit.pitch = min(max(orbit.pitch + Float(dy) * 0.006, BmOrbit.pitchRange.lowerBound), BmOrbit.pitchRange.upperBound)
+        var p: Float = orbit.pitch
+        p += Float(dy) * 0.006
+        p = max(p, BmOrbit.pitchRange.lowerBound)
+        p = min(p, BmOrbit.pitchRange.upperBound)
+        orbit.pitch = p
         requestRender(preview: true)
     }
 
