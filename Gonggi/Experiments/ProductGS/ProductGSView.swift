@@ -490,6 +490,37 @@ final class ProductSessionViewModel: ObservableObject {
             message = res.1.isEmpty ? res.0 : "초기 구간 진단을 마쳤어요. 결과 파일 \(res.1.count)개 — '같은 입력으로 제품 비교' 시트의 '결과 공유'에서 저장하세요."
         }
     }
+    /// 진단 전용(기본 꺼짐·화질 개선 아님): 저장한 연구 기록을 실제 Swift 엔진에 넣어 전체 화면 갱신 1회와 원본 창 갱신 1회의 입력·기울기·지도 전후를 내보낸다(PC 대조용).
+    func runStepExport(_ src: CompareSource) {
+        guard state == .idle || state == .finished, compareProgress == nil else { return }
+        compareProgress = 0
+        compareText = nil
+        message = "단계 1회 내보내기 중… (처음부터 키프레임을 처리해 8번째 키프레임 근처에서 갱신 1회씩 기록합니다. 수 분 걸릴 수 있어요)"
+        let env = "\(ExpSys.machine) · iOS · \(GonggiBuildInfo.versionLine) (\(GonggiBuildInfo.buildSHA)) · 열 \(ExpSys.thermal)"
+        Task {
+            let res = await Task.detached(priority: .userInitiated) { () -> (String, [URL]) in
+                do {
+                    let source = try GSOProductReplaySource(url: src.url)
+                    let mono = RTMonoDepth()
+                    _ = mono.load()
+                    let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "")
+                    try? GSOStore.ensureDirectory(ProductGSStore.directory)
+                    let dir = ProductGSStore.directory.appendingPathComponent("diag-step-" + stamp, isDirectory: true)
+                    let r = ProductStepExportRun.run(source: source, config: GSOConfig.productDefault(), mono: mono, heldOut: { GSOCompare.isHeldOut(index: $0) }, outDir: dir, environment: env,
+                                                     inputDescription: "\(src.url.lastPathComponent) (\(source.count)장)") { d in
+                        Task { @MainActor in self.compareProgress = d }
+                    }
+                    return (r.summary, r.files)
+                } catch {
+                    return ("단계 1회 내보내기 실패: \(error)", [])
+                }
+            }.value
+            compareProgress = nil
+            compareText = res.0
+            compareShare = res.1
+            message = res.1.isEmpty ? res.0 : "내보내기를 마쳤어요. 파일 \(res.1.count)개 — '같은 입력으로 제품 비교' 시트의 '결과 공유'에서 저장하세요."
+        }
+    }
 }
 
 struct ProductGSView: View {
@@ -740,6 +771,7 @@ struct ProductGSView: View {
                         Button { vm.runCompare(s) } label: { Text(s.title).font(.subheadline) }.disabled(vm.compareProgress != nil)
                         Button { vm.runStageTrace(s) } label: { Text("단계별 진단 (진단 전용 · 화질 개선 아님): " + s.title).font(.caption) }.disabled(vm.compareProgress != nil)
                         Button { vm.runEarlyTrace(s) } label: { Text("초기 구간 진단·눈코 (진단 전용 · 화질 개선 아님): " + s.title).font(.caption) }.disabled(vm.compareProgress != nil)
+                        Button { vm.runStepExport(s) } label: { Text("단계 1회 내보내기: 전체 화면 1회 + 원본 창 1회 (PC 대조용 · 진단 전용 · 기본 꺼짐): " + s.title).font(.caption) }.disabled(vm.compareProgress != nil)
                     }
                 }
             }

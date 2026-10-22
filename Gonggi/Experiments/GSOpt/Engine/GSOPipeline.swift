@@ -353,6 +353,8 @@ final class GSOPipeline {
     let config: GSOConfig
     /// 진단 전용: 켜면 process가 lastDiag에 입력 사본을 남긴다(기본 꺼짐, 동작 불변).
     var diagCapture = false
+    /// 진단 전용(기본 nil=꺼짐, 동작 불변): 켜면 전체 화면 갱신 1회·원본 창 갱신 1회의 입력·기울기·지도 전후를 내보낸다(ProductStepExport.swift).
+    var stepExport: GSOStepExport?
     private(set) var lastDiag: GSOKFDiag?
     let map = GSOMap()
     let optimizer: GSOOptimizer
@@ -1042,7 +1044,13 @@ final class GSOPipeline {
             view.errCells = cells
             let grads = GSORaster.backward(map.g, camera: view.camera, state: st, dLdC: dLdC, dLdD: dLdD, dLdA: dLdA)
             let t2 = now()
+            let expFull: GSOStepExport? = (stepExport?.wantFull == true && rec.iterations == 0) ? stepExport : nil
+            var expPre: Data?, expFP = ""
+            if expFull != nil { expPre = GSOStepExport.dumpMap(map); expFP = stateFingerprint() }
             movedTotal += optimizer.step(map: map, grads: grads, geometry: config.geometryOptimization)
+            if let e = expFull, let pre = expPre {
+                e.recordFull(pre: pre, map: map, view: view, stats: stats, grads: grads, cfg: config, lrScale: optimizer.lrScale, preFingerprint: expFP, postFingerprint: stateFingerprint())
+            }
             let t3 = now()
             rec.forwardMs += (t1 - t0) * 1000; rec.backwardMs += (t2 - t1) * 1000; rec.updateMs += (t3 - t2) * 1000
             rec.iterations += 1
@@ -1197,7 +1205,14 @@ final class GSOPipeline {
             if it == 0 { lossFirst = stats.photometric }
             lossLast = stats.photometric
             let grads = GSORaster.backward(map.g, camera: camHi, state: st, dLdC: dC, dLdD: dD, dLdA: dA)
+            let expWin: GSOStepExport? = (stepExport?.wantWindow == true && it == 0) ? stepExport : nil
+            var expPreW: Data?, expFPW = ""
+            if expWin != nil { expPreW = GSOStepExport.dumpMap(map); expFPW = stateFingerprint() }
             optimizer.step(map: map, grads: grads, geometry: config.geometryOptimization)
+            if let e = expWin, let pre = expPreW {
+                e.recordWindow(pre: pre, map: map, viewID: view.id, camHi: camHi, target: tgt, labels: cropLabels, x0: x0, y0: y0, cw: cw, ch: ch, srcW: hs.w, srcH: hs.h,
+                               stats: stats, grads: grads, cfg: config, lrScale: optimizer.lrScale, preFingerprint: expFPW, postFingerprint: stateFingerprint())
+            }
             // 선택적 분할의 근거: 화면 위치 gradient 크기(손실 정규화를 되돌려 합 단위로)의 이동 평균
             let scale = Float(cw * ch * 3)
             for r in 0..<grads.count {

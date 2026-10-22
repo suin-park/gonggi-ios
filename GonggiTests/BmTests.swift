@@ -534,3 +534,52 @@ final class GSOptBmSessionTests: XCTestCase {
         s.close()
     }
 }
+
+// MARK: 단계 1회 내보내기(진단, 기본 꺼짐)
+
+final class GSOptBmStepExportTests: XCTestCase {
+    func testStepExportRecordsOneFullAndOneWindowUpdateWithoutChangingTheEngine() throws {
+        let src = ProductTest.source(frames: 16)
+        let cfg = ProductTest.scaled(.productDefault())
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("step-export-" + UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // A: 내보내기 켬(끝까지 같은 프레임을 처리), B: 켜지 않음(armAfterKeyframes를 넘는 값). 최종 상태 지문이 같아야 한다.
+        let a = ProductStepExportRun.run(source: src, config: cfg, mono: ProductMonoFactory.make(src), heldOut: { GSOCompare.isHeldOut(index: $0) }, armAfterKeyframes: 4, maxExtraKeyframes: 100,
+                                         stopWhenDone: false, iterationsPerKeyframe: 8, outDir: dir, environment: "test", inputDescription: "synthetic")
+        let b = ProductStepExportRun.run(source: src, config: cfg, mono: ProductMonoFactory.make(src), heldOut: { GSOCompare.isHeldOut(index: $0) }, armAfterKeyframes: 9999, maxExtraKeyframes: 100,
+                                         stopWhenDone: false, iterationsPerKeyframe: 8, outDir: dir.appendingPathComponent("off", isDirectory: true), environment: "test", inputDescription: "synthetic")
+        XCTAssertTrue(a.fullCaptured, "전체 화면 갱신이 기록되지 않음")
+        XCTAssertTrue(a.windowCaptured, "원본 창 갱신이 기록되지 않음")
+        XCTAssertFalse(b.fullCaptured); XCTAssertFalse(b.windowCaptured)
+        XCTAssertEqual(a.fingerprint, b.fingerprint, "내보내기를 켜면 엔진 상태가 달라짐(동작 불변이어야 한다)")
+        // 매니페스트
+        let m = try JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("manifest.json"))) as? [String: Any]
+        guard let full = m?["full"] as? [String: Any], let win = m?["window"] as? [String: Any] else { return XCTFail("매니페스트에 full/window 없음") }
+        XCTAssertEqual(full["iterations"] as? Int, 1); XCTAssertEqual(win["iterations"] as? Int, 1)
+        let fc = full["config"] as? [String: Any]
+        XCTAssertEqual((fc?["lrColor"] as? NSNumber)?.floatValue ?? 0, cfg.opt.lrColor, accuracy: 1e-6)
+        XCTAssertNotNil(full["camera"]); XCTAssertNotNil(win["window"]); XCTAssertNotEqual(full["fingerprintBefore"] as? String, full["fingerprintAfter"] as? String, "갱신 전후 지도가 같음")
+        // 지도 덤프: 헤더·크기, 갱신 전후가 다름
+        func map(_ name: String) throws -> Data { try Data(contentsOf: dir.appendingPathComponent(name)) }
+        for pre in ["full_pre_map.bin", "window_pre_map.bin"] {
+            let d = try map(pre)
+            XCTAssertEqual(String(decoding: d.prefix(4), as: UTF8.self), "GSD1")
+            let n = Int(d.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self) })
+            let expect = 8 + n * (4 * (3 + 3 + 4 + 3 + 1) + 4 * (3 + 3 + 3 + 3 + 4 + 4 + 3 + 3 + 1 + 1) + 4 + 4 * (3 + 3) + 1 + 4)
+            XCTAssertEqual(d.count, expect, "\(pre) 크기가 형식과 다름")
+        }
+        XCTAssertNotEqual(try map("full_pre_map.bin"), try map("full_post_map.bin"))
+        XCTAssertNotEqual(try map("window_pre_map.bin"), try map("window_post_map.bin"))
+        let g = try map("full_grads.bin")
+        XCTAssertEqual(String(decoding: g.prefix(4), as: UTF8.self), "GGR1")
+        let gn = Int(g.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self) })
+        XCTAssertEqual(gn, full["gradientCount"] as? Int)
+        XCTAssertEqual(g.count, 8 + gn * (4 + 4 * (3 + 3 + 4 + 1 + 3)))
+        // 학습 영상: 학습 격자 크기와 같다
+        let cam = full["camera"] as? [String: Any]
+        let w = cam?["width"] as? Int ?? 0, h = cam?["height"] as? Int ?? 0
+        XCTAssertEqual(try map("full_target_f32_hwc.bin").count, w * h * 3 * 4)
+        let wd = win["window"] as? [String: Any]
+        XCTAssertEqual(try map("window_target_f32_hwc.bin").count, (wd?["width"] as? Int ?? 0) * (wd?["height"] as? Int ?? 0) * 3 * 4)
+    }
+}
