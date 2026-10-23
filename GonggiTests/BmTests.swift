@@ -699,7 +699,7 @@ final class GSOptBmV4Tests: XCTestCase {
         let t0 = CFAbsoluteTimeGetCurrent()
         guard let built = BmHull.build(gaussians: g, centre: .zero, views: views, rawMasks: raw, settings: s) else { return XCTFail("외곽을 만들지 못함") }
         let h = built.0
-        GSOTest.log("bmHullSphere", ["ms": (CFAbsoluteTimeGetCurrent() - t0) * 1000, "surface": h.surface.count, "dropped": h.dropped.count, "cells": built.1.gridCells])
+        GSOTest.log("bmHullSphere", ["ms": (CFAbsoluteTimeGetCurrent() - t0) * 1000, "surface": Double(h.surface.count), "dropped": Double(h.dropped.count), "cells": Double(built.1.gridCells)])
         XCTAssertEqual(Set(h.dropped), Set([4, 13, 22, 31]), "부분을 빠뜨린 마스크만 빠져야 한다")
         let radii = h.surface.map { simd_length($0) }.sorted()
         let med = radii[radii.count / 2]
