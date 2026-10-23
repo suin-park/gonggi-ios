@@ -90,17 +90,20 @@ struct BmViewerView: View {
     init(item: GSOStore.Item) { _session = StateObject(wrappedValue: BmSession(item: item)) }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                canvas
-                modePicker
-                if let n = session.notice { Text(n).font(.footnote).foregroundStyle(ExpTheme.warn) }
-                controls
-                statusCard
-                shareCard
+        // 이미지와 보기 전환은 스크롤 밖에 고정한다(이미지 위 제스처가 스크롤과 겹치지 않게).
+        VStack(spacing: 10) {
+            canvas.padding(.horizontal, 16).padding(.top, 8)
+            modePicker.padding(.horizontal, 16)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let n = session.notice { Text(n).font(.footnote).foregroundStyle(ExpTheme.warn) }
+                    controls
+                    statusCard
+                    shareCard
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
         }
         .background(GonggiAmbientBackground())
         .navigationTitle(session.item.url.deletingPathExtension().lastPathComponent)

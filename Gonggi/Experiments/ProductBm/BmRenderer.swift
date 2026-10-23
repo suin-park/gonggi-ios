@@ -47,14 +47,16 @@ final class BmRenderer {
         colorBuf = []; zBuf = []; bufPixels = 0; bufSlots = 0
     }
 
+    /// 미리보기(320×240)와 표준(640×480, 내부 2배)이 같은 버퍼를 쓰도록 최소 표준 크기로 잡는다(조작 중 할당·해제가 반복되지 않게). 고품질(내부 3배)만 더 크게 다시 잡는다.
     private func ensure(slots: Int, pixels: Int) {
-        if slots <= bufSlots && pixels == bufPixels { return }
+        let want = max(pixels, 1_228_800)
+        if want == bufPixels && slots <= bufSlots { return }
         free()
         for _ in 0..<slots {
-            colorBuf.append(UnsafeMutablePointer<Float>.allocate(capacity: pixels * 3))
-            zBuf.append(UnsafeMutablePointer<Float>.allocate(capacity: pixels))
+            colorBuf.append(UnsafeMutablePointer<Float>.allocate(capacity: want * 3))
+            zBuf.append(UnsafeMutablePointer<Float>.allocate(capacity: want))
         }
-        bufPixels = pixels; bufSlots = slots
+        bufPixels = want; bufSlots = slots
     }
 
     /// 목표 카메라 대비 원본 순위(가까운 순). 거리 + 0.004 × 각도.
