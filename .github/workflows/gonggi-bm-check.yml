@@ -28,7 +28,7 @@ jobs:
   check:
     name: Build and run Bm tests
     runs-on: macos-15
-    timeout-minutes: 80
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4

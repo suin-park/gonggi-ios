@@ -223,7 +223,8 @@ final class GSOptBmRenderTests: XCTestCase {
         for ss in [1, 2] {
             guard let f = BmRenderer().render(sources: [src], target: target, params: params(ss: ss)) else { return XCTFail("렌더 실패") }
             var diff = 0.0
-            for i in 0..<(640 * 480) { for c in 0..<3 { diff += abs(Double(f.rgba[i * 4 + c]) - Double(src.rgb[i * 3 + c])) } }
+            let ref = src.denseRGB()
+            for i in 0..<(640 * 480) { for c in 0..<3 { diff += abs(Double(f.rgba[i * 4 + c]) - Double(ref[i * 3 + c])) } }
             XCTAssertLessThan(diff / Double(640 * 480 * 3), 1.5, "ss=\(ss): 같은 카메라인데 사진과 다름")
             XCTAssertGreaterThan(f.coverage, 0.99)
         }
@@ -326,7 +327,7 @@ final class GSOptBmEngineTests: XCTestCase {
         XCTAssertTrue(t.poseCached)
         let s = e.preparedSources.first { $0.index == 1 }
         XCTAssertNotNil(s)
-        guard let z = s?.z else { return }
+        guard let z = s?.denseZ() else { return }
         let inMask = set.photos[1].mask640
         var n = 0, good = 0, outside = 0
         for i in 0..<(640 * 480) {
@@ -744,8 +745,9 @@ final class GSOptBmV4Tests: XCTestCase {
         let rgb = [UInt8](repeating: 77, count: 640 * 480 * 3)
         let s = BmSource(index: 2, camera: GSOCamera(pose: BmTest.pose(x: 0), k: BmTest.K), rgb: rgb, z: z, keep: keep)
         XCTAssertEqual(s.count, 200, "레이어 화소(깊이 0 포함)를 모두 담는다")
-        XCTAssertEqual(s.z[12 * 640 + 35], 0.9); XCTAssertEqual(s.z[17 * 640 + 35], 0)
-        XCTAssertEqual(s.rgb[(12 * 640 + 35) * 3], 77); XCTAssertEqual(s.rgb[(100 * 640 + 35) * 3], 0)
+        let dz = s.denseZ(), drgb = s.denseRGB()
+        XCTAssertEqual(dz[12 * 640 + 35], 0.9); XCTAssertEqual(dz[17 * 640 + 35], 0)
+        XCTAssertEqual(drgb[(12 * 640 + 35) * 3], 77); XCTAssertEqual(drgb[(100 * 640 + 35) * 3], 0)
         XCTAssertFalse(s.hasV4)
     }
 

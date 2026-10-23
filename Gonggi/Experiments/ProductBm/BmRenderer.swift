@@ -40,8 +40,8 @@ final class BmSource {
 
     func setV4(_ z: [Float]) { precondition(z.count == count); z4 = z }
 
-    /// 시험·진단용 전체 배열(640×480×3, 없는 곳 0).
-    var rgb: [UInt8] {
+    /// 시험·진단용 전체 배열(640×480×3, 없는 곳 0). 부를 때마다 새로 만든다(반복문 안에서 부르지 말 것).
+    func denseRGB() -> [UInt8] {
         var out = [UInt8](repeating: 0, count: BmPhoto.width * BmPhoto.height * 3)
         for k in 0..<count {
             let o = (Int(py[k]) * BmPhoto.width + Int(px[k])) * 3
@@ -49,8 +49,8 @@ final class BmSource {
         }
         return out
     }
-    var z: [Float] { dense(z0) }
-    var zV4: [Float] { dense(z4) }
+    func denseZ() -> [Float] { dense(z0) }
+    func denseZV4() -> [Float] { dense(z4) }
     private func dense(_ a: [Float]) -> [Float] {
         var out = [Float](repeating: 0, count: BmPhoto.width * BmPhoto.height)
         if a.count == count { for k in 0..<count { out[Int(py[k]) * BmPhoto.width + Int(px[k])] = a[k] } }
