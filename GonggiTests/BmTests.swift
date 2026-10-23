@@ -398,6 +398,7 @@ final class GSOptBmStoreTests: XCTestCase {
         XCTAssertEqual(BmStore.intDeltas(back!)[7]?[1], 0.2)
         XCTAssertNil(BmStore.load(for: item, gaussians: 124, photos: 45), "가우시안 수가 다르면 캐시를 버린다")
         XCTAssertNil(BmStore.load(for: item, gaussians: 123, photos: 46), "사진 수가 다르면 캐시를 버린다")
+        XCTAssertNotNil(BmStore.load(for: item, gaussians: 123, photos: nil), "캐시로 다시 열 때는 사진 수를 확인하지 않는다")
         XCTAssertEqual(BmStore.stateURL(for: item).lastPathComponent, "product-gs-x.bm.json")
         // 파일 가져오기: 같은 이름을 복사한다
         let dst = dir.appendingPathComponent("imported", isDirectory: true)
@@ -463,7 +464,7 @@ final class GSOptBmSessionTests: XCTestCase {
         return false
     }
 
-    func testOpenSavedResultShowsFirstScreenThenReopensWithCachedPosesAndView() async throws {
+    func testFirstOpenPreparesEverythingWritesCacheAndReopenSkipsPhotos() async throws {
         let saved = BmPose.iterations
         BmPose.iterations = 2
         defer { BmPose.iterations = saved }
@@ -475,31 +476,77 @@ final class GSOptBmSessionTests: XCTestCase {
 
         let s1 = BmSession(item: item)
         s1.open()
+        // 준비 중에는 퍼센트가 100 미만이고 이미지가 없다(불완전한 화면을 결과처럼 보여 주지 않는다).
+        var sawProgress = false
+        for _ in 0..<50 {
+            if case .loading(let p) = s1.phase { sawProgress = true; XCTAssertLessThan(p.percent, 100); XCTAssertNil(s1.image); break }
+            if s1.phase == .ready { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(sawProgress || s1.phase == .ready)
         let ok = await waitReady(s1, seconds: 420)
         XCTAssertTrue(ok, "첫 화면에 도달하지 못함: \(s1.phase)")
         XCTAssertTrue(s1.bmAvailable, s1.notice ?? "")
         XCTAssertNotNil(s1.image)
         XCTAssertNotNil(s1.firstScreenSeconds)
+        XCTAssertFalse(s1.openedFromCache)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: BmCache.directory(for: item).appendingPathComponent("manifest.json").path), "준비 결과 캐시가 확정되지 않음")
         // 둘러보기 입력 → 상태 저장
         s1.rotate(dx: 40, dy: 10); s1.pinch(scale: 1.5); s1.setDistance(0.8)
         s1.mode = .gs
         s1.close()
         let saved1 = BmStore.load(for: item, gaussians: BmTest.scene().count, photos: 7)
         XCTAssertNotNil(saved1, "닫을 때 보정·시점이 저장되지 않음")
-        XCTAssertGreaterThanOrEqual(saved1?.deltas.count ?? 0, 6, "첫 화면에 쓴 사진의 포즈 보정이 저장되지 않음")
+        XCTAssertEqual(saved1?.deltas.count ?? 0, 7, "모든 사진의 포즈 보정이 저장되지 않음")
         XCTAssertEqual(saved1?.mode, "gs")
         XCTAssertTrue(FileManager.default.fileExists(atPath: BmStore.logURL(for: item).path), "측정 로그가 저장되지 않음")
 
         // 앱을 다시 연 것과 같다: 새 세션이 저장된 시점·모드를 복원한다.
         let s2 = BmSession(item: item)
         s2.open()
-        let ok2 = await waitReady(s2, seconds: 420)
+        let t2 = CFAbsoluteTimeGetCurrent()
+        let ok2 = await waitReady(s2, seconds: 120)
         XCTAssertTrue(ok2, "재열기 실패: \(s2.phase)")
+        XCTAssertTrue(s2.openedFromCache, "유효한 캐시가 있는데 다시 준비함")
+        GSOTest.log("bmCacheReopen", ["seconds": CFAbsoluteTimeGetCurrent() - t2])
         XCTAssertEqual(s2.mode, .gs)
         XCTAssertEqual(s2.orbit.yaw, s1.orbit.yaw, accuracy: 1e-5)
         XCTAssertEqual(s2.orbit.distScale, 0.8, accuracy: 1e-5)
         XCTAssertNotNil(s2.image)
         s2.close()
+
+        // 원본 재생 자료가 바뀌면 캐시를 버리고 다시 준비한다.
+        let h = try FileHandle(forWritingTo: item.replayURL!); try h.seekToEnd(); h.write(Data([0])); try h.close()
+        let s3 = BmSession(item: item)
+        s3.open()
+        _ = await waitReady(s3, seconds: 420)
+        XCTAssertFalse(s3.openedFromCache, "원본이 바뀌었는데 이전 캐시를 씀")
+        s3.close()
+    }
+
+    func testCancelDuringPreparationLeavesNoCacheAndRetryFinishes() async throws {
+        let saved = BmPose.iterations
+        BmPose.iterations = 2
+        defer { BmPose.iterations = saved }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bm-cancel-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let item = try saveSyntheticResult(into: dir)
+        let s = BmSession(item: item)
+        s.open()
+        for _ in 0..<200 {
+            if case .loading(let p) = s.phase, p.percent > 5 { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        s.cancelLoading()
+        for _ in 0..<300 { if case .failed = s.phase { break }; try? await Task.sleep(nanoseconds: 20_000_000) }
+        if case .failed = s.phase {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: BmCache.directory(for: item).appendingPathComponent("manifest.json").path), "취소했는데 캐시가 확정됨")
+            s.retry()
+        }
+        let ok = await waitReady(s, seconds: 420)
+        XCTAssertTrue(ok, "다시 시도 후 준비 실패: \(s.phase)")
+        s.close()
     }
 
     func testMissingReplayFallsBackTo3DGSWithAClearReason() async throws {
@@ -586,5 +633,182 @@ final class GSOptBmStepExportTests: XCTestCase {
         XCTAssertEqual(try map("full_target_f32_hwc.bin").count, w * h * 3 * 4)
         let wd = win["window"] as? [String: Any]
         XCTAssertEqual(try map("window_target_f32_hwc.bin").count, (wd?["width"] as? Int ?? 0) * (wd?["height"] as? Int ?? 0) * 3 * 4)
+    }
+}
+
+
+// MARK: V4 외곽 · 준비 결과 캐시 · 관측 범위
+
+enum BmV4Test {
+    /// 원점을 보는 카메라(640×480, f = 520).
+    static func look(from c: SIMD3<Float>) -> GSOCamera {
+        let z = simd_normalize(-c)
+        var x = simd_cross(SIMD3<Float>(0, -1, 0), z)
+        x = simd_length(x) > 1e-6 ? simd_normalize(x) : SIMD3<Float>(1, 0, 0)
+        let y = simd_cross(z, x)
+        return GSOCamera(rcw: simd_float3x3(columns: (x, y, z)).transpose, center: c, fx: 520, fy: 520, cx: 319.5, cy: 239.5, width: 640, height: 480)
+    }
+
+    /// 반지름 r 구의 정확한 마스크(광선이 구에 닿으면 1).
+    static func sphereMask(_ cam: GSOCamera, r: Float) -> [UInt8] {
+        var m = [UInt8](repeating: 0, count: 640 * 480)
+        let Rwc = cam.rcw.transpose
+        for y in 0..<480 {
+            for x in 0..<640 {
+                let d = simd_normalize(Rwc * SIMD3<Float>((Float(x) - cam.cx) / cam.fx, (Float(y) - cam.cy) / cam.fy, 1))
+                let b = simd_dot(cam.center, d)
+                let c = simd_dot(cam.center, cam.center) - r * r
+                if b * b - c >= 0 { m[y * 640 + x] = 1 }
+            }
+        }
+        return m
+    }
+
+    static func ring(n: Int, elevDeg: Float, dist: Float) -> [SIMD3<Float>] {
+        (0..<n).map { k in
+            let a = Float(k) / Float(n) * 2 * .pi, e = elevDeg * .pi / 180
+            return SIMD3<Float>(dist * Foundation.cos(e) * Foundation.sin(a), dist * Foundation.sin(e), dist * Foundation.cos(e) * Foundation.cos(a))
+        }
+    }
+
+    /// 구 표면 가우시안(격자 범위 계산용).
+    static func sphereGaussians(r: Float) -> GSOGaussians {
+        var g = GSOGaussians()
+        for i in 0..<400 {
+            let t = Float(i) / 400, phi = Foundation.acos(1 - 2 * t), th = Float(i) * 2.39996
+            let p = SIMD3<Float>(r * Foundation.sin(phi) * Foundation.cos(th), r * Foundation.cos(phi), r * Foundation.sin(phi) * Foundation.sin(th))
+            g.append(mu: p, logScale: SIMD3<Float>(repeating: Float(log(0.004))), quat: SIMD4<Float>(0, 0, 0, 1), color: SIMD3<Float>(0.6, 0.5, 0.4), opacityLogit: 4)
+        }
+        return g
+    }
+}
+
+final class GSOptBmV4Tests: XCTestCase {
+    func testHullOfASphereMatchesItsRadiusAndDropsMasksThatMissParts() {
+        let r: Float = 0.1
+        let g = BmV4Test.sphereGaussians(r: r)
+        let cams = (BmV4Test.ring(n: 18, elevDeg: 10, dist: 0.6) + BmV4Test.ring(n: 18, elevDeg: 45, dist: 0.6)).map { BmV4Test.look(from: $0) }
+        var views: [BmHullView] = [], raw: [[UInt8]] = []
+        let s = BmHullSettings()
+        for (k, c) in cams.enumerated() {
+            var m = BmV4Test.sphereMask(c, r: r)
+            if k % 9 == 4 { for y in 0..<480 { for x in 0..<320 { m[y * 640 + x] = 0 } } }       // 4장은 왼쪽 절반을 빠뜨린 마스크
+            raw.append(m)
+            views.append(BmHullView(index: k, camera: c, mask: BmImageOps.dilateSquare(m, width: 640, height: 480, radius: s.maskDilate)))
+        }
+        let t0 = CFAbsoluteTimeGetCurrent()
+        guard let built = BmHull.build(gaussians: g, centre: .zero, views: views, rawMasks: raw, settings: s) else { return XCTFail("외곽을 만들지 못함") }
+        let h = built.0
+        GSOTest.log("bmHullSphere", ["ms": (CFAbsoluteTimeGetCurrent() - t0) * 1000, "surface": h.surface.count, "dropped": h.dropped.count, "cells": built.1.gridCells])
+        XCTAssertEqual(Set(h.dropped), Set([4, 13, 22, 31]), "부분을 빠뜨린 마스크만 빠져야 한다")
+        let radii = h.surface.map { simd_length($0) }.sorted()
+        let med = radii[radii.count / 2]
+        XCTAssertEqual(med, r, accuracy: 0.015, "표면 반지름 중앙값이 구와 다름")
+        XCTAssertLessThan(radii[radii.count * 95 / 100], r + 0.045, "외곽이 구보다 많이 큼(위아래는 덜 깎일 수 있음)")
+        // 윤곽: 새 시점(높이 25°)에서 정확한 구 마스크와 겹침
+        let c = BmV4Test.look(from: SIMD3<Float>(0.3, 0.27, 0.45))
+        let a = h.alpha(camera: c), m = BmV4Test.sphereMask(c, r: r)
+        var inter = 0, uni = 0
+        for i in 0..<a.count { let p = a[i] > 0.5, q = m[i] != 0; if p && q { inter += 1 }; if p || q { uni += 1 } }
+        XCTAssertGreaterThan(Double(inter) / Double(max(1, uni)), 0.85)
+        let d = h.depth(camera: c)
+        let centrePx = 240 * 640 + 320
+        XCTAssertEqual(d[centrePx], simd_length(c.center) - r, accuracy: 0.015, "외곽 깊이가 구 앞면과 다름")
+    }
+
+    func testV4RenderUsesHullAlphaAndFillsMissingColour() {
+        let src = BmTest.source(index: 0, x: 0, color: { x, _ in x < 320 ? (200, 40, 40) : (40, 40, 200) }, z: { x, y in (x > 200 && x < 440 && y > 140 && y < 340) ? 1 : 0 })
+        var z4 = src.z0
+        for k in 0..<z4.count where z4[k] > 0 { z4[k] = 1 }
+        src.setV4(z4)
+        let target = GSOCamera(pose: BmTest.pose(x: 0), k: BmTest.K)
+        var ha = [Float](repeating: 0, count: 640 * 480)
+        for y in 120..<360 { for x in 180..<460 { ha[y * 640 + x] = 1 } }        // 외곽이 원본보다 20 px 넓다
+        var p = BmRenderParams(); p.ss = 1
+        guard let f = BmRenderer().render(sources: [src], target: target, params: p, variant: .v4, hullAlpha: ha) else { return XCTFail() }
+        XCTAssertEqual(Int(f.rgba[(130 * 640 + 190) * 4 + 3]), 255, "외곽 안은 불투명")
+        XCTAssertEqual(Int(f.rgba[(100 * 640 + 320) * 4 + 3]), 0, "외곽 밖은 투명")
+        XCTAssertGreaterThan(Int(f.rgba[(130 * 640 + 190) * 4]), 150, "빈 곳은 가까운 색(빨강)으로 채움")
+        XCTAssertGreaterThan(f.filledPixels, 10_000)
+        // 기존 Bm은 그대로(원본 범위 밖은 투명)
+        guard let f0 = BmRenderer().render(sources: [src], target: target, params: p) else { return XCTFail() }
+        XCTAssertEqual(Int(f0.rgba[(130 * 640 + 190) * 4 + 3]), 0)
+        XCTAssertEqual(f0.filledPixels, 0)
+    }
+
+    func testSparseSourceKeepsLayerPixelsAndDenseViews() {
+        var keep = [UInt8](repeating: 0, count: 640 * 480)
+        for y in 10..<20 { for x in 30..<50 { keep[y * 640 + x] = 1 } }
+        var z = [Float](repeating: 0, count: 640 * 480)
+        for y in 10..<15 { for x in 30..<50 { z[y * 640 + x] = 0.9 } }
+        let rgb = [UInt8](repeating: 77, count: 640 * 480 * 3)
+        let s = BmSource(index: 2, camera: GSOCamera(pose: BmTest.pose(x: 0), k: BmTest.K), rgb: rgb, z: z, keep: keep)
+        XCTAssertEqual(s.count, 200, "레이어 화소(깊이 0 포함)를 모두 담는다")
+        XCTAssertEqual(s.z[12 * 640 + 35], 0.9); XCTAssertEqual(s.z[17 * 640 + 35], 0)
+        XCTAssertEqual(s.rgb[(12 * 640 + 35) * 3], 77); XCTAssertEqual(s.rgb[(100 * 640 + 35) * 3], 0)
+        XCTAssertFalse(s.hasV4)
+    }
+
+    func testCacheRoundTripRejectsCorruptionChangedInputsAndPartials() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("bm-cache-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let kmogs = dir.appendingPathComponent("product-gs-c.kmogs"), rep = dir.appendingPathComponent("product-gs-c.kmoreplay")
+        try Data([1, 2, 3]).write(to: kmogs); try Data([4, 5]).write(to: rep)
+        let item = GSOStore.list(directory: dir).first!
+        XCTAssertNotNil(item.replayURL)
+        let a = BmTest.source(index: 3, x: 0.01, color: { x, y in (UInt8(x % 256), UInt8(y % 256), 9) }, z: { x, _ in x < 100 ? 1.2345 : 0 })
+        var z4 = a.z0; for k in 0..<z4.count { z4[k] = z4[k] > 0 ? 1.25 : 0.5 }; a.setV4(z4)
+        let b = BmTest.source(index: 1, x: -0.02, color: { _, _ in (1, 2, 3) }, z: { _, y in y < 50 ? 2.0 : 0 })
+        let hull = BmHull(settings: BmHullSettings(), surface: [SIMD3<Float>(0.1, 0.2, 0.3), SIMD3<Float>(-0.1, 0, 1)], dropped: [7, 9], usedViews: 30, occupied: 1234)
+        let hs = BmHullSettings()
+        guard let fp = BmCache.fingerprint(for: item, gaussians: 55) else { return XCTFail() }
+        let bytes = try BmCache.write(for: item, sources: [a, b], hull: hull, inputs: fp, settings: hs, prepareSeconds: 12.5, stageSeconds: ["prepare": 10])
+        XCTAssertGreaterThan(bytes, 0)
+        XCTAssertEqual(BmCache.size(for: item), bytes)
+        switch BmCache.load(for: item, inputs: fp, settings: hs) {
+        case .ok(let srcs, let h, let man, _, _):
+            XCTAssertEqual(srcs.map { $0.index }, [1, 3])
+            let a2 = srcs[1]
+            XCTAssertEqual(a2.count, a.count); XCTAssertEqual(a2.px, a.px); XCTAssertEqual(a2.col, a.col)
+            XCTAssertEqual(a2.z0[0], 1.2345, accuracy: 0.0002); XCTAssertEqual(a2.z4[0], 1.25, accuracy: 0.0002)
+            XCTAssertEqual(a2.camera, a.camera)
+            XCTAssertEqual(h?.surface.count, 2); XCTAssertEqual(h?.dropped, [7, 9])
+            XCTAssertEqual(man.prepareSeconds, 12.5)
+        default: XCTFail("캐시를 읽지 못함")
+        }
+        // 입력이 바뀌면 invalid
+        var fp2 = fp; fp2.gaussians = 56
+        if case .invalid = BmCache.load(for: item, inputs: fp2, settings: hs) {} else { XCTFail("가우시안 수가 바뀌었는데 캐시를 씀") }
+        var hs2 = hs; hs2.strictOut = 0.05
+        if case .invalid = BmCache.load(for: item, inputs: fp, settings: hs2) {} else { XCTFail("설정이 바뀌었는데 캐시를 씀") }
+        // 손상(한 바이트)
+        let su = BmCache.directory(for: item).appendingPathComponent("sources.bin")
+        var d = try Data(contentsOf: su); d[d.count / 2] ^= 0xFF; try d.write(to: su)
+        if case .invalid = BmCache.load(for: item, inputs: fp, settings: hs) {} else { XCTFail("손상된 캐시를 씀") }
+        // 남은 임시 폴더는 완성본이 아니며 정리된다
+        BmCache.remove(for: item)
+        let partial = dir.appendingPathComponent("product-gs-c.bmcache.partial-x", isDirectory: true)
+        try FileManager.default.createDirectory(at: partial, withIntermediateDirectories: true)
+        if case .missing = BmCache.load(for: item, inputs: fp, settings: hs) {} else { XCTFail("임시 폴더를 캐시로 읽음") }
+        BmCache.cleanPartials(for: item)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+    }
+
+    func testCoverageNearestAngleAndElevationRange() {
+        let cams = BmV4Test.ring(n: 24, elevDeg: 30, dist: 1).map { BmV4Test.look(from: $0) }
+        let cov = BmCoverage(cameras: cams, centre: .zero)
+        XCTAssertEqual(cov.elevMinDeg, 30, accuracy: 0.5); XCTAssertEqual(cov.elevMaxDeg, 30, accuracy: 0.5)
+        let onRing = cov.check(cameraCenter: cams[3].center * 2, centre: .zero)
+        XCTAssertLessThan(onRing.nearestDeg, 0.5); XCTAssertFalse(onRing.sparse)
+        let above = cov.check(cameraCenter: SIMD3<Float>(0, 1, 0.05), centre: .zero)
+        XCTAssertTrue(above.outsideElevation); XCTAssertGreaterThan(above.nearestDeg, 50)
+    }
+
+    func testMaskBoxFraction() {
+        var labels = [UInt8](repeating: GSOProductMask.background, count: 100 * 50)
+        for y in 10..<40 { for x in 20..<45 { labels[y * 100 + x] = GSOProductMask.product } }
+        let m = GSOProductMask(width: 100, height: 50, labels: labels, trusted: true, iou: 1, areaFraction: 0.15, targetID: 1, note: "")
+        XCTAssertEqual(m.boxFraction, 0.6, accuracy: 1e-5)
     }
 }

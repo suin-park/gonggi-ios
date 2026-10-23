@@ -327,6 +327,7 @@ struct GSORefineProgress {
     var azimuthBins = 12
     var directionCells = 0       // 방위 12 × 고도 3 = 36칸 중 본 칸
     var directionBins = 36
+    var directionSeen = [Bool](repeating: false, count: 36)   // 칸 = 방위 × 3 + 고도(0: 15° 미만, 1: 15~45°, 2: 45° 이상)
     var insufficientShare: Float = 0   // 관측했지만 복원이 부족한 가우시안(임시 상태이거나 서로 다른 시점 관측 3회 미만)의 비율
     var fractionCells: Float { cellsTotal > 0 ? Float(cellsRefined) / Float(cellsTotal) : 0 }
     var fractionGaussians: Float { gaussiansTotal > 0 ? Float(gaussiansRefined) / Float(gaussiansTotal) : 0 }
@@ -1359,6 +1360,7 @@ final class GSOPipeline {
                 az.insert(ab); cells.insert(ab * 3 + eb)
             }
             p.azimuthObserved = az.count; p.directionCells = cells.count
+            for c in cells where c >= 0 && c < 36 { p.directionSeen[c] = true }
         }
         if map.count > 0 {
             var weak = 0

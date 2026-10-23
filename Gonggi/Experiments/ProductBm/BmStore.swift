@@ -10,6 +10,7 @@ struct BmSavedState: Codable, Equatable {
     var orbit = BmOrbit()
     var mode = "bm"                       // bm | gs | split
     var quality = "standard"              // standard | high
+    var limitToObserved: Bool? = nil      // 관측 범위 안에서만 회전(없으면 꺼짐)
 }
 
 enum BmStore {
@@ -23,9 +24,11 @@ enum BmStore {
         return item.url.deletingLastPathComponent().appendingPathComponent(base + ".bm-log.json")
     }
 
-    static func load(for item: GSOStore.Item, gaussians: Int, photos: Int) -> BmSavedState? {
+    /// photos = nil이면 사진 수는 확인하지 않는다(캐시로 다시 열 때는 원본 사진을 읽지 않아 모른다).
+    static func load(for item: GSOStore.Item, gaussians: Int, photos: Int?) -> BmSavedState? {
         guard let d = try? Data(contentsOf: stateURL(for: item)), let s = try? JSONDecoder().decode(BmSavedState.self, from: d) else { return nil }
-        guard s.version == 1, s.gaussians == gaussians, s.photos == photos else { return nil }
+        guard s.version == 1, s.gaussians == gaussians else { return nil }
+        if let p = photos, s.photos != p { return nil }
         return s
     }
 

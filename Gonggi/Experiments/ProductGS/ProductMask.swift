@@ -24,6 +24,21 @@ struct GSOProductMask: Equatable {
 
     var productCount: Int { labels.reduce(0) { $0 + ($1 == Self.product ? 1 : 0) } }
 
+    /// 화면 점유율: 확실한 제품 화소를 감싼 상자의 가로·세로 비율 중 큰 값(0...1). 제품 화소가 없으면 0. 촬영 거리 안내에만 쓴다.
+    var boxFraction: Float {
+        var x0 = width, y0 = height, x1 = -1, y1 = -1
+        for y in 0..<height {
+            for x in 0..<width where labels[y * width + x] == Self.product {
+                if x < x0 { x0 = x }
+                if x > x1 { x1 = x }
+                if y < y0 { y0 = y }
+                if y > y1 { y1 = y }
+            }
+        }
+        guard x1 >= x0, y1 >= y0, width > 0, height > 0 else { return 0 }
+        return max(Float(x1 - x0 + 1) / Float(width), Float(y1 - y0 + 1) / Float(height))
+    }
+
     /// 최근접 표본으로 다른 격자로 옮긴다(픽셀 중심 규약). 라벨은 보간하지 않는다.
     func resampled(width tw: Int, height th: Int) -> [UInt8] {
         if tw == width && th == height { return labels }

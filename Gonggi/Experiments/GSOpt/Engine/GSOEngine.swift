@@ -82,6 +82,8 @@ struct GSOLive {
     var refineKind = ""
     var coverageText = ""
     var texText = ""
+    var directionSeen: [Bool] = []         // 방위 12 × 고도 3(GSORefineProgress.directionSeen)
+    var productBoxFraction: Double?        // 마지막 신뢰 마스크의 화면 점유율(상자 가로·세로 중 큰 비율)
 }
 
 /// 엔진이 모으는 추가 통계(정밀화·검증·미생성 이유·중지 구간).
@@ -218,6 +220,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
     private var maskSamples: [Double] = []
     private var maskStats = (trusted: 0, uncertain: 0)
     private var maskNoteLast = ""
+    private var productBoxLast: Double?
     private var progressLatest = GSORefineProgress()
     private var bgLeakLast: Double?
     private var productPixelsLast = 0
@@ -623,6 +626,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             maskSamples.append(maskMs); if maskSamples.count > 400 { maskSamples.removeFirst() }
             if mask?.trusted == true { maskStats.trusted += 1 } else { maskStats.uncertain += 1 }
             maskNoteLast = mask?.note ?? ""
+            if let m = mask, m.trusted { productBoxLast = Double(m.boxFraction) }
             statLock.unlock()
             log?.write("product_mask", ["id": input.id, "trusted": mask?.trusted ?? false, "note": mask?.note ?? "", "iou": Double(mask?.iou ?? 0),
                                         "area": Double(mask?.areaFraction ?? 0), "ms": maskMs, "status": trk.status.rawValue, "targetID": trk.targetID])
@@ -959,6 +963,7 @@ final class GSOEngine: NSObject, ARSessionDelegate, @unchecked Sendable {
             l.refineCellsPct = progressLatest.cellsTotal > 0 ? Double(progressLatest.fractionCells) * 100 : nil
             l.refineGaussiansPct = progressLatest.gaussiansTotal > 0 ? Double(progressLatest.fractionGaussians) * 100 : nil
             l.bgLeak = bgLeakLast; l.productPixels = productPixelsLast
+            l.directionSeen = progressLatest.directionSeen; l.productBoxFraction = productBoxLast
             l.budgetText = budgetText; l.refineKind = refineKindLast
         }
         l.firstInputS = fi.map { $0 - startedHost }

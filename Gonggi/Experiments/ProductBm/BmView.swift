@@ -13,9 +13,9 @@ struct BmHomeView: View {
             VStack(alignment: .leading, spacing: 16) {
                 KmoPageTitle(text: "제품 Bm 보기")
                 ExpCard {
-                    Text("저장한 제품 결과의 사진 여러 장을 지도 깊이로 다시 투영해 섞는 보기(Bm)와, 지도를 그대로 그린 3DGS를 같은 카메라로 비교해요.")
+                    Text("저장한 제품 결과의 사진 여러 장을 지도 깊이로 다시 투영해 섞는 보기(기존 Bm), 외곽 형태로 윤곽을 고정한 V4, 지도를 그대로 그린 3DGS를 같은 카메라로 비교해요.")
                         .font(.subheadline).foregroundStyle(GonggiColors.textPrimary)
-                    Text("제품 촬영 화면에서 '연구 기록'을 켜고 촬영·저장한 결과에서만 Bm을 만들 수 있어요(재생 자료 필요). 처음 열 때 사진을 준비하느라 시간이 걸리고, 이 기기에서 직접 잰 시간이 로그에 남아요.")
+                    Text("제품 촬영 화면에서 '연구 기록'을 켜고, '새 방식: 텍스처 스플랫 레이어'를 끈 채로 촬영·저장한 결과에서만 볼 수 있어요. 처음 열 때 한 번 준비하고, 준비 결과는 기기에 저장돼 다음부터는 바로 열려요.")
                         .font(.footnote).foregroundStyle(GonggiColors.textSecondary)
                 }
                 ExpCard("저장한 제품 결과") {
@@ -77,7 +77,8 @@ struct BmHomeView: View {
         var s = "\(it.bytes / 1024) KB"
         if let d = it.date { s += " · " + ExperimentResultsView.dateText(d) }
         s += it.replayURL != nil ? " · 재생 자료 있음(Bm 가능)" : " · 재생 자료 없음(3DGS만)"
-        if FileManager.default.fileExists(atPath: BmStore.stateURL(for: it).path) { s += " · 이전 보정 저장됨" }
+        let cb = BmCache.size(for: it)
+        if cb > 0 { s += " · 준비 결과 저장됨(\(cb / 1_048_576) MB)" } else if FileManager.default.fileExists(atPath: BmStore.stateURL(for: it).path) { s += " · 사진 맞춤 일부 저장됨" }
         return s
     }
 }
@@ -97,8 +98,10 @@ struct BmViewerView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if let n = session.notice { Text(n).font(.footnote).foregroundStyle(ExpTheme.warn) }
+                    if session.phase == .ready { coverageCard }
                     controls
                     statusCard
+                    diagnosticsCard
                     shareCard
                 }
                 .padding(.horizontal, 16)
@@ -122,10 +125,11 @@ struct BmViewerView: View {
                      onDoubleTap: { session.resetView() })
                 .disabled(session.phase != .ready)
             switch session.phase {
-            case .loading(let text, let p):
+            case .loading(let p):
                 VStack(spacing: 10) {
-                    ProgressView(value: p).tint(GonggiColors.accentTeal).frame(maxWidth: 220)
-                    Text(text).font(.footnote).foregroundStyle(.white)
+                    Text("\(p.title) · \(p.percent)%").font(.headline).foregroundStyle(.white)
+                    ProgressView(value: Double(p.percent), total: 100).tint(GonggiColors.accentTeal).frame(maxWidth: 240)
+                    Text(p.stage).font(.footnote).foregroundStyle(.white.opacity(0.85))
                     Button("취소") { session.cancelLoading() }.buttonStyle(.bordered).tint(.white)
                 }
                 .padding(16).background(Color.black.opacity(0.6)).clipShape(RoundedRectangle(cornerRadius: 12))
@@ -146,12 +150,17 @@ struct BmViewerView: View {
                         Text(session.mode.label).font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4)
                             .background(Color.black.opacity(0.55)).foregroundStyle(.white).clipShape(Capsule())
                         Spacer()
-                        if !session.preparedText.isEmpty {
-                            Text(session.preparedText).font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
+                        if session.limitToObserved {
+                            Text("회전 제한 켜짐").font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
                                 .background(Color.black.opacity(0.55)).foregroundStyle(.white).clipShape(Capsule())
                         }
                     }
                     Spacer()
+                    if let w = session.coverageWarning {
+                        Text(w).font(.caption2).multilineTextAlignment(.leading).padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Color.orange.opacity(0.85)).foregroundStyle(.black).clipShape(RoundedRectangle(cornerRadius: 6))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 .padding(8)
             }
@@ -169,8 +178,11 @@ struct BmViewerView: View {
             }
             .pickerStyle(.segmented)
             .disabled(session.phase != .ready)
-            Text("한 손가락: 회전 · 두 손가락: 이동 · 핀치: 확대 · 두 번 탭: 처음 시점 · 모드를 바꿔도 카메라는 그대로예요.")
+            Text("한 손가락: 회전 · 두 손가락: 이동 · 핀치: 확대 · 두 번 탭: 처음 시점 · 모드를 바꿔도 카메라는 그대로예요. 반반은 왼쪽 기존 Bm, 오른쪽 V4예요.")
                 .font(.caption).foregroundStyle(GonggiColors.textSecondary)
+            if session.phase == .ready && !session.v4Available && session.bmAvailable {
+                Text("이 결과는 V4 외곽이 없어 V4·반반을 고를 수 없어요.").font(.caption).foregroundStyle(ExpTheme.warn)
+            }
         }
     }
 
@@ -184,6 +196,7 @@ struct BmViewerView: View {
             }
             .disabled(session.phase != .ready)
             Toggle("고품질(느림, 내부 3배 격자)", isOn: $session.highQuality).font(.subheadline).disabled(session.phase != .ready || !session.bmAvailable)
+            Toggle("관측 범위 안에서만 회전(촬영한 높이로 제한)", isOn: $session.limitToObserved).font(.subheadline).disabled(session.phase != .ready || !session.bmAvailable)
             Button { session.resetView() } label: { Label("처음 시점으로", systemImage: "arrow.counterclockwise").frame(maxWidth: .infinity, minHeight: 40) }
                 .disabled(session.phase != .ready)
         }
@@ -197,8 +210,32 @@ struct BmViewerView: View {
                 Text("첫 화면까지 측정 중…").font(.subheadline).foregroundStyle(GonggiColors.textSecondary)
             }
             if !session.lastFrameInfo.isEmpty { Text(session.lastFrameInfo).font(.caption.monospaced()).foregroundStyle(GonggiColors.textSecondary) }
-            Text("Bm은 지도 깊이로 사진을 다시 투영해 섞어요. 털 질감·흐림이 해결된 것은 아니에요. 눈·코·글자 선명도, 겹침, 외곽선, 구멍, 사진 전환 튐을 직접 확인해 주세요.")
+            Text("Bm은 지도 깊이로 사진을 다시 투영해 섞어요. V4는 사진 마스크로 깎은 외곽 형태로 윤곽을 고정하고, 윤곽 안인데 사진 색이 닿지 않은 곳은 가까운 색으로 채워요(채운 화소 비율이 위 줄에 나와요). V4는 PC 시험에서 귀 같은 가는 돌출이 깎이거나 오목한 곳이 채워지는 경우가 있었어요. 형태·외곽선·글자·겹침을 기존 Bm과 같은 시점에서 직접 비교해 주세요.")
                 .font(.caption).foregroundStyle(GonggiColors.textSecondary)
+        }
+    }
+
+    private var coverageCard: some View {
+        ExpCard("촬영 관측") {
+            if session.coverageText.isEmpty {
+                Text("이 결과는 사진 관측 정보가 없어요.").font(.caption).foregroundStyle(GonggiColors.textSecondary)
+            } else {
+                Text(session.coverageText).font(.caption.monospaced()).foregroundStyle(GonggiColors.textPrimary)
+                Text("찍지 않은 높이·방향은 사진에 없는 면이라 실제와 다르게 보일 수 있어요. 회전 제한을 켜면 촬영한 높이 범위 안에서만 돌아가요(자유 회전 품질이 해결된 것은 아니에요).")
+                    .font(.caption).foregroundStyle(GonggiColors.textSecondary)
+            }
+        }
+    }
+
+    private var diagnosticsCard: some View {
+        ExpCard("상세 진단") {
+            if session.phase == .ready {
+                Text(session.openedFromCache ? "저장된 준비 결과로 열었어요(원본 사진을 다시 준비하지 않음)." : "이번에 처음 준비했어요. 다음부터는 저장된 결과로 열려요.")
+                    .font(.caption).foregroundStyle(GonggiColors.textPrimary)
+            }
+            ForEach(session.diagnostics, id: \.self) { d in Text(d).font(.caption.monospaced()).foregroundStyle(GonggiColors.textSecondary) }
+            Button { session.rebuild() } label: { Label("준비 결과 지우고 다시 준비", systemImage: "arrow.clockwise").frame(maxWidth: .infinity, minHeight: 40) }
+                .disabled(session.phase != .ready || !session.bmAvailable)
         }
     }
 

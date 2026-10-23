@@ -560,6 +560,7 @@ struct ProductGSView: View {
                 topBar
                 if vm.showDiagnostics && vm.state != .idle { diagnostics }
                 Spacer()
+                if vm.state == .running && vm.live.isProduct && vm.live.texText.isEmpty { CaptureCoverageGuide(seen: vm.live.directionSeen, boxFraction: vm.live.productBoxFraction) }
                 if vm.state == .running {
                     Text(vm.live.hint.isEmpty ? vm.live.depthStatus : vm.live.hint).font(.footnote.weight(.semibold)).padding(10)
                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
@@ -778,5 +779,54 @@ struct ProductGSView: View {
             .navigationTitle("제품 비교").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("닫기") { showCompare = false } } }
         }
+    }
+}
+
+
+/// 촬영 중 관측 안내: 제품 중심 기준 높이 3줄 × 방위 12칸 중 카메라가 지나간 칸, 부족한 높이, 화면 점유율에 따른 거리 안내.
+/// 칸이 채워져도 그 방향의 화질이 보장되는 것은 아니다(찍은 방향만 다시 볼 수 있다는 뜻).
+struct CaptureCoverageGuide: View {
+    var seen: [Bool]
+    var boxFraction: Double?
+
+    private let rows: [(String, Int)] = [("위 45°+", 2), ("중간", 1), ("낮게 15°-", 0)]
+
+    private func isOn(_ a: Int, _ band: Int) -> Bool { seen.count == 36 && seen[a * 3 + band] }
+
+    private func count(_ band: Int) -> Int {
+        guard seen.count == 36 else { return 0 }
+        return (0..<12).filter { seen[$0 * 3 + band] }.count
+    }
+
+    private var lacking: String {
+        let names = ["낮은 높이", "중간 높이", "위쪽 높이"]
+        let miss = (0..<3).filter { count($0) < 6 }.map { "\(names[$0]) \(count($0))/12" }
+        return miss.isEmpty ? "세 높이 모두 절반 이상 지나갔어요." : "부족한 높이: " + miss.joined(separator: " · ") + " — 그 높이에서 제품 둘레를 한 바퀴 더 돌아 주세요."
+    }
+
+    private var distanceHint: String? {
+        guard let f = boxFraction, f > 0 else { return nil }
+        let pct = Int((f * 100).rounded())
+        if f < 0.4 { return "제품이 화면의 \(pct)%예요. 조금 더 가까이(제품이 화면의 절반 이상 차도록) 찍어 주세요." }
+        if f > 0.92 { return "제품이 화면을 거의 채워요(\(pct)%). 가장자리가 잘리지 않게 조금 뒤로 가 주세요." }
+        return "제품 화면 점유율 \(pct)%"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(0..<3, id: \.self) { k in
+                HStack(spacing: 3) {
+                    Text(rows[k].0).font(.system(size: 10)).frame(width: 54, alignment: .leading)
+                    ForEach(0..<12, id: \.self) { a in
+                        RoundedRectangle(cornerRadius: 2).fill(isOn(a, rows[k].1) ? Color.green.opacity(0.85) : Color.white.opacity(0.18)).frame(width: 12, height: 12)
+                    }
+                }
+            }
+            Text(lacking).font(.system(size: 11))
+            if let d = distanceHint { Text(d).font(.system(size: 11)) }
+        }
+        .foregroundStyle(.white)
+        .padding(8)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
     }
 }

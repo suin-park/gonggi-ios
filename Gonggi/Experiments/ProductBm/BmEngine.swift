@@ -97,7 +97,7 @@ final class BmEngine {
         for p in 0..<(W * H) where layer[p] == 0 { z[p] = 0 }
         let t3 = CFAbsoluteTimeGetCurrent(); timing.layerMs = (t3 - t2) * 1000
         lock.lock()
-        if any { sources[i] = BmSource(index: i, camera: cam, rgb: photo.rgb, z: z); failed[i] = nil }
+        if any { sources[i] = BmSource(index: i, camera: cam, rgb: photo.rgb, z: z, keep: layer); failed[i] = nil }
         else { failed[i] = "지도에서 이 사진 시점의 제품 깊이를 얻지 못했어요" }
         lock.unlock()
         return timing
@@ -105,8 +105,68 @@ final class BmEngine {
 
     // MARK: 렌더
 
-    func renderBm(target: GSOCamera, params: BmRenderParams) -> BmFrame? {
-        renderer.render(sources: preparedSources, target: target, params: params)
+    /// variant = .v4는 외곽(hull)과 V4 깊이가 준비됐을 때만 그린다(아니면 nil).
+    func renderBm(target: GSOCamera, params: BmRenderParams, variant: BmVariant = .bm) -> BmFrame? {
+        if variant == .v4 {
+            guard let h = hull else { return nil }
+            let ha = h.alpha(camera: BmGeo.resized(target, width: params.width, height: params.height))
+            return renderer.render(sources: preparedSources, target: target, params: params, variant: .v4, hullAlpha: ha)
+        }
+        return renderer.render(sources: preparedSources, target: target, params: params)
+    }
+
+    // MARK: V4 외곽
+
+    private(set) var hull: BmHull?
+    var hasV4: Bool { hull != nil }
+
+    /// 준비된 모든 사진(보정 포즈, 제품 마스크)으로 V4 외곽을 만든다. 사진 묶음(마스크)이 있어야 한다. progress(단계 0~2, 단계 안 0...1).
+    func buildHull(centre: SIMD3<Float>, settings: BmHullSettings = BmHullSettings(), progress: ((Int, Double) -> Void)? = nil,
+                   isCancelled: (() -> Bool)? = nil) -> BmHull.BuildTiming? {
+        let srcs = preparedSources.sorted { $0.index < $1.index }
+        var views: [BmHullView] = [], raw: [[UInt8]] = []
+        for s in srcs {
+            let ph = photos.photos[s.index]
+            guard ph.mask640.count == BmPhoto.width * BmPhoto.height else { continue }
+            views.append(BmHullView(index: s.index, camera: s.camera, mask: BmImageOps.dilateSquare(ph.mask640, width: BmPhoto.width, height: BmPhoto.height, radius: settings.maskDilate)))
+            raw.append(ph.mask640)
+        }
+        guard let built = BmHull.build(gaussians: gaussians, centre: centre, views: views, rawMasks: raw, settings: settings, progress: progress, isCancelled: isCancelled) else { return nil }
+        lock.lock(); hull = built.0; lock.unlock()
+        return built.1
+    }
+
+    /// 사진마다 V4 깊이: 레이어 화소 중 지도 깊이가 외곽 표면과 depthAgree 안이면 지도 깊이, 아니면 외곽 깊이(외곽이 없으면 지도 깊이). progress(0...1).
+    func applyHullDepth(progress: ((Double) -> Void)? = nil, isCancelled: (() -> Bool)? = nil) -> Bool {
+        guard let h = hull else { return false }
+        let srcs = preparedSources
+        let tol = h.settings.depthAgree
+        let lockP = NSLock(); var done = 0
+        DispatchQueue.concurrentPerform(iterations: srcs.count) { j in
+            if isCancelled?() == true { return }
+            let s = srcs[j]
+            let zh = h.depth(camera: s.camera)
+            var z4 = [Float](repeating: 0, count: s.count)
+            for k in 0..<s.count {
+                let zm = s.z0[k], hz = zh[Int(s.py[k]) * BmPhoto.width + Int(s.px[k])]
+                if zm > 0 && hz > 0 && abs(zm - hz) <= tol { z4[k] = zm }
+                else if hz > 0 { z4[k] = hz }
+                else { z4[k] = zm }
+            }
+            s.setV4(z4)
+            lockP.lock(); done += 1; let d = done; lockP.unlock()
+            if d % 8 == 0 || d == srcs.count { progress?(Double(d) / Double(max(1, srcs.count))) }
+        }
+        return isCancelled?() != true
+    }
+
+    /// 캐시에서 다시 연 엔진: 원본 사진 없이 준비된 원본·외곽만으로 그린다.
+    init(gaussians: GSOGaussians, sources: [BmSource], hull: BmHull?, deltas: [Int: [Double]]) {
+        self.gaussians = gaussians
+        self.photos = BmPhotoSet()
+        self.deltas = deltas
+        for s in sources { self.sources[s.index] = s }
+        self.hull = hull
     }
 
     /// 순수 3DGS(저장 지도를 같은 카메라에서 CPU 래스터라이저로 그린다). Bm과 같은 크기·같은 카메라를 쓴다.

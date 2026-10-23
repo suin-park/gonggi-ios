@@ -328,6 +328,10 @@ enum BmImageOps {
             col = nextCol; have = nextHave
         }
         let b = gaussian(alp, width: w, height: h, sigma: sigma)
+        return finishSilhouette(col: col, blurred: b, n: n, lo: lo, hi: hi)
+    }
+
+    private static func finishSilhouette(col: [Float], blurred b: [Float], n: Int, lo: Float, hi: Float) -> (rgb: [Float], alpha: [Float]) {
         var a2 = [Float](repeating: 0, count: n)
         var rgb = [Float](repeating: 0, count: n * 3)
         for i in 0..<n {
@@ -338,5 +342,50 @@ enum BmImageOps {
             rgb[i * 3] = col[i * 3] * s; rgb[i * 3 + 1] = col[i * 3 + 1] * s; rgb[i * 3 + 2] = col[i * 3 + 2] * s
         }
         return (rgb, a2)
+    }
+
+    /// V4 윤곽: 혼합 색(알파로 나눔)을 목표 윤곽(target > 0) 안 전체로 가장 가까운 유효 색(알파 > 0.02)에서 번지게 하고(8-이웃 너비 우선, PC는 유클리드 최근접),
+    /// 출력 알파 = target, 색 = 채운 색 × target. filled = target > 0.5인데 혼합 색이 없던 화소 수(사진 색이 아니라 채운 색으로 보이는 곳).
+    static func fillToAlpha(color pm: [Float], alpha alp: [Float], target: [Float], width w: Int, height h: Int) -> (rgb: [Float], alpha: [Float], filled: Int) {
+        let n = w * h
+        var col = [Float](repeating: 0, count: n * 3)
+        var have = [Bool](repeating: false, count: n)
+        var queue: [Int] = []
+        queue.reserveCapacity(n / 4)
+        for i in 0..<n where alp[i] > 0.02 {
+            let a = max(alp[i], 1e-3)
+            col[i * 3] = pm[i * 3] / a; col[i * 3 + 1] = pm[i * 3 + 1] / a; col[i * 3 + 2] = pm[i * 3 + 2] / a
+            have[i] = true; queue.append(i)
+        }
+        var filled = 0
+        for i in 0..<n where target[i] > 0.5 && !have[i] { filled += 1 }
+        // 목표 윤곽 안의 빈 화소가 다 찰 때까지만 번진다.
+        var need = 0
+        for i in 0..<n where target[i] > 0 && !have[i] { need += 1 }
+        var head = 0
+        while head < queue.count && need > 0 {
+            let i = queue[head]; head += 1
+            let x = i % w, y = i / w
+            for dy in -1...1 {
+                for dx in -1...1 where dx != 0 || dy != 0 {
+                    let xx = x + dx, yy = y + dy
+                    if xx < 0 || xx >= w || yy < 0 || yy >= h { continue }
+                    let j = yy * w + xx
+                    if have[j] { continue }
+                    have[j] = true
+                    col[j * 3] = col[i * 3]; col[j * 3 + 1] = col[i * 3 + 1]; col[j * 3 + 2] = col[i * 3 + 2]
+                    if target[j] > 0 { need -= 1 }
+                    queue.append(j)
+                }
+            }
+        }
+        var rgb = [Float](repeating: 0, count: n * 3)
+        var a2 = [Float](repeating: 0, count: n)
+        for i in 0..<n {
+            let t = min(max(target[i], 0), 1)
+            a2[i] = have[i] ? t : 0
+            rgb[i * 3] = col[i * 3] * a2[i]; rgb[i * 3 + 1] = col[i * 3 + 1] * a2[i]; rgb[i * 3 + 2] = col[i * 3 + 2] * a2[i]
+        }
+        return (rgb, a2, filled)
     }
 }
