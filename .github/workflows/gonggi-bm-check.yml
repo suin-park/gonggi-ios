@@ -3,6 +3,13 @@ name: Gonggi Bm check
 # 제품 Bm 보기 전용 빠른 검증(수동 실행): 컴파일 + Bm 테스트 클래스만 실행한다. 서명·아카이브·업로드 없음.
 # 서명·아카이브·업로드 없음. 전체 게이트는 gonggi-testflight.yml(pre_archive_tests=full)이 담당한다.
 on:
+  push:
+    branches:
+      - feat/product-bm-view
+    paths:
+      - 'Gonggi/Experiments/**'
+      - 'GonggiTests/BmTests.swift'
+      - '.github/workflows/gonggi-bm-check.yml'
   workflow_dispatch:
 
 concurrency:
