@@ -55,11 +55,19 @@ struct BmHomeView: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.data], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls):
-                do {
-                    let n = try BmStore.importFiles(urls)
-                    importMessage = "\(n)개 파일을 가져왔어요."
-                } catch { importMessage = "가져오기 실패: \(error.localizedDescription)" }
-                items = ProductGSStore.list()
+                importMessage = "가져오는 중… (파일이 크면 시간이 걸려요)"
+                Task.detached(priority: .userInitiated) {
+                    var msg: String
+                    do {
+                        let n = try BmStore.importFiles(urls)
+                        msg = "\(n)개 파일을 가져왔어요."
+                    } catch { msg = "가져오기 실패: \(error.localizedDescription)" }
+                    let text = msg
+                    await MainActor.run {
+                        importMessage = text
+                        items = ProductGSStore.list()
+                    }
+                }
             case .failure(let e): importMessage = "가져오기 취소 또는 실패: \(e.localizedDescription)"
             }
         }
