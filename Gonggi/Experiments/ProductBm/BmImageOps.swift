@@ -108,28 +108,54 @@ enum BmImageOps {
         return out
     }
 
-    /// 분리형 가우시안 블러(반경 = 3σ, 정규화, 가장자리 복제).
+    /// 분리형 가우시안 블러(반경 = 3σ, 정규화, 가장자리 복제). 가로는 가장자리를 채운 한 줄 버퍼로, 세로는 줄 단위 누적으로 계산한다(클램프 없는 안쪽 루프).
     static func gaussian(_ src: [Float], width w: Int, height h: Int, sigma: Float) -> [Float] {
         let r = max(1, Int((sigma * 3).rounded(.down)))
-        var k = [Float](repeating: 0, count: 2 * r + 1)
+        let taps = 2 * r + 1
+        var k = [Float](repeating: 0, count: taps)
         var ks: Float = 0
-        for i in -r...r { let v = Foundation.exp(-Float(i * i) / (2 * sigma * sigma)); k[i + r] = v; ks += v }
-        for i in 0..<k.count { k[i] /= ks }
+        for i in -r...r {
+            let e: Float = -Float(i * i) / (2 * sigma * sigma)
+            let v = Foundation.exp(e)
+            k[i + r] = v
+            ks += v
+        }
+        for i in 0..<taps { k[i] /= ks }
         var tmp = [Float](repeating: 0, count: w * h)
         var out = [Float](repeating: 0, count: w * h)
-        for y in 0..<h {
-            let row = y * w
-            for x in 0..<w {
-                var acc: Float = 0
-                for i in -r...r { acc += src[row + min(max(x + i, 0), w - 1)] * k[i + r] }
-                tmp[row + x] = acc
+        var pad = [Float](repeating: 0, count: w + 2 * r)
+        src.withUnsafeBufferPointer { sp in
+            tmp.withUnsafeMutableBufferPointer { tp in
+                pad.withUnsafeMutableBufferPointer { pp in
+                    k.withUnsafeBufferPointer { kp in
+                        for y in 0..<h {
+                            let row = y * w
+                            for x in 0..<r { pp[x] = sp[row] }
+                            for x in 0..<w { pp[x + r] = sp[row + x] }
+                            for x in 0..<r { pp[w + r + x] = sp[row + w - 1] }
+                            for x in 0..<w {
+                                var acc: Float = 0
+                                for i in 0..<taps { acc += pp[x + i] * kp[i] }
+                                tp[row + x] = acc
+                            }
+                        }
+                    }
+                }
             }
         }
-        for y in 0..<h {
-            for x in 0..<w {
-                var acc: Float = 0
-                for i in -r...r { acc += tmp[min(max(y + i, 0), h - 1) * w + x] * k[i + r] }
-                out[y * w + x] = acc
+        tmp.withUnsafeBufferPointer { tp in
+            out.withUnsafeMutableBufferPointer { op in
+                k.withUnsafeBufferPointer { kp in
+                    for y in 0..<h {
+                        let orow = y * w
+                        for i in -r...r {
+                            let yy = min(max(y + i, 0), h - 1)
+                            let wgt = kp[i + r]
+                            let trow = yy * w
+                            for x in 0..<w { op[orow + x] += tp[trow + x] * wgt }
+                        }
+                    }
+                }
             }
         }
         return out

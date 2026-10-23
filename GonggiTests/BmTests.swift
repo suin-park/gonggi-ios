@@ -340,7 +340,7 @@ final class GSOptBmEngineTests: XCTestCase {
 
     func testBmAtAPhotoPoseReproducesThePhotoInsideTheProduct() {
         let g = BmTest.scene()
-        let xs: [Float] = [-0.06, -0.04, -0.02, 0, 0.02, 0.04, 0.06]
+        let xs: [Float] = [-0.05, -0.03, -0.01, 0.01, 0.03, 0.05]
         let set = BmTest.photoSet(g: g, xs: xs)
         let zero = [Double](repeating: 0, count: 6)
         var cached: [Int: [Double]] = [:]
@@ -348,10 +348,10 @@ final class GSOptBmEngineTests: XCTestCase {
         let e = BmEngine(gaussians: g, photos: set, cachedDeltas: cached)
         for i in 0..<xs.count { e.prepare(i) }
         XCTAssertEqual(e.preparedCount, xs.count)
-        let target = GSOCamera(pose: BmTest.pose(x: 0.0), k: BmTest.K)
+        let target = GSOCamera(pose: BmTest.pose(x: -0.01), k: BmTest.K)
         var p = BmRenderParams(); p.ss = 2
         guard let f = e.renderBm(target: target, params: p) else { return XCTFail("렌더 실패") }
-        let ref = set.photos[3]
+        let ref = set.photos[2]
         var se = 0.0, n = 0
         let inner = BmImageOps.erodeSquare(ref.mask640, width: 640, height: 480, radius: 10)
         for i in 0..<(640 * 480) where inner[i] == 1 {

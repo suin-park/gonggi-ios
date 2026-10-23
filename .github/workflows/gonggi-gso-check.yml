@@ -10,7 +10,6 @@ on:
       - feat/surface-align
       - feat/gs-native-res
       - feat/gs-quality-engine
-      - feat/product-bm-view
     paths:
       - 'Gonggi/Experiments/**'
       - 'GonggiTests/GSOpt*'

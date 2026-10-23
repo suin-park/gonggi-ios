@@ -193,12 +193,14 @@ final class BmSession: ObservableObject {
     }
 
     private func finishFirstScreen() {
-        phase = .ready
+        // 첫 화면 이미지가 실제로 그려진 뒤에 준비 완료(.ready)로 바꾼다. 그 전에는 '그리는 중'을 보여 준다.
+        phase = .loading("첫 화면을 그리는 중…", 0.97)
         renderNow(preview: false) { [weak self] in
             guard let self = self else { return }
+            self.phase = .ready
             let s = CFAbsoluteTimeGetCurrent() - self.openStart
             self.firstScreenSeconds = s
-            self.log.event("first_screen", ["seconds": s, "mode": self.mode.rawValue])
+            self.log.event("first_screen", ["seconds": s, "mode": self.mode.rawValue, "imageDrawn": self.image != nil])
             self.log.setMeta("firstScreenSeconds", s)
             self.updatePreparedText()
             self.persist()
