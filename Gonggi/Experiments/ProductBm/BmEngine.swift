@@ -12,6 +12,9 @@ final class BmEngine {
     private var deltas: [Int: [Double]] = [:]
     private var sources: [Int: BmSource] = [:]
     private var failed: [Int: String] = [:]
+    private var cams640: [Int: GSOCamera] = [:]      // 외곽 깎기용(마스크가 640×480)
+    /// 원본 사진 최대 폭(재생 기록이 더 작으면 그 폭). 센서 최대 4:3 = 1920.
+    static var maxSourceWidth = 1920
 
     struct PrepareTiming {
         var index: Int
@@ -80,10 +83,18 @@ final class BmEngine {
         if isCancelled?() == true { return nil }
         let t1 = CFAbsoluteTimeGetCurrent(); timing.poseMs = (t1 - t0) * 1000
         let d = delta(of: i) ?? [Double](repeating: 0, count: 6)
-        let cam = BmGeo.apply(photo.camera640(), delta: d)
+        let cam640 = BmGeo.apply(photo.camera640(), delta: d)
+        // 원본 해상도(최대 maxSourceWidth)로 다시 읽는다. 640 기준 반경·배율은 폭 비율로 늘린다(같은 물리 크기).
+        guard let full = photos.full(i, maxWidth: BmEngine.maxSourceWidth) else {
+            lock.lock(); failed[i] = "원본 사진을 다시 읽지 못했어요"; lock.unlock()
+            return timing
+        }
+        let W = full.width, H = full.height
+        let scale = Float(W) / Float(BmPhoto.width)
+        let cam = BmGeo.apply(GSOCamera(pose: photo.pose, k: full.k), delta: d)
         let st = GSORaster.forward(gaussians, camera: cam, rules: .display)
-        let W = BmPhoto.width, H = BmPhoto.height
-        let md = BmImageOps.dilateSquare(photo.mask640, width: W, height: H, radius: 7)
+        let mHi = BmImageOps.resizeNearest(photo.mask640, width: BmPhoto.width, height: BmPhoto.height, toWidth: W, toHeight: H)
+        let md = BmImageOps.dilateSquare(mHi, width: W, height: H, radius: max(1, Int((7 * scale).rounded())))
         var z = [Float](repeating: 0, count: W * H)
         var any = false
         for p in 0..<(W * H) {
@@ -92,12 +103,15 @@ final class BmEngine {
         }
         let t2 = CFAbsoluteTimeGetCurrent(); timing.depthMs = (t2 - t1) * 1000
         if isCancelled?() == true { return nil }
-        let mt = BmImageOps.matte(gray: photo.gray960, grayWidth: photo.grayWidth, grayHeight: photo.grayHeight, mask: photo.mask320, maskWidth: 320, maskHeight: 240)
-        let layer = BmImageOps.layerMask(matte: mt, width: W, height: H)
+        // 매트: 가이드 필터 반경·형태 연산 반경은 960 기준(4, 3)을 폭 비율로. 레이어: 640 기준 ×3 확대·σ4·여유 3 px와 같은 물리 크기.
+        let gr = max(4, Int((4 * Float(W) / 960).rounded())), gm = max(3, Int((3 * Float(W) / 960).rounded()))
+        let mt = BmImageOps.matte(gray: full.gray, grayWidth: W, grayHeight: H, mask: photo.mask320, maskWidth: 320, maskHeight: 240, outWidth: W, outHeight: H, r: gr, morph: gm)
+        let ls = max(1, Int((1920 / Float(W)).rounded()))
+        let layer = BmImageOps.layerMask(matte: mt, width: W, height: H, scale: ls, blurSigma: 4.0 * Float(W * ls) / 1920, dilateRadius: max(1, Int((3 * scale).rounded())))
         for p in 0..<(W * H) where layer[p] == 0 { z[p] = 0 }
         let t3 = CFAbsoluteTimeGetCurrent(); timing.layerMs = (t3 - t2) * 1000
         lock.lock()
-        if any { sources[i] = BmSource(index: i, camera: cam, rgb: photo.rgb, z: z, keep: layer); failed[i] = nil }
+        if any { sources[i] = BmSource(index: i, camera: cam, rgb: full.rgb, z: z, keep: layer, width: W, height: H); cams640[i] = cam640; failed[i] = nil }
         else { failed[i] = "지도에서 이 사진 시점의 제품 깊이를 얻지 못했어요" }
         lock.unlock()
         return timing
@@ -119,16 +133,20 @@ final class BmEngine {
 
     private(set) var hull: BmHull?
     var hasV4: Bool { hull != nil }
+    /// 준비된 원본 사진의 폭(가장 큰 값).
+    var sourceWidth: Int { preparedSources.map { $0.camera.width }.max() ?? BmPhoto.width }
+    var sourceHeight: Int { preparedSources.map { $0.camera.height }.max() ?? BmPhoto.height }
 
     /// 준비된 모든 사진(보정 포즈, 제품 마스크)으로 V4 외곽을 만든다. 사진 묶음(마스크)이 있어야 한다. progress(단계 0~2, 단계 안 0...1).
     func buildHull(centre: SIMD3<Float>, settings: BmHullSettings = BmHullSettings(), progress: ((Int, Double) -> Void)? = nil,
                    isCancelled: (() -> Bool)? = nil) -> BmHull.BuildTiming? {
         let srcs = preparedSources.sorted { $0.index < $1.index }
         var views: [BmHullView] = [], raw: [[UInt8]] = []
+        lock.lock(); let c640 = cams640; lock.unlock()
         for s in srcs {
             let ph = photos.photos[s.index]
-            guard ph.mask640.count == BmPhoto.width * BmPhoto.height else { continue }
-            views.append(BmHullView(index: s.index, camera: s.camera, mask: BmImageOps.dilateSquare(ph.mask640, width: BmPhoto.width, height: BmPhoto.height, radius: settings.maskDilate)))
+            guard ph.mask640.count == BmPhoto.width * BmPhoto.height, let cam = c640[s.index] else { continue }
+            views.append(BmHullView(index: s.index, camera: cam, mask: BmImageOps.dilateSquare(ph.mask640, width: BmPhoto.width, height: BmPhoto.height, radius: settings.maskDilate)))
             raw.append(ph.mask640)
         }
         guard let built = BmHull.build(gaussians: gaussians, centre: centre, views: views, rawMasks: raw, settings: settings, progress: progress, isCancelled: isCancelled) else { return nil }
@@ -136,7 +154,9 @@ final class BmEngine {
         return built.1
     }
 
-    /// 사진마다 V4 깊이: 레이어 화소 중 지도 깊이가 외곽 표면과 depthAgree 안이면 지도 깊이, 아니면 외곽 깊이(외곽이 없으면 지도 깊이). progress(0...1).
+    /// 사진마다 V4 깊이. 실제 표면은 외곽 덩어리 안이나 그 표면에만 있을 수 있으므로,
+    /// 지도 깊이가 외곽 표면보다 depthAgree 넘게 앞(카메라 쪽, 불가능한 위치)이거나 지도 깊이가 없을 때만 외곽 깊이를 쓰고, 나머지는 지도 깊이를 그대로 둔다.
+    /// (3.0 (30)은 앞뒤 모두 바꿔 오목한 면을 외곽 '뚜껑'으로 끌어당겨 흐려졌다: PC test_05 의자에서 레이어 화소 90% 교체, 내부 PSNR 23.78 → 22.44.) progress(0...1).
     func applyHullDepth(progress: ((Double) -> Void)? = nil, isCancelled: (() -> Bool)? = nil) -> Bool {
         guard let h = hull else { return false }
         let srcs = preparedSources
@@ -146,12 +166,11 @@ final class BmEngine {
             if isCancelled?() == true { return }
             let s = srcs[j]
             let zh = h.depth(camera: s.camera)
+            let sw = s.camera.width
             var z4 = [Float](repeating: 0, count: s.count)
             for k in 0..<s.count {
-                let zm = s.z0[k], hz = zh[Int(s.py[k]) * BmPhoto.width + Int(s.px[k])]
-                if zm > 0 && hz > 0 && abs(zm - hz) <= tol { z4[k] = zm }
-                else if hz > 0 { z4[k] = hz }
-                else { z4[k] = zm }
+                let zm = s.z0[k], hz = zh[Int(s.py[k]) * sw + Int(s.px[k])]
+                if hz > 0 && (zm <= 0 || zm < hz - tol) { z4[k] = hz } else { z4[k] = zm }
             }
             s.setV4(z4)
             lockP.lock(); done += 1; let d = done; lockP.unlock()

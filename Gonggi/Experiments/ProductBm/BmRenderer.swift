@@ -20,8 +20,8 @@ final class BmSource {
     }
 
     /// 전체 배열(640×480)에서 만든다. keep이 주어지면 그 화소(레이어)를, 없으면 z > 0인 화소를 담는다.
-    convenience init(index: Int, camera: GSOCamera, rgb: [UInt8], z: [Float], keep: [UInt8]? = nil, z4: [Float]? = nil) {
-        let W = BmPhoto.width, H = BmPhoto.height
+    convenience init(index: Int, camera: GSOCamera, rgb: [UInt8], z: [Float], keep: [UInt8]? = nil, z4: [Float]? = nil, width: Int = BmPhoto.width, height: Int = BmPhoto.height) {
+        let W = width, H = height
         var xs: [UInt16] = [], ys: [UInt16] = [], cc: [UInt8] = [], zz: [Float] = [], z4s: [Float] = []
         for y in 0..<H {
             for x in 0..<W {
@@ -42,9 +42,10 @@ final class BmSource {
 
     /// 시험·진단용 전체 배열(640×480×3, 없는 곳 0). 부를 때마다 새로 만든다(반복문 안에서 부르지 말 것).
     func denseRGB() -> [UInt8] {
-        var out = [UInt8](repeating: 0, count: BmPhoto.width * BmPhoto.height * 3)
+        let W = camera.width
+        var out = [UInt8](repeating: 0, count: W * camera.height * 3)
         for k in 0..<count {
-            let o = (Int(py[k]) * BmPhoto.width + Int(px[k])) * 3
+            let o = (Int(py[k]) * W + Int(px[k])) * 3
             out[o] = col[k * 3]; out[o + 1] = col[k * 3 + 1]; out[o + 2] = col[k * 3 + 2]
         }
         return out
@@ -52,8 +53,9 @@ final class BmSource {
     func denseZ() -> [Float] { dense(z0) }
     func denseZV4() -> [Float] { dense(z4) }
     private func dense(_ a: [Float]) -> [Float] {
-        var out = [Float](repeating: 0, count: BmPhoto.width * BmPhoto.height)
-        if a.count == count { for k in 0..<count { out[Int(py[k]) * BmPhoto.width + Int(px[k])] = a[k] } }
+        let W = camera.width
+        var out = [Float](repeating: 0, count: W * camera.height)
+        if a.count == count { for k in 0..<count { out[Int(py[k]) * W + Int(px[k])] = a[k] } }
         return out
     }
 }

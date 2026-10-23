@@ -24,7 +24,7 @@ final class GSOSessionViewModel: ObservableObject {
     @Published var geometryOptimization = true
     @Published var useMono = true
     /// 해상도 방식: 0 = 기존(원본 960 → 320 → 학습 160), 1 = 원본 해상도 실험(1920 보관), 2 = 원본 최대(4K 보관, 느림). 기존 방식과 저장본은 그대로다.
-    @Published var resolutionMode = 0
+    @Published var resolutionMode = 2          // 0 기존(960) · 1 원본 1920 · 2 원본 최대(4K 보관). 3.0 (31)부터 기본은 원본 최대
     @Published var showDiagnostics = true
     @Published var savedItems: [GSOStore.Item] = []
     @Published var viewingTitle: String?

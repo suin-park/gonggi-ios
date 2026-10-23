@@ -108,6 +108,9 @@ final class BmSession: ObservableObject {
     @Published private(set) var firstScreenSeconds: Double?
     @Published private(set) var openedFromCache = false
     @Published private(set) var diagnostics: [String] = []
+    /// 결과 출력 폭(화면 물리 화소, 4:3). 화면에서 setViewport로 정한다. 조작 중 미리보기는 절반.
+    @Published private(set) var outputWidth = 640
+    private var sourceStride = 1
 
     let item: GSOStore.Item
     private var engine: BmEngine?
@@ -378,7 +381,10 @@ final class BmSession: ObservableObject {
         let cb = BmCache.size(for: item)
         if cb > 0 { diag.append("저장된 준비 결과 \(cb / 1_048_576) MB (원본 재생 자료 \((fileSize(item.replayURL) ?? 0) / 1_048_576) MB와 별도)") }
         if cov.dirs.count > 0 { diag.append(String(format: "촬영 높이 %.0f°~%.0f° · 사진 사이 간격(90%%) %.1f°", cov.elevMinDeg, cov.elevMaxDeg, cov.spacingP90Deg)) }
+        sourceStride = max(1, engine.sourceWidth / BmPhoto.width)
+        if engine.preparedCount > 0 { diag.append("원본 사진 \(engine.sourceWidth)×\(engine.sourceHeight) · 화면 출력 \(outputWidth)×\(outputWidth * 3 / 4)(조작 중 절반)") }
         diagnostics = diag
+        log.setMeta("sourceSize", "\(engine.sourceWidth)x\(engine.sourceHeight)")
         applyLimit()
         setStage(max(0, plan.weights.count - 1), fromCache ? "첫 화면을 그리는 중" : "첫 화면을 그리는 중", 0.5)
         // 첫 화면이 실제로 그려진 뒤에 결과 화면으로 바꾼다.
@@ -400,6 +406,15 @@ final class BmSession: ObservableObject {
     }
 
     func cancelLoading() { cancel.cancel() }
+
+    /// 뷰어 칸의 물리 화소 폭으로 출력 해상도를 맞춘다(8의 배수, 320~2048).
+    func setViewport(widthPx: Int) {
+        let w = max(320, min(2048, (widthPx / 8) * 8))
+        guard w != outputWidth else { return }
+        outputWidth = w
+        log.setMeta("outputSize", "\(w)x\(w * 3 / 4)")
+        requestRender(preview: false)
+    }
 
     func retry() { if case .failed = phase { phase = .idle; open() } }
 
@@ -497,16 +512,18 @@ final class BmSession: ObservableObject {
     private func startRender(preview: Bool, completion: (() -> Void)? = nil) {
         guard let engine = engine, let space = viewSpace else { completion?(); return }
         renderBusy = true; renderDirty = false
-        let orbit = self.orbit, mode = self.mode, high = self.highQuality, log = self.log
+        let orbit = self.orbit, mode = self.mode, high = self.highQuality, log = self.log, outW = self.outputWidth, sst = self.sourceStride
         updateCoverage(camera: space.camera(orbit, width: 640, height: 480))
         renderQueue.async { [weak self] in
-            let W = preview ? 320 : 640, H = preview ? 240 : 480
+            let W = preview ? max(160, (outW / 2 / 8) * 8) : outW
+            let H = W * 3 / 4
             let cam = space.camera(orbit, width: W, height: H)
             var frame: BmFrame?
             var kind = ""
             func bm(_ v: BmVariant) -> BmFrame? {
                 var p = BmRenderParams(); p.width = W; p.height = H
-                if preview { p.ss = 1; p.stride = 2 } else { p.ss = high ? 3 : 2; p.stride = 1 }
+                // 출력이 화면 해상도라 표준은 내부 배율 1, 고품질은 2. 미리보기는 원본을 (원본 폭 / 640) 간격으로만 쓴다.
+                if preview { p.ss = 1; p.stride = sst } else { p.ss = high ? 2 : 1; p.stride = 1 }
                 return engine.renderBm(target: cam, params: p, variant: v)
             }
             let q = preview ? "preview" : (high ? "high" : "standard")
@@ -573,7 +590,7 @@ final class BmSession: ObservableObject {
     func flushLog() {
         log.setMeta("quality", highQuality ? "high(SS3)" : "standard(SS2)")
         log.setMeta("mode", mode.rawValue)
-        log.setMeta("renderConfig", "preview 320x240 SS1 stride2 / standard 640x480 SS2 / high 640x480 SS3; K=5, p0=3, edge layer tol 3 px; V4 hull " + hullSettings.fingerprint)
+        log.setMeta("renderConfig", "output \(outputWidth)x\(outputWidth * 3 / 4) (screen px); preview half SS1 stride \(sourceStride) / standard SS1 / high SS2; sources up to \(BmEngine.maxSourceWidth) px; K=5, p0=3, edge layer tol 3 px@640; V4 hull front-only depth " + hullSettings.fingerprint)
         log.event("flush", ["prepared": engine?.preparedCount ?? 0])
         log.flush(to: BmStore.logURL(for: item))
         shareURLs = [BmStore.logURL(for: item)]

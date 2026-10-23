@@ -231,7 +231,21 @@ jobs:
               -only-testing:GonggiTests/ReanchorAfterStallTests
               -only-testing:GonggiTests/AdaptiveKeyframeTF62Tests
               -only-testing:GonggiTests/CaptureDataFoundationTests
+              # 제품 Bm 보기(V4·캐시·고해상도) + 제품 마스크
+              -only-testing:GonggiTests/GSOptBmGeometryTests
+              -only-testing:GonggiTests/GSOptBmImageOpsTests
+              -only-testing:GonggiTests/GSOptBmRenderTests
+              -only-testing:GonggiTests/GSOptBmEngineTests
+              -only-testing:GonggiTests/GSOptBmStoreTests
+              -only-testing:GonggiTests/GSOptBmSessionTests
+              -only-testing:GonggiTests/GSOptBmV4Tests
+              -only-testing:GonggiTests/GSOptBmHiResTests
+              -only-testing:GonggiTests/GSOptProductMaskTests
             )
+            # 계산이 큰 Bm 시험을 디버그(최적화 없음)로 돌리면 수십 분 걸린다. targeted는 최적화 빌드로 시험한다(아카이브는 별도 Release).
+            OPT=(SWIFT_OPTIMIZATION_LEVEL=-O)
+          else
+            OPT=()
           fi
           set +e
           xcodebuild test \
@@ -240,6 +254,7 @@ jobs:
             -configuration Debug \
             -destination "platform=iOS Simulator,id=${UDID}" \
             "${ONLY[@]}" \
+            ${OPT[@]+"${OPT[@]}"} \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild-pre-archive-test.log
           STATUS=${PIPESTATUS[0]}

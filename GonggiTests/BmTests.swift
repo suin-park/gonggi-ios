@@ -56,14 +56,14 @@ enum BmTest {
     }
 
     /// 한 평면(깊이 z) 원본: 색 함수와 깊이 함수는 (x, y) 화소 기준.
-    static func source(index: Int, x: Float, color: (Int, Int) -> (UInt8, UInt8, UInt8), z: (Int, Int) -> Float) -> BmSource {
+    static func source(index: Int, x: Float, color: (Int, Int) -> (UInt8, UInt8, UInt8), z: (Int, Int) -> Float, keepAll: Bool = false) -> BmSource {
         var rgb = [UInt8](repeating: 0, count: 640 * 480 * 3), zz = [Float](repeating: 0, count: 640 * 480)
         for y in 0..<480 { for xx in 0..<640 {
             let c = color(xx, y); let o = (y * 640 + xx) * 3
             rgb[o] = c.0; rgb[o + 1] = c.1; rgb[o + 2] = c.2
             zz[y * 640 + xx] = z(xx, y)
         } }
-        return BmSource(index: index, camera: GSOCamera(pose: pose(x: x), k: K), rgb: rgb, z: zz)
+        return BmSource(index: index, camera: GSOCamera(pose: pose(x: x), k: K), rgb: rgb, z: zz, keep: keepAll ? [UInt8](repeating: 1, count: 640 * 480) : nil)
     }
 }
 
@@ -491,6 +491,10 @@ final class GSOptBmSessionTests: XCTestCase {
         XCTAssertNotNil(s1.image)
         XCTAssertNotNil(s1.firstScreenSeconds)
         XCTAssertFalse(s1.openedFromCache)
+        s1.setViewport(widthPx: 803)
+        XCTAssertEqual(s1.outputWidth, 800, "출력 폭은 화면 물리 화소(8의 배수)")
+        for _ in 0..<300 { if s1.image?.width == 800 { break }; try? await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertEqual(s1.image?.width, 800); XCTAssertEqual(s1.image?.height, 600)
         XCTAssertTrue(FileManager.default.fileExists(atPath: BmCache.directory(for: item).appendingPathComponent("manifest.json").path), "준비 결과 캐시가 확정되지 않음")
         // 둘러보기 입력 → 상태 저장
         s1.rotate(dx: 40, dy: 10); s1.pinch(scale: 1.5); s1.setDistance(0.8)
@@ -812,5 +816,83 @@ final class GSOptBmV4Tests: XCTestCase {
         for y in 10..<40 { for x in 20..<45 { labels[y * 100 + x] = GSOProductMask.product } }
         let m = GSOProductMask(width: 100, height: 50, labels: labels, trusted: true, iou: 1, areaFraction: 0.15, targetID: 1, note: "")
         XCTAssertEqual(m.boxFraction, 0.6, accuracy: 1e-5)
+    }
+}
+
+
+// MARK: 원본 고해상도 · V4 깊이(앞쪽만 교정) · 화면 해상도 출력
+
+final class GSOptBmHiResTests: XCTestCase {
+    /// 1280×960 원본 사진(재생 기록과 같은 경로)과 320×240 제품 마스크.
+    private func hiInput(id: Int, g: GSOGaussians, x: Float) -> (SV2Input, GSOProductMask) {
+        let K2 = BmTest.K.scaled(toWidth: 1280, height: 960)
+        let st = BmTest.render(g, pose: BmTest.pose(x: x), k: K2)
+        var rgb = [UInt8](repeating: 0, count: 1280 * 960 * 3)
+        for i in 0..<(1280 * 960) { for c in 0..<3 { rgb[i * 3 + c] = BmImageOps.byte(st.image[i * 3 + c]) } }
+        var labels = [UInt8](repeating: GSOProductMask.background, count: 320 * 240)
+        for y in 0..<240 { for x in 0..<320 { if 1 - st.transmittance[(4 * y) * 1280 + 4 * x] > 0.5 { labels[y * 320 + x] = GSOProductMask.product } } }
+        let inp = SV2Input(id: id, segment: 0, timestamp: Double(id) * 0.1, captureHost: Double(id) * 0.1, pose: BmTest.pose(x: x), kFull: K2, rgbHi: rgb, hiWidth: 1280, hiHeight: 960,
+                           tracking: "normal", trackingNormal: true, exposureDuration: nil, exposureOffset: nil)
+        return (inp, GSOProductMask(width: 320, height: 240, labels: labels, trusted: true, iou: 1, areaFraction: 0.5, targetID: 1, note: "test"))
+    }
+
+    func testSourcesUseTheFullRecordedResolutionAndReproduceAPhoto() {
+        let g = BmTest.scene()
+        let xs: [Float] = [-0.05, -0.03, -0.01, 0.01, 0.03, 0.05]
+        var ins: [SV2Input] = [], ms: [GSOProductMask?] = []
+        for (i, x) in xs.enumerated() { let (a, m) = hiInput(id: i + 1, g: g, x: x); ins.append(a); ms.append(m) }
+        let set = BmPhotoSet(source: GSOProductArraySource(inputs: ins, masks: ms))
+        XCTAssertEqual(set.photos[0].rgb.count, 640 * 480 * 3, "메모리에는 640 사진만")
+        XCTAssertEqual(set.photos[0].hiWidth, 1280)
+        var cached: [Int: [Double]] = [:]
+        for i in 0..<xs.count { cached[i] = [Double](repeating: 0, count: 6) }
+        let e = BmEngine(gaussians: g, photos: set, cachedDeltas: cached)
+        for i in 0..<xs.count { e.prepare(i) }
+        XCTAssertEqual(e.preparedCount, xs.count)
+        XCTAssertEqual(e.sourceWidth, 1280, "원본 해상도로 준비해야 한다")
+        let s = e.preparedSources.first { $0.index == 2 }!
+        XCTAssertEqual(s.camera.width, 1280); XCTAssertEqual(s.camera.fx, 1040, accuracy: 0.5)
+        // 화면 해상도(960×720) 출력: 같은 시점 사진과 비교
+        let tK = BmTest.K.scaled(toWidth: 960, height: 720)
+        var p = BmRenderParams(); p.width = 960; p.height = 720; p.ss = 1
+        guard let f = e.renderBm(target: GSOCamera(pose: BmTest.pose(x: -0.01), k: tK), params: p) else { return XCTFail("렌더 실패") }
+        let ref = BmTest.render(g, pose: BmTest.pose(x: -0.01), k: tK)
+        var se = 0.0, n = 0
+        for y in 120..<600 { for x in 160..<800 {
+            let i = y * 960 + x
+            if 1 - ref.transmittance[i] < 0.99 || f.rgba[i * 4 + 3] < 250 { continue }
+            for c in 0..<3 { let d = Double(f.rgba[i * 4 + c]) / 255 - Double(min(max(ref.image[i * 3 + c], 0), 1)); se += d * d }
+            n += 3
+        } }
+        let psnr = -10 * log10(max(se / Double(max(1, n)), 1e-12))
+        GSOTest.log("bmHiRes", ["psnr": psnr, "coverage": Double(f.coverage), "ms": f.totalMs])
+        XCTAssertGreaterThan(n, 100_000)
+        XCTAssertGreaterThan(psnr, 22, "고해상도 원본으로 같은 시점 사진을 재현하지 못함")
+    }
+
+    func testV4DepthOnlyPullsMapDepthThatIsInFrontOfTheHull() {
+        // 외곽 표면: z = 1.0 평면(카메라 정면). 지도 깊이: 왼쪽 1.2(외곽 안쪽, 오목한 면처럼 정상), 가운데 0.8(외곽보다 앞: 불가능), 오른쪽 없음.
+        var pts: [SIMD3<Float>] = []
+        for iy in -60...60 { for ix in -150...150 { pts.append(SIMD3<Float>(Float(ix) * 0.004, Float(iy) * 0.004, 1.0)) } }
+        let hull = BmHull(settings: BmHullSettings(), surface: pts, dropped: [], usedViews: 10, occupied: 100)
+        let src = BmTest.source(index: 0, x: 0, color: { _, _ in (100, 100, 100) }, z: { x, _ in x < 200 ? 1.2 : (x < 400 ? 0.8 : 0) }, keepAll: true)
+        let e = BmEngine(gaussians: BmTest.scene(), sources: [src], hull: hull, deltas: [:])
+        XCTAssertTrue(e.applyHullDepth())
+        let z4 = src.denseZV4()
+        let row = 240 * 640
+        XCTAssertEqual(z4[row + 100], 1.2, accuracy: 1e-4, "외곽 안쪽(오목한 면) 지도 깊이는 그대로")
+        XCTAssertEqual(z4[row + 300], 1.0, accuracy: 0.01, "외곽보다 앞의 지도 깊이는 외곽 표면으로")
+        XCTAssertEqual(z4[row + 500], 1.0, accuracy: 0.01, "지도 깊이가 없으면 외곽 깊이")
+    }
+
+    func testEllipseDilationMatchesTheRadius3ShapeAndScales() {
+        var m = [UInt8](repeating: 0, count: 61 * 61); m[30 * 61 + 30] = 1
+        XCTAssertEqual(BmImageOps.dilateEllipse(m, width: 61, height: 61, radius: 3), BmImageOps.dilateEllipse3(m, width: 61, height: 61))
+        let d9 = BmImageOps.dilateEllipse(m, width: 61, height: 61, radius: 9)
+        XCTAssertEqual(d9[30 * 61 + 39], 1); XCTAssertEqual(d9[30 * 61 + 40], 0)
+        XCTAssertEqual(d9[39 * 61 + 30], 1, "cv2 타원처럼 위아래 끝 행은 가운데 한 칸"); XCTAssertEqual(d9[40 * 61 + 30], 0); XCTAssertEqual(d9[39 * 61 + 31], 0)
+        XCTAssertEqual(d9[(30 + 6) * 61 + 30 + 6], 1); XCTAssertEqual(d9[(30 + 7) * 61 + 30 + 7], 0, "원형(네모가 아님)")
+        let up = BmImageOps.resizeNearest([1, 2, 3, 4], width: 2, height: 2, toWidth: 4, toHeight: 4)
+        XCTAssertEqual(up, [1, 1, 2, 2, 1, 1, 2, 2, 3, 3, 4, 4, 3, 3, 4, 4])
     }
 }

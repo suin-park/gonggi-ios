@@ -6,7 +6,7 @@ import simd
 /// 원본 사진(.kmoreplay)은 다시 열 때 읽지 않는다. 캐시는 임시 폴더에 다 쓴 뒤 이름을 바꿔 확정하므로, 취소·오류로 남은 조각은 완성본으로 읽히지 않는다.
 enum BmCache {
     /// 처리 방식이 바뀔 때만 올린다(앱 업데이트만으로는 다시 계산하지 않는다).
-    static let processingVersion = "bm-v4-1"
+    static let processingVersion = "bm-v4-2"           // v4-2: V4 깊이는 앞쪽만 교정, 원본 사진 최대 1920
     static let formatVersion = 1
 
     struct InputFingerprint: Codable, Equatable {
@@ -47,7 +47,7 @@ enum BmCache {
         return item.url.deletingLastPathComponent().appendingPathComponent(base + ".bmcache", isDirectory: true)
     }
 
-    static func settingsKey(_ s: BmHullSettings) -> String { "pose320-lm8 depth-a0.5-d7 layer-gf4-x3-s4-e3 | " + s.fingerprint }
+    static func settingsKey(_ s: BmHullSettings) -> String { "pose320-lm8 depth-a0.5-d7 layer-gf4-x3-s4-e3 src\(BmEngine.maxSourceWidth) | " + s.fingerprint }
 
     static func fingerprint(for item: GSOStore.Item, gaussians: Int) -> InputFingerprint? {
         let fm = FileManager.default

@@ -95,6 +95,20 @@ struct GSOConfig: Equatable {
         return c
     }
 
+    /// 실시간 제품 3DGS 원본 최대 해상도(3.0 (31)부터 라이브 기본): 제품 기본 설정 + 원본 해상도 모드(키프레임 보관·재생 기록 폭을 센서 최대 4K까지,
+    /// 학습 240 폭을 원본에서 직접, 전체 화면 고해상도 정밀화). 재현·비교 도구(ProductStageTrace 등)는 그대로 productDefault()를 쓴다.
+    /// 메모리(4K 보관 40장 ≈ 1.3 GB)·발열·저장 용량이 늘어난다. A15에서 측정하지 않았다.
+    static func productNative(hiWidthMax: Int = 3840, trainWidth: Int = 240) -> GSOConfig {
+        var c = productDefault()
+        var n = GSONativeRes()
+        n.hiWidthMax = hiWidthMax; n.trainWidth = trainWidth
+        n.hiCacheCount = hiWidthMax >= 3840 ? 40 : 100
+        c.native = n
+        c.trainWidth = trainWidth
+        c.hiCacheCount = n.hiCacheCount
+        return c
+    }
+
     /// 텍스처 스플랫 레이어(새 방식). 같은 ARKit·마스크·깊이 입력을 쓰고 최적화·분할을 하지 않는다.
     static func productTexture() -> GSOConfig {
         var c = productDefault()

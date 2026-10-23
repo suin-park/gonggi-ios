@@ -125,6 +125,7 @@ jobs:
             -only-testing:GonggiTests/GSOptBmSessionTests \
             -only-testing:GonggiTests/GSOptBmStepExportTests \
             -only-testing:GonggiTests/GSOptBmV4Tests \
+            -only-testing:GonggiTests/GSOptBmHiResTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee xcodebuild-gso.log
           STATUS=${PIPESTATUS[0]}

@@ -203,6 +203,71 @@ enum BmImageOps {
     }
 
     /// 반경 3 타원 구조 요소(OpenCV getStructuringElement(MORPH_ELLIPSE, 7×7): 줄 폭 1, 5, 7, 7, 7, 5, 1) 팽창.
+    /// 반경 r 타원(cv2 MORPH_ELLIPSE (2r+1)×(2r+1)과 같은 행별 반폭) 팽창. r = 3이면 dilateEllipse3과 같다.
+    /// 행마다 가장 가까운 1까지의 가로 거리를 먼저 구해 화소당 (2r+1)번만 본다(고해상도에서 r이 커도 빠르다).
+    static func dilateEllipse(_ m: [UInt8], width w: Int, height h: Int, radius r: Int) -> [UInt8] {
+        if r <= 0 { return m }
+        if r == 3 { return dilateEllipse3(m, width: w, height: h) }
+        var half = [Int](repeating: 0, count: 2 * r + 1)
+        for dy in -r...r {
+            if abs(dy) == r { half[dy + r] = 0; continue }
+            let v = Double(r) * (1 - Double(dy * dy) / Double(r * r)).squareRoot()
+            half[dy + r] = Int(v.rounded())
+        }
+        let big = w + h + 1
+        var dist = [Int32](repeating: Int32(big), count: w * h)
+        for y in 0..<h {
+            var last = -big
+            for x in 0..<w { if m[y * w + x] != 0 { last = x }; dist[y * w + x] = Int32(min(big, x - last)) }
+            last = 2 * big
+            for x in stride(from: w - 1, through: 0, by: -1) { if m[y * w + x] != 0 { last = x }; dist[y * w + x] = min(dist[y * w + x], Int32(min(big, last - x))) }
+        }
+        var out = [UInt8](repeating: 0, count: w * h)
+        out.withUnsafeMutableBufferPointer { op in
+            dist.withUnsafeBufferPointer { dp in
+                let ob = op.baseAddress!, db = dp.baseAddress!
+                DispatchQueue.concurrentPerform(iterations: h) { y in
+                    for x in 0..<w {
+                        for dy in -r...r {
+                            let yy = y + dy
+                            if yy < 0 || yy >= h { continue }
+                            if Int(db[yy * w + x]) <= half[dy + r] { ob[y * w + x] = 1; break }
+                        }
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /// 최근접 크기 바꾸기(라벨·마스크, 화소 중심 규약).
+    static func resizeNearest(_ m: [UInt8], width w: Int, height h: Int, toWidth dw: Int, toHeight dh: Int) -> [UInt8] {
+        if w == dw && h == dh { return m }
+        var out = [UInt8](repeating: 0, count: dw * dh)
+        for y in 0..<dh {
+            let sy = min(h - 1, Int((Float(y) + 0.5) * Float(h) / Float(dh)))
+            for x in 0..<dw {
+                let sx = min(w - 1, Int((Float(x) + 0.5) * Float(w) / Float(dw)))
+                out[y * dw + x] = m[sy * w + sx]
+            }
+        }
+        return out
+    }
+
+    /// RGB → 회색(cv2 RGB2GRAY 가중).
+    static func gray(_ rgb: [UInt8], count n: Int) -> [UInt8] {
+        var g = [UInt8](repeating: 0, count: n)
+        rgb.withUnsafeBufferPointer { s in
+            for p in 0..<n {
+                var v: Float = 0.299 * Float(s[p * 3])
+                v += 0.587 * Float(s[p * 3 + 1])
+                v += 0.114 * Float(s[p * 3 + 2])
+                g[p] = UInt8(min(Float(255), max(Float(0), v.rounded())))
+            }
+        }
+        return g
+    }
+
     static func dilateEllipse3(_ m: [UInt8], width w: Int, height h: Int) -> [UInt8] {
         let halfWidths = [0, 2, 3, 3, 3, 2, 0]      // dy = -3...3
         var out = [UInt8](repeating: 0, count: w * h)
@@ -248,7 +313,7 @@ enum BmImageOps {
     /// 가이드 필터 제품 매트(bm_edge.matte). 입력: 960×720 회색(0...255), 320×240 제품 마스크(1 = 제품). 출력: 640×480 매트(0...1).
     /// 순서: 마스크를 쌍선형으로 확대 → 가이드 필터(r=4, eps=1e-4) → 구멍 메운 이진 마스크의 7×7 침식 안쪽은 1, 7×7 팽창 바깥은 0 → 부드러운 단계(0.3~0.7) → 면적 평균으로 640×480.
     static func matte(gray: [UInt8], grayWidth gw: Int, grayHeight gh: Int, mask: [UInt8], maskWidth mw: Int, maskHeight mh: Int,
-                      outWidth ow: Int = 640, outHeight oh: Int = 480, r: Int = 4, eps: Float = 1e-4) -> [Float] {
+                      outWidth ow: Int = 640, outHeight oh: Int = 480, r: Int = 4, eps: Float = 1e-4, morph: Int = 3) -> [Float] {
         let n = gw * gh
         let m = resizeBilinear(mask.map { $0 == 1 ? 1 : 0 }, width: mw, height: mh, toWidth: gw, toHeight: gh)
         var guide = [Float](repeating: 0, count: n)
@@ -266,7 +331,7 @@ enum BmImageOps {
         var hd = [UInt8](repeating: 0, count: n)
         for i in 0..<n { hd[i] = m[i] > 0.5 ? 1 : 0 }
         hd = fillHoles(hd, width: gw, height: gh)
-        let er = erodeSquare(hd, width: gw, height: gh, radius: 3), di = dilateSquare(hd, width: gw, height: gh, radius: 3)
+        let er = erodeSquare(hd, width: gw, height: gh, radius: morph), di = dilateSquare(hd, width: gw, height: gh, radius: morph)
         var q = [Float](repeating: 0, count: n)
         for i in 0..<n {
             var v: Float = ba[i] * guide[i] + bb[i]
@@ -284,17 +349,20 @@ enum BmImageOps {
 
     /// 사진별 가장자리 레이어(e2e_device.layer): 매트 → ×3 확대 → σ4 블러 → 0.5 임계 → 구멍 메움 → 면적 평균 → 0.5 임계 → 반경 3 타원 팽창(여유 3 px).
     /// 3배 확대는 PC가 바이큐빅이고 여기서는 쌍선형이다(바로 뒤에 σ4 블러가 있어 차이가 매우 작다).
-    static func layerMask(matte: [Float], width w: Int, height h: Int, scale s: Int = 3, blurSigma: Float = 4.0) -> [UInt8] {
+    /// 고해상도 원본(폭 1920 등)은 scale = 1920 / 폭(1이면 확대 없음), dilateRadius = 3 × 폭 / 640으로 부른다(640 기준과 같은 물리 크기).
+    static func layerMask(matte: [Float], width w: Int, height h: Int, scale s: Int = 3, blurSigma: Float = 4.0, dilateRadius: Int = 3) -> [UInt8] {
         let bw = w * s, bh = h * s
-        var big = resizeBilinear(matte, width: w, height: h, toWidth: bw, toHeight: bh)
+        var big = s == 1 ? matte : resizeBilinear(matte, width: w, height: h, toWidth: bw, toHeight: bh)
         big = gaussian(big, width: bw, height: bh, sigma: blurSigma)
         var bin = [UInt8](repeating: 0, count: bw * bh)
         for i in 0..<(bw * bh) { bin[i] = big[i] > 0.5 ? 1 : 0 }
         bin = fillHoles(bin, width: bw, height: bh)
-        let f = resizeArea(bin.map { Float($0) }, width: bw, height: bh, toWidth: w, toHeight: h)
         var m = [UInt8](repeating: 0, count: w * h)
-        for i in 0..<(w * h) { m[i] = f[i] > 0.5 ? 1 : 0 }
-        return dilateEllipse3(m, width: w, height: h)
+        if s == 1 { m = bin } else {
+            let f = resizeArea(bin.map { Float($0) }, width: bw, height: bh, toWidth: w, toHeight: h)
+            for i in 0..<(w * h) { m[i] = f[i] > 0.5 ? 1 : 0 }
+        }
+        return dilateEllipse(m, width: w, height: h, radius: dilateRadius)
     }
 
     // MARK: 출력 윤곽 정리

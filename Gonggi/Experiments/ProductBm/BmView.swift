@@ -87,6 +87,7 @@ struct BmHomeView: View {
 struct BmViewerView: View {
     @StateObject private var session: BmSession
     @State private var showInfo = false
+    @Environment(\.displayScale) private var displayScale
 
     init(item: GSOStore.Item) { _session = StateObject(wrappedValue: BmSession(item: item)) }
 
@@ -167,7 +168,12 @@ struct BmViewerView: View {
         }
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .background(Color.black)
+        .background(GeometryReader { g in
+            // 출력 해상도 = 이 칸의 물리 화소 폭(화면에서 늘이지 않는다).
+            Color.black
+                .onAppear { session.setViewport(widthPx: Int(g.size.width * displayScale)) }
+                .onChange(of: g.size.width) { _, w in session.setViewport(widthPx: Int(w * displayScale)) }
+        })
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
