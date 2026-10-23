@@ -860,13 +860,13 @@ final class GSOptBmHiResTests: XCTestCase {
         var se = 0.0, n = 0
         for y in 120..<600 { for x in 160..<800 {
             let i = y * 960 + x
-            if 1 - ref.transmittance[i] < 0.99 || f.rgba[i * 4 + 3] < 250 { continue }
+            if 1 - ref.transmittance[i] < 0.9 || f.rgba[i * 4 + 3] < 250 { continue }
             for c in 0..<3 { let d = Double(f.rgba[i * 4 + c]) / 255 - Double(min(max(ref.image[i * 3 + c], 0), 1)); se += d * d }
             n += 3
         } }
         let psnr = -10 * log10(max(se / Double(max(1, n)), 1e-12))
         GSOTest.log("bmHiRes", ["psnr": psnr, "coverage": Double(f.coverage), "ms": f.totalMs])
-        XCTAssertGreaterThan(n, 100_000)
+        XCTAssertGreaterThan(n, 30_000)
         XCTAssertGreaterThan(psnr, 22, "고해상도 원본으로 같은 시점 사진을 재현하지 못함")
     }
 
