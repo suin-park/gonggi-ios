@@ -7,7 +7,7 @@ struct ExperimentHomeView: View {
     let onClose: () -> Void
 
     private enum Route: Hashable {
-        case realtime, surfaceV2, gaussianOpt, productGS, productBm, sensor, depth, coexist, results, guide
+        case realtime, surfaceV2, gaussianOpt, productGS, productBm, smoothProduct, smoothSpace, sensor, depth, coexist, results, guide
     }
 
     @State private var path: [Route] = []
@@ -29,9 +29,13 @@ struct ExperimentHomeView: View {
                         RecordChoiceRow(choice: .init(title: "실시간 제품 3DGS (기기 내)", line: "고정된 제품을 휴대폰으로 비추며 가우시안을 만들고, 다른 시점에서 비출수록 디테일이 좋아져요. 서버 없음", icon: "cube")) { path.append(.productGS) }
                         divider
                         RecordChoiceRow(choice: .init(title: "제품 Bm 보기 (저장한 결과)", line: "저장한 제품 결과의 사진을 섞어 보는 Bm과 3DGS를 같은 카메라로 돌려 보며 비교해요. 서버 없음", icon: "photo.stack")) { path.append(.productBm) }
+                        divider
+                        RecordChoiceRow(choice: .init(title: "매끈한 표면 만들기 (저장한 제품)", line: "촬영 뒤 이 기기에서 털 뭉침 없는 매끈한 표면 3DGS를 만들고 걸린 시간을 기록해요. 서버 없음", icon: "circle.hexagongrid")) { path.append(.smoothProduct) }
                     }
                     RecordSection(title: "실시간 공간 생성") {
                         RecordChoiceRow(choice: .init(title: "가우시안 최적화 (기기 내)", line: "촬영 중 기기에서 가우시안을 실제로 최적화해요. 서버 없음", icon: "sparkles")) { path.append(.gaussianOpt) }
+                        divider
+                        RecordChoiceRow(choice: .init(title: "매끈한 표면 만들기 (저장한 공간)", line: "가우시안 최적화로 저장한 공간을 촬영 뒤 매끈한 표면 3DGS로 다시 만들고 걸린 시간을 기록해요. 서버 없음", icon: "circle.hexagongrid")) { path.append(.smoothSpace) }
                         divider
                         RecordChoiceRow(choice: .init(title: "실시간 공간 생성 V2", line: "서버·학습·모델 없이 표면을 만들고 원본 영상을 입혀 저장해요", icon: "square.3.layers.3d")) { path.append(.surfaceV2) }
                         divider
@@ -69,6 +73,8 @@ struct ExperimentHomeView: View {
                 case .gaussianOpt: GaussianOptView()
                 case .productGS: ProductGSView()
                 case .productBm: BmHomeView()
+                case .smoothProduct: SGSHomeView(mode: .product)
+                case .smoothSpace: SGSHomeView(mode: .space)
                 case .sensor: ExperimentSensorView()
                 case .depth: ExperimentDepthView()
                 case .coexist: ExperimentCoexistView()

@@ -241,6 +241,9 @@ jobs:
               -only-testing:GonggiTests/GSOptBmV4Tests
               -only-testing:GonggiTests/GSOptBmHiResTests
               -only-testing:GonggiTests/GSOptProductMaskTests
+              # 매끈한 표면 3DGS(촬영 후 기기 내 처리)
+              -only-testing:GonggiTests/SmoothGSNormalTermTests
+              -only-testing:GonggiTests/SmoothGSPartsTests
             )
             # 계산이 큰 Bm 시험을 디버그(최적화 없음)로 돌리면 수십 분 걸린다. targeted는 최적화 빌드로 시험한다(아카이브는 별도 Release).
             OPT=(SWIFT_OPTIMIZATION_LEVEL=-O)
