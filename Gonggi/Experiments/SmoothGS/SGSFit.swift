@@ -218,7 +218,9 @@ final class SGSSurfelFit {
             for r in 0..<gr.count {
                 let i = Int(gr.orig[r])
                 gr.mu[r] += g2.mu[r]; gr.logScale[r] += g2.logScale[r]; gr.quat[r] += g2.quat[r]; gr.opacity[r] += g2.opacity[r]
-                let gnw = rT * (g2.color[r] * sgn[r])
+                let sr: Float = sgn[r]
+                let gcs: SIMD3<Float> = g2.color[r] * sr
+                let gnw: SIMD3<Float> = rT * gcs
                 gr.quat[r] += SGSMath.dNormalDQuat(model.g.quat[i], gnw)
             }
         }
