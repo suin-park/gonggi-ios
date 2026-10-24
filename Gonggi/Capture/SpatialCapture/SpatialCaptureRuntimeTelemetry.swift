@@ -75,7 +75,7 @@ final class SpatialCaptureRuntimeTelemetry: @unchecked Sendable {
         switch reason {
         case "blur":
             blurRejectedCount += 1
-        case "motion_too_fast", "angular_too_fast":
+        case "motion_too_fast", "angular_too_fast", "motion_blur":
             motionRejectedCount += 1
         case "translation_too_small", "idle_near_duplicate":
             translationRejectedCount += 1

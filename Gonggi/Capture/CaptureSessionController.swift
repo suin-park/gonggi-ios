@@ -267,6 +267,12 @@ final class CaptureSessionController {
         }
 
         let exposureScore = Double(min(1, lastSample?.brightness ?? 0.85))
+        let motionBlurPx = MotionBlurEstimate.pixels(
+            angularVelocity: lastSample?.angularVelocityRadPerSec,
+            translationSpeed: lastSample?.translationSpeedMps,
+            exposureSec: frame.camera.exposureDuration,
+            fx: Double(frame.camera.intrinsics.columns.0.x)
+        )
         let persistPeek = frameContinuityTelemetry.peekPreviousFramePersistence(frame: frame)
 
         var isKeyframe = false
@@ -337,6 +343,7 @@ final class CaptureSessionController {
                         sharpnessState: sharpSnap.state,
                         motionSpeed: SpatialCaptureConfig.selectorMotionInput(lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed),
                         angularVelocity: SpatialCaptureConfig.selectorMotionInput(lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity),
+                        motionBlurPx: MotionBlurEstimate.selectorInput(motionBlurPx),
                         lowTextureScore: lowTexture,
                         exposureScore: exposureScore,
                         cellOverlapState: overlapAnalyzer.lastState,
@@ -410,6 +417,7 @@ final class CaptureSessionController {
                 sharpnessState: sharpSnap.state,
                 motionSpeed: SpatialCaptureConfig.selectorMotionInput(lastSample?.translationSpeedMps ?? telemetry.avgTranslationSpeed),
                 angularVelocity: SpatialCaptureConfig.selectorMotionInput(lastSample?.angularVelocityRadPerSec ?? telemetry.avgAngularVelocity),
+                motionBlurPx: MotionBlurEstimate.selectorInput(motionBlurPx),
                 lowTextureScore: lowTexture,
                 exposureScore: exposureScore,
                 cellOverlapState: overlapAnalyzer.lastState,
@@ -625,7 +633,15 @@ final class CaptureSessionController {
             acceptKindRaw: keyDecision.acceptKind.rawValue,
             jpegURL: jpegURL,
             debugPrincipalPointJPEGURL: debugURL,
-            optionalDepthRelativePath: nil
+            optionalDepthRelativePath: nil,
+            exposureDurationSec: frame.camera.exposureDuration > 0 ? frame.camera.exposureDuration : nil,
+            motionBlurPx: MotionBlurEstimate.pixels(
+                angularVelocity: lastSample?.angularVelocityRadPerSec,
+                translationSpeed: lastSample?.translationSpeedMps,
+                exposureSec: frame.camera.exposureDuration,
+                fx: Double(frame.camera.intrinsics.columns.0.x)
+            ),
+            laplacianVarianceHalfRes: MotionBlurEstimate.keyframeLaplacianVariance(pixelBuffer: ownedBuffer)
         )
 
         let enqueued = jpegEncodeQueue.tryEnqueue(
@@ -700,7 +716,10 @@ final class CaptureSessionController {
                     overlapState: snap.overlapState,
                     trackingState: snap.trackingState,
                     lowTextureScore: snap.lowTextureScore,
-                    acceptReason: snap.acceptReason
+                    acceptReason: snap.acceptReason,
+                    exposureDurationSec: snap.exposureDurationSec,
+                    motionBlurPx: snap.motionBlurPx,
+                    laplacianVarianceHalfRes: snap.laplacianVarianceHalfRes
                 ),
                 optionalDepthRelativePath: depthPath
             )
@@ -2444,6 +2463,21 @@ final class CaptureSessionController {
 
     /// Guide v2 stage 1 (observe-only): plane anchors (~1 s) and feature points (every 3rd frame)
     /// feed the surface coverage model off the AR callback thread.
+    private static func planeClassificationLabel(_ anchor: ARPlaneAnchor) -> String? {
+        guard ARPlaneAnchor.isClassificationSupported else { return nil }
+        switch anchor.classification {
+        case .floor: return "floor"
+        case .wall: return "wall"
+        case .ceiling: return "ceiling"
+        case .table: return "table"
+        case .seat: return "seat"
+        case .window: return "window"
+        case .door: return "door"
+        case .none(_): return nil
+        @unknown default: return nil
+        }
+    }
+
     private func feedSurfaceCoverage(frame: ARFrame) {
         surfaceFrameCounter &+= 1
         guard surfaceFrameCounter % 3 == 0, frame.camera.trackingState == .normal else { return }
@@ -2462,7 +2496,8 @@ final class CaptureSessionController {
                     width: anchor.planeExtent.width,
                     height: anchor.planeExtent.height,
                     rotationOnYAxis: anchor.planeExtent.rotationOnYAxis,
-                    isVertical: anchor.alignment == .vertical
+                    isVertical: anchor.alignment == .vertical,
+                    classification: Self.planeClassificationLabel(anchor)
                 )
             }
         }

@@ -39,4 +39,10 @@ struct SpatialKeyframeSnapshot {
     /// DEBUG-only overlay JPEG path (principal point). Nil in Release / when disabled.
     var debugPrincipalPointJPEGURL: URL?
     var optionalDepthRelativePath: String?
+    /// `ARCamera.exposureDuration` of this frame (seconds).
+    var exposureDurationSec: Double? = nil
+    /// `MotionBlurEstimate.pixels` for this frame.
+    var motionBlurPx: Double? = nil
+    /// `MotionBlurEstimate.keyframeLaplacianVariance` (half-res luma, central half). Diagnostics only.
+    var laplacianVarianceHalfRes: Double? = nil
 }

@@ -74,6 +74,8 @@ struct SurfacePlaneSample: Equatable, Sendable {
     var height: Float
     var rotationOnYAxis: Float
     var isVertical: Bool
+    /// ARKit plane classification ("floor", "wall", ...; nil when unsupported or not yet known).
+    var classification: String? = nil
 }
 
 struct SurfaceCoverageModel {
@@ -122,6 +124,7 @@ struct SurfaceCoverageModel {
         var halfV: Float
         var normal: simd_float3
         var isVertical: Bool
+        var classification: String?
     }
 
     private(set) var keyframes: [Keyframe] = []
@@ -158,7 +161,8 @@ struct SurfaceCoverageModel {
             next[s.id] = PlaneRect(
                 id: s.id, center: c, axisU: toWorldDir(localU), axisV: toWorldDir(localV),
                 halfU: s.width / 2, halfV: s.height / 2,
-                normal: toWorldDir(simd_float3(0, 1, 0)), isVertical: s.isVertical
+                normal: toWorldDir(simd_float3(0, 1, 0)), isVertical: s.isVertical,
+                classification: s.classification
             )
         }
         planes = next
@@ -292,7 +296,7 @@ struct SurfaceCoverageModel {
                     azimuthBuckets: s.azimuthBuckets
                 )
             }
-        return SpatialCaptureSurfaceCoverage(
+        var result = SpatialCaptureSurfaceCoverage(
             schemaVersion: 1,
             calibrationId: SurfaceCoverageConfig.calibrationId,
             thresholds: .init(
@@ -326,6 +330,22 @@ struct SurfaceCoverageModel {
                 summaryMs: Self.nowMs() - t0
             )
         )
+        // Reconstruction prior (V1_061: a plain floor mat had no texture to fix its depth): the plane anchors as
+        // ARKit last reported them, in ARKit world (gravity y up, metres). Works without LiDAR.
+        result.planes = model.planes.values.sorted { $0.id.uuidString < $1.id.uuidString }.map { p in
+            SpatialCaptureSurfaceCoverage.Plane(
+                id: p.id.uuidString,
+                center: [p.center.x, p.center.y, p.center.z].map { Double($0) },
+                normal: [p.normal.x, p.normal.y, p.normal.z].map { Double($0) },
+                axisU: [p.axisU.x, p.axisU.y, p.axisU.z].map { Double($0) },
+                axisV: [p.axisV.x, p.axisV.y, p.axisV.z].map { Double($0) },
+                halfExtentU: Double(p.halfU),
+                halfExtentV: Double(p.halfV),
+                isVertical: p.isVertical,
+                classification: p.classification
+            )
+        }
+        return result
     }
 
     private static func percentile(_ xs: [Double], _ q: Double) -> Double {

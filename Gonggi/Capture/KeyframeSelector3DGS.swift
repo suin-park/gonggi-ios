@@ -13,6 +13,8 @@ enum KeyframeSelector3DGS {
         var minBridgeObservationIntervalSec: Double = CaptureBridgeConfig.minBridgeObservationIntervalSec
         var maxMotionSpeedMps: Double = SpatialCaptureConfig.maxMotionSpeedMps
         var maxAngularVelocityRadPerSec: Double = SpatialCaptureConfig.maxAngularVelocityRadPerSec
+        /// Estimated smear gate (`MotionBlurEstimate`); only applies when the caller passes `motionBlurPx`.
+        var maxMotionBlurPx: Double = MotionBlurEstimate.maxBlurPx
         var maxLowTextureScore: Double = SpatialCaptureConfig.maxLowTextureScore
         var hardMaxKeyframes: Int = SpatialCaptureConfig.hardMaxKeyframes
         var useBridgeContinuity: Bool = true
@@ -60,6 +62,7 @@ enum KeyframeSelector3DGS {
         sharpnessState: CaptureSharpnessState? = nil,
         motionSpeed: Double? = nil,
         angularVelocity: Double? = nil,
+        motionBlurPx: Double? = nil,
         lowTextureScore: Double? = nil,
         exposureScore: Double = 0.85,
         cellOverlapState: CaptureOverlapState = .notAvailable,
@@ -83,6 +86,9 @@ enum KeyframeSelector3DGS {
         }
         if let angularVelocity, angularVelocity > config.maxAngularVelocityRadPerSec {
             return .rejected("angular_too_fast")
+        }
+        if let motionBlurPx, motionBlurPx > config.maxMotionBlurPx {
+            return .rejected("motion_blur")
         }
         _ = lowTextureScore
 

@@ -96,6 +96,10 @@ struct SpatialCaptureFrameQuality: Codable, Equatable, Sendable {
     var transitionScore: Double?
     var coverageCell: String?
     var regionId: String?
+    /// Photo blur evidence (nil on older packages and on continuity-rescue photos).
+    var exposureDurationSec: Double? = nil
+    var motionBlurPx: Double? = nil
+    var laplacianVarianceHalfRes: Double? = nil
 }
 
 struct SpatialCaptureSessionQuality: Codable, Equatable, Sendable {
@@ -206,6 +210,20 @@ struct SpatialCaptureSurfaceCoverage: Codable, Equatable, Sendable {
     var deficits: [Deficit]
     /// On-device compute cost of this model (device performance check).
     var performance: Performance?
+    /// ARKit plane anchors (> 0.2 m sides) at the end of capture, ARKit world. Nil on older packages.
+    var planes: [Plane]? = nil
+
+    struct Plane: Codable, Equatable, Sendable {
+        var id: String
+        var center: [Double]
+        var normal: [Double]
+        var axisU: [Double]
+        var axisV: [Double]
+        var halfExtentU: Double
+        var halfExtentV: Double
+        var isVertical: Bool
+        var classification: String?
+    }
 
     struct Performance: Codable, Equatable, Sendable {
         var keyframeObserveMsP50: Double
