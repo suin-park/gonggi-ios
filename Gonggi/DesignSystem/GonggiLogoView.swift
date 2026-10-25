@@ -34,7 +34,7 @@ struct GonggiLogoView: View {
     var width: CGFloat = 200
     /// When true (default), the logo resists VStack compression (Dynamic Type / tight height).
     var resistsCompression: Bool = true
-    var accessibilityLabelText: String = "커모"
+    var accessibilityLabelText: String = "WHIK"
 
     private var height: CGFloat {
         width * variant.layoutAspectHeightOverWidth

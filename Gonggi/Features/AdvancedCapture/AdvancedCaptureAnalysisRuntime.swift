@@ -233,7 +233,7 @@ final class AdvancedCaptureAnalysisRuntime: ObservableObject {
 
     private func scheduleLocalNotification(sessionId: String) {
         let content = UNMutableNotificationContent()
-        content.title = "커모"
+        content.title = "WHIK"
         content.body = "분석이 끝났습니다. 촬영 가이드에 따라 촬영을 시작하세요."
         content.sound = .default
         content.userInfo = [

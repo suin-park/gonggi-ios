@@ -19,10 +19,10 @@ struct Panorama360ViewerView: View {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 36, weight: .light))
                             .foregroundStyle(GonggiColors.accentTeal)
-                        Text("미리보기를 불러오지 못했어요")
+                        Text("Couldn't load the preview")
                             .font(GonggiTypography.body(17))
                             .foregroundStyle(GonggiColors.textPrimary)
-                        Text("파노라마 파일이 없거나 손상되었을 수 있어요.")
+                        Text("The panorama file is missing or damaged.")
                             .font(GonggiTypography.caption(13))
                             .foregroundStyle(GonggiColors.textSecondary)
                             .multilineTextAlignment(.center)
@@ -39,11 +39,11 @@ struct Panorama360ViewerView: View {
                     .ignoresSafeArea()
                 }
             }
-            .navigationTitle("360° 공간 미리보기")
+            .navigationTitle("360° view")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("닫기") { dismiss() }
+                    Button("Close") { dismiss() }
                 }
             }
         }

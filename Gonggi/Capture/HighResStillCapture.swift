@@ -13,12 +13,19 @@ import Foundation
 /// Why (V1_061, 10-25): photos taken while nearly still (< 0.1 rad/s) were no sharper than ones at 0.3 rad/s, so the
 /// 1920×1440 video frames themselves limit detail; dropping blurred photos alone gave only +1 dB.
 enum HighResCaptureMode {
-    static let enabledDefaultsKey = "gonggi.capture.highResStills.enabled"
+    /// WHIK 3.1: on by default for every 3D Space capture (new installs and updates). The 실험 toggle used to write
+    /// `legacyExperimentDefaultsKey` (absent = off); a stored `false` there must not switch the new default off,
+    /// so only this v2 key is read. It is written only by the hidden 실험 toggle (internal rollback switch).
+    static let enabledDefaultsKey = "gonggi.capture.maxQuality.v2"
+    static let legacyExperimentDefaultsKey = "gonggi.capture.highResStills.enabled"
 
     static var isEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: enabledDefaultsKey) }
+        get { (UserDefaults.standard.object(forKey: enabledDefaultsKey) as? Bool) ?? true }
         set { UserDefaults.standard.set(newValue, forKey: enabledDefaultsKey) }
     }
+
+    /// Stills are skipped (the capture itself continues) when free space drops below this.
+    static let minFreeBytesForStills: Int64 = 2_000_000_000
 
     /// Longest shutter auto-exposure may pick. 1/120 s keeps smear at 0.25 rad/s under 3 px (fx ≈ 1437).
     static let maxExposureSec: Double = 1.0 / 120
@@ -111,6 +118,11 @@ final class HighResStillWriter: ObservableObject {
         return (k.columns.0.x * sx, k.columns.1.y * sy, k.columns.2.x * sx, k.columns.2.y * sy)
     }
 
+    static func freeBytes(at url: URL) -> Int64? {
+        let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
     func reset(exposureCap: [String: Any]) {
         lock.lock(); defer { lock.unlock() }
         root = nil
@@ -124,6 +136,12 @@ final class HighResStillWriter: ObservableObject {
         lock.lock()
         if inFlight {
             index.failures["busy", default: 0] += 1
+            lock.unlock()
+            return
+        }
+        // Storage guard: ~3–5 MB per still. Below the floor the capture continues with its normal photos only.
+        if let free = Self.freeBytes(at: packageRoot), free < HighResCaptureMode.minFreeBytesForStills {
+            index.failures["low_storage", default: 0] += 1
             lock.unlock()
             return
         }

@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: ""
-    MARKETING_VERSION: "3.0"
+    MARKETING_VERSION: "3.1"
     CURRENT_PROJECT_VERSION: "1"
     GONGGI_BUILD_SHA: "local"
     # API server for this build. Production unless the TestFlight workflow passes a staging URL
@@ -39,6 +39,9 @@ targets:
       - path: Gonggi
         excludes:
           - "**/*.md"
+          # WHIK 3.1: English-first app. Korean resources stay in the repo but are not bundled, so a Korean device
+          # also opens in English (re-add to localize).
+          - "Resources/ko.lproj/**"
     resources:
       - path: NOTICE
       - path: third_party/opencv/LICENSE
@@ -69,10 +72,10 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Gonggi/Capture/Quick360/Engine/OpenCV/Gonggi-Bridging-Header.h
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleIconName: AppIcon
-        INFOPLIST_KEY_CFBundleDisplayName: 커모
-        INFOPLIST_KEY_NSCameraUsageDescription: 파노라마·공간 기록과 AR로 3D 어셋을 배치하기 위해 카메라가 필요합니다.
-        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: 촬영한 공간의 위치를 기록하고 주변 매장을 찾기 위해 사용합니다.
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
+        INFOPLIST_KEY_CFBundleDisplayName: "WHIK: 3D Scanner"
+        INFOPLIST_KEY_NSCameraUsageDescription: WHIK uses the camera to capture spaces and objects in 3D.
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: WHIK saves where a capture was taken.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: WHIK can record the sound of a space with your capture.
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
@@ -91,9 +94,9 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # 설치된 앱 이름. xcodegen이 이 속성으로 Info.plist를 새로 쓰므로 여기에 있어야 최종 아카이브에 들어간다.
-        CFBundleDisplayName: 커모
+        CFBundleDisplayName: "WHIK: 3D Scanner"
+        CFBundleDevelopmentRegion: en
         CFBundleLocalizations:
-          - ko
           - en
         GonggiBuildSHA: $(GONGGI_BUILD_SHA)
         GonggiAPIBaseURL: $(GONGGI_API_BASE_URL)
@@ -107,17 +110,18 @@ targets:
         GonggiProductGSVersion: "1"
         # 기록하기 › 실험 › 실시간 제품 3DGS의 새 방식(텍스처 스플랫 레이어, .kmots)이 이 빌드에 들어 있다는 표식. IPA 점검이 확인한다.
         GonggiTexLayersVersion: "4"
-        NSMotionUsageDescription: 센서 검사에서 기기 움직임(자이로·가속도) 수신 빈도를 확인하기 위해 사용합니다.
+        NSMotionUsageDescription: WHIK uses motion sensors to guide steady captures.
         # Internal TestFlight ONLY: bake pending-angular-rescue ON into this IPA.
         # Product default in Swift remains OFF when this key is removed/false.
         GonggiPendingAngularRescueDefault: true
         CFBundleIconName: AppIcon
         ITSAppUsesNonExemptEncryption: false
-        UILaunchScreen: {}
-        NSCameraUsageDescription: 파노라마·공간 기록, 사진으로 3D 만들기, AR로 3D 어셋 배치를 위해 카메라가 필요합니다.
-        NSLocationWhenInUseUsageDescription: 촬영한 공간의 위치를 기록하고 주변 매장을 찾기 위해 사용합니다.
-        NSMicrophoneUsageDescription: 공간의 소리를 함께 기록하기 위해 마이크 접근이 필요합니다.
-        NSPhotoLibraryAddUsageDescription: 촬영한 공간을 저장합니다.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        NSCameraUsageDescription: WHIK uses the camera to capture spaces and objects in 3D.
+        NSLocationWhenInUseUsageDescription: WHIK saves where a capture was taken.
+        NSMicrophoneUsageDescription: WHIK can record the sound of a space with your capture.
+        NSPhotoLibraryAddUsageDescription: WHIK saves captures to your photo library when you choose to.
         # Injected from Config/Auth.xcconfig (Debug + Release) — not hardcoded in Swift.
         GoogleClientID: $(GOOGLE_IOS_CLIENT_ID)
         CFBundleURLTypes:
@@ -143,6 +147,20 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Gonggi.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Gonggi"
         BUNDLE_LOADER: "$(TEST_HOST)"
 
+  # WHIK shell screenshots for design review (scheme GonggiUIShots only; the Gonggi scheme's tests skip it).
+  GonggiUIShots:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: GonggiUIShots
+    dependencies:
+      - target: Gonggi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.whik.gonggi.uishots
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Gonggi
+
 schemes:
   Gonggi:
     build:
@@ -158,3 +176,13 @@ schemes:
       config: Release
     analyze:
       config: Debug
+
+  GonggiUIShots:
+    build:
+      targets:
+        Gonggi: all
+        GonggiUIShots: [test]
+    test:
+      config: Debug
+      targets:
+        - GonggiUIShots

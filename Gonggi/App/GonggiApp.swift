@@ -27,7 +27,7 @@ struct GonggiApp: App {
                     appState.handleScenePhase(.active)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .gonggiOpenGaussianSpace)) { note in
-                    // Before sign-in is restored the id stays pending; MainTabView opens it on appear.
+                    // Before sign-in is restored the id stays pending; WhikRootView opens it once signed in.
                     guard case .signedIn = authSession.phase,
                           let spaceId = (note.object as? String) ?? GonggiPushDeepLink.pendingGaussianSpaceId
                     else { return }
@@ -66,20 +66,11 @@ struct GonggiApp: App {
         #endif
     }
 
+    /// WHIK: 3D Scanner — the shell never waits for sign-in (guests use Home and browse Capture; sign-in is asked
+    /// for when an action needs the account). The old signed-in root `MainTabView` and the signed-out
+    /// `AuthShellView` stay in the code base, unreachable (docs/WHIK_HIDDEN_FEATURES.md).
     @ViewBuilder
     private var authenticatedRoot: some View {
-        switch authSession.phase {
-        case .restoring:
-            ZStack {
-                GonggiAmbientBackground()
-                ProgressView()
-                    .tint(GonggiColors.textSecondary)
-            }
-            .onAppear { authSession.bootstrap() }
-        case .signedIn:
-            MainTabView()
-        case .signedOut:
-            AuthShellView(session: authSession)
-        }
+        WhikRootView()
     }
 }

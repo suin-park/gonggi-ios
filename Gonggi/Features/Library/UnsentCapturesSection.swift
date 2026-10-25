@@ -14,10 +14,10 @@ struct UnsentCapturesSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
             if !items.isEmpty {
-                Text("업로드하지 못한 촬영")
+                Text("Not uploaded yet")
                     .font(GonggiTypography.body(15).weight(.semibold))
                     .foregroundStyle(GonggiColors.textPrimary)
-                Text("원본은 이 기기에 남아 있어요. 다시 업로드하면 같은 촬영으로 3D 생성을 이어서 요청해요.")
+                Text("The original capture is still on this device. Upload it again to continue.")
                     .font(GonggiTypography.body(13))
                     .foregroundStyle(GonggiColors.textSecondary)
                 ForEach(items) { item in
@@ -32,15 +32,15 @@ struct UnsentCapturesSection: View {
         }
         .onAppear(perform: reload)
         .confirmationDialog(
-            "지금 로그인한 계정으로 업로드할까요?",
+            "Upload to the signed-in account?",
             isPresented: Binding(get: { confirmItem != nil }, set: { if !$0 { confirmItem = nil } }),
             titleVisibility: .visible,
             presenting: confirmItem
         ) { item in
-            Button("이 계정으로 업로드") { resend(item) }
-            Button("취소", role: .cancel) {}
+            Button("Upload to this account") { resend(item) }
+            Button("Cancel", role: .cancel) {}
         } message: { item in
-            Text("\(dateLabel(item)), 사진 \(item.photoCount)장. 이 기기에서 촬영했지만 계정 정보가 기록되기 전의 촬영이에요.")
+            Text("\(dateLabel(item)), \(item.photoCount) photos. Captured on this device before it was linked to an account.")
         }
     }
 
@@ -50,7 +50,7 @@ struct UnsentCapturesSection: View {
                 Text(item.suggestedName)
                     .font(GonggiTypography.body(15))
                     .foregroundStyle(GonggiColors.textPrimary)
-                Text("\(dateLabel(item)), 사진 \(item.photoCount)장")
+                Text("\(dateLabel(item)), \(item.photoCount) photos")
                     .font(GonggiTypography.body(13))
                     .foregroundStyle(GonggiColors.textSecondary)
             }
@@ -61,11 +61,11 @@ struct UnsentCapturesSection: View {
                 if busySessionId == item.sessionId {
                     ProgressView().tint(GonggiColors.textPrimary)
                 } else {
-                    Text("다시 업로드")
+                    Text("Upload")
                 }
             }
             .disabled(busySessionId != nil)
-            .accessibilityLabel("업로드하지 못한 촬영 다시 업로드")
+            .accessibilityLabel("Upload this capture again")
         }
         .padding(GonggiSpacing.md)
         .background(GonggiColors.surfaceElevated.opacity(0.6))
@@ -73,7 +73,7 @@ struct UnsentCapturesSection: View {
     }
 
     private func dateLabel(_ item: UnsentCaptureResumer.Item) -> String {
-        guard let d = item.capturedAt else { return "촬영 시각 모름" }
+        guard let d = item.capturedAt else { return "Unknown time" }
         return d.formatted(date: .abbreviated, time: .shortened)
     }
 
@@ -85,11 +85,11 @@ struct UnsentCapturesSection: View {
     private func resend(_ item: UnsentCaptureResumer.Item) {
         guard busySessionId == nil else { return }
         busySessionId = item.sessionId
-        message = "업로드 중이에요. 끝날 때까지 앱을 닫지 말아 주세요."
+        message = "Uploading. Keep the app open until it finishes."
         Task { @MainActor in
             let error = await UnsentCaptureResumer.resend(item, service: appState.spaceService)
             busySessionId = nil
-            message = error ?? (item.isProduct ? "업로드했어요. 3D 자산 생성을 요청했어요." : "업로드했어요. 3D 공간 생성을 요청했어요.")
+            message = error ?? (item.isProduct ? "Uploaded. Your 3D Object is being created." : "Uploaded. Your 3D Space is being created.")
             reload()
             appState.rebuildSpaces()
             appState.ensureSpaceGenerationPolling()

@@ -11,7 +11,8 @@ struct ExperimentHomeView: View {
     }
 
     @State private var path: [Route] = []
-    @AppStorage(HighResCaptureMode.enabledDefaultsKey) private var highResStills = false
+    /// Default on (WHIK 3.1 general capture default); turning it off here is the internal rollback switch.
+    @AppStorage(HighResCaptureMode.enabledDefaultsKey) private var highResStills = true
 
     var body: some View {
         NavigationStack(path: $path) {

@@ -13,7 +13,7 @@ struct AuthUserShell: Equatable {
     var creditsLabel: String?
 
     static let placeholder = AuthUserShell(
-        displayName: "커모 사용자",
+        displayName: "WHIK user",
         email: "계정 연동 전",
         photoSystemImage: "person.fill"
     )
@@ -96,7 +96,7 @@ final class AuthSessionController: ObservableObject {
         } catch let MobileAuthAPIError.server(_, message, _) {
             lastError = message
         } catch {
-            lastError = "로그인에 실패했습니다."
+            lastError = "Sign-in failed."
         }
     }
 
@@ -109,7 +109,7 @@ final class AuthSessionController: ObservableObject {
             lastError = message
             return false
         } catch {
-            lastError = "회원가입에 실패했습니다."
+            lastError = "Sign-up failed."
             return false
         }
     }
@@ -126,7 +126,7 @@ final class AuthSessionController: ObservableObject {
             lastError = message
             return false
         } catch {
-            lastError = "이메일 인증에 실패했습니다."
+            lastError = "Email verification failed."
             return false
         }
     }
@@ -140,7 +140,7 @@ final class AuthSessionController: ObservableObject {
             lastError = message
             return false
         } catch {
-            lastError = "인증 코드 재발송에 실패했습니다."
+            lastError = "Couldn't resend the code."
             return false
         }
     }
@@ -154,7 +154,7 @@ final class AuthSessionController: ObservableObject {
             lastError = message
             return false
         } catch {
-            lastError = "재설정 메일 요청에 실패했습니다."
+            lastError = "Couldn't send the reset email."
             return false
         }
     }
@@ -168,7 +168,7 @@ final class AuthSessionController: ObservableObject {
             lastError = message
             return false
         } catch {
-            lastError = "비밀번호 재설정에 실패했습니다."
+            lastError = "Password reset failed."
             return false
         }
     }
@@ -182,7 +182,7 @@ final class AuthSessionController: ObservableObject {
         } catch let MobileAuthAPIError.server(_, message, _) {
             lastError = message
         } catch {
-            lastError = "Google 로그인에 실패했습니다."
+            lastError = "Google sign-in failed."
         }
     }
 
@@ -205,7 +205,7 @@ final class AuthSessionController: ObservableObject {
         } catch let MobileAuthAPIError.server(_, message, _) {
             lastError = message
         } catch {
-            lastError = "Apple 로그인에 실패했습니다."
+            lastError = "Apple sign-in failed."
         }
     }
 
@@ -218,6 +218,13 @@ final class AuthSessionController: ObservableObject {
             emailSheetPresented = true
         }
     }
+
+    #if DEBUG
+    /// Simulator screenshot runs only (`-mock -whik-preview-signed-in`): signed-in look over mock data, no server.
+    func debugPreviewSignIn() {
+        phase = .signedIn(.placeholder)
+    }
+    #endif
 
     func signOutShell() {
         Task { await signOut() }
@@ -668,9 +675,9 @@ struct EmailContinueView: View {
 
     enum Field { case name, email, password, passwordConfirm, otp }
     enum Mode: String, CaseIterable {
-        case login = "로그인"
-        case register = "회원가입"
-        case reset = "비밀번호 찾기"
+        case login = "Sign in"
+        case register = "Sign up"
+        case reset = "Reset"
     }
     enum Step { case form, verifyCode, resetCode }
 
@@ -682,7 +689,7 @@ struct EmailContinueView: View {
                 GonggiAmbientBackground(showGlow: false)
                 ScrollView {
                     VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-                        KmoWordmark(width: 150)
+                        WhikLogo(width: 150)
                             .frame(maxWidth: .infinity, alignment: .center)
                             .padding(.top, GonggiSpacing.xs)
                             .padding(.bottom, GonggiSpacing.xs)
@@ -692,7 +699,7 @@ struct EmailContinueView: View {
                             .foregroundStyle(GonggiColors.textPrimary)
 
                         if step == .form {
-                            Picker("방식", selection: $mode) {
+                            Picker("Mode", selection: $mode) {
                                 ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                             }
                             .pickerStyle(.segmented)
@@ -721,7 +728,7 @@ struct EmailContinueView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
-                        Text("커모와 3D Locker는 같은 계정을 사용합니다.")
+                        Text("WHIK and 3D Locker use the same account.")
                             .font(GonggiTypography.caption(12))
                             .foregroundStyle(GonggiColors.textTertiary)
                             .padding(.top, GonggiSpacing.sm)
@@ -734,7 +741,7 @@ struct EmailContinueView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("닫기") { dismiss() }
+                    Button("Close") { dismiss() }
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
             }
@@ -750,11 +757,11 @@ struct EmailContinueView: View {
 
     private var headerTitle: String {
         switch (mode, step) {
-        case (_, .verifyCode): return "이메일 인증"
-        case (_, .resetCode): return "새 비밀번호"
-        case (.login, _): return "이메일로 계속하기"
-        case (.register, _): return "회원가입"
-        case (.reset, _): return "비밀번호 찾기"
+        case (_, .verifyCode): return "Verify your email"
+        case (_, .resetCode): return "New password"
+        case (.login, _): return "Continue with Email"
+        case (.register, _): return "Sign up"
+        case (.reset, _): return "Reset password"
         }
     }
 
@@ -763,27 +770,27 @@ struct EmailContinueView: View {
         VStack(spacing: GonggiSpacing.sm) {
             switch (mode, step) {
             case (.register, .form):
-                textField("이름", text: $name, field: .name, content: .name)
-                textField("이메일", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
-                secureField("비밀번호 (8자 이상)", text: $password, field: .password, content: .newPassword)
-                secureField("비밀번호 확인", text: $passwordConfirm, field: .passwordConfirm, content: .newPassword)
+                textField("Name", text: $name, field: .name, content: .name)
+                textField("Email", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
+                secureField("Password (8+ characters)", text: $password, field: .password, content: .newPassword)
+                secureField("Confirm password", text: $passwordConfirm, field: .passwordConfirm, content: .newPassword)
             case (.login, .form):
-                textField("이메일", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
-                secureField("비밀번호", text: $password, field: .password, content: .password)
+                textField("Email", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
+                secureField("Password", text: $password, field: .password, content: .password)
             case (.reset, .form):
-                textField("이메일", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
+                textField("Email", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
             case (_, .verifyCode):
-                Text("\(email)으로 보낸 6자리 코드를 입력해 주세요.")
+                Text("Enter the 6-digit code sent to \(email).")
                     .font(GonggiTypography.body(14))
                     .foregroundStyle(GonggiColors.textSecondary)
-                textField("인증 코드", text: $otpCode, field: .otp, content: .oneTimeCode, keyboard: .numberPad)
+                textField("Code", text: $otpCode, field: .otp, content: .oneTimeCode, keyboard: .numberPad)
             case (_, .resetCode):
-                Text("메일로 받은 6자리 코드와 새 비밀번호를 입력해 주세요.")
+                Text("Enter the 6-digit code from the email and a new password.")
                     .font(GonggiTypography.body(14))
                     .foregroundStyle(GonggiColors.textSecondary)
-                textField("인증 코드", text: $otpCode, field: .otp, content: .oneTimeCode, keyboard: .numberPad)
-                secureField("새 비밀번호 (8자 이상)", text: $password, field: .password, content: .newPassword)
-                secureField("새 비밀번호 확인", text: $passwordConfirm, field: .passwordConfirm, content: .newPassword)
+                textField("Code", text: $otpCode, field: .otp, content: .oneTimeCode, keyboard: .numberPad)
+                secureField("New password (8+ characters)", text: $password, field: .password, content: .newPassword)
+                secureField("Confirm new password", text: $passwordConfirm, field: .passwordConfirm, content: .newPassword)
             }
         }
         .foregroundStyle(GonggiColors.textPrimary)
@@ -793,42 +800,42 @@ struct EmailContinueView: View {
     private var actionButtons: some View {
         switch (mode, step) {
         case (.login, .form):
-            PrimaryButton(title: busy ? "로그인 중…" : "계속하기") {
+            PrimaryButton(title: busy ? "Signing in…" : "Continue") {
                 Task { await submitLogin() }
             }
             .disabled(busy || email.isEmpty || password.isEmpty)
         case (.register, .form):
-            PrimaryButton(title: busy ? "가입 중…" : "가입하기") {
+            PrimaryButton(title: busy ? "Signing up…" : "Sign up") {
                 Task { await submitRegister() }
             }
             .disabled(busy || !canRegister)
         case (.reset, .form):
-            PrimaryButton(title: busy ? "전송 중…" : "인증 코드 받기") {
+            PrimaryButton(title: busy ? "Sending…" : "Send code") {
                 Task { await submitResetRequest() }
             }
             .disabled(busy || email.isEmpty)
         case (.register, .verifyCode):
-            PrimaryButton(title: busy ? "확인 중…" : "인증하고 시작하기") {
+            PrimaryButton(title: busy ? "Checking…" : "Verify") {
                 Task { await submitVerify() }
             }
             .disabled(busy || otpCode.filter(\.isNumber).count != 6)
-            Button("코드 다시 받기") {
+            Button("Resend code") {
                 Task { await resendCode() }
             }
             .disabled(busy)
             .foregroundStyle(GonggiColors.brandCyan)
-            Button("뒤로") {
+            Button("Back") {
                 step = .form
                 otpCode = ""
                 session.lastError = nil
             }
             .foregroundStyle(GonggiColors.textSecondary)
         case (_, .resetCode):
-            PrimaryButton(title: busy ? "변경 중…" : "비밀번호 변경") {
+            PrimaryButton(title: busy ? "Saving…" : "Change password") {
                 Task { await submitResetComplete() }
             }
             .disabled(busy || !canCompleteReset)
-            Button("뒤로") {
+            Button("Back") {
                 step = .form
                 otpCode = ""
                 password = ""
@@ -903,7 +910,7 @@ struct EmailContinueView: View {
                 password: password
             )
             session.lastError = nil
-            infoMessage = "인증 코드를 이메일로 보냈어요."
+            infoMessage = "We sent a code to your email."
             step = .verifyCode
             focusedField = .otp
         } catch let MobileAuthAPIError.server(code, message, _) {
@@ -917,7 +924,7 @@ struct EmailContinueView: View {
                 session.lastError = message
             }
         } catch {
-            session.lastError = "회원가입에 실패했습니다."
+            session.lastError = "Sign-up failed."
         }
     }
 
@@ -932,7 +939,7 @@ struct EmailContinueView: View {
         busy = true
         defer { busy = false }
         if await session.resendEmailVerification(email: email) {
-            infoMessage = "인증 코드를 다시 보냈어요."
+            infoMessage = "We sent a new code."
         }
     }
 
@@ -940,7 +947,7 @@ struct EmailContinueView: View {
         busy = true
         defer { busy = false }
         if await session.requestPasswordReset(email: email) {
-            infoMessage = "계정이 있으면 인증 코드를 보내드려요."
+            infoMessage = "If an account exists, we sent a code."
             step = .resetCode
             password = ""
             passwordConfirm = ""
@@ -953,7 +960,7 @@ struct EmailContinueView: View {
         busy = true
         defer { busy = false }
         if await session.completePasswordReset(email: email, code: otpCode, newPassword: password) {
-            infoMessage = "비밀번호가 변경되었어요. 새 비밀번호로 로그인해 주세요."
+            infoMessage = "Password changed. Sign in with the new password."
             mode = .login
             step = .form
             otpCode = ""

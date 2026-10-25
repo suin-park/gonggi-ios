@@ -20,7 +20,7 @@ struct MobileAuthUserDTO: Equatable, Sendable {
 
     var shell: AuthUserShell {
         AuthUserShell(
-            displayName: name.isEmpty ? "커모 사용자" : name,
+            displayName: name.isEmpty ? "WHIK user" : name,
             email: email.isEmpty ? "—" : email,
             photoSystemImage: "person.fill",
             userId: id.isEmpty ? nil : id,
