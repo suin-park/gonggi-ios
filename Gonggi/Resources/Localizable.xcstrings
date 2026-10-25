@@ -1261,6 +1261,34 @@
         }
       }
     },
+    "3D preview isn't ready yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3D preview isn't ready yet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3Dビューはまだ準備中です"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3D 보기를 아직 준비하고 있어요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "3D 预览尚未准备好"
+          }
+        }
+      }
+    },
     "3D ready": {
       "localizations": {
         "en": {
@@ -11001,6 +11029,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "拖动标记点来移动位置"
+          }
+        }
+      }
+    },
+    "Drag to rotate, pinch to zoom": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag to rotate, pinch to zoom"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ドラッグで回転、ピンチで拡大"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "드래그해서 돌리고, 두 손가락으로 확대해요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "拖动旋转，双指缩放"
           }
         }
       }

@@ -210,7 +210,10 @@ struct WhikLibraryView: View {
     @ObservedObject private var assets = AssetLibraryStore.shared
     @Bindable private var state = WhikLibraryState.shared
     @State private var detail: SpaceRecord?
-    @State private var assetDetail: MobileAssetDTO?
+    /// Photo-made 3D Object opened full screen (the AR detail page is unused for now).
+    @State private var openedAsset: MobileAssetDTO?
+    @State private var assetToDelete: MobileAssetDTO?
+    @State private var deleteFailed = false
     @State private var showFilters = false
 
     private var signedIn: Bool {
@@ -278,8 +281,22 @@ struct WhikLibraryView: View {
             .navigationDestination(item: $detail) { space in
                 SpaceDetailView(space: space)
             }
-            .navigationDestination(item: $assetDetail) { asset in
-                AssetDetailView(listSnapshot: asset)
+            .fullScreenCover(item: $openedAsset) { asset in
+                WhikObjectViewer(snapshot: asset) { openedAsset = nil }
+            }
+            .confirmationDialog(L("Delete this 3D Object?"), isPresented: Binding(
+                get: { assetToDelete != nil },
+                set: { if !$0 { assetToDelete = nil } }
+            ), titleVisibility: .visible, presenting: assetToDelete) { asset in
+                Button(L("Delete"), role: .destructive) { Task { await delete(asset) } }
+                Button(L("Cancel"), role: .cancel) {}
+            } message: { _ in
+                Text(L("It will be deleted from both 3D Locker and WHIK, and removed from any space it's placed in. This can't be undone."))
+            }
+            .alert(L("Couldn't delete"), isPresented: $deleteFailed) {
+                Button(L("OK"), role: .cancel) {}
+            } message: {
+                Text(L("Couldn't delete the object. Please try again in a moment."))
             }
             .sheet(isPresented: $showFilters) {
                 WhikLibraryFilterSheet(query: $state.query)
@@ -427,7 +444,8 @@ struct WhikLibraryView: View {
             }
             Button { detail = r } label: { Label(L("Details, rename or delete"), systemImage: "info.circle") }
         case .asset(let a):
-            Button { assetDetail = a } label: { Label(L("Details"), systemImage: "info.circle") }
+            Button { openedAsset = a } label: { Label(L("Open"), systemImage: "cube") }
+            Button(role: .destructive) { assetToDelete = a } label: { Label(L("Delete object"), systemImage: "trash") }
         }
     }
 
@@ -444,7 +462,18 @@ struct WhikLibraryView: View {
                 viewers.openSpace(jobId: r.id)
             }
         case .asset(let a):
-            assetDetail = a
+            openedAsset = a
+        }
+    }
+
+    private func delete(_ asset: MobileAssetDTO) async {
+        do {
+            try await MobileAssetsAPIClient().deleteAsset(id: asset.id)
+            await VRUsdzCache().invalidate(assetId: asset.id)
+            assets.removeAsset(id: asset.id)
+            GonggiHaptics.medium()
+        } catch {
+            deleteFailed = true
         }
     }
 
