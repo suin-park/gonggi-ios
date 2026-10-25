@@ -121,6 +121,22 @@ extension Notification.Name {
 /// Where a library record's thumbnail can come from without running any generation.
 enum WhikThumbnailSources {
     /// Existing saved image or the sharpest local capture photo. Runs off the main thread.
+    /// Called when a capture is handed to generation, while its photos are certainly on the device: keeps the
+    /// sharpest capture photo (else the job's own JPEG) in the persistent store. Capture packages are pruned after
+    /// 7 days and the old job thumbnail lives in Caches, so a thumbnail derived later can find nothing to use.
+    /// Existing thumbnails are kept; runs off the main thread.
+    static func persistAtSubmit(libraryId: String, sessionId: String?, fallbackJPEG: URL?) {
+        guard !WhikThumbnailStore.shared.has(id: libraryId) else { return }
+        Task.detached(priority: .utility) {
+            guard let image = derive(savedThumbnail: nil, sessionId: sessionId)
+                ?? fallbackJPEG.flatMap({ WhikThumbnailStore.decode(fileURL: $0) })
+            else { return }
+            if WhikThumbnailStore.shared.save(image, id: libraryId) {
+                await MainActor.run { NotificationCenter.default.post(name: .whikThumbnailDidChange, object: libraryId) }
+            }
+        }
+    }
+
     static func derive(savedThumbnail: URL?, sessionId: String?) -> UIImage? {
         if let saved = savedThumbnail, FileManager.default.fileExists(atPath: saved.path),
            let image = WhikThumbnailStore.decode(fileURL: saved) {

@@ -162,6 +162,7 @@ final class GaussianGenerationStore: ObservableObject {
         if let jpeg = thumbnailSourceJPEG {
             thumbRel = copyThumbnail(from: jpeg, spaceId: spaceId)
         }
+        WhikThumbnailSources.persistAtSubmit(libraryId: "gaussian:\(spaceId)", sessionId: sessionId, fallbackJPEG: thumbnailSourceJPEG)
         let now = Date()
         if let idx = jobs.firstIndex(where: { $0.spaceId == spaceId }) {
             jobs[idx].jobId = jobId
