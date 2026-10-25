@@ -23,7 +23,9 @@ enum SpatialCapturePackageZipper {
         var includesObjectContract: Bool = false
     }
 
-    static func buildArchive(packageRoot: URL, destinationDirectory: URL) throws -> Result {
+    /// `includeHighRes`: also add `hires/` (실험 › 고화질 공간 촬영 stills). Only the 원본 패키지 share sets it;
+    /// upload archives never carry them.
+    static func buildArchive(packageRoot: URL, destinationDirectory: URL, includeHighRes: Bool = false) throws -> Result {
         let started = Date()
         let fm = FileManager.default
         guard fm.fileExists(atPath: packageRoot.path) else {
@@ -70,6 +72,10 @@ enum SpatialCapturePackageZipper {
             let attrs = try fm.attributesOfItem(atPath: fileURL.path)
             let size = (attrs[.size] as? NSNumber)?.intValue ?? 0
             guard size >= 0, size <= Int(UInt32.max) else {
+                throw ZipError.fileTooLarge(name)
+            }
+            // Zip32 offsets: the whole archive must stay under 4 GiB.
+            guard handle.offsetInFile + UInt64(size) + 30 + UInt64(nameData.count) <= UInt64(UInt32.max) else {
                 throw ZipError.fileTooLarge(name)
             }
             let crc = try ZipCRC32.crc32(ofFileAt: fileURL)
@@ -134,6 +140,15 @@ enum SpatialCapturePackageZipper {
         for frame in frameURLs {
             let name = "\(SpatialCaptureConfig.framesDirectoryName)/\(frame.lastPathComponent)"
             try appendEntry(name: name, fileURL: frame)
+        }
+        if includeHighRes {
+            let hiresDir = packageRoot.appendingPathComponent(HighResCaptureMode.directoryName, isDirectory: true)
+            let hiresURLs = ((try? fm.contentsOfDirectory(at: hiresDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
+                .filter { ["jpg", "json"].contains($0.pathExtension.lowercased()) }
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            for url in hiresURLs {
+                try appendEntry(name: "\(HighResCaptureMode.directoryName)/\(url.lastPathComponent)", fileURL: url)
+            }
         }
 
         let centralOffset = UInt32(handle.offsetInFile)

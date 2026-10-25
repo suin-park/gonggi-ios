@@ -484,6 +484,13 @@ struct CaptureFlowView: View {
                 onGuide: { viewModel.guidance.toggleGuide() }
             )
 
+            if HighResCaptureMode.isEnabled, viewModel.cameraPresentation == .live {
+                HighResStillBadge(writer: viewModel.highResStills)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 96)
+                    .allowsHitTesting(false)
+            }
+
             // Kept for API compatibility / DEBUG — always suppressed in favor of PrimaryGuidance.
             if let plan = guidePlan, !suppressAstraBanner {
                 GuidedCapturePlanBanner(
@@ -609,4 +616,22 @@ struct CaptureFlowView: View {
 #Preview("Capture flow") {
     CaptureFlowView(onClose: {})
         .environmentObject(AppState(isMockMode: true))
+}
+
+/// 실험 › 고화질 공간 촬영: tells the user the mode is on and how many full-resolution stills were saved.
+private struct HighResStillBadge: View {
+    @ObservedObject var writer: HighResStillWriter
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "camera.aperture")
+            Text("고화질 · 멈추면 촬영 \(writer.savedCount)장")
+        }
+        .font(GonggiTypography.caption(12))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color.black.opacity(0.55)))
+        .accessibilityLabel("고화질 촬영 켜짐, 고화질 사진 \(writer.savedCount)장")
+    }
 }

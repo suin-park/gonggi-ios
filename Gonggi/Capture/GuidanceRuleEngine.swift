@@ -39,7 +39,7 @@ struct GuidanceRuleEngine {
     var translationSpeedThresholdMps: Double = 0.45
     /// "천천히" prompt. Was 1.2 rad/s, which almost never fired; V1_061 photos lost half their sharpness above ~0.3 rad/s
     /// and 10 % of saved photos were taken above 0.56 rad/s.
-    var angularSpeedThresholdRadPerSec: Double = 0.6
+    var angularSpeedThresholdRadPerSec: Double = HighResCaptureMode.isEnabled ? HighResCaptureMode.angularSpeedPromptRadPerSec : 0.6
 
     private var lastMessageAt: Date?
     private var lastAction: GuidanceAction = .continueCapture

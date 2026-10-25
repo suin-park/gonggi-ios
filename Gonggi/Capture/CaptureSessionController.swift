@@ -59,6 +59,9 @@ final class CaptureSessionController {
     private var longestSaveStallNoticeSec: Double = 0
     private var currentSaveStallSec: Double = 0
     private var packagePaths: SpatialCapturePackagePaths?
+    /// Called on the AR delegate queue when the current frame became a keyframe (frameId, package root).
+    /// 실험 › 고화질 공간 촬영 uses it to request a full-resolution still.
+    var onSpatialKeyframeAccepted: ((String, URL) -> Void)?
     private var startedAt = Date()
     private var sessionStartTimestamp: TimeInterval = 0
     private(set) var isActive = false
@@ -490,6 +493,9 @@ final class CaptureSessionController {
             }
         }
 
+        if isKeyframe, let frameId = telemetryFrameId, let root = packagePaths?.root {
+            onSpatialKeyframeAccepted?(frameId, root)
+        }
         noteCandidateEvaluated(at: frame.timestamp)
         // Observe-only: never fail capture if telemetry sampling throws/unavailable.
         recordFrameContinuityTelemetry(

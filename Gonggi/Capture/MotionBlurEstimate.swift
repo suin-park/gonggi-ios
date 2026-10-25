@@ -13,7 +13,10 @@ enum MotionBlurEstimate {
     static var gateEnabled = true
     /// Reject above this estimated smear (pixels in the 1920-wide photo). First device capture calibrates it
     /// (quality.json now records `exposureDurationSec` and `motionBlurPx` for every saved photo).
-    static var maxBlurPx: Double = 8.0
+    static var defaultMaxBlurPx: Double = 8.0
+    static var maxBlurPx: Double {
+        HighResCaptureMode.isEnabled ? HighResCaptureMode.stillMaxBlurPx : defaultMaxBlurPx
+    }
     static let assumedDepthM: Double = 1.5
 
     static func pixels(angularVelocity: Double?, translationSpeed: Double?, exposureSec: Double, fx: Double) -> Double? {

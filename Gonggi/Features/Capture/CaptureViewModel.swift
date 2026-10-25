@@ -22,6 +22,9 @@ final class CaptureViewModel: ObservableObject {
     let guidance = CaptureGuidanceEngine()
     let arSession = ARSession()
     let framePipeline = CaptureFramePipeline()
+    /// 실험 › 고화질 공간 촬영 (idle unless `HighResCaptureMode.isEnabled`).
+    let highResStills = HighResStillWriter()
+    private var highResExposureCap: [String: Any] = [:]
 
     private let texturedMeshCapture = TexturedMeshCaptureService()
     private var mockTimer: AnyCancellable?
@@ -123,6 +126,16 @@ final class CaptureViewModel: ObservableObject {
         lastSummary = nil
         startedAt = Date()
         guidance.start()
+        highResStills.reset(exposureCap: highResExposureCap)
+        if HighResCaptureMode.isEnabled, !useMockCamera {
+            let session = arSession
+            let writer = highResStills
+            framePipeline.onSpatialKeyframeAccepted = { frameId, root in
+                writer.request(session: session, frameId: frameId, packageRoot: root)
+            }
+        } else {
+            framePipeline.onSpatialKeyframeAccepted = nil
+        }
         framePipeline.start(mockMode: useMockCamera)
         guidance.isRecording = framePipeline.isRecording
 
@@ -236,6 +249,9 @@ final class CaptureViewModel: ObservableObject {
             config.frameSemantics.insert(.sceneDepth)
         }
         config.environmentTexturing = .automatic
+        HighResCaptureMode.configure(config)
         arSession.run(config, options: [.resetTracking, .removeExistingAnchors])
+        highResExposureCap = HighResCaptureMode.applyExposureCap()
+        highResExposureCap["videoFormat"] = "\(Int(config.videoFormat.imageResolution.width))x\(Int(config.videoFormat.imageResolution.height))@\(config.videoFormat.framesPerSecond)"
     }
 }

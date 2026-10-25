@@ -11,6 +11,7 @@ struct ExperimentHomeView: View {
     }
 
     @State private var path: [Route] = []
+    @AppStorage(HighResCaptureMode.enabledDefaultsKey) private var highResStills = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -40,6 +41,19 @@ struct ExperimentHomeView: View {
                         RecordChoiceRow(choice: .init(title: "실시간 공간 생성 V2", line: "서버·학습·모델 없이 표면을 만들고 원본 영상을 입혀 저장해요", icon: "square.3.layers.3d")) { path.append(.surfaceV2) }
                         divider
                         RecordChoiceRow(choice: .init(title: "실시간 공간 생성", line: "ARKit로 움직이며 가우시안 표면을 쌓고 둘러봐요 (비교용)", icon: "cube.transparent")) { path.append(.realtime) }
+                    }
+                    RecordSection(title: "고화질 공간 촬영") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle(isOn: $highResStills) {
+                                Text("기록하기 3D 공간 기록을 고화질로")
+                                    .font(.subheadline.weight(.semibold)).foregroundStyle(GonggiColors.textPrimary)
+                            }
+                            Text("켜면 멈춰 있을 때만 사진을 저장하고, 그때마다 카메라 최대 해상도 사진을 함께 저장해요. 셔터를 1/120초 이하로 짧게 해 흔들림을 줄여요.")
+                                .font(.footnote).foregroundStyle(GonggiColors.textSecondary)
+                            Text("공간 생성에 올라가는 데이터는 그대로예요. 고화질 사진은 촬영 요약의 「원본 패키지 내보내기」에만 들어가요(사진당 약 3–5MB).")
+                                .font(.footnote).foregroundStyle(GonggiColors.textSecondary)
+                        }
+                        .padding(16)
                     }
                     RecordSection(title: "센서 검사") {
                         RecordChoiceRow(choice: .init(title: "기본 센서 검사", line: "ARKit 추적, 노출, Core Motion과 기능별 부하 비교", icon: "gyroscope")) { path.append(.sensor) }

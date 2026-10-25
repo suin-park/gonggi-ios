@@ -6,6 +6,8 @@ import QuartzCore
 final class CaptureFramePipeline {
     var mockMode: Bool = true
     var onQualityUpdate: ((CaptureQualityState, String) -> Void)?
+    /// Forwarded to each live `CaptureSessionController` (AR delegate queue).
+    var onSpatialKeyframeAccepted: ((String, URL) -> Void)?
 
     let coverageSpatialIndex = CoverageSpatialIndex()
 
@@ -27,6 +29,7 @@ final class CaptureFramePipeline {
             sessionController = nil
         } else {
             let controller = CaptureSessionController(coverageSpatialIndex: coverageSpatialIndex)
+            controller.onSpatialKeyframeAccepted = onSpatialKeyframeAccepted
             sessionController = controller
             try? controller.start()
         }

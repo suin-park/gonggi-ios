@@ -171,11 +171,15 @@ enum CaptureDiagnosticsStore {
             .appendingPathComponent("GonggiOriginal-\(captureId)-\(UUID().uuidString.prefix(8))", isDirectory: true)
         let zipped = try SpatialCapturePackageZipper.buildArchive(
             packageRoot: packageRoot,
-            destinationDirectory: zipDir
+            destinationDirectory: zipDir,
+            includeHighRes: true
         )
 
         let inventory = CapturePackageRetention.packageInventory(packageRoot: packageRoot)
         var manifest: [String: Any] = [
+            "includesHighResStills": FileManager.default.fileExists(
+                atPath: packageRoot.appendingPathComponent(HighResCaptureMode.directoryName).path
+            ),
             "kind": "gonggi_full_spatial_package_export",
             "sessionId": sessionId,
             "captureId": captureId,
