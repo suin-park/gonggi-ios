@@ -485,7 +485,7 @@ struct CaptureFlowView: View {
             )
 
             // Still counter is a diagnostic: internal builds only (the mode itself is on for everyone).
-            if HighResCaptureMode.isEnabled, GonggiFeatureFlags.isInternalToolsUnlocked, viewModel.cameraPresentation == .live {
+            if HighResCaptureMode.stillsEnabled, GonggiFeatureFlags.isInternalToolsUnlocked, viewModel.cameraPresentation == .live {
                 HighResStillBadge(writer: viewModel.highResStills)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .padding(.top, 96)

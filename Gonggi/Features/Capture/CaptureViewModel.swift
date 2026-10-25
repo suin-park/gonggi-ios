@@ -22,7 +22,7 @@ final class CaptureViewModel: ObservableObject {
     let guidance = CaptureGuidanceEngine()
     let arSession = ARSession()
     let framePipeline = CaptureFramePipeline()
-    /// 실험 › 고화질 공간 촬영 (idle unless `HighResCaptureMode.isEnabled`).
+    /// 실험 › 고화질 공간 촬영 (idle unless `HighResCaptureMode.stillsEnabled`).
     let highResStills = HighResStillWriter()
     private var highResExposureCap: [String: Any] = [:]
 
@@ -127,7 +127,7 @@ final class CaptureViewModel: ObservableObject {
         startedAt = Date()
         guidance.start()
         highResStills.reset(exposureCap: highResExposureCap)
-        if HighResCaptureMode.isEnabled, !useMockCamera {
+        if HighResCaptureMode.stillsEnabled, !useMockCamera {
             let session = arSession
             let writer = highResStills
             framePipeline.onSpatialKeyframeAccepted = { frameId, root in

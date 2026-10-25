@@ -261,9 +261,15 @@ final class WhikShellTests: XCTestCase {
         }
         d.removeObject(forKey: HighResCaptureMode.enabledDefaultsKey)
         d.set(false, forKey: HighResCaptureMode.legacyExperimentDefaultsKey)
-        XCTAssertTrue(HighResCaptureMode.isEnabled)
-        XCTAssertEqual(MotionBlurEstimate.maxBlurPx, HighResCaptureMode.stillMaxBlurPx)
-        XCTAssertEqual(GuidanceRuleEngine().angularSpeedThresholdRadPerSec, HighResCaptureMode.angularSpeedPromptRadPerSec)
-        XCTAssertEqual(KeyframeSelector3DGS.Config().maxMotionBlurPx, HighResCaptureMode.stillMaxBlurPx)
+        let savedStills = d.object(forKey: HighResCaptureMode.stillsDefaultsKey)
+        defer {
+            if let savedStills { d.set(savedStills, forKey: HighResCaptureMode.stillsDefaultsKey) } else { d.removeObject(forKey: HighResCaptureMode.stillsDefaultsKey) }
+        }
+        d.removeObject(forKey: HighResCaptureMode.stillsDefaultsKey)
+        XCTAssertTrue(HighResCaptureMode.isEnabled, "shutter cap on by default")
+        XCTAssertFalse(HighResCaptureMode.stillsEnabled, "no 12 MP stills (shutter sound) by default")
+        XCTAssertEqual(MotionBlurEstimate.maxBlurPx, MotionBlurEstimate.defaultMaxBlurPx, "hand-held capture is not limited to standing still")
+        XCTAssertEqual(GuidanceRuleEngine().angularSpeedThresholdRadPerSec, 0.6)
+        XCTAssertEqual(KeyframeSelector3DGS.Config().maxMotionBlurPx, MotionBlurEstimate.defaultMaxBlurPx)
     }
 }

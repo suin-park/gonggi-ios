@@ -24,14 +24,26 @@ enum HighResCaptureMode {
         set { UserDefaults.standard.set(newValue, forKey: enabledDefaultsKey) }
     }
 
+    /// 12 MP stills (and the strict "hold still" gates they need), off by default since 3.1(35).
+    /// Why (device test 10-25): users hold the phone in a moving hand, so the 3 px / 0.3 rad/s gates dropped most
+    /// photos, and every still plays the shutter sound (iOS does not allow silencing it in Korea/Japan). The stills
+    /// never reach the generation server (upload zip excludes `hires/`), so turning them off costs the result nothing.
+    /// Only the hidden 실험 toggle turns them on, for research exports.
+    static let stillsDefaultsKey = "gonggi.capture.hiresStills.v3"
+
+    static var stillsEnabled: Bool {
+        get { isEnabled && UserDefaults.standard.bool(forKey: stillsDefaultsKey) }
+        set { UserDefaults.standard.set(newValue, forKey: stillsDefaultsKey) }
+    }
+
     /// Stills are skipped (the capture itself continues) when free space drops below this.
     static let minFreeBytesForStills: Int64 = 2_000_000_000
 
     /// Longest shutter auto-exposure may pick. 1/120 s keeps smear at 0.25 rad/s under 3 px (fx ≈ 1437).
     static let maxExposureSec: Double = 1.0 / 120
-    /// Stricter keyframe smear gate while on (video-resolution pixels; ≈ 2× that in the 12 MP still).
+    /// Stricter keyframe smear gate while stills are on (video-resolution pixels; ≈ 2× that in the 12 MP still).
     static let stillMaxBlurPx: Double = 3.0
-    /// "천천히" prompt threshold while on.
+    /// "천천히" prompt threshold while stills are on.
     static let angularSpeedPromptRadPerSec: Double = 0.3
 
     static let directoryName = "hires"
@@ -39,7 +51,7 @@ enum HighResCaptureMode {
 
     /// Video format whose high-resolution capture is the largest still the device offers.
     static func configure(_ config: ARWorldTrackingConfiguration) {
-        guard isEnabled else { return }
+        guard stillsEnabled else { return }
         if let format = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
             config.videoFormat = format
         }

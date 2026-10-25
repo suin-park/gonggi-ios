@@ -5,24 +5,28 @@ import XCTest
 /// 실험 › 고화질 공간 촬영: stricter gates while on, intrinsics scaled to the still, `hires/` kept out of upload zips.
 final class HighResStillCaptureTests: XCTestCase {
     private var savedMode = false
+    private var savedStills = false
 
     override func setUp() {
         super.setUp()
         savedMode = HighResCaptureMode.isEnabled
+        savedStills = UserDefaults.standard.bool(forKey: HighResCaptureMode.stillsDefaultsKey)
     }
 
     override func tearDown() {
         HighResCaptureMode.isEnabled = savedMode
+        HighResCaptureMode.stillsEnabled = savedStills
         super.tearDown()
     }
 
-    func testModeTightensBlurGateAndSlowDownPrompt() {
-        HighResCaptureMode.isEnabled = false
-        XCTAssertEqual(MotionBlurEstimate.maxBlurPx, MotionBlurEstimate.defaultMaxBlurPx)
+    func testStillsTightenBlurGateAndSlowDownPrompt() {
+        HighResCaptureMode.isEnabled = true
+        HighResCaptureMode.stillsEnabled = false
+        XCTAssertEqual(MotionBlurEstimate.maxBlurPx, MotionBlurEstimate.defaultMaxBlurPx, "max quality alone keeps hand-held gates")
         XCTAssertEqual(GuidanceRuleEngine().angularSpeedThresholdRadPerSec, 0.6)
         XCTAssertEqual(KeyframeSelector3DGS.Config().maxMotionBlurPx, MotionBlurEstimate.defaultMaxBlurPx)
 
-        HighResCaptureMode.isEnabled = true
+        HighResCaptureMode.stillsEnabled = true
         XCTAssertEqual(MotionBlurEstimate.maxBlurPx, HighResCaptureMode.stillMaxBlurPx)
         XCTAssertEqual(GuidanceRuleEngine().angularSpeedThresholdRadPerSec, HighResCaptureMode.angularSpeedPromptRadPerSec)
         XCTAssertEqual(KeyframeSelector3DGS.Config().maxMotionBlurPx, HighResCaptureMode.stillMaxBlurPx)

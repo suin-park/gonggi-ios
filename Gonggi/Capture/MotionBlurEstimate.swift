@@ -15,7 +15,7 @@ enum MotionBlurEstimate {
     /// (quality.json now records `exposureDurationSec` and `motionBlurPx` for every saved photo).
     static var defaultMaxBlurPx: Double = 8.0
     static var maxBlurPx: Double {
-        HighResCaptureMode.isEnabled ? HighResCaptureMode.stillMaxBlurPx : defaultMaxBlurPx
+        HighResCaptureMode.stillsEnabled ? HighResCaptureMode.stillMaxBlurPx : defaultMaxBlurPx
     }
     static let assumedDepthM: Double = 1.5
 
