@@ -34,6 +34,8 @@ struct WhikHomeView: View {
                 ForEach(items) { sample in
                     // The pager ignores the safe area (full-bleed photo); pass the real bottom inset down.
                     WhikSamplePage(sample: sample, bottomInset: outer.safeAreaInsets.bottom) { open(sample) }
+                        // Page-style TabView keeps each page inside the safe area unless the page ignores it too.
+                        .ignoresSafeArea()
                         .tag(sample.id)
                 }
             }
