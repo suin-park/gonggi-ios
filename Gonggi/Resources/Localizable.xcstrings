@@ -886,7 +886,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산 생성을 시작했어요."
+            "value": "3D 오브젝트 생성을 시작했어요."
           }
         },
         "zh-Hans": {
@@ -942,7 +942,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산"
+            "value": "3D 오브젝트"
           }
         },
         "zh-Hans": {
@@ -970,7 +970,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "촬영으로 만든 3D 자산"
+            "value": "촬영으로 만든 3D 오브젝트"
           }
         },
         "zh-Hans": {
@@ -1222,7 +1222,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 생성을 시작했어요. 보관함의 3D 자산에서 결과를 볼 수 있어요."
+            "value": "3D 생성을 시작했어요. 보관함의 3D 오브젝트에서 결과를 볼 수 있어요."
           }
         },
         "zh-Hans": {
@@ -2605,6 +2605,34 @@
         }
       }
     },
+    "Angles covered %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Angles covered %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "撮影した角度 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "둘러본 각도 %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已拍角度 %@"
+          }
+        }
+      }
+    },
     "Announcements": {
       "localizations": {
         "en": {
@@ -2678,7 +2706,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "링크가 있는 사람은 누구나 이 3D 자산을 볼 수 있어요"
+            "value": "링크가 있는 사람은 누구나 이 3D 오브젝트를 볼 수 있어요"
           }
         },
         "zh-Hans": {
@@ -7130,7 +7158,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "자산을 삭제하지 못했어요. 잠시 후 다시 시도해주세요."
+            "value": "오브젝트를 삭제하지 못했어요. 잠시 후 다시 시도해주세요."
           }
         },
         "zh-Hans": {
@@ -7690,7 +7718,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산을 불러오지 못했어요"
+            "value": "3D 오브젝트를 불러오지 못했어요"
           }
         },
         "zh-Hans": {
@@ -8530,7 +8558,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산 촬영 정보를 읽지 못했어요"
+            "value": "3D 오브젝트 촬영 정보를 읽지 못했어요"
           }
         },
         "zh-Hans": {
@@ -8558,7 +8586,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산 촬영 정보를 읽지 못했어요.\n보관함에서 다시 시도하거나 새로 촬영해 주세요."
+            "value": "3D 오브젝트 촬영 정보를 읽지 못했어요.\n보관함에서 다시 시도하거나 새로 촬영해 주세요."
           }
         },
         "zh-Hans": {
@@ -9510,7 +9538,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산 만들기"
+            "value": "3D 오브젝트 만들기"
           }
         },
         "zh-Hans": {
@@ -9594,7 +9622,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "그대로 3D 자산 만들기"
+            "value": "그대로 3D 오브젝트 만들기"
           }
         },
         "zh-Hans": {
@@ -9734,7 +9762,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산 생성 중"
+            "value": "3D 오브젝트 생성 중"
           }
         },
         "zh-Hans": {
@@ -10350,7 +10378,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "자산 삭제"
+            "value": "오브젝트 삭제"
           }
         },
         "zh-Hans": {
@@ -10462,7 +10490,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이 3D 자산을 삭제할까요?"
+            "value": "이 3D 오브젝트를 삭제할까요?"
           }
         },
         "zh-Hans": {
@@ -14057,6 +14085,34 @@
         }
       }
     },
+    "Hold the phone steady and slowly look around": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold the phone steady and slowly look around"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スマホをしっかり持って、ゆっくり見回してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "휴대폰을 흔들리지 않게 들고 천천히 둘러봐 주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请拿稳手机，慢慢环顾四周"
+          }
+        }
+      }
+    },
     "Hold the phone upright": {
       "localizations": {
         "en": {
@@ -14410,7 +14466,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산과 AR 사용 방법"
+            "value": "3D 오브젝트와 AR 사용 방법"
           }
         },
         "zh-Hans": {
@@ -16622,7 +16678,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "3D 자산을 불러오는 중…"
+            "value": "3D 오브젝트를 불러오는 중…"
           }
         },
         "zh-Hans": {
@@ -17294,7 +17350,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "사진으로 새 3D 자산을 만들어 보세요."
+            "value": "사진으로 새 3D 오브젝트를 만들어 보세요."
           }
         },
         "zh-Hans": {
@@ -18666,7 +18722,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "새 3D 자산 만들기"
+            "value": "새 3D 오브젝트 만들기"
           }
         },
         "zh-Hans": {
@@ -18946,7 +19002,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "아직 3D 자산이 없어요"
+            "value": "아직 3D 오브젝트가 없어요"
           }
         },
         "zh-Hans": {
@@ -20066,7 +20122,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "아직 없어요. 오른쪽 위 +로 사진에서 3D 자산을 만들 수 있어요."
+            "value": "아직 없어요. 오른쪽 위 +로 사진에서 3D 오브젝트를 만들 수 있어요."
           }
         },
         "zh-Hans": {
@@ -20990,7 +21046,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "다른 사용자가 홈 둘러보기에서 이 자산을 볼 수 있어요."
+            "value": "다른 사용자가 홈 둘러보기에서 이 오브젝트를 볼 수 있어요."
           }
         },
         "zh-Hans": {
@@ -28281,6 +28337,62 @@
         }
       }
     },
+    "Tap Capture complete, or keep capturing": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap Capture complete, or keep capturing"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「撮影完了」を押すか、そのまま撮影を続けられます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "촬영 완료를 누르거나 계속 촬영해도 돼요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点击“拍摄完成”，或继续拍摄"
+          }
+        }
+      }
+    },
+    "Tap Start capture to begin": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tap Start capture to begin"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「撮影を開始」を押してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "촬영 시작을 눌러 주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请点击“开始拍摄”"
+          }
+        }
+      }
+    },
     "Tap Start space capture": {
       "localizations": {
         "en": {
@@ -33993,6 +34105,34 @@
         }
       }
     },
+    "You can end the capture now": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You can end the capture now"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ここで撮影を終了できます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지금 촬영을 끝내도 돼요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "现在可以结束拍摄"
+          }
+        }
+      }
+    },
     "You can finish now": {
       "localizations": {
         "en": {
@@ -34374,7 +34514,7 @@
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "WHIK와 3D Locker 계정이 함께 삭제됩니다. 저장한 공간과 3D 자산, 공유 링크와 남은 크레딧을 더 이상 이용할 수 없습니다."
+            "value": "WHIK와 3D Locker 계정이 함께 삭제됩니다. 저장한 공간과 3D 오브젝트, 공유 링크와 남은 크레딧을 더 이상 이용할 수 없습니다."
           }
         },
         "zh-Hans": {

@@ -197,6 +197,46 @@ enum CaptureQuietUIPresenter {
         return isReady ? L("Capture complete") : L("End capture")
     }
 
+    /// WHIK guide card (one card in every capture mode). Order: storage cap, recognizing, the guide v3/v4 prompt,
+    /// a correction (warning), ready, then the free-capture tip that changes as photos are saved.
+    static func guide(for quality: CaptureQualityState) -> WhikCaptureGuide {
+        switch phase(for: quality) {
+        case .storageCapReached:
+            return WhikCaptureGuide(title: L("New photos are no longer being saved"),
+                                    subtitle: L("You can end the capture now"), tone: .warning)
+        case .recognizing:
+            return WhikCaptureGuide(title: L("Recognizing the space"),
+                                    subtitle: L("Hold the phone steady and slowly look around"))
+        default:
+            break
+        }
+        if let coach = quality.coachPrompt {
+            let c = CaptureUIPresenter.coachCopy(coach)
+            return WhikCaptureGuide(title: c.title, subtitle: c.subtitle)
+        }
+        if let gap = quality.gapPrompt {
+            let c = CaptureUIPresenter.gapCopy(gap)
+            return WhikCaptureGuide(title: c.title, subtitle: c.subtitle)
+        }
+        if let hint = toastHint(for: quality) {
+            return WhikCaptureGuide(title: hint, subtitle: nil, tone: .warning)
+        }
+        if phase(for: quality) == .ready {
+            return WhikCaptureGuide(title: statusLine(for: quality),
+                                    subtitle: L("Tap Capture complete, or keep capturing"), tone: .done)
+        }
+        let tip = CaptureUIPresenter.captureTipCopy(savedPhotos: quality.spatialKeyframeEnqueueCount)
+        if phase(for: quality) == .nearlyReady {
+            return WhikCaptureGuide(title: L("Look around a little more"), subtitle: tip.subtitle)
+        }
+        return WhikCaptureGuide(title: tip.title, subtitle: tip.subtitle)
+    }
+
+    /// Bottom ring: the same fill the cube used (sector ring, or a share of quality coverage).
+    static func ringFraction(for quality: CaptureQualityState) -> Double {
+        min(1, max(0, max(quality.sectorRingProgress.fillRatio, quality.qualityCoverage * 0.35)))
+    }
+
     /// Short intervention toast — only when recognizing is done and something blocks progress.
     static func toastHint(for quality: CaptureQualityState) -> String? {
         if quality.candidateSafetyCapReached {

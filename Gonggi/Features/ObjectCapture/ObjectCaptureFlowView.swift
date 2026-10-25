@@ -46,7 +46,7 @@ enum ObjectCaptureCopy {
     static var depth: String { L("Depth") }
     static var placeAgain: String { L("Place again") }
     static var beginCapture: String { L("Start capture") }
-    static var finish: String { L("Finish") }
+    static var finish: String { L("End capture") }
     static var finishing: String { L("Organizing photos") }
     static var close: String { L("Close") }
     static var bands: [String] { [L("Low"), L("Middle"), L("High")] }
@@ -92,11 +92,16 @@ struct ObjectCaptureFlowView: View {
                     .allowsHitTesting(false)
             }
             VStack(spacing: 12) {
-                topBar
+                WhikCaptureTopBar(title: L("3D Object"), onClose: {
+                    session.stop()
+                    onClose()
+                })
+                if let guide = cardGuide {
+                    WhikCaptureGuideCard(guide: guide)
+                }
                 Spacer()
                 bottomPanel
             }
-            .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
         .onAppear { session.start() }
@@ -139,61 +144,26 @@ struct ObjectCaptureFlowView: View {
         }
     }
 
-    private var topBar: some View {
-        HStack(alignment: .top) {
-            if showsStatusChip {
-                VStack(alignment: .leading, spacing: 4) {
-                    if !topText.isEmpty {
-                        Text(topText)
-                            .font(.headline)
-                    }
-                    if let note = session.locatingNote, session.trackingNote == nil {
-                        Text(note)
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                    if let note = session.rangeHoldNote {
-                        Text(note)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.orange)
-                    } else if let note = session.trackingNote {
-                        Text(note)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.orange)
-                    }
-                    if let helper = session.trackingHelper, session.trackingNote != nil {
-                        Text(helper)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-                }
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            Button(ObjectCaptureCopy.close) {
-                session.stop()
-                onClose()
-            }
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.black.opacity(0.55), in: Capsule())
+    /// One guide card (shared WHIK capture HUD). Tracking / range recovery replaces placement and walk guidance
+    /// as a warning (never both at once, D3); otherwise the step hint with its supporting note.
+    private var cardGuide: WhikCaptureGuide? {
+        if let note = session.rangeHoldNote {
+            return WhikCaptureGuide(title: note, subtitle: nil, tone: .warning)
         }
-    }
-
-    /// Status chip: placement touch hint XOR tracking/range recovery — never both at once (D3).
-    private var showsStatusChip: Bool {
-        !topText.isEmpty
-            || (session.locatingNote != nil && session.trackingNote == nil)
-            || session.trackingNote != nil
-            || session.trackingHelper != nil
-            || session.rangeHoldNote != nil
+        if let note = session.trackingNote {
+            return WhikCaptureGuide(title: note, subtitle: session.trackingHelper, tone: .warning)
+        }
+        guard !topText.isEmpty else { return nil }
+        let subtitle: String?
+        switch session.stage {
+        case .placing, .secondTap: subtitle = session.locatingNote
+        case .capturing: subtitle = ObjectCaptureCopy.captureNote
+        default: subtitle = nil
+        }
+        if case .failed = session.stage {
+            return WhikCaptureGuide(title: topText, subtitle: nil, tone: .warning)
+        }
+        return WhikCaptureGuide(title: topText, subtitle: subtitle)
     }
 
     private var topText: String {
@@ -233,7 +203,9 @@ struct ObjectCaptureFlowView: View {
         case .finishing:
             ProgressView().tint(.white)
         case .failed:
-            PrimaryButton(title: ObjectCaptureCopy.close, icon: "xmark") { onClose() }
+            WhikCapturePanel {
+                WhikCaptureActionButton(title: ObjectCaptureCopy.close, fullWidth: true) { onClose() }
+            }
         }
     }
 
@@ -310,10 +282,11 @@ struct ObjectSizingPanel: View {
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.white)
             }
-            PrimaryButton(title: ObjectCaptureCopy.beginCapture, icon: "camera") { session.beginCapture() }
+            WhikCaptureActionButton(title: ObjectCaptureCopy.beginCapture, systemImage: "camera", fullWidth: true) {
+                session.beginCapture()
+            }
         }
-        .padding(14)
-        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .whikCapturePanelStyle()
     }
 
     private func sizeSlider(_ label: String, value: Float, set: @escaping (Float) -> Void) -> some View {
@@ -346,11 +319,7 @@ struct ObjectCapturingPanel: View {
             if session.rangeConsistencyHold {
                 rangeHoldControls
             } else {
-                Text(ObjectCaptureCopy.captureNote)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                // The capture note is the guide card's supporting line (shared WHIK capture HUD).
                 capturingControls
             }
         }
@@ -397,40 +366,32 @@ struct ObjectCapturingPanel: View {
             .font(.body.weight(.semibold))
             .foregroundStyle(.white.opacity(0.85))
         }
-        .padding(14)
-        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .whikCapturePanelStyle()
     }
 
     private var capturingControls: some View {
-        HStack(alignment: .center, spacing: 16) {
+        // Same row as the other modes: ring, photo count with a short status line, end button. The orbit rings are
+        // this mode's ring (one ring per height band; the band percentages are read out for VoiceOver).
+        HStack(alignment: .center, spacing: 12) {
             ObjectOrbitRingsView(counts: session.coverageCounts, currentAzimuthDeg: session.currentAzimuthDeg)
-                .frame(width: 96, height: 96)
+                .frame(width: 64, height: 64)
                 .accessibilityLabel(ringsAccessibility)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(ObjectCaptureCopy.photos(session.savedPhotos))
-                    .font(.headline.monospacedDigit())
-                ForEach(Array(ObjectCaptureCopy.bands.enumerated()), id: \.offset) { i, name in
-                    Text("\(name) \(Int(((session.bandFill.objectCaptureElement(at: i) ?? 0) * 100).rounded()))%")
-                        .font(.caption.monospacedDigit())
-                }
-            }
-            .foregroundStyle(.white)
+            WhikCaptureCountLabel(
+                count: ObjectCaptureCopy.photos(session.savedPhotos),
+                caption: L("Angles covered %@", "\(coveredPercent)%")
+            )
             Spacer(minLength: 0)
-            Button {
+            WhikCaptureActionButton(title: ObjectCaptureCopy.finish, enabled: session.savedPhotos >= 2) {
                 guard session.requestFinish() else { return }
                 onFinish()
-            } label: {
-                Text(ObjectCaptureCopy.finish)
-                    .font(.headline)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(GonggiColors.accentTeal, in: Capsule())
-                    .foregroundStyle(.white)
             }
-            .disabled(session.savedPhotos < 2)
         }
-        .padding(14)
-        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .whikCapturePanelStyle()
+    }
+
+    private var coveredPercent: Int {
+        guard !session.bandFill.isEmpty else { return 0 }
+        return Int((session.bandFill.reduce(0, +) / Double(session.bandFill.count) * 100).rounded())
     }
 
     private var ringsAccessibility: String {
@@ -502,8 +463,7 @@ struct ObjectLocatingPanel: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        .padding(14)
-        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .whikCapturePanelStyle()
     }
 }
 

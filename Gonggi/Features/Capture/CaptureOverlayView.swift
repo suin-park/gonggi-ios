@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Quiet Spatial Capture chrome: camera-first, small cube, minimal status, ephemeral toast.
+/// 3D Space capture chrome on the shared WHIK capture HUD: top bar, one guide card, ring + photo count, finish.
 struct CaptureOverlayView: View {
     @ObservedObject var guidance: CaptureGuidanceEngine
     var astraSegmentInstruction: String? = nil
@@ -10,47 +10,28 @@ struct CaptureOverlayView: View {
     let onGuide: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var toastText: String?
-    @State private var toastToken = UUID()
-
-    private var quietPhase: CaptureQuietUIPhase {
-        CaptureQuietUIPresenter.phase(for: guidance.quality)
-    }
-
-    private var recognitionReady: Bool {
-        CaptureQuietUIPresenter.isSpatialRecognitionReady(quality: guidance.quality)
-    }
+    @State private var hold = WhikCaptureGuideHold()
+    @State private var shownGuide = WhikCaptureGuide(title: L("Recognizing the space"))
 
     private var isReady: Bool {
         guidance.quality.completionState == .ready || guidance.quality.reconstructionReady
     }
 
-    private var cubeFills: CaptureCubeFaceFills {
-        CaptureCubeFaceFills.from(progress: guidance.quality.sectorRingProgress)
-    }
-
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                LinearGradient(
-                    colors: [Color.black.opacity(0.38), .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 96)
+                LinearGradient(colors: [Color.black.opacity(0.38), .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 96)
                 Spacer()
-                LinearGradient(
-                    colors: [.clear, Color.black.opacity(0.42)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 140)
+                LinearGradient(colors: [.clear, Color.black.opacity(0.42)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 140)
             }
             .ignoresSafeArea()
             .allowsHitTesting(false)
 
-            VStack(spacing: 0) {
-                topBar
+            VStack(spacing: 12) {
+                WhikCaptureTopBar(title: L("3D Space"), onClose: onClose, onHelp: onGuide)
+                WhikCaptureGuideCard(guide: shownGuide)
                 if guidance.quality.reacquireThumbnailVisible,
                    let data = guidance.quality.reacquireThumbnailJPEG
                 {
@@ -62,24 +43,11 @@ struct CaptureOverlayView: View {
                         proximity: guidance.quality.reacquireProximity
                     )
                     .padding(.horizontal, GonggiSpacing.md)
-                    .padding(.top, GonggiSpacing.sm)
                     .transition(.opacity)
                     .allowsHitTesting(false)
                 }
                 Spacer(minLength: 0)
-                if let toastText {
-                    Text(toastText)
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background(Color.black.opacity(0.55))
-                        .clipShape(Capsule())
-                        .transition(.opacity)
-                        .padding(.bottom, GonggiSpacing.sm)
-                        .allowsHitTesting(false)
-                }
-                bottomChrome
+                bottomPanel
             }
             .padding(.top, GonggiSpacing.sm)
             .padding(.bottom, GonggiSpacing.lg)
@@ -88,95 +56,44 @@ struct CaptureOverlayView: View {
             debugMetricsBag
             #endif
         }
-        .animation(reduceMotion ? nil : GonggiMotion.quick, value: toastText)
-        .animation(reduceMotion ? nil : GonggiMotion.quick, value: quietPhase)
-        .onAppear { refreshToast() }
-        .onChange(of: guidance.quality) { _, _ in refreshToast() }
+        .animation(reduceMotion ? nil : GonggiMotion.quick, value: shownGuide)
+        .onAppear { refreshGuide() }
+        .onChange(of: guidance.quality) { _, _ in refreshGuide() }
     }
 
-    private var topBar: some View {
-        HStack(alignment: .center) {
-            GonggiIconButton(systemName: "xmark", style: .dimmed, action: onClose)
-                .accessibilityLabel(L("Close"))
-            Spacer()
-            Text(L("3D Space capture"))
-                .font(GonggiTypography.headline(15))
-                .foregroundStyle(GonggiColors.textPrimary)
-            Spacer()
-            GonggiIconButton(systemName: "questionmark.circle", style: .dimmed, action: onGuide)
-                .accessibilityLabel(L("Capture guide"))
-        }
-        .padding(.horizontal, GonggiSpacing.md)
-    }
-
-    private var bottomChrome: some View {
-        VStack(spacing: GonggiSpacing.sm) {
-            Text(CaptureQuietUIPresenter.statusLine(for: guidance.quality))
-                .font(GonggiTypography.caption(13))
-                .foregroundStyle(
-                    guidance.quality.candidateSafetyCapReached
-                        ? GonggiColors.warning
-                        : (isReady ? GonggiColors.successGreen : GonggiColors.textSecondary)
+    private var bottomPanel: some View {
+        let q = guidance.quality
+        let tone: WhikCaptureTone = q.candidateSafetyCapReached ? .warning : (isReady ? .done : .normal)
+        return WhikCapturePanel {
+            HStack(spacing: 12) {
+                WhikCaptureProgressRing(fraction: CaptureQuietUIPresenter.ringFraction(for: q), tone: tone)
+                    .opacity(CaptureQuietUIPresenter.phase(for: q) == .recognizing ? 0.4 : 1)
+                WhikCaptureCountLabel(
+                    count: L("%@ photos", "\(q.spatialKeyframeEnqueueCount)"),
+                    caption: CaptureQuietUIPresenter.statusLine(for: q)
                 )
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .accessibilityLabel(CaptureQuietUIPresenter.statusLine(for: guidance.quality))
-
-            HStack(alignment: .center, spacing: GonggiSpacing.md) {
-                GonggiIconButton(
-                    systemName: guidance.isFlashOn ? "bolt.fill" : "bolt.slash.fill",
+                Spacer(minLength: 0)
+                WhikCircleButton(
+                    systemImage: guidance.isFlashOn ? "bolt.fill" : "bolt.slash.fill",
                     size: 40,
-                    style: .dimmed,
+                    label: guidance.isFlashOn ? L("Turn off flash") : L("Turn on flash"),
                     action: onFlash
                 )
-                .accessibilityLabel(guidance.isFlashOn ? L("Turn off flash") : L("Turn on flash"))
-
-                CaptureCoverageCubeView(
-                    fills: cubeFills,
-                    isActive: recognitionReady,
-                    size: 58
-                )
-                .opacity(quietPhase == .recognizing ? 0.4 : 1)
-
-                CaptureFinishPillButton(
-                    isReady: isReady,
+                WhikCaptureActionButton(
                     title: CaptureQuietUIPresenter.finishTitle(
                         isReady: isReady,
-                        candidateSafetyCapReached: guidance.quality.candidateSafetyCapReached
+                        candidateSafetyCapReached: q.candidateSafetyCapReached
                     ),
+                    prominent: isReady,
                     action: onFinish
                 )
             }
-            .padding(.horizontal, GonggiSpacing.sm)
-            .padding(.vertical, GonggiSpacing.xs)
-            .background(
-                RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
-                    .fill(Color.black.opacity(0.5))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: GonggiRadius.lg, style: .continuous)
-                    .stroke(GonggiColors.borderSubtle, lineWidth: 1)
-            )
         }
-        .padding(.horizontal, GonggiSpacing.md)
     }
 
-    private func refreshToast() {
-        let next = CaptureQuietUIPresenter.toastHint(for: guidance.quality)
-        guard next != toastText else { return }
-        let token = UUID()
-        toastToken = token
-        withAnimation(reduceMotion ? nil : GonggiMotion.quick) {
-            toastText = next
-        }
-        guard next != nil else { return }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_400_000_000)
-            guard toastToken == token else { return }
-            withAnimation(reduceMotion ? nil : GonggiMotion.quick) {
-                toastText = nil
-            }
-        }
+    private func refreshGuide() {
+        let next = hold.resolve(CaptureQuietUIPresenter.guide(for: guidance.quality))
+        if next != shownGuide { shownGuide = next }
     }
 
     #if DEBUG
@@ -185,7 +102,7 @@ struct CaptureOverlayView: View {
             Spacer()
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("quiet \(String(describing: quietPhase)), track \(String(format: "%.2f", guidance.quality.trackingQuality))")
+                    Text("quiet \(String(describing: CaptureQuietUIPresenter.phase(for: guidance.quality))), track \(String(format: "%.2f", guidance.quality.trackingQuality))")
                     Text("comp \(guidance.quality.completionState.rawValue), recon \(guidance.quality.reconstructionReady)")
                     Text("stage \(guidance.quality.guidanceStage.rawValue)")
                 }

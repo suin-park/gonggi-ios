@@ -116,7 +116,8 @@ final class WhikScreenshotTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ライブラリ"].exists, "screen re-rendered in Japanese without a restart")
     }
 
-    private func openCapture(_ title: String, _ name: String, language: String? = nil) {
+    @discardableResult
+    private func openCapture(_ title: String, _ name: String, language: String? = nil) -> XCUIApplication {
         let app = launch(["-whik-preview-signed-in"], language: language)
         let captureTab = ["en": "Capture", "ko": "촬영", "ja": "撮影", "zh-Hans": "拍摄"][language ?? "en"]!
         tab(app, captureTab)
@@ -125,12 +126,19 @@ final class WhikScreenshotTests: XCTestCase {
         card.tap(); sleep(4)
         shot(app, name)
         XCTAssertFalse(app.buttons["Not now"].exists, "signed in: the flow opens directly")
+        return app
     }
 
     func test04CaptureFlowsOpen() {
         openCapture("3D Space", "14_flow_3d_space")
         openCapture("360° Space", "15_flow_360_space")
-        openCapture("3D Object", "16_flow_3d_object")
+        let object = openCapture("3D Object", "16_flow_3d_object")
+        // Past the intro sheet: the shared capture HUD (top bar + guide card) of the 3D Object flow.
+        let start = object.buttons["Start"].firstMatch
+        if start.waitForExistence(timeout: 3) {
+            start.tap(); sleep(3)
+            shot(object, "16b_flow_3d_object_hud")
+        }
     }
 
     func test05LargeText() {

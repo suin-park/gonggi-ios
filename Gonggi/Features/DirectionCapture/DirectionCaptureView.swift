@@ -29,19 +29,6 @@ struct DirectionCaptureView: View {
             }
 
             overlay
-
-            if case .failed(let msg) = viewModel.phase {
-                VStack {
-                    Spacer()
-                    Text(msg)
-                        .font(GonggiTypography.caption(13))
-                        .foregroundStyle(GonggiColors.error)
-                        .padding()
-                        .background(Color.black.opacity(0.55))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .padding()
-                }
-            }
         }
         .onAppear {
             viewModel.configure(mockMode: appState.isMockMode)
@@ -59,112 +46,75 @@ struct DirectionCaptureView: View {
         .statusBarHidden(true)
     }
 
+    /// Shared WHIK capture HUD: top bar, one guide card, ring + direction count, start button.
     private var overlay: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button {
-                    GonggiHaptics.light()
-                    viewModel.close()
-                    onClose()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                        .background(Color.black.opacity(0.45))
-                        .clipShape(Circle())
-                }
-                Spacer()
-                Text(viewModel.progressText)
-                    .font(GonggiTypography.body(16))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color.black.opacity(0.45))
-                    .clipShape(Capsule())
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-
-            guidanceBanner
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .allowsHitTesting(false)
+        VStack(spacing: 12) {
+            WhikCaptureTopBar(title: L("360° Space"), onClose: {
+                GonggiHaptics.light()
+                viewModel.close()
+                onClose()
+            })
+            WhikCaptureGuideCard(guide: DirectionCaptureView.guide(
+                phase: viewModel.phase,
+                phaseTitle: viewModel.phaseTitle,
+                guideText: viewModel.guideText,
+                isPhotoPending: viewModel.isPhotoPending
+            ))
 
             #if DEBUG
             Text("\(viewModel.yawDisplay), \(viewModel.pitchDisplay)")
                 .font(GonggiTypography.caption(11))
                 .foregroundStyle(.white.opacity(0.65))
-                .padding(.top, 6)
             #endif
 
             Spacer()
 
-            bottomBar
-                .padding(.bottom, 28)
+            bottomPanel
+        }
+        .padding(.top, 12)
+        .padding(.bottom, 24)
+    }
+
+    static let totalDirections = 20
+
+    /// Guide card for each phase. Before starting: where to stand and what to tap; while capturing: the turn
+    /// (eye level / up / down) and the live direction hint; a failure is a warning with its message.
+    static func guide(phase: DirectionCapturePhase, phaseTitle: String, guideText: String,
+                      isPhotoPending: Bool) -> WhikCaptureGuide {
+        switch phase {
+        case .idle, .ready:
+            return WhikCaptureGuide(title: L("Look around from one spot"), subtitle: L("Tap Start capture to begin"))
+        case .failed(let message):
+            return WhikCaptureGuide(title: L("Try again"), subtitle: message, tone: .warning)
+        case .completed:
+            return WhikCaptureGuide(title: L("Capture complete"), subtitle: nil, tone: .done)
+        default:
+            if isPhotoPending { return WhikCaptureGuide(title: L("Capturing…"), subtitle: nil) }
+            return WhikCaptureGuide(title: phaseTitle, subtitle: guideText.isEmpty ? nil : guideText)
         }
     }
 
-    /// Large, high-contrast coach for phase title + live guide (TestFlight: hard to read at 14pt).
-    private var guidanceBanner: some View {
-        VStack(spacing: 10) {
-            Text(viewModel.isPhotoPending ? L("Capturing…") : viewModel.phaseTitle)
-                .font(GonggiTypography.display(28))
-                .fontWeight(.bold)
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-                .minimumScaleFactor(0.85)
-                .lineLimit(2)
-
-            if !viewModel.guideText.isEmpty, !viewModel.isPhotoPending {
-                Text(viewModel.guideText)
-                    .font(GonggiTypography.headline(20))
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 18)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.black.opacity(0.72))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(GonggiColors.accentTeal.opacity(0.55), lineWidth: 1.5)
-        )
-        .shadow(color: .black.opacity(0.45), radius: 16, y: 6)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            viewModel.isPhotoPending
-                ? L("Capturing")
-                : "\(viewModel.phaseTitle). \(viewModel.guideText)"
-        )
-    }
-
-    private var bottomBar: some View {
-        Group {
+    private var bottomPanel: some View {
+        let done = viewModel.completed.count
+        let isDone = viewModel.phase == .completed
+        return WhikCapturePanel {
             switch viewModel.phase {
             case .idle, .ready, .failed:
-                Button {
+                WhikCaptureActionButton(title: L("Start capture"), systemImage: "camera", fullWidth: true) {
                     viewModel.startCapture()
-                } label: {
-                    Text(L("Start space capture"))
-                        .font(GonggiTypography.body(17))
-                        .foregroundStyle(.black)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(GonggiColors.accentTeal)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
-                .padding(.horizontal, 24)
             default:
-                Text(L("Keep moving, capturing automatically"))
-                    .font(GonggiTypography.caption(12))
-                    .foregroundStyle(.white.opacity(0.75))
+                HStack(spacing: 12) {
+                    WhikCaptureProgressRing(
+                        fraction: Double(done) / Double(Self.totalDirections),
+                        tone: isDone ? .done : .normal
+                    )
+                    WhikCaptureCountLabel(
+                        count: "\(done) / \(Self.totalDirections)",
+                        caption: L("Keep moving, capturing automatically")
+                    )
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
