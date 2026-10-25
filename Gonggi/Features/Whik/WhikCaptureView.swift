@@ -163,11 +163,11 @@ private struct WhikCaptureCard: View {
     var body: some View {
         Button(action: action) {
             ZStack(alignment: .bottomLeading) {
-                Image(kind.photoAsset)
-                    .resizable()
-                    .scaledToFill()
+                // Fill a fixed box: a bare scaledToFill image would widen the card (and the page) past the screen.
+                Color.clear
                     .frame(maxWidth: .infinity)
                     .frame(height: 196)
+                    .overlay(Image(kind.photoAsset).resizable().scaledToFill())
                     .clipped()
                     .accessibilityHidden(true)
                 WhikPhotoScrim(top: 0, bottom: 0.82)
