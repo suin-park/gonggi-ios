@@ -52,9 +52,13 @@ final class WhikShellTests: XCTestCase {
         let suite = "whik.test.language.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        XCTAssertEqual(AppLanguage(defaults: defaults).code, .en, "first launch defaults to English on any device")
+        // The test scheme passes -whik.language.v1 ko (argument domain beats every suite), so read the
+        // persistent domain directly.
+        XCTAssertEqual(AppLanguage.resolve(stored: nil), .en, "first launch defaults to English on any device")
+        XCTAssertEqual(AppLanguage.resolve(stored: "fr"), .en)
         AppLanguage(defaults: defaults).set(.ja, defaults: defaults)
-        XCTAssertEqual(AppLanguage(defaults: defaults).code, .ja, "the next launch keeps the choice")
+        let saved = defaults.persistentDomain(forName: suite)?[AppLanguage.defaultsKey] as? String
+        XCTAssertEqual(AppLanguage.resolve(stored: saved), .ja, "the next launch keeps the choice")
     }
 
     func testEveryLanguageHasEveryKey() {

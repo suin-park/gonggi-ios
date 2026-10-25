@@ -36,10 +36,15 @@ final class AppLanguage {
     private(set) var locale: Locale
 
     init(defaults: UserDefaults = .standard) {
-        let stored = defaults.string(forKey: Self.defaultsKey).flatMap(Code.init(rawValue:)) ?? .en
+        let stored = Self.resolve(stored: defaults.string(forKey: Self.defaultsKey))
         code = stored
         bundle = Self.bundle(for: stored)
         locale = Locale(identifier: stored.rawValue)
+    }
+
+    /// Saved value → language; nothing saved (first launch) or an unknown value is English.
+    static func resolve(stored: String?) -> Code {
+        stored.flatMap(Code.init(rawValue:)) ?? .en
     }
 
     func set(_ new: Code, defaults: UserDefaults = .standard) {
