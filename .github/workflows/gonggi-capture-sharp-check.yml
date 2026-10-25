@@ -1,0 +1,120 @@
+name: Gonggi capture sharpness check
+
+# feat/capture-sharpness-gate 전용 빠른 검증: 컴파일 + 촬영 게이트·고화질 촬영·안내·패키지 테스트 클래스만 실행한다.
+# 서명·아카이브·업로드 없음. 기존 실패 목록(ci/known_test_failures.txt)에 있는 실패는 허용한다.
+on:
+  push:
+    branches:
+      - feat/capture-sharpness-gate
+    paths:
+      - '.github/workflows/gonggi-capture-sharp-check.yml'
+
+concurrency:
+  group: gonggi-capture-sharp-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  SCHEME: Gonggi
+  PROJECT: Gonggi.xcodeproj
+  OPENCV_VERSION: "4.10.0"
+
+jobs:
+  check:
+    name: Build and run capture tests
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache OpenCV xcframework
+        id: opencv-cache
+        uses: actions/cache@v4
+        with:
+          path: Vendor/OpenCV/opencv2.xcframework
+          key: opencv-${{ env.OPENCV_VERSION }}-ios17-arm64-simarm64-minimal-v1
+
+      - name: Ensure OpenCV xcframework
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build_opencv_xcframework.sh scripts/ensure_opencv_xcframework.sh
+          ./scripts/ensure_opencv_xcframework.sh
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1)"
+          echo "DEVELOPER_DIR=${XCODE_APP}/Contents/Developer" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Fetch Depth Anything V2 Small (Core ML, sha256 pinned)
+        run: bash scripts/fetch-depth-model.sh
+
+      - name: Generate Xcode project
+        run: |
+          set -euo pipefail
+          xcodegen generate
+          test -d "${{ env.PROJECT }}"
+
+      - name: Capture tests
+        run: |
+          set -euo pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)['devices']
+          for rt in sorted([k for k in data if 'iOS' in k], reverse=True):
+              phones = sorted([d for d in data[rt] if d.get('isAvailable') and 'iPhone' in d.get('name', '')], key=lambda d: d['name'])
+              pick = [d for d in phones if any(x in d['name'] for x in ('iPhone 16', 'iPhone 15', 'iPhone 14'))] or phones
+              if pick:
+                  print(pick[0]['udid']); sys.exit(0)
+          sys.exit(1)")"
+          xcrun simctl boot "${UDID}" 2>/dev/null || true
+          set +e
+          xcodebuild test \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${UDID}" \
+            -only-testing:GonggiTests/HighResStillCaptureTests \
+            -only-testing:GonggiTests/MotionBlurCaptureTests \
+            -only-testing:GonggiTests/GuidanceRuleEngineTests \
+            -only-testing:GonggiTests/KeyframeSelectorLogicTests \
+            -only-testing:GonggiTests/SpatialCapturePackageTests \
+            -only-testing:GonggiTests/SpatialRecordFormalFeatureTests \
+            -only-testing:GonggiTests/SurfaceCoverageModelTests \
+            -only-testing:GonggiTests/PrimaryGuidancePresenterTests \
+            -only-testing:GonggiTests/SpaceCaptureMetadataTests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee xcodebuild-capture.log
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          echo "---- errors ----"
+          grep -E "error:|XCTAssert|failed \(" xcodebuild-capture.log | head -n 80 || true
+          grep -E "Executed [0-9]+ tests" xcodebuild-capture.log | tail -n 3 || true
+          echo "xcodebuild exit=${STATUS} (known failures make this non-zero; the gate below decides)"
+          grep -oE "GonggiTests\.[A-Za-z0-9_]+ [A-Za-z0-9_]+\]' failed" xcodebuild-capture.log \
+            | awk '{ sub(/^GonggiTests\./, "", $1); sub(/\].*/, "", $2); print $1 "/" $2 }' | sort -u > failed.txt || true
+          NEW=0
+          while read -r t; do
+            if grep -qxF "$t" ci/known_test_failures.txt; then echo "known: $t"; else echo "NEW FAILURE: $t"; NEW=1; fi
+          done < failed.txt
+          if ! grep -qE "Executed [0-9]+ tests" xcodebuild-capture.log; then echo "tests did not run (build error or crash)"; exit 1; fi
+          exit "${NEW}"
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-capture-log
+          path: xcodebuild-capture.log
+          retention-days: 7
