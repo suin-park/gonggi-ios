@@ -124,16 +124,17 @@ final class VRLookControllerTests: XCTestCase {
         XCTAssertEqual(eq.pitchDeg, look.finalPitchDeg, accuracy: 0.5)
     }
 
-    func testTouchPanFingerRightIncreasesYaw() {
+    /// The picture follows the finger: dragging right turns the view left.
+    func testTouchPanFingerRightDecreasesYaw() {
         var look = VRLookComposer()
         look.applyTouchTranslation(dx: 100, dy: 0)
-        XCTAssertGreaterThan(look.touchYawOffsetDeg, 0)
+        XCTAssertLessThan(look.touchYawOffsetDeg, 0)
     }
 
-    func testTouchPanFingerDownDecreasesPitch() {
+    func testTouchPanFingerDownIncreasesPitch() {
         var look = VRLookComposer()
         look.applyTouchTranslation(dx: 0, dy: 100)
-        XCTAssertLessThan(look.touchPitchOffsetDeg, 0)
+        XCTAssertGreaterThan(look.touchPitchOffsetDeg, 0)
     }
 
     func testPreferencesReduceMotionForcesOff() {

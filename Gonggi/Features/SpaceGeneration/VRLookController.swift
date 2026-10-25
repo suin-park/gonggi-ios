@@ -70,10 +70,11 @@ enum VRLookMath {
     }
 
     /// Touch pan translation (points) → equirect offset deltas (degrees).
-    /// Finger right → +yaw; finger down → −pitch (look down), matching legacy euler path.
+    /// The picture follows the finger, like other 360 viewers: finger right → −yaw (look left);
+    /// finger down → +pitch (look up). WHIK 3.1(36); before, the view followed the finger instead.
     static func touchOffsetDeltaDeg(translationX: CGFloat, translationY: CGFloat) -> (yaw: Float, pitch: Float) {
-        let yaw = Float(translationX) * touchDegreesPerPoint
-        let pitch = -Float(translationY) * touchDegreesPerPoint
+        let yaw = -Float(translationX) * touchDegreesPerPoint
+        let pitch = Float(translationY) * touchDegreesPerPoint
         return (yaw, pitch)
     }
 }

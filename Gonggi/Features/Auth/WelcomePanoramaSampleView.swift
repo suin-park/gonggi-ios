@@ -254,9 +254,10 @@ private struct WelcomePanoramaSceneRepresentable: UIViewRepresentable {
                 let dx = Float(translation.x - lastPan.x) * 0.005
                 let dy = Float(translation.y - lastPan.y) * 0.005
                 lastPan = translation
-                camera.eulerAngles.y -= dx
+                // The picture follows the finger (drag right -> look left), like other 360 viewers.
+                camera.eulerAngles.y += dx
                 let maxPitch: Float = 1.4
-                camera.eulerAngles.x = max(-maxPitch, min(maxPitch, camera.eulerAngles.x - dy))
+                camera.eulerAngles.x = max(-maxPitch, min(maxPitch, camera.eulerAngles.x + dy))
                 // Keep auto-yaw centered on the user's look direction after drag.
                 baseYaw = camera.eulerAngles.y
             case .ended, .cancelled, .failed:

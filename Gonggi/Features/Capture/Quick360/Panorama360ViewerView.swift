@@ -132,8 +132,9 @@ private struct Panorama360SceneView: UIViewRepresentable {
             let dx = Float(translation.x - lastPan.x) * 0.005
             let dy = Float(translation.y - lastPan.y) * 0.005
             lastPan = translation
-            camera.eulerAngles.y -= dx
-            camera.eulerAngles.x = max(-maxPitch, min(maxPitch, camera.eulerAngles.x - dy))
+            // The picture follows the finger (drag right -> look left), like other 360 viewers.
+            camera.eulerAngles.y += dx
+            camera.eulerAngles.x = max(-maxPitch, min(maxPitch, camera.eulerAngles.x + dy))
             if gesture.state == .ended { lastPan = .zero }
         }
 
