@@ -47,6 +47,7 @@ final class WhikScreenshotTests: XCTestCase {
         app.buttons["Objects"].firstMatch.tap(); sleep(2)
         shot(app, "04_home_objects")
         app.buttons["Spaces"].firstMatch.tap(); sleep(2)
+        app.swipeRight(); sleep(1) // back to the first page (the pager remembers the last one)
         let open360 = app.buttons["Open Look around"].firstMatch
         if open360.waitForExistence(timeout: 3) {
             open360.tap(); sleep(4)

@@ -14,7 +14,7 @@ struct AuthUserShell: Equatable {
 
     static let placeholder = AuthUserShell(
         displayName: "WHIK user",
-        email: "계정 연동 전",
+        email: "",
         photoSystemImage: "person.fill"
     )
 }

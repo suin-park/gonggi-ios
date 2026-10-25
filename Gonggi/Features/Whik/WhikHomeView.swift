@@ -47,6 +47,7 @@ struct WhikHomeView: View {
                 }
                 WhikSegmented(items: [(.spaces, "Spaces"), (.objects, "Objects")], selection: $category)
                     .frame(maxWidth: 300)
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 Spacer()
             }
             .padding(.horizontal, WhikLayout.sideInset)
