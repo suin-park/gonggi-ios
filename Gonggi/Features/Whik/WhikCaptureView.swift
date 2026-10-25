@@ -1,11 +1,12 @@
 import SwiftUI
 
 /// The three public capture types and what they open. Each card starts the existing flow unchanged.
+/// Case order is the card order on the Capture tab: 360° first, then 3D Space, then 3D Object.
 enum WhikCaptureKind: String, CaseIterable, Identifiable {
-    /// `ThreeDSpaceRecordFlowView` → 3DGS space (server, `ServerGenerationProfileMapper.spatialPackageProfile`).
-    case space3D
     /// `DirectionCaptureView` → Lat Long 360° space (server).
     case space360
+    /// `ThreeDSpaceRecordFlowView` → 3DGS space (server, `ServerGenerationProfileMapper.spatialPackageProfile`).
+    case space3D
     /// `ObjectCaptureFlowView` → 3DGS product/object (server).
     case object3D
 

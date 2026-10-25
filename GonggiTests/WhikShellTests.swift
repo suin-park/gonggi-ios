@@ -95,6 +95,10 @@ final class WhikShellTests: XCTestCase {
         XCTAssertTrue(WhikAutoName.space(date).hasPrefix("新しいスペース"), WhikAutoName.space(date))
     }
 
+    func testCaptureCardOrderPuts360First() {
+        XCTAssertEqual(WhikCaptureKind.allCases, [.space360, .space3D, .object3D])
+    }
+
     // MARK: Home samples
 
     func testOnlyTheBundled360SampleOpensAViewer() {
