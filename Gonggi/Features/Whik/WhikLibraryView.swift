@@ -136,6 +136,7 @@ struct WhikLibraryView: View {
                     }
                     .padding(.top, 8)
                     WhikChips(items: [(.all, "All"), (.spaces, "Spaces"), (.objects, "Objects")], selection: $filter)
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                     if signedIn {
                         // Captures that never finished uploading stay resumable (original package on device).
                         if filter != .objects { UnsentCapturesSection(products: false) }
@@ -302,6 +303,7 @@ private struct WhikLibraryTile: View {
             }
         }
         .contentShape(Rectangle())
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }

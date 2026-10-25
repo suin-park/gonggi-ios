@@ -70,6 +70,8 @@ struct WhikCaptureView: View {
                 } label: {
                     Label("Import 360° photo", systemImage: "square.and.arrow.up")
                         .font(.system(.body).weight(.medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                         .foregroundStyle(WhikColors.textPrimary)
                         .frame(maxWidth: .infinity, minHeight: 48)
                 }
@@ -174,9 +176,13 @@ private struct WhikCaptureCard: View {
                         Text(kind.title)
                             .font(WhikFont.cardTitle())
                             .foregroundStyle(WhikColors.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                         Text(kind.line)
                             .font(.system(.subheadline))
                             .foregroundStyle(WhikColors.textSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                     }
                     Spacer(minLength: 8)
                     if busy {
@@ -190,6 +196,8 @@ private struct WhikCaptureCard: View {
                 .padding(16)
             }
             .frame(height: 196)
+            // Text sits on a fixed-height photo: grow with Dynamic Type only up to where it still fits.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(WhikColors.border, lineWidth: 1))
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
