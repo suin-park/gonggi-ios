@@ -7,6 +7,9 @@ struct WhikAccountView: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var auth = AuthSessionController.shared
     @State private var confirmSignOut = false
+    @State private var showExperiments = false
+    /// TestFlight / DEBUG only, after the existing unlock (Help › version, 7 taps). Never on App Store builds.
+    @State private var internalTools = GonggiFeatureFlags.isInternalToolsUnlocked
 
     private var user: AuthUserShell { auth.currentUser ?? .placeholder }
 
@@ -41,6 +44,16 @@ struct WhikAccountView: View {
                     link("Privacy & permissions", icon: "hand.raised") { ProfilePrivacyPermissionsView() }
                     link("Help", icon: "questionmark.circle") { ProfileHelpView() }
                 }
+                if internalTools {
+                    Section("Internal") {
+                        Button {
+                            showExperiments = true
+                        } label: {
+                            Label("Experiments", systemImage: "flask")
+                        }
+                        .listRowBackground(WhikColors.surface)
+                    }
+                }
                 Section {
                     Button(role: .destructive) {
                         confirmSignOut = true
@@ -69,6 +82,11 @@ struct WhikAccountView: View {
                 }
             }
             .task { await auth.refreshProfile() }
+            .onAppear { internalTools = GonggiFeatureFlags.isInternalToolsUnlocked }
+            .fullScreenCover(isPresented: $showExperiments) {
+                // Preserved 실험 menu (hidden from the public shell; see docs/WHIK_HIDDEN_FEATURES.md).
+                ExperimentHomeView(onClose: { showExperiments = false })
+            }
             .alert("Sign out?", isPresented: $confirmSignOut) {
                 Button("Cancel", role: .cancel) {}
                 Button("Sign out", role: .destructive) {
