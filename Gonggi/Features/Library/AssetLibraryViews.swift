@@ -1097,6 +1097,8 @@ struct AssetUSDZPreviewHost: View {
     let assetId: String
     let remoteURL: URL
     var thumbUrl: String? = nil
+    /// Called once with a rendered view of the model (WHIK: thumbnail for objects the server has none for).
+    var onSnapshot: ((UIImage) -> Void)? = nil
 
     @State private var localURL: URL?
     @State private var failed = false
@@ -1104,7 +1106,7 @@ struct AssetUSDZPreviewHost: View {
     var body: some View {
         Group {
             if let localURL {
-                AssetSceneKitPreviewRepresentable(modelURL: localURL)
+                AssetSceneKitPreviewRepresentable(modelURL: localURL, onSnapshot: onSnapshot)
             } else if failed {
                 AssetThumbnailView(
                     urlString: thumbUrl,
@@ -1131,6 +1133,7 @@ struct AssetUSDZPreviewHost: View {
 
 struct AssetSceneKitPreviewRepresentable: UIViewRepresentable {
     let modelURL: URL
+    var onSnapshot: ((UIImage) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -1141,6 +1144,13 @@ struct AssetSceneKitPreviewRepresentable: UIViewRepresentable {
         if let scene = try? SCNScene(url: modelURL, options: nil) {
             view.scene = scene
             view.pointOfView = makeCamera(for: scene)
+            if let onSnapshot {
+                // After the first frames have drawn, at the default framing.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak view] in
+                    guard let view, view.window != nil else { return }
+                    onSnapshot(view.snapshot())
+                }
+            }
         }
         return view
     }

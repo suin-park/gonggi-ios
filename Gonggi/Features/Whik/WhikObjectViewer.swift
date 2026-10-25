@@ -46,7 +46,11 @@ struct WhikObjectViewer: View {
     @ViewBuilder
     private var content: some View {
         if current.canPreviewUSDZ, let raw = current.usdzUrl, let url = URL(string: raw) {
-            AssetUSDZPreviewHost(assetId: current.id, remoteURL: url, thumbUrl: current.thumbUrl)
+            AssetUSDZPreviewHost(assetId: current.id, remoteURL: url, thumbUrl: current.thumbUrl) { image in
+                // The server has no thumbnail for this object: keep this view as its Library thumbnail.
+                guard (current.thumbUrl ?? "").isEmpty else { return }
+                WhikThumbnailStore.shared.noteViewerSnapshot(image, libraryId: WhikObjectViewer.thumbnailId(current.id))
+            }
         } else if asset == nil, !loadFailed {
             ProgressView().tint(WhikColors.mint)
         } else {
@@ -65,6 +69,8 @@ struct WhikObjectViewer: View {
             .padding(.horizontal, 32)
         }
     }
+
+    static func thumbnailId(_ assetId: String) -> String { "asset:" + assetId }
 
     private func load() async {
         loadFailed = false

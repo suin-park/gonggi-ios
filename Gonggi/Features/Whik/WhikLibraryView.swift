@@ -621,11 +621,18 @@ private struct WhikLibraryTile: View {
                 SpaceThumbnailView(space: r, height: height, width: width, cornerRadius: 0, showsActivityOverlay: false)
             }
         case .asset(let a):
-            ZStack {
-                WhikColors.surface
-                AssetThumbnailView(urlString: a.thumbUrl, size: min(width, height))
+            if (a.thumbUrl ?? "").isEmpty {
+                // No server thumbnail: the view saved the first time the object was opened, else an icon.
+                WhikRecordThumbnail(libraryId: WhikObjectViewer.thumbnailId(a.id), savedThumbnail: nil, sessionId: nil,
+                                    placeholderSymbol: "cube")
+                    .frame(width: width, height: height)
+            } else {
+                ZStack {
+                    WhikColors.surface
+                    AssetThumbnailView(urlString: a.thumbUrl, size: min(width, height))
+                }
+                .frame(width: width, height: height)
             }
-            .frame(width: width, height: height)
         }
     }
 }
