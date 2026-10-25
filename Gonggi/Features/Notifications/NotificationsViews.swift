@@ -11,7 +11,7 @@ enum GonggiNotificationDate {
         }
         guard let date else { return iso }
         let rel = RelativeDateTimeFormatter()
-        rel.locale = Locale(identifier: "ko_KR")
+        rel.locale = AppLanguage.shared.locale
         rel.unitsStyle = .short
         return rel.localizedString(for: date, relativeTo: Date())
     }
@@ -32,19 +32,19 @@ struct NotificationsListView: View {
     var body: some View {
         Group {
             if isLoading && items.isEmpty {
-                ProgressView("알림 불러오는 중…")
+                ProgressView(L("Loading notifications…"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let errorText, items.isEmpty {
                 ContentUnavailableView(
-                    "알림을 불러오지 못했어요",
+                    L("Couldn't load notifications"),
                     systemImage: "bell.slash",
                     description: Text(errorText)
                 )
             } else if items.isEmpty {
                 ContentUnavailableView(
-                    "알림이 없어요",
+                    L("No notifications"),
                     systemImage: "bell",
-                    description: Text("다른 사람이 좋아요를 누르거나 댓글을 남기면 여기에 표시돼요.")
+                    description: Text(L("Likes and comments from others will appear here."))
                 )
             } else {
                 List {
@@ -66,11 +66,11 @@ struct NotificationsListView: View {
             }
         }
         .background(GonggiAmbientBackground())
-        .navigationTitle("알림")
+        .navigationTitle(L("Notifications"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("모두 읽음") {
+                Button(L("Mark all as read")) {
                     Task { await markAllRead() }
                 }
                 .disabled(unreadCount == 0 || isLoading)
@@ -130,7 +130,7 @@ struct NotificationsListView: View {
 
     private func reload() async {
         guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
-            errorText = "로그인이 필요해요."
+            errorText = L("Please sign in.")
             items = []
             return
         }
@@ -144,7 +144,7 @@ struct NotificationsListView: View {
             nextCursor = result.nextCursor
             await MainActor.run { appState.notificationUnreadCount = result.unreadCount }
         } catch {
-            errorText = "잠시 후 다시 시도해주세요."
+            errorText = L("Please try again in a moment.")
         }
     }
 
@@ -240,7 +240,7 @@ struct NotificationDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(GonggiAmbientBackground())
-        .navigationTitle("알림 상세")
+        .navigationTitle(L("Notification details"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
             item = preview
@@ -250,7 +250,7 @@ struct NotificationDetailView: View {
 
     private func load() async {
         guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
-            errorText = "로그인이 필요해요."
+            errorText = L("Please sign in.")
             return
         }
         isLoading = true
@@ -266,7 +266,7 @@ struct NotificationDetailView: View {
             }
         } catch {
             if item == nil {
-                errorText = "알림을 열 수 없어요."
+                errorText = L("Can't open the notification.")
             }
         }
     }

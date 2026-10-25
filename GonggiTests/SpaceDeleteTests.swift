@@ -5,16 +5,16 @@ import XCTest
 final class SpaceDeleteTests: XCTestCase {
     func testDeleteAlertCopySeparatesSpaceFromLinks() {
         // Product copy contract (Build 78) — space delete ≠ link delete.
-        let title = "이 공간을 삭제할까요?"
+        let title = L("Delete this space?")
         let message = "이 공간과 연결된 공간 이동도 함께 제거됩니다.\n다른 공간 자체는 삭제되지 않습니다."
-        XCTAssertTrue(title.contains("공간"))
+        XCTAssertTrue(title.contains(L("Space")))
         XCTAssertTrue(message.contains("다른 공간 자체는 삭제되지 않습니다"))
         XCTAssertFalse(message.contains("복구할 수 없습니다"))
     }
 
     func testSpaceDeleteErrorMessages() {
-        XCTAssertEqual(SpaceDeleteError.network.userMessage, "네트워크 연결을 확인해주세요")
-        XCTAssertEqual(SpaceDeleteError.generic.userMessage, "공간을 삭제하지 못했어요")
+        XCTAssertEqual(SpaceDeleteError.network.userMessage, L("Check your network connection"))
+        XCTAssertEqual(SpaceDeleteError.generic.userMessage, L("Couldn't delete the space"))
     }
 
     func testJobStoreRemoveDropsCardSource() {

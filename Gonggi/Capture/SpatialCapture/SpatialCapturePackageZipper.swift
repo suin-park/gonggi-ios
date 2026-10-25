@@ -194,11 +194,11 @@ enum SpatialCapturePackageZipper {
 
         var errorDescription: String? {
             switch self {
-            case .packageMissing: return "3D 공간 기록 촬영 데이터가 없습니다."
-            case .missingRequired(let n): return "필수 파일 누락: \(n)"
-            case .insufficientFrames(let n): return "JPEG keyframe이 부족합니다 (\(n))."
-            case .nameTooLong(let n): return "ZIP 경로가 너무 깁니다: \(n)"
-            case .fileTooLarge(let n): return "파일이 너무 큽니다: \(n)"
+            case .packageMissing: return L("No 3D Space capture data.")
+            case .missingRequired(let n): return L("Missing required file: %@", "\(n)")
+            case .insufficientFrames(let n): return L("Not enough JPEG keyframes (%@).", "\(n)")
+            case .nameTooLong(let n): return L("ZIP path is too long: %@", "\(n)")
+            case .fileTooLarge(let n): return L("File is too large: %@", "\(n)")
             }
         }
     }

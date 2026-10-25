@@ -150,10 +150,10 @@ enum DirectionCaptureGuide {
         warnBandDeg: Float = DirectionCaptureConfig.horizontalLevelWarnDeg
     ) -> String? {
         if elevationDeg < -warnBandDeg {
-            return "카메라를 조금 위로 들어주세요"
+            return L("Raise the camera a little")
         }
         if elevationDeg > warnBandDeg {
-            return "카메라를 조금 내려주세요"
+            return L("Lower the camera a little")
         }
         return nil
     }
@@ -170,15 +170,15 @@ enum DirectionCaptureGuide {
            yaw <= DirectionCaptureConfig.frontSeamHelperActiveYawDeg,
            !isFrontSeamSoftMinSatisfied(unwrappedYaw: yaw)
         {
-            return "조금 더 오른쪽으로 돌아주세요"
+            return L("Turn a little more to the right")
         }
         if let elev = elevationDeg,
            let level = horizontalLevelGuidanceMessage(elevationDeg: elev)
         {
             return level
         }
-        if warnFast { return "조금 천천히 움직여주세요" }
-        return "휴대폰을 세운 채 천천히 오른쪽으로 돌아주세요."
+        if warnFast { return L("Please move a little more slowly") }
+        return L("Keep the phone upright and turn slowly to the right.")
     }
 
     /// Legacy overload used by older call sites / tests.
@@ -203,22 +203,22 @@ enum DirectionCaptureGuide {
         tooSteep: Bool = false,
         inPreferredBand: Bool = false
     ) -> String {
-        if inverted { return "휴대폰을 바로 세워주세요" }
-        if warnFast { return "조금 천천히 움직여주세요" }
+        if inverted { return L("Hold the phone upright") }
+        if warnFast { return L("Please move a little more slowly") }
         if waitingForElevation {
-            return "벽과 하늘(천장) 경계가 보이게"
+            return L("Show where the wall meets the sky (ceiling)")
         }
         if tooSteep {
-            return "조금 덜 위로 들어주세요"
+            return L("Raise it a little less")
         }
         if waitingForSettle {
-            return "벽과 하늘(천장) 경계가 보이게"
+            return L("Show where the wall meets the sky (ceiling)")
         }
-        if stuckAtLastShot { return "조금만 더 돌아주세요." }
+        if stuckAtLastShot { return L("Turn just a little more.") }
         if inPreferredBand {
-            return "천천히 오른쪽으로 돌아주세요"
+            return L("Turn slowly to the right")
         }
-        return "벽과 하늘(천장) 경계가 보이게"
+        return L("Show where the wall meets the sky (ceiling)")
     }
 
     static func lowerObliqueGuideMessage(
@@ -230,21 +230,21 @@ enum DirectionCaptureGuide {
         tooSteep: Bool = false,
         inPreferredBand: Bool = false
     ) -> String {
-        if inverted { return "휴대폰을 바로 세워주세요" }
-        if warnFast { return "조금 천천히 움직여주세요" }
+        if inverted { return L("Hold the phone upright") }
+        if warnFast { return L("Please move a little more slowly") }
         if waitingForElevation {
-            return "바닥과 벽 아래가 함께 보이게"
+            return L("Show the floor and the bottom of the wall")
         }
         if tooSteep {
-            return "조금 덜 아래로 내려주세요"
+            return L("Lower it a little less")
         }
         if waitingForSettle {
-            return "바닥과 벽 아래가 함께 보이게"
+            return L("Show the floor and the bottom of the wall")
         }
-        if stuckAtLastShot { return "조금만 더 돌아주세요." }
+        if stuckAtLastShot { return L("Turn just a little more.") }
         if inPreferredBand {
-            return "천천히 오른쪽으로 돌아주세요"
+            return L("Turn slowly to the right")
         }
-        return "바닥과 벽 아래가 함께 보이게"
+        return L("Show the floor and the bottom of the wall")
     }
 }

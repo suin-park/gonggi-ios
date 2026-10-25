@@ -11,10 +11,10 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .spaces: return "공간"
-        case .assets: return "3D 자산"
-        case .placementResults: return "작업 결과"
-        case .savedProducts: return "저장한 상품"
+        case .spaces: return L("Space")
+        case .assets: return L("3D Objects")
+        case .placementResults: return L("Results")
+        case .savedProducts: return L("Saved products")
         }
     }
 }
@@ -100,7 +100,7 @@ final class AssetLibraryStore: ObservableObject {
             guard AuthSessionGeneration.isCurrent(generation) else { return }
             assets = []
             phase = .failed
-            errorMessage = "로그인이 필요해요"
+            errorMessage = L("Please sign in")
             isRefreshing = false
             return
         }
@@ -120,14 +120,14 @@ final class AssetLibraryStore: ObservableObject {
             if case .server(let status) = error, status == 401 {
                 assets = []
                 phase = .failed
-                errorMessage = "로그인이 필요해요"
+                errorMessage = L("Please sign in")
             } else if hadContent {
                 // Keep stale list only within the **same** account generation.
                 errorMessage = nil
             } else {
                 assets = []
                 phase = .failed
-                errorMessage = "3D 자산을 불러오지 못했어요"
+                errorMessage = L("Couldn't load 3D Objects")
             }
         } catch {
             _ = await jobsRefresh
@@ -137,7 +137,7 @@ final class AssetLibraryStore: ObservableObject {
             } else {
                 assets = []
                 phase = .failed
-                errorMessage = "3D 자산을 불러오지 못했어요"
+                errorMessage = L("Couldn't load 3D Objects")
             }
         }
         isRefreshing = false

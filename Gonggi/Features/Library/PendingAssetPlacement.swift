@@ -58,9 +58,9 @@ enum AssetPlacementLaunch {
         var userMessage: String {
             switch self {
             case .maxAssets:
-                return "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+                return L("You can place up to 8 3D Objects in this space")
             case .spaceNotReady:
-                return "이 공간은 아직 배치할 수 없어요"
+                return L("This space can't be used for placement yet")
             case .prepareFailed(let message):
                 return message
             }

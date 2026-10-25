@@ -21,9 +21,9 @@ struct PlaceAssetSpacePickerView: View {
             Group {
                 if candidates.isEmpty {
                     ContentUnavailableView(
-                        "배치할 수 있는 공간이 없어요",
+                        L("No spaces available for placement"),
                         systemImage: "cube.transparent",
-                        description: Text("준비가 끝난 공간을 먼저 만들어 주세요.")
+                        description: Text(L("Make a finished space first."))
                     )
                 } else {
                     List(candidates) { space in
@@ -43,7 +43,7 @@ struct PlaceAssetSpacePickerView: View {
                                     Text(space.name)
                                         .font(GonggiTypography.body(16))
                                         .foregroundStyle(GonggiColors.textPrimary)
-                                    Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
+                                    Text(WhikDate.short(space.capturedAt))
                                         .font(GonggiTypography.caption(12))
                                         .foregroundStyle(GonggiColors.textSecondary)
                                     Text(space.statusBadgeLabel)
@@ -61,14 +61,14 @@ struct PlaceAssetSpacePickerView: View {
                     .listStyle(.plain)
                 }
             }
-            .navigationTitle("배치할 공간 선택")
+            .navigationTitle(L("Choose a space to place in"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(GonggiColors.backgroundPrimary, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .background(GonggiColors.backgroundPrimary)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { onClose() }
+                    Button(L("Cancel")) { onClose() }
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
             }

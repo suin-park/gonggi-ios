@@ -11,12 +11,12 @@ struct SpaceLinkFloatingActions: View {
     var body: some View {
         VStack(spacing: 8) {
             if isDraft {
-                actionButton(title: "촬영", systemImage: "camera.fill", prominent: true, action: onCapture)
-                actionButton(title: "기존 공간 연결", systemImage: "link", prominent: false, action: onLinkExisting)
+                actionButton(title: L("Capture"), systemImage: "camera.fill", prominent: true, action: onCapture)
+                actionButton(title: L("Link an existing space"), systemImage: "link", prominent: false, action: onLinkExisting)
             } else if let onEditMetadata {
-                actionButton(title: "핫스팟 편집", systemImage: "pencil", prominent: true, action: onEditMetadata)
+                actionButton(title: L("Edit hotspot"), systemImage: "pencil", prominent: true, action: onEditMetadata)
             }
-            actionButton(title: "삭제", systemImage: "trash", prominent: false, destructive: true, action: onDelete)
+            actionButton(title: L("Delete"), systemImage: "trash", prominent: false, destructive: true, action: onDelete)
         }
         .padding(10)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))

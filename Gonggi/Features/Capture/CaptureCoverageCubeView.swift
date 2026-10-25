@@ -134,12 +134,12 @@ struct CaptureCoverageCubeView: View {
 
     private var accessibilitySummary: String {
         let parts = [
-            ("정면", fills.front), ("왼쪽", fills.left), ("오른쪽", fills.right),
-            ("뒤", fills.back), ("위", fills.top), ("아래", fills.bottom),
+            (L("Front"), fills.front), (L("Left"), fills.left), (L("Right"), fills.right),
+            (L("Back"), fills.back), (L("Up"), fills.top), (L("Down"), fills.bottom),
         ]
         let filled = parts.filter { $0.1 >= 0.75 }.map(\.0)
-        if filled.isEmpty { return "커버리지 큐브, 아직 부족한 면이 많아요" }
-        return "커버리지 큐브, 충분: \(filled.joined(separator: ", "))"
+        if filled.isEmpty { return L("Coverage cube, many sides still need photos") }
+        return L("Coverage cube, enough: %@", "\(filled.joined(separator: ", "))")
     }
 }
 
@@ -174,33 +174,33 @@ enum CaptureQuietUIPresenter {
     static func statusLine(for quality: CaptureQualityState) -> String {
         switch phase(for: quality) {
         case .recognizing:
-            return "공간을 인식하고 있어요"
+            return L("Recognizing the space")
         case .capturing:
-            return "공간 기록 중"
+            return L("Capturing the space")
         case .nearlyReady:
-            return "조금만 더 둘러봐 주세요"
+            return L("Look around a little more")
         case .ready:
             // reconstructionReady ≠ session end (multi-room may continue). Open items (not asked yet / asked and still
             // missing / photo limit) never read as enough.
             let open = !quality.captureRemaining.isEmpty || !quality.captureRecommendations.isEmpty
-            return open ? "기록을 마칠 수 있어요" : "공간이 충분히 기록됐어요"
+            return open ? L("You can finish the capture") : L("The space is fully captured")
         case .storageCapReached:
             // Enqueue cap — do not claim a durable on-disk JPEG count.
-            return "새 사진이 더 이상 저장되지 않습니다"
+            return L("New photos are no longer being saved")
         }
     }
 
     static func finishTitle(isReady: Bool, candidateSafetyCapReached: Bool = false) -> String {
         if candidateSafetyCapReached {
-            return isReady ? "촬영 완료" : "촬영 종료"
+            return isReady ? L("Capture complete") : L("End capture")
         }
-        return isReady ? "촬영 완료" : "촬영 종료"
+        return isReady ? L("Capture complete") : L("End capture")
     }
 
     /// Short intervention toast — only when recognizing is done and something blocks progress.
     static func toastHint(for quality: CaptureQualityState) -> String? {
         if quality.candidateSafetyCapReached {
-            return "새 사진이 더 이상 저장되지 않습니다"
+            return L("New photos are no longer being saved")
         }
         guard isSpatialRecognitionReady(quality: quality) else { return nil }
         // Guide v3/v4 prompt on screen: one guidance line at a time (the cube hint must not contradict it).
@@ -211,32 +211,32 @@ enum CaptureQuietUIPresenter {
         }
 
         if quality.trackingQuality < 0.45 || quality.guidanceAction == .trackingRecovery {
-            return "조금 천천히 움직여 주세요"
+            return L("Move a little more slowly")
         }
         if quality.guidanceAction == .improveBaseline
             || quality.guidanceAction == .moveLaterally
             || quality.translationBaselineGrade == .insufficient
         {
-            return "조금 위치를 옮겨보세요"
+            return L("Try moving to a slightly different spot")
         }
         if quality.guidanceAction == .needUpperCoverage
             || quality.guidanceStage == .upperSweep
         {
-            return "벽과 천장이 만나는 선도 함께 보여주세요"
+            return L("Include where the wall meets the ceiling")
         }
         if quality.guidanceAction == .needLowerCoverage
             || quality.guidanceStage == .lowerSweep
         {
-            return "벽과 바닥이 만나는 곳도 함께 보여주세요"
+            return L("Include where the wall meets the floor")
         }
         if quality.guidanceAction == .reacquireView {
-            return "이 장면이 다시 보이도록 천천히 움직여주세요"
+            return L("Move slowly until this view appears again")
         }
         if quality.guidanceAction == .returnToPreviousArea {
-            return "방금 촬영한 곳이 다시 보이도록 이동해주세요"
+            return L("Move until the spot you just captured is visible again")
         }
         if quality.guidanceAction == .slowDown || quality.motionSpeed > 0.7 {
-            return "조금 천천히 움직여 주세요"
+            return L("Move a little more slowly")
         }
         return nil
     }

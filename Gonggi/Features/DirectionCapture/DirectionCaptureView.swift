@@ -20,7 +20,7 @@ struct DirectionCaptureView: View {
                     endPoint: .bottom
                 )
                 .ignoresSafeArea()
-                Text("Mock 카메라")
+                Text(L("Mock camera"))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             } else {
@@ -108,7 +108,7 @@ struct DirectionCaptureView: View {
     /// Large, high-contrast coach for phase title + live guide (TestFlight: hard to read at 14pt).
     private var guidanceBanner: some View {
         VStack(spacing: 10) {
-            Text(viewModel.isPhotoPending ? "촬영 중…" : viewModel.phaseTitle)
+            Text(viewModel.isPhotoPending ? L("Capturing…") : viewModel.phaseTitle)
                 .font(GonggiTypography.display(28))
                 .fontWeight(.bold)
                 .foregroundStyle(.white)
@@ -140,7 +140,7 @@ struct DirectionCaptureView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             viewModel.isPhotoPending
-                ? "촬영 중"
+                ? L("Capturing")
                 : "\(viewModel.phaseTitle). \(viewModel.guideText)"
         )
     }
@@ -152,7 +152,7 @@ struct DirectionCaptureView: View {
                 Button {
                     viewModel.startCapture()
                 } label: {
-                    Text("공간 기록 시작")
+                    Text(L("Start space capture"))
                         .font(GonggiTypography.body(17))
                         .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)
@@ -162,7 +162,7 @@ struct DirectionCaptureView: View {
                 }
                 .padding(.horizontal, 24)
             default:
-                Text("계속 움직여도 됩니다, 자동 촬영 중")
+                Text(L("Keep moving, capturing automatically"))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(.white.opacity(0.75))
             }

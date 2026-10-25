@@ -33,14 +33,14 @@ actor MobileGaussianPLYAPIClient {
 
         var userMessage: String {
             switch self {
-            case .notAuthenticated: return "로그인이 필요해요"
-            case .invalidFile: return "PLY 파일만 가져올 수 있어요"
-            case .tooLarge: return "파일이 너무 커요 (최대 500MB)"
-            case .orgRequired: return "계정 조직 정보가 없어요. 다시 로그인해 주세요"
-            case .invalidResponse: return "서버 응답을 읽지 못했어요"
-            case .server(let code): return "가져오기에 실패했어요 (\(code))"
-            case .network: return "네트워크 연결을 확인해 주세요"
-            case .uploadFailed: return "파일 업로드에 실패했어요"
+            case .notAuthenticated: return L("Please sign in")
+            case .invalidFile: return L("Only PLY files can be imported")
+            case .tooLarge: return L("The file is too large (max 500 MB)")
+            case .orgRequired: return L("No organization on your account. Please sign in again")
+            case .invalidResponse: return L("Couldn't read the server response")
+            case .server(let code): return L("Import failed (%@)", "\(code)")
+            case .network: return L("Check your network connection")
+            case .uploadFailed: return L("File upload failed")
             }
         }
     }

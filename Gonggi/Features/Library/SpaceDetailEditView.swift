@@ -33,8 +33,8 @@ struct SpaceDetailEditView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("이름") {
-                    TextField("공간 이름", text: $name)
+                Section(L("Name")) {
+                    TextField(L("Space name"), text: $name)
                         .onChange(of: name) { _, value in
                             if value.count > 60 { name = String(value.prefix(60)) }
                         }
@@ -43,21 +43,21 @@ struct SpaceDetailEditView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("위치") {
+                Section(L("Location")) {
                     Text(locationLabel)
                         .foregroundStyle(.secondary)
 
-                    Button("현재 위치 사용") {
+                    Button(L("Use current location")) {
                         Task { await useCurrentLocation() }
                     }
                     .disabled(isLocating)
 
-                    Button("직접 입력") {
+                    Button(L("Enter manually")) {
                         locationMode = .manual
                     }
 
                     if locationMode == .manual {
-                        TextField("위치 이름", text: $manualLocationName)
+                        TextField(L("Location name"), text: $manualLocationName)
                             .onChange(of: manualLocationName) { _, value in
                                 if value.count > 100 {
                                     manualLocationName = String(value.prefix(100))
@@ -68,12 +68,12 @@ struct SpaceDetailEditView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Button("위치 제거", role: .destructive) {
+                    Button(L("Remove location"), role: .destructive) {
                         locationMode = .removed
                     }
                 }
 
-                Section("메모") {
+                Section(L("Notes")) {
                     TextEditor(text: $memo)
                         .frame(minHeight: 140)
                         .onChange(of: memo) { _, value in
@@ -84,7 +84,7 @@ struct SpaceDetailEditView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("공간 정보 편집")
+            .navigationTitle(L("Edit space details"))
             .navigationBarTitleDisplayMode(.inline)
             .disabled(isSaving)
             .overlay {
@@ -97,20 +97,20 @@ struct SpaceDetailEditView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { dismiss() }
+                    Button(L("Cancel")) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("저장") {
+                    Button(L("Save")) {
                         Task { await save() }
                     }
                     .disabled(isSaving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            .alert("저장하지 못했어요", isPresented: Binding(
+            .alert(L("Couldn't save"), isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
             )) {
-                Button("확인", role: .cancel) {}
+                Button(L("OK"), role: .cancel) {}
             } message: {
                 Text(errorMessage ?? "")
             }
@@ -122,12 +122,12 @@ struct SpaceDetailEditView: View {
         case .existing:
             return space.locationDisplayLabel
         case .current:
-            return "현재 위치"
+            return L("Current location")
         case .manual:
             let trimmed = manualLocationName.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? "위치 이름을 입력해주세요." : trimmed
+            return trimmed.isEmpty ? L("Enter a location name.") : trimmed
         case .removed:
-            return "위치 정보 없음"
+            return L("No location")
         }
     }
 
@@ -139,7 +139,7 @@ struct SpaceDetailEditView: View {
             currentLocation = try await SpaceOneShotLocation().request()
             locationMode = .current
         } catch {
-            errorMessage = "현재 위치를 확인하지 못했어요. 위치 권한과 네트워크 상태를 확인해주세요."
+            errorMessage = L("Couldn't get your current location. Check location access and your network.")
         }
     }
 
@@ -167,7 +167,7 @@ struct SpaceDetailEditView: View {
                 guard let currentLocation else {
                     throw SpaceOneShotLocationError.unavailable
                 }
-                locationName = "현재 위치"
+                locationName = L("Current location")
                 latitude = currentLocation.latitude
                 longitude = currentLocation.longitude
                 source = "AUTO"
@@ -199,14 +199,14 @@ struct SpaceDetailEditView: View {
             errorMessage = error.userMessage
         } catch let error as SpaceDetailMetadataValidationError {
             switch error {
-            case .emptyName: errorMessage = "공간 이름을 입력해주세요."
-            case .nameTooLong: errorMessage = "공간 이름은 60자 이하여야 해요."
-            case .memoTooLong: errorMessage = "메모는 1000자 이하여야 해요."
-            case .emptyLocationName: errorMessage = "위치 이름을 입력해주세요."
-            case .locationNameTooLong: errorMessage = "위치 이름은 100자 이하여야 해요."
+            case .emptyName: errorMessage = L("Enter a space name.")
+            case .nameTooLong: errorMessage = L("Space names can be up to 60 characters.")
+            case .memoTooLong: errorMessage = L("Notes can be up to 1000 characters.")
+            case .emptyLocationName: errorMessage = L("Enter a location name.")
+            case .locationNameTooLong: errorMessage = L("Location names can be up to 100 characters.")
             }
         } catch {
-            errorMessage = "입력한 정보를 확인해주세요."
+            errorMessage = L("Check the information you entered.")
         }
     }
 }

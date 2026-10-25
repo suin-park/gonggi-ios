@@ -17,7 +17,7 @@ struct ProfileEditNameView: View {
     var body: some View {
         Form {
             Section {
-                TextField("표시 이름", text: $name)
+                TextField(L("Display name"), text: $name)
                     .textInputAutocapitalization(.words)
                     .disabled(saving)
                 Text("\(name.trimmingCharacters(in: .whitespacesAndNewlines).count)/\(maxLength)")
@@ -30,11 +30,11 @@ struct ProfileEditNameView: View {
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("프로필 수정")
+        .navigationTitle(L("Edit profile"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("저장") { Task { await save() } }
+                Button(L("Save")) { Task { await save() } }
                     .disabled(saving || !canSave)
             }
         }
@@ -59,7 +59,7 @@ struct ProfileEditNameView: View {
         } catch let MobileAuthAPIError.server(_, message, _) {
             errorMessage = message
         } catch {
-            errorMessage = "이름을 저장하지 못했어요."
+            errorMessage = L("Couldn't save the name.")
         }
     }
 }
@@ -75,23 +75,23 @@ struct ProfileEmailView: View {
 
     var body: some View {
         List {
-            Section("계정 정보") {
-                LabeledContent("이메일", value: auth.profile?.email ?? auth.currentUser?.email ?? "—")
+            Section(L("Account info")) {
+                LabeledContent(L("Email"), value: auth.profile?.email ?? auth.currentUser?.email ?? "—")
                 LabeledContent(
-                    "인증",
-                    value: (auth.profile?.emailVerified == true) ? "인증됨" : "미인증"
+                    L("Verification"),
+                    value: (auth.profile?.emailVerified == true) ? L("Verified") : L("Not verified")
                 )
-                LabeledContent("가입 / 주 로그인", value: Self.label(provider))
+                LabeledContent(L("Sign-up / main sign-in"), value: Self.label(provider))
             }
             if provider == "GOOGLE" {
                 Section {
-                    Text("이 이메일은 Google 계정에서 관리됩니다.")
+                    Text(L("This email is managed by your Google account."))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             } else if provider == "APPLE" {
                 Section {
-                    Text("이 이메일은 Apple 계정에서 관리됩니다.")
+                    Text(L("This email is managed by your Apple account."))
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -99,14 +99,14 @@ struct ProfileEmailView: View {
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("이메일")
+        .navigationTitle(L("Email"))
     }
 
     private static func label(_ p: String) -> String {
         switch p {
         case "GOOGLE": return "Google"
         case "APPLE": return "Apple"
-        case "LOCAL": return "이메일"
+        case "LOCAL": return L("Email")
         default: return p.isEmpty ? "—" : p
         }
     }
@@ -127,20 +127,20 @@ struct ProfileProvidersView: View {
         List {
             Section {
                 if rows.isEmpty {
-                    Text("로그인 방법을 확인할 수 없습니다.")
+                    Text(L("Can't check sign-in methods."))
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(rows, id: \.self) { id in
-                        Text("\(Self.label(id)) 연결됨")
+                        Text(L("%@ connected", "\(Self.label(id))"))
                     }
                 }
             } footer: {
-                Text("연결 추가/해제는 아직 지원하지 않습니다.")
+                Text(L("Adding or removing connections isn't supported yet."))
             }
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("로그인 방법")
+        .navigationTitle(L("Sign-in methods"))
         .task { await auth.refreshProfile() }
     }
 
@@ -148,7 +148,7 @@ struct ProfileProvidersView: View {
         switch p.uppercased() {
         case "GOOGLE": return "Google"
         case "APPLE": return "Apple"
-        case "LOCAL": return "이메일"
+        case "LOCAL": return L("Email")
         default: return p
         }
     }
@@ -171,15 +171,15 @@ struct ProfilePasswordView: View {
     var body: some View {
         Form {
             if mode == .change {
-                Section("현재 비밀번호") {
-                    SecureField("현재 비밀번호", text: $current)
+                Section(L("Current password")) {
+                    SecureField(L("Current password"), text: $current)
                         .textContentType(.password)
                 }
             }
-            Section("새 비밀번호") {
-                SecureField("새 비밀번호 (8자 이상)", text: $newPassword)
+            Section(L("New password")) {
+                SecureField(L("New password (8+ characters)"), text: $newPassword)
                     .textContentType(.newPassword)
-                SecureField("새 비밀번호 확인", text: $confirm)
+                SecureField(L("Confirm new password"), text: $confirm)
                     .textContentType(.newPassword)
             }
             if let message {
@@ -191,10 +191,10 @@ struct ProfilePasswordView: View {
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle(mode == .change ? "비밀번호 변경" : "비밀번호 설정")
+        .navigationTitle(mode == .change ? L("Change password") : L("Set password"))
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("저장") { Task { await save() } }
+                Button(L("Save")) { Task { await save() } }
                     .disabled(saving || !canSave)
             }
         }
@@ -219,7 +219,7 @@ struct ProfilePasswordView: View {
                 currentPassword: mode == .change ? current : nil,
                 newPassword: newPassword
             )
-            message = "비밀번호가 변경되었습니다."
+            message = L("Your password was changed.")
             current = ""
             newPassword = ""
             confirm = ""
@@ -228,7 +228,7 @@ struct ProfilePasswordView: View {
         } catch let MobileAuthAPIError.server(_, msg, _) {
             errorMessage = msg
         } catch {
-            errorMessage = "비밀번호를 변경하지 못했어요."
+            errorMessage = L("Couldn't change the password.")
         }
     }
 }
@@ -241,12 +241,12 @@ struct ProfilePlanView: View {
     var body: some View {
         List {
             Section {
-                LabeledContent("현재 플랜", value: auth.profile?.planLabel ?? "—")
+                LabeledContent(L("Current plan"), value: auth.profile?.planLabel ?? "—")
                 if let end = auth.profile?.planPeriodEnd, let formatted = Self.formatISO(end) {
-                    LabeledContent("갱신 / 만료", value: formatted)
+                    LabeledContent(L("Renews / expires"), value: formatted)
                 }
             }
-            Section("주요 한도") {
+            Section(L("Main limits")) {
                 Text(Self.limitsCopy(for: auth.profile?.planCode))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -254,20 +254,20 @@ struct ProfilePlanView: View {
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("현재 플랜")
+        .navigationTitle(L("Current plan"))
         .task { await auth.refreshProfile() }
     }
 
     private static func limitsCopy(for code: String?) -> String {
         switch (code ?? "").uppercased() {
         case "STANDARD":
-            return "월 3D 생성 한도 8회, 포함 크레딧 120"
+            return L("Up to 8 3D creations a month, 120 credits included")
         case "PRO":
-            return "월 3D 생성 한도 23회, 포함 크레딧 300"
+            return L("Up to 23 3D creations a month, 300 credits included")
         case "FREE":
-            return "크레딧 기반 이용 (월 생성 횟수 한도 없음)"
+            return L("Credit-based use (no monthly creation limit)")
         default:
-            return "서버에 등록된 플랜 한도가 적용됩니다."
+            return L("The plan limits on the server apply.")
         }
     }
 
@@ -277,7 +277,7 @@ struct ProfilePlanView: View {
         let date = formatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
         guard let date else { return nil }
         let out = DateFormatter()
-        out.locale = Locale(identifier: "ko_KR")
+        out.locale = AppLanguage.shared.locale
         out.dateStyle = .medium
         return out.string(from: date)
     }
@@ -292,19 +292,19 @@ struct ProfileCreditsView: View {
 
     var body: some View {
         List {
-            Section("잔액") {
+            Section(L("Balance")) {
                 if loading {
                     ProgressView()
                 } else if let credits {
                     Text("\(credits.balance)")
                         .font(.title2.weight(.semibold))
                 } else {
-                    Text(errorMessage ?? "잔액을 불러오지 못했어요.")
+                    Text(errorMessage ?? L("Couldn't load the balance."))
                         .foregroundStyle(.secondary)
                 }
             }
             if let entries = credits?.entries, !entries.isEmpty {
-                Section("최근 내역") {
+                Section(L("Recent activity")) {
                     ForEach(entries) { entry in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
@@ -323,7 +323,7 @@ struct ProfileCreditsView: View {
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("크레딧")
+        .navigationTitle(L("Credits"))
         .task { await load() }
         .refreshable { await load() }
     }
@@ -332,7 +332,7 @@ struct ProfileCreditsView: View {
         loading = true
         defer { loading = false }
         guard let token = AuthSessionController.shared.accessToken else {
-            errorMessage = "로그인이 필요합니다."
+            errorMessage = L("Please sign in.")
             return
         }
         do {
@@ -342,7 +342,7 @@ struct ProfileCreditsView: View {
             errorMessage = message
             credits = nil
         } catch {
-            errorMessage = "크레딧을 불러오지 못했어요."
+            errorMessage = L("Couldn't load credits.")
             credits = nil
         }
     }
@@ -353,7 +353,7 @@ struct ProfileCreditsView: View {
         let date = formatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
         guard let date else { return nil }
         let out = DateFormatter()
-        out.locale = Locale(identifier: "ko_KR")
+        out.locale = AppLanguage.shared.locale
         out.dateStyle = .medium
         out.timeStyle = .short
         return out.string(from: date)
@@ -373,22 +373,22 @@ struct ProfileUsageView: View {
                 ProgressView()
             } else if let usage {
                 Section {
-                    LabeledContent("공간", value: "\(usage.spaces)")
-                    LabeledContent("생성 중", value: "\(usage.generatingSpaces)")
-                    LabeledContent("공유 중", value: "\(usage.sharedSpaces)")
-                    LabeledContent("3D 자산", value: "\(usage.assets3d)")
+                    LabeledContent(L("Space"), value: "\(usage.spaces)")
+                    LabeledContent(L("Creating"), value: "\(usage.generatingSpaces)")
+                    LabeledContent(L("Sharing"), value: "\(usage.sharedSpaces)")
+                    LabeledContent(L("3D Objects"), value: "\(usage.assets3d)")
                     if let bytes = usage.storageBytes {
-                        LabeledContent("저장 용량", value: Self.formatBytes(bytes))
+                        LabeledContent(L("Storage"), value: Self.formatBytes(bytes))
                     }
                 }
             } else {
-                Text(errorMessage ?? "사용량을 불러오지 못했어요.")
+                Text(errorMessage ?? L("Couldn't load usage."))
                     .foregroundStyle(.secondary)
             }
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("콘텐츠 사용량")
+        .navigationTitle(L("Content usage"))
         .task { await load() }
         .refreshable { await load() }
     }
@@ -397,7 +397,7 @@ struct ProfileUsageView: View {
         loading = true
         defer { loading = false }
         guard let token = AuthSessionController.shared.accessToken else {
-            errorMessage = "로그인이 필요합니다."
+            errorMessage = L("Please sign in.")
             return
         }
         do {
@@ -405,7 +405,7 @@ struct ProfileUsageView: View {
         } catch let MobileAuthAPIError.server(_, message, _) {
             errorMessage = message
         } catch {
-            errorMessage = "사용량을 불러오지 못했어요."
+            errorMessage = L("Couldn't load usage.")
         }
     }
 
@@ -428,27 +428,27 @@ struct ProfileSharedSpacesView: View {
             if loading {
                 ProgressView()
             } else if spaces.isEmpty {
-                Text(errorMessage ?? "공유 중인 공간이 없습니다.")
+                Text(errorMessage ?? L("No spaces are shared."))
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(spaces) { space in
                     VStack(alignment: .leading, spacing: 8) {
                         Text(space.title).font(.headline)
                         if let date = Self.formatISO(space.sharedAt) {
-                            Text("공유 시작 \(date)")
+                            Text(L("Shared since %@", "\(date)"))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         HStack {
-                            Button("링크 복사") {
+                            Button(L("Copy link")) {
                                 UIPasteboard.general.string = space.shareUrl
                                 GonggiHaptics.light()
                             }
-                            Button("공유") {
+                            Button(L("Share")) {
                                 shareItem = SharePayload(url: space.shareUrl)
                             }
                             Spacer()
-                            Button("공유 해제", role: .destructive) {
+                            Button(L("Stop sharing"), role: .destructive) {
                                 Task { await revoke(space) }
                             }
                             .disabled(revokingId == space.spaceId)
@@ -461,7 +461,7 @@ struct ProfileSharedSpacesView: View {
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("공유 관리")
+        .navigationTitle(L("Manage sharing"))
         .task { await load() }
         .refreshable { await load() }
         .sheet(item: $shareItem) { item in
@@ -477,7 +477,7 @@ struct ProfileSharedSpacesView: View {
         defer { loading = false }
         guard let token = AuthSessionController.shared.accessToken else {
             spaces = []
-            errorMessage = "로그인이 필요합니다."
+            errorMessage = L("Please sign in.")
             return
         }
         do {
@@ -487,7 +487,7 @@ struct ProfileSharedSpacesView: View {
             errorMessage = message
             spaces = []
         } catch {
-            errorMessage = "공유 목록을 불러오지 못했어요."
+            errorMessage = L("Couldn't load the shared list.")
             spaces = []
         }
     }
@@ -504,7 +504,7 @@ struct ProfileSharedSpacesView: View {
             )
             spaces.removeAll { $0.spaceId == space.spaceId }
         } catch {
-            errorMessage = "공유를 해제하지 못했어요."
+            errorMessage = L("Couldn't stop sharing.")
         }
     }
 
@@ -514,7 +514,7 @@ struct ProfileSharedSpacesView: View {
         let date = formatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
         guard let date else { return nil }
         let out = DateFormatter()
-        out.locale = Locale(identifier: "ko_KR")
+        out.locale = AppLanguage.shared.locale
         out.dateStyle = .medium
         return out.string(from: date)
     }
@@ -550,11 +550,11 @@ struct ProfileAppSettingsView: View {
 
     var body: some View {
         List {
-            Toggle("셀룰러 데이터로 업로드 허용", isOn: $allowCellular)
+            Toggle(L("Allow uploads over cellular"), isOn: $allowCellular)
                 .onChange(of: allowCellular) { _, value in
                     GonggiAppSettings.allowCellularUpload = value
                 }
-            Toggle("촬영 위치 저장", isOn: $captureLocationEnabled)
+            Toggle(L("Save capture location"), isOn: $captureLocationEnabled)
                 .onChange(of: captureLocationEnabled) { _, enabled in
                     SpaceCaptureLocationPreferences.setEnabled(enabled, userId: userId)
                     if enabled {
@@ -562,14 +562,14 @@ struct ProfileAppSettingsView: View {
                     }
                 }
                 .disabled(userId == nil)
-            Toggle("햅틱 피드백", isOn: $hapticsEnabled)
+            Toggle(L("Haptic feedback"), isOn: $hapticsEnabled)
                 .onChange(of: hapticsEnabled) { _, value in
                     GonggiAppSettings.hapticsEnabled = value
                 }
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("앱 설정")
+        .navigationTitle(L("App settings"))
     }
 }
 
@@ -577,36 +577,36 @@ struct ProfileAppSettingsView: View {
 
 struct ProfilePrivacyPermissionsView: View {
     @ObservedObject private var auth = AuthSessionController.shared
-    @State private var camera = "확인 중"
-    @State private var location = "확인 중"
-    @State private var mic = "확인 중"
+    @State private var camera = L("Checking")
+    @State private var location = L("Checking")
+    @State private var mic = L("Checking")
     @State private var safariURL: SpaceLinkIdentifiedURL?
 
     var body: some View {
         List {
-            Section("권한") {
-                permissionRow("카메라", status: camera)
-                permissionRow("위치", status: location)
-                permissionRow("마이크", status: mic)
-                Button("iOS 설정 열기") {
+            Section(L("Permissions")) {
+                permissionRow(L("Camera"), status: camera)
+                permissionRow(L("Location"), status: location)
+                permissionRow(L("Microphone"), status: mic)
+                Button(L("Open iOS Settings")) {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         UIApplication.shared.open(url)
                     }
                 }
             }
-            Section("약관") {
-                Button("개인정보처리방침") {
+            Section(L("Terms")) {
+                Button(L("Privacy Policy")) {
                     safariURL = SpaceLinkIdentifiedURL(url: GonggiProductURLs.privacyPolicy)
                 }
-                Button("이용약관") {
+                Button(L("Terms of Use")) {
                     safariURL = SpaceLinkIdentifiedURL(url: GonggiProductURLs.termsOfService)
                 }
             }
             Section {
-                NavigationLink("공유 중인 공간 관리") {
+                NavigationLink(L("Manage shared spaces")) {
                     ProfileSharedSpacesView()
                 }
-                NavigationLink("차단한 사용자") {
+                NavigationLink(L("Blocked users")) {
                     BlockedPublishersView(
                         userId: auth.profile?.id ?? auth.currentUser?.userId
                     )
@@ -615,7 +615,7 @@ struct ProfilePrivacyPermissionsView: View {
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("권한 및 개인정보")
+        .navigationTitle(L("Privacy & permissions"))
         .task { refreshStatuses() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
             refreshStatuses()
@@ -635,25 +635,25 @@ struct ProfilePrivacyPermissionsView: View {
 
     private func refreshStatuses() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized: camera = "허용됨"
-        case .denied: camera = "허용 안 됨"
-        case .restricted: camera = "제한됨"
-        case .notDetermined: camera = "아직 요청하지 않음"
+        case .authorized: camera = L("Allowed")
+        case .denied: camera = L("Not allowed")
+        case .restricted: camera = L("Restricted")
+        case .notDetermined: camera = L("Not requested yet")
         @unknown default: camera = "—"
         }
 
         switch CLLocationManager().authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse: location = "허용됨"
-        case .denied: location = "허용 안 됨"
-        case .restricted: location = "제한됨"
-        case .notDetermined: location = "아직 요청하지 않음"
+        case .authorizedAlways, .authorizedWhenInUse: location = L("Allowed")
+        case .denied: location = L("Not allowed")
+        case .restricted: location = L("Restricted")
+        case .notDetermined: location = L("Not requested yet")
         @unknown default: location = "—"
         }
 
         switch AVAudioSession.sharedInstance().recordPermission {
-        case .granted: mic = "허용됨"
-        case .denied: mic = "허용 안 됨"
-        case .undetermined: mic = "아직 요청하지 않음"
+        case .granted: mic = L("Allowed")
+        case .denied: mic = L("Not allowed")
+        case .undetermined: mic = L("Not requested yet")
         @unknown default: mic = "—"
         }
     }
@@ -673,24 +673,24 @@ struct ProfileHelpView: View {
 
     var body: some View {
         List {
-            Section("안내") {
-                helpLink("공간 촬영 방법")
-                helpLink("공간 생성 상태 설명")
-                helpLink("공유 방법")
-                helpLink("핫스팟과 공간 연결 방법")
-                helpLink("3D 자산과 AR 사용 방법")
+            Section(L("Guides")) {
+                helpLink(L("How to capture a space"))
+                helpLink(L("Creation status explained"))
+                helpLink(L("How to share"))
+                helpLink(L("How to link spaces with hotspots"))
+                helpLink(L("How to use 3D Objects and AR"))
             }
-            Section("문의") {
-                Button("문의하기") {
+            Section(L("Contact")) {
+                Button(L("Contact us")) {
                     safariURL = SpaceLinkIdentifiedURL(url: GonggiProductURLs.support)
                 }
             }
-            Section("앱 정보") {
+            Section(L("About")) {
                 Button {
                     handleVersionTap()
                 } label: {
                     HStack {
-                        Text("버전")
+                        Text(L("Version"))
                             .foregroundStyle(GonggiColors.textPrimary)
                         Spacer()
                         Text(versionLine)
@@ -698,9 +698,9 @@ struct ProfileHelpView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("버전 \(versionLine)")
+                .accessibilityLabel(L("Version %@", "\(versionLine)"))
                 .accessibilityHint(GonggiFeatureFlags.canUnlockInternalTools
-                    ? "내부 도구 잠금 해제를 위해 여러 번 탭할 수 있습니다"
+                    ? L("Tap several times to unlock internal tools")
                     : "")
                 if let unlockHint {
                     Text(unlockHint)
@@ -711,19 +711,19 @@ struct ProfileHelpView: View {
 
             if showInternalTools {
                 Section {
-                    Text("Test A–E 산출물: Captures/*/capture/debug/ (telemetry, sensor_space, camera_path_xz, decisions)")
+                    Text(L("Test A–E output: Captures/*/capture/debug/ (telemetry, sensor_space, camera_path_xz, decisions)"))
                         .font(.caption2)
                         .foregroundStyle(GonggiColors.textSecondary)
                 } header: {
-                    Text("내부 테스트")
+                    Text(L("Internal test"))
                 } footer: {
-                    Text("TestFlight/DEBUG 전용. App Store 일반 빌드에는 표시되지 않습니다.")
+                    Text(L("TestFlight/DEBUG only. Not shown in App Store builds."))
                 }
             }
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("도움말 및 문의")
+        .navigationTitle(L("Help"))
         .onAppear {
             showInternalTools = GonggiFeatureFlags.isInternalToolsUnlocked
         }
@@ -739,10 +739,10 @@ struct ProfileHelpView: View {
             versionTapCount = 0
             GonggiFeatureFlags.setInternalToolsUnlocked(true)
             showInternalTools = true
-            unlockHint = "내부 테스트 메뉴가 열렸습니다"
+            unlockHint = L("Internal test menu unlocked")
             GonggiHaptics.medium()
         } else if versionTapCount >= 4 {
-            unlockHint = "내부 도구까지 \(7 - versionTapCount)회"
+            unlockHint = L("%@ more taps to internal tools", "\(7 - versionTapCount)")
         }
     }
 
@@ -770,27 +770,27 @@ struct ProfileDeleteAccountView: View {
     var body: some View {
         List {
             Section {
-                Text("WHIK와 3D Locker 계정이 함께 삭제됩니다. 저장한 공간과 3D 자산, 공유 링크와 남은 크레딧을 더 이상 이용할 수 없습니다.")
+                Text(L("Your WHIK and 3D Locker account will be deleted. Saved spaces, 3D Objects, share links and remaining credits will no longer be available."))
                     .font(.footnote)
             }
-            Section("삭제 대상") {
-                Text("통합 사용자 계정, WHIK 공간, 원본 촬영, 파노라마, 오디오, 핫스팟 연결, 공유 링크, 3D Locker 자산, 세션과 인증 토큰")
+            Section(L("What gets deleted")) {
+                Text(L("Unified user account, WHIK spaces, original captures, panoramas, audio, hotspot links, share links, 3D Locker assets, sessions and tokens"))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Section("보관") {
-                Text("법적으로 보관해야 하는 결제와 회계 기록은 계정 데이터와 분리되어 보관 정책에 따라 유지됩니다.")
+            Section(L("Retained")) {
+                Text(L("Payment and accounting records that must be kept by law are stored apart from account data under the retention policy."))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
             if provider == "LOCAL" || auth.profile?.hasPassword == true {
-                Section("비밀번호 확인") {
-                    SecureField("현재 비밀번호", text: $password)
+                Section(L("Confirm password")) {
+                    SecureField(L("Current password"), text: $password)
                 }
             }
             Section {
-                Toggle("위 내용을 확인했으며 계정을 삭제합니다.", isOn: $confirmed)
-                Button("회원 탈퇴", role: .destructive) {
+                Toggle(L("I've read the above and want to delete my account."), isOn: $confirmed)
+                Button(L("Delete account"), role: .destructive) {
                     Task { await delete() }
                 }
                 .disabled(!confirmed || busy)
@@ -801,7 +801,7 @@ struct ProfileDeleteAccountView: View {
         }
         .scrollContentBackground(.hidden)
         .background(GonggiAmbientBackground(showGlow: false))
-        .navigationTitle("회원 탈퇴")
+        .navigationTitle(L("Delete account"))
         .disabled(busy)
     }
 
@@ -827,7 +827,7 @@ struct ProfileDeleteAccountView: View {
             errorMessage = message
         } catch {
             errorMessage = error.localizedDescription.isEmpty
-                ? "계정 삭제를 완료하지 못했어요."
+                ? L("Couldn't finish deleting the account.")
                 : error.localizedDescription
         }
     }
@@ -867,7 +867,7 @@ final class DeleteAppleReauthCoordinator: NSObject, ASAuthorizationControllerDel
         else {
             continuation?.resume(throwing: MobileAuthAPIError.server(
                 code: "REAUTH_FAILED",
-                message: "Apple 계정 확인에 실패했습니다.",
+                message: L("Apple account check failed."),
                 status: 401
             ))
             continuation = nil

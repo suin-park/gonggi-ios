@@ -4,16 +4,16 @@ import XCTest
 final class SpaceCleanupTests: XCTestCase {
     @MainActor
     func testModeTitlesAvoidDeleteWording() {
-        XCTAssertEqual(SpaceCleanupMode.selectedObjects.title, "가구 선택해서 비우기")
-        XCTAssertFalse(SpaceCleanupMode.selectedObjects.title.contains("삭제"))
-        XCTAssertFalse(SpaceCleanupMode.selectedObjects.subtitle.contains("삭제"))
+        XCTAssertEqual(SpaceCleanupMode.selectedObjects.title, L("Choose furniture to clear"))
+        XCTAssertFalse(SpaceCleanupMode.selectedObjects.title.contains(L("Delete")))
+        XCTAssertFalse(SpaceCleanupMode.selectedObjects.subtitle.contains(L("Delete")))
         // ALL_FURNITURE remains in the API enum for older jobs but is removed from the menu.
-        XCTAssertEqual(SpaceCleanupMode.allFurniture.title, "전체 가구 비우기")
+        XCTAssertEqual(SpaceCleanupMode.allFurniture.title, L("Clear all furniture"))
     }
 
     @MainActor
     func testMenuExposesSelectedModeOnly() {
-        XCTAssertEqual(SpaceCleanupMode.selectedObjects.title, "가구 선택해서 비우기")
+        XCTAssertEqual(SpaceCleanupMode.selectedObjects.title, L("Choose furniture to clear"))
         XCTAssertNotEqual(SpaceCleanupMode.selectedObjects, .allFurniture)
     }
 

@@ -6,11 +6,11 @@ final class StoreShelfCoreTests9: XCTestCase {
     func testPhotoCountAndSizeAreNotNetworkProblems() {
         let count = StoreCaptureFailure.fromServer(status: 413, code: "TOO_MANY_PHOTOS_FOR_ANALYSIS")
         XCTAssertEqual(count.kind, .tooManyPhotos)
-        XCTAssertFalse(count.guidance.contains("연결"))
+        XCTAssertFalse(count.guidance.contains(L("Link")))
         XCTAssertFalse(count.canRetry, "the same request would be refused again")
         let size = StoreCaptureFailure.fromServer(status: 413, code: "PHOTO_TOO_LARGE")
         XCTAssertEqual(size.kind, .tooLarge)
-        XCTAssertFalse(size.guidance.contains("연결"))
+        XCTAssertFalse(size.guidance.contains(L("Link")))
         XCTAssertEqual(StoreCaptureFailure.fromServer(status: 413, code: nil).kind, .tooLarge)
     }
 
@@ -388,7 +388,7 @@ final class StoreShelfShortFlowTests: XCTestCase {
     }
 
     func testServerTextIsScrubbedOfModelNamesAndInternalStates() {
-        XCTAssertEqual(StoreUserText.scrub("분석 gpt-6-astra RUNNING 중"), "분석 중")
+        XCTAssertEqual(StoreUserText.scrub("분석 gpt-6-astra RUNNING 중"), L("Analyzing"))
         XCTAssertFalse(StoreUserText.containsDeveloperTerm("제품 이름을 확인해 주세요"))
         XCTAssertTrue(StoreUserText.containsDeveloperTerm("Chat GPT Astra API"))
         let run = RemoteAnalysisRun(id: "r", status: "RUNNING", model: "gpt-6-astra", errorCode: nil, inputTokens: nil, outputTokens: nil,

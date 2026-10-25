@@ -51,7 +51,7 @@ final class SpaceLinkLabelSizeTests: XCTestCase {
             yawDeg: 10,
             pitchDeg: 5,
             radius: 3,
-            label: "안내",
+            label: L("Guides"),
             externalUrl: "https://example.com/path",
             labelSize: .large,
             status: .linked,

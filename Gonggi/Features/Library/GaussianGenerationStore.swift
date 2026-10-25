@@ -99,11 +99,11 @@ final class GaussianGenerationStore: ObservableObject {
 
         var userFacingStatusLabel: String {
             switch spaceStatus {
-            case .uploading: return "업로드 중"
-            case .processing: return isProductResult ? "3D 자산 생성 중" : "3D 공간 생성 중"
-            case .ready: return "생성 완료"
+            case .uploading: return L("Uploading")
+            case .processing: return isProductResult ? L("Creating 3D Object") : L("Creating 3D Space")
+            case .ready: return L("Creation complete")
             case .failed: return failureLabel
-            case .draft: return "준비 중"
+            case .draft: return L("Preparing")
             }
         }
 
@@ -111,25 +111,25 @@ final class GaussianGenerationStore: ObservableObject {
         var failureLabel: String {
             if status == GaussianGenerationStore.interruptedStatus
                 || failureCode == GaussianGenerationStore.uploadInterruptedCode {
-                return "업로드 중단, 다시 시도할 수 있어요"
+                return L("Upload stopped, you can retry")
             }
             switch failureCode {
             case "NATIVE_UNAVAILABLE", "RUNPOD_SUBMIT_FAILED":
-                return "생성 서버 준비 안 됨, 다시 시도할 수 있어요"
+                return L("Creation server not ready, you can retry")
             case "JOB_EXPIRED":
-                return "시간 초과, 다시 시도할 수 있어요"
+                return L("Timed out, you can retry")
             case "OBJECT_PACKAGE_INVALID":
-                return "3D 자산 촬영 정보를 읽지 못했어요"
+                return L("Couldn't read the 3D Object capture")
             case "OBJECT_INIT_POINTS_INSUFFICIENT", "OBJECT_NO_SPARSE_POINTS":
-                return "선택 범위 안에 학습에 필요한 점이 부족해요, 상자를 물체에 맞게 다시 촬영해 주세요"
+                return L("Not enough points inside the box. Capture again with the box fitted to the object")
             case "OBJECT_MASK_FAILED":
-                return "제품을 사진에서 구분하지 못했어요, 다시 시도할 수 있어요"
+                return L("Couldn't separate the product in the photos, you can retry")
             case "OBJECT_TRUNCATED":
-                return "제품 일부가 잘린 촬영이에요, 다시 시도할 수 있어요"
+                return L("Part of the product was cut off, you can retry")
             case "RUNPOD_CANCELLED", "cancelled":
-                return "생성 취소됨"
+                return L("Creation cancelled")
             default:
-                return "생성 실패, 다시 시도할 수 있어요"
+                return L("Creation failed, you can retry")
             }
         }
 
@@ -306,7 +306,7 @@ final class GaussianGenerationStore: ObservableObject {
                 GaussianGenerationRecord(
                     spaceId: r.spaceId,
                     jobId: "",
-                    name: r.name.isEmpty ? (r.captureKind == "object" ? "3D 자산" : "3D 공간") : r.name,
+                    name: r.name.isEmpty ? (r.captureKind == "object" ? L("3D Objects") : L("3D Space")) : r.name,
                     captureId: nil,
                     sessionId: nil,
                     qualityProfile: "",
@@ -361,8 +361,9 @@ final class GaussianGenerationStore: ObservableObject {
     /// Product results say where they came from once ready ("실물 촬영 · …"), or that the quality check failed.
     static func cardNote(_ job: GaussianGenerationRecord) -> String {
         guard job.isProductResult, job.spaceStatus == .ready else { return job.userFacingStatusLabel }
-        if job.objectQualityResult == "failed" { return "품질 확인 필요" }
-        return job.provenanceLabel ?? job.userFacingStatusLabel
+        if job.objectQualityResult == "failed" { return L("Quality check needed") }
+        // provenanceLabel is server-written Korean; shown only in Korean.
+        return AdvancedCaptureCopy.serverCopy(job.provenanceLabel) ?? job.userFacingStatusLabel
     }
 
     func spaceId(fromLibraryId id: String) -> String? {

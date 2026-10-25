@@ -54,7 +54,7 @@ final class CaptureViewModel: ObservableObject {
         capturePlan = CapturePlan.normalize(from: sanitized)
         guidedSegmentIndex = 0
         // Initial hint only — during capture, live GuidanceAction owns the coach bubble.
-        if let hint = capturePlan.startHint {
+        if let hint = AdvancedCaptureCopy.serverCopy(capturePlan.startHint) {
             guidance.applySnapshot(quality: guidance.quality, message: hint)
         }
     }

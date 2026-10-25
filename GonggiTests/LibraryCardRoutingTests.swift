@@ -21,7 +21,7 @@ final class LibraryCardRoutingTests: XCTestCase {
     func testViewCTAOnlyWhenCanOpenExistingVR() {
         let ready = SpaceRecord(
             id: "r1",
-            name: "완료",
+            name: L("Done"),
             capturedAt: Date(),
             status: .ready,
             thumbnailSystemImage: "cube",
@@ -30,7 +30,7 @@ final class LibraryCardRoutingTests: XCTestCase {
         )
         let failed = SpaceRecord(
             id: "f1",
-            name: "실패",
+            name: L("Failed"),
             capturedAt: Date(),
             status: .failed,
             thumbnailSystemImage: "exclamationmark",

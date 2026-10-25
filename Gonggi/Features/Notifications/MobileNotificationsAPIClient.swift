@@ -11,10 +11,10 @@ struct GonggiNotificationItem: Identifiable, Equatable, Hashable, Sendable {
 
     var typeLabelKo: String {
         switch type {
-        case "GONGGI_SPACE_LIKE": return "좋아요"
-        case "GONGGI_SPACE_COMMENT": return "댓글"
-        case "GONGGI_ADMIN_ANNOUNCEMENT": return "공지"
-        default: return "알림"
+        case "GONGGI_SPACE_LIKE": return L("Likes")
+        case "GONGGI_SPACE_COMMENT": return L("Comments")
+        case "GONGGI_ADMIN_ANNOUNCEMENT": return L("Announcements")
+        default: return L("Notifications")
         }
     }
 
@@ -72,7 +72,7 @@ actor MobileNotificationsAPIClient {
         guard (200..<300).contains(http.statusCode), (json?["ok"] as? Bool) == true else {
             throw MobileAuthAPIError.server(
                 code: (json?["errorCode"] as? String) ?? "ERROR",
-                message: "알림을 불러오지 못했어요.",
+                message: L("Couldn't load notifications."),
                 status: http.statusCode
             )
         }
@@ -102,7 +102,7 @@ actor MobileNotificationsAPIClient {
         else {
             throw MobileAuthAPIError.server(
                 code: (json?["errorCode"] as? String) ?? "ERROR",
-                message: "알림을 열 수 없어요.",
+                message: L("Can't open the notification."),
                 status: http.statusCode
             )
         }
@@ -124,7 +124,7 @@ actor MobileNotificationsAPIClient {
         guard (200..<300).contains(http.statusCode), (json?["ok"] as? Bool) == true else {
             throw MobileAuthAPIError.server(
                 code: (json?["errorCode"] as? String) ?? "ERROR",
-                message: "읽음 처리에 실패했어요.",
+                message: L("Couldn't mark as read."),
                 status: http.statusCode
             )
         }

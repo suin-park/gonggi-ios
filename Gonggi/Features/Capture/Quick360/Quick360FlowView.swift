@@ -49,10 +49,10 @@ struct Quick360FlowView: View {
 
             if viewModel.isStopping || viewModel.isStitching {
                 CaptureProcessingOverlay(
-                    message: viewModel.isStitching ? "기록을 정리하고 있어요" : "촬영을 마무리하고 있어요",
+                    message: viewModel.isStitching ? L("Organizing the capture") : L("Finishing the capture"),
                     detail: viewModel.isStitching
-                        ? "공간 미리보기를 준비 중이에요"
-                        : "잠시만 기다려 주세요"
+                        ? L("Preparing the space preview")
+                        : L("Please wait a moment")
                 )
             }
         }

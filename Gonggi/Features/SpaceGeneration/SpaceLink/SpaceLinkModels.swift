@@ -18,9 +18,9 @@ enum SpaceLinkLabelSize: String, Codable, Sendable, Equatable, CaseIterable {
 
     var displayTitle: String {
         switch self {
-        case .small: return "작게"
-        case .medium: return "보통"
-        case .large: return "크게"
+        case .small: return L("Small")
+        case .medium: return L("Fair")
+        case .large: return L("Large")
         }
     }
 

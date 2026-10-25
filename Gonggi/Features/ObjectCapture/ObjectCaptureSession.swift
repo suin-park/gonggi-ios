@@ -279,7 +279,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         if let floorY { v["floorY"] = Double(floorY) }
         if stage == .placing {
             guard let floorY else {
-                locatingNote = "바닥이 보이게 휴대폰을 천천히 움직여 주세요"
+                locatingNote = L("Move the phone slowly so the floor is visible")
                 trace.add(traceTime(), "tap1_no_floor", v)
                 return
             }
@@ -307,7 +307,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             firstTap = nil
             firstTapMarker = nil
             stage = .placing
-            locatingNote = "추적이 한 번 끊겼어요. 처음부터 물체 가운데를 다시 눌러 주세요"
+            locatingNote = L("Tracking was lost once. Start over by tapping the center of the object")
             return
         }
         switch ObjectTwoTap.estimate(first: first.ray, second: r) {
@@ -315,7 +315,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             // the two floor measurements disagree: the floor (or the world) moved between the taps
             v["floorDisagreeM"] = Double(abs((floorY ?? 0) - first.floorY))
             trace.add(traceTime(), "tap2_rejected", v, ["why": "floor_disagree"])
-            locatingNote = "바닥 인식이 흔들려요. 바닥을 천천히 비추고 다시 눌러 주세요"
+            locatingNote = L("Floor detection is unstable. Point slowly at the floor and tap again")
             _ = res
         case .success(let res):
             v["convergenceDeg"] = res.convergenceDeg
@@ -333,11 +333,11 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             trace.add(traceTime(), "tap2_rejected", v, ["why": "\(why)"])
             switch why {
             case .tooClose:
-                locatingNote = "조금 더 옆으로 이동한 뒤 눌러 주세요 (지금 \(Int(walkAngleDeg().rounded()))° / \(Int(ObjectTwoTap.goodConvergenceDeg))° 이상)"
+                locatingNote = L("Move a little more to the side, then tap (now %1$@° / at least %2$@°)", "\(Int(walkAngleDeg().rounded()))", "\(Int(ObjectTwoTap.goodConvergenceDeg))")
             case .tooOpposite:
-                locatingNote = "물체 반대편이에요. 처음 자리에서 옆으로 90° 정도만 이동해 눌러 주세요"
+                locatingNote = L("That's the far side of the object. Move only about 90° from where you started, then tap")
             case .inconsistent, .behindCamera:
-                locatingNote = "두 번 누른 곳이 서로 달라요. 물체 가운데를 눌러 주세요"
+                locatingNote = L("The two taps don't match. Tap the center of the object")
             }
         }
     }
@@ -471,10 +471,10 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         switch kind {
         case .unrecoveredCameraFrame:
             rangeHoldNote = savedPhotos > 0
-                ? "위치 좌표계가 바뀌었어요. 지금까지 찍은 사진은 보관하고, 같은 촬영에 이어 찍지 마세요"
-                : "위치 좌표계가 바뀌었어요. 새 촬영으로 시작해 주세요"
+                ? L("The position reference changed. Photos so far are kept; don't continue this capture")
+                : L("The position reference changed. Please start a new capture")
         case .recoverableAnchorOnly:
-            rangeHoldNote = "위치 앵커가 크게 흔들렸어요. 상자는 촬영 시작 범위로 유지했어요"
+            rangeHoldNote = L("The position anchor moved a lot. The box was kept at the capture's starting range")
         }
         trace.add(traceTime(), "world_discontinuity", [
             "moveM": Double(cameraJumpM ?? anchorRejectedMoveM ?? 0),
@@ -601,11 +601,11 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                     v["txPx"] = reg.txPx; v["tyPx"] = reg.tyPx; v["magPx"] = reg.magnitudePx
                     v["magDeg"] = atan(reg.magnitudePx / focal) * 180 / .pi
                     self.returnCheckSummary = String(
-                        format: "한 바퀴 확인: 가이드-물체 화면 어긋남 %.1f px (%.2f°), 카메라 위치 차 %.0f cm, 앵커 이동 %.1f mm",
+                        format: L("Full-turn check: guide–object offset %.1f px (%.2f°), camera position diff %.0f cm, anchor move %.1f mm"),
                         reg.magnitudePx, atan(reg.magnitudePx / focal) * 180 / .pi, Double(d.positionM) * 100, anchorShift * 1000
                     )
                 } else {
-                    self.returnCheckSummary = "한 바퀴 확인: 비교하지 못했어요"
+                    self.returnCheckSummary = L("Full-turn check: couldn't compare")
                 }
                 self.trace.add(t, "return_check", v)
             }
@@ -666,11 +666,11 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         let since = gate.normalSince.map { frame.timestamp - $0 } ?? 0
         let shift = baseAnchorOrigin.flatMap { o in baseAnchorLatest.map { simd_distance(o, $0) } } ?? 0
         var lines = [
-            String(format: "추적 %@ %.0f초, 지도 %@", gate.currentTracking, since, gate.currentMapping),
-            String(format: "앵커 이동 %.1f mm, 걸은 거리 %.1f m", Double(shift) * 1000, Double(pathSincePlacement)),
+            String(format: L("Tracking %@ %.0f s, map %@"), gate.currentTracking, since, gate.currentMapping),
+            String(format: L("Anchor move %.1f mm, distance walked %.1f m"), Double(shift) * 1000, Double(pathSincePlacement)),
         ]
-        if let d = supportHeightDelta() { lines.append(String(format: "바닥 높이 차 %+.1f cm", Double(d) * 100)) }
-        lines.append(returnCheckSummary ?? "한 바퀴 돌아오면 가이드와 물체의 어긋남을 잽니다")
+        if let d = supportHeightDelta() { lines.append(String(format: L("Floor height diff %+.1f cm"), Double(d) * 100)) }
+        lines.append(returnCheckSummary ?? L("After one full turn, the guide–object offset is measured"))
         diagnosticsReadout = lines.joined(separator: "\n")
     }
 
@@ -789,7 +789,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         let existing = arView.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first
         let hit = existing ?? arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first
         guard let hit else {
-            placementHint = "바닥이나 테이블 면을 찾지 못했어요. 휴대폰을 천천히 움직여 면을 비춰 주세요"
+            placementHint = L("Couldn't find a floor or table surface. Move the phone slowly and point at a surface")
             return
         }
         let t = hit.worldTransform.columns.3
@@ -1072,7 +1072,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
             let paths = try SpatialCapturePackageBuilder.prepareDirectories(sessionId: sessionId)
             self.paths = paths
         } catch {
-            stage = .failed("저장 공간을 준비하지 못했어요")
+            stage = .failed(L("Couldn't prepare storage"))
             return
         }
         captureId = ObjectCaptureIdRegistry.nextCaptureId()
@@ -1541,7 +1541,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
         }
         arSession.pause()
         guard let paths, keyframes.count >= 2 else {
-            stage = .failed("저장된 사진이 너무 적어요. 물체 주위를 더 돌며 찍어 주세요")
+            stage = .failed(L("Too few photos were saved. Walk around the object more"))
             return nil
         }
         let endedAt = Date()
@@ -1617,7 +1617,7 @@ final class ObjectCaptureSession: NSObject, ObservableObject, ARSessionDelegate 
                 )
             )
         } catch {
-            stage = .failed("촬영 파일을 만들지 못했어요")
+            stage = .failed(L("Couldn't create the capture file"))
             return nil
         }
     }

@@ -70,7 +70,7 @@ actor MobileImage3DAPIClient {
         guard let http = response as? HTTPURLResponse else { throw MobileImage3DAPIError.network }
         guard (200..<300).contains(http.statusCode) else {
             if http.statusCode == 403 {
-                throw MobileImage3DAPIError.server(code: "PRESIGN_EXPIRED", message: "업로드가 만료됐어요", status: 403)
+                throw MobileImage3DAPIError.server(code: "PRESIGN_EXPIRED", message: L("The upload expired"), status: 403)
             }
             throw MobileImage3DAPIError.network
         }
@@ -128,7 +128,7 @@ actor MobileImage3DAPIClient {
         )
         if status == 401 { throw MobileImage3DAPIError.unauthorized }
         if status == 404 {
-            throw MobileImage3DAPIError.server(code: "JOB_NOT_FOUND", message: "작업을 찾을 수 없어요", status: 404)
+            throw MobileImage3DAPIError.server(code: "JOB_NOT_FOUND", message: L("Couldn't find the job"), status: 404)
         }
         let decoder = JSONDecoder()
         if let envelope = try? decoder.decode(JobEnvelope.self, from: data) {
@@ -228,12 +228,12 @@ actor MobileImage3DAPIClient {
 
     private func friendlySourceMessage(code: String, fallback: String) -> String {
         switch code {
-        case "FILE_TOO_LARGE": return "파일이 너무 커요"
-        case "UNSUPPORTED_IMAGE": return "JPEG 사진만 사용할 수 있어요"
+        case "FILE_TOO_LARGE": return L("The file is too large")
+        case "UNSUPPORTED_IMAGE": return L("Only JPEG photos can be used")
         case "SOURCE_NOT_FOUND", "SOURCE_NOT_OWNED", "INVALID_SOURCE":
-            return fallback.isEmpty ? "사진을 확인하지 못했어요" : fallback
+            return fallback.isEmpty ? L("Couldn't check the photo") : fallback
         default:
-            return fallback.isEmpty ? "사진이 올바르지 않아요" : fallback
+            return fallback.isEmpty ? L("The photo isn't valid") : fallback
         }
     }
 

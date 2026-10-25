@@ -10,11 +10,11 @@ struct SpacePreviewView: View {
         NavigationStack {
             QuickLookPreview(url: usdzURL)
                 .ignoresSafeArea(edges: .bottom)
-                .navigationTitle("공간 미리보기")
+                .navigationTitle(L("Space preview"))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("닫기") { dismiss() }
+                        Button(L("Close")) { dismiss() }
                     }
                 }
         }

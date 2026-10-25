@@ -39,9 +39,6 @@ targets:
       - path: Gonggi
         excludes:
           - "**/*.md"
-          # WHIK 3.1: English-first app. Korean resources stay in the repo but are not bundled, so a Korean device
-          # also opens in English (re-add to localize).
-          - "Resources/ko.lproj/**"
     resources:
       - path: NOTICE
       - path: third_party/opencv/LICENSE
@@ -72,7 +69,7 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: Gonggi/Capture/Quick360/Engine/OpenCV/Gonggi-Bridging-Header.h
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleIconName: AppIcon
-        INFOPLIST_KEY_CFBundleDisplayName: "WHIK: 3D Scanner"
+        INFOPLIST_KEY_CFBundleDisplayName: WHIK
         INFOPLIST_KEY_NSCameraUsageDescription: WHIK uses the camera to capture spaces and objects in 3D.
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: WHIK saves where a capture was taken.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: WHIK can record the sound of a space with your capture.
@@ -94,10 +91,14 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         # 설치된 앱 이름. xcodegen이 이 속성으로 Info.plist를 새로 쓰므로 여기에 있어야 최종 아카이브에 들어간다.
-        CFBundleDisplayName: "WHIK: 3D Scanner"
+        # Home-screen name. The store listing name is "WHIK: 3D Scanner" (App Store Connect), not this key.
+        CFBundleDisplayName: WHIK
         CFBundleDevelopmentRegion: en
         CFBundleLocalizations:
           - en
+          - ko
+          - ja
+          - zh-Hans
         GonggiBuildSHA: $(GONGGI_BUILD_SHA)
         GonggiAPIBaseURL: $(GONGGI_API_BASE_URL)
         GonggiStoreAPIBaseURL: $(GONGGI_STORE_API_BASE_URL)
@@ -170,6 +171,10 @@ schemes:
       config: Debug
     test:
       config: Debug
+      # Unit tests run the app UI in Korean (saved-language key via the argument domain): most copy tests were
+      # written against the Korean strings. WhikShellTests switch languages explicitly.
+      commandLineArguments:
+        "-whik.language.v1 ko": true
       targets:
         - GonggiTests
     profile:

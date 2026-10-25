@@ -23,9 +23,9 @@ enum WelcomePanoramaSampleAsset {
     }
 
     /// Welcome-only product copy.
-    static let headline = "제품을 찾고, 매장을 둘러보세요."
-    static let subtitle = "내 공간에서 미리 체험하세요."
-    static let accountFootnote = "제품과 공간을 하나의 계정으로 관리하세요."
+    static var headline: String { L("Find products and explore stores.") }
+    static var subtitle: String { L("Try it out in your own space.") }
+    static var accountFootnote: String { L("Manage products and spaces with one account.") }
 }
 
 /// Welcome-only equirect sample card (inline only — no fullscreen presentation).
@@ -48,7 +48,7 @@ struct WelcomePanoramaSampleView: View {
             .clipShape(RoundedRectangle(cornerRadius: GonggiRadius.md, style: .continuous))
             .allowsHitTesting(true)
 
-            Text("360° 샘플")
+            Text(L("360° sample"))
                 .font(GonggiTypography.caption(11))
                 .fontWeight(.semibold)
                 .foregroundStyle(Color.white.opacity(0.95))
@@ -69,7 +69,7 @@ struct WelcomePanoramaSampleView: View {
         .frame(maxWidth: .infinity)
         .clipped()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("360도 공간 샘플")
+        .accessibilityLabel(L("360° space sample"))
         .accessibilityRemoveTraits(.isButton)
     }
 }

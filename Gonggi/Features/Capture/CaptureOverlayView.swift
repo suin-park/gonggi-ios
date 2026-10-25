@@ -97,14 +97,14 @@ struct CaptureOverlayView: View {
     private var topBar: some View {
         HStack(alignment: .center) {
             GonggiIconButton(systemName: "xmark", style: .dimmed, action: onClose)
-                .accessibilityLabel("닫기")
+                .accessibilityLabel(L("Close"))
             Spacer()
-            Text("3D 공간 기록")
+            Text(L("3D Space capture"))
                 .font(GonggiTypography.headline(15))
                 .foregroundStyle(GonggiColors.textPrimary)
             Spacer()
             GonggiIconButton(systemName: "questionmark.circle", style: .dimmed, action: onGuide)
-                .accessibilityLabel("촬영 가이드")
+                .accessibilityLabel(L("Capture guide"))
         }
         .padding(.horizontal, GonggiSpacing.md)
     }
@@ -129,7 +129,7 @@ struct CaptureOverlayView: View {
                     style: .dimmed,
                     action: onFlash
                 )
-                .accessibilityLabel(guidance.isFlashOn ? "플래시 끄기" : "플래시 켜기")
+                .accessibilityLabel(guidance.isFlashOn ? L("Turn off flash") : L("Turn on flash"))
 
                 CaptureCoverageCubeView(
                     fills: cubeFills,
@@ -227,12 +227,12 @@ struct CaptureWarningChip: View {
 
     private var label: String {
         switch kind {
-        case .fastMovement: return "너무 빠름"
-        case .trackingLimited: return "카메라 위치 확인 중"
-        case .lowTexture: return "특징 부족"
-        case .overlapWeak: return "연결이 약해짐"
-        case .blurryFrame: return "화면이 흐림"
-        case .baselineWeak: return "옆으로 이동"
+        case .fastMovement: return L("Too fast")
+        case .trackingLimited: return L("Checking camera position")
+        case .lowTexture: return L("Not enough detail")
+        case .overlapWeak: return L("Connection weakened")
+        case .blurryFrame: return L("Image is blurry")
+        case .baselineWeak: return L("Step sideways")
         }
     }
 
@@ -260,12 +260,12 @@ struct CaptureWarningChip: View {
 
     private var accessibilityLabel: String {
         switch kind {
-        case .fastMovement: return "빠른 이동 경고"
-        case .trackingLimited: return "추적 제한 경고"
-        case .lowTexture: return "특징 부족 경고"
-        case .overlapWeak: return "촬영 연결 약함 경고"
-        case .blurryFrame: return "화면 흐림 경고"
-        case .baselineWeak: return "횡이동 필요 경고"
+        case .fastMovement: return L("Moving too fast warning")
+        case .trackingLimited: return L("Limited tracking warning")
+        case .lowTexture: return L("Not enough detail warning")
+        case .overlapWeak: return L("Weak capture connection warning")
+        case .blurryFrame: return L("Blurry image warning")
+        case .baselineWeak: return L("Sideways move needed warning")
         }
     }
 }

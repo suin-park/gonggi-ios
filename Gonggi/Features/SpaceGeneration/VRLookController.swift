@@ -135,8 +135,8 @@ enum VRMotionPreferences {
     static let storageKey = "gonggi.vrMotionEnabled"
     static let motionHintSeenKey = "gonggi.vrMotionHintSeen.v1"
 
-    static let motionHintPrimary = "휴대폰을 움직여 공간을 둘러보세요"
-    static let motionHintSecondary = "화면을 밀어 시점을 조정할 수도 있어요"
+    static var motionHintPrimary: String { L("Move your phone to look around the space") }
+    static var motionHintSecondary: String { L("You can also swipe to change the view") }
 
     /// Resolved default for a new VR session.
     static func resolvedMotionEnabled(

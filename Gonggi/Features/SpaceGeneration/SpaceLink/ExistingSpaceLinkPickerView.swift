@@ -31,15 +31,15 @@ struct ExistingSpaceLinkPickerView: View {
             Group {
                 if let offlineMessage {
                     ContentUnavailableView(
-                        "연결할 수 없어요",
+                        L("Can't link"),
                         systemImage: "wifi.slash",
                         description: Text(offlineMessage)
                     )
                 } else if candidates.isEmpty {
                     ContentUnavailableView(
-                        "연결할 수 있는 공간이 없어요",
+                        L("No spaces to link"),
                         systemImage: "cube.transparent",
-                        description: Text("새 공간을 촬영해 보세요.")
+                        description: Text(L("Try capturing a new space."))
                     )
                 } else {
                     List(candidates) { space in
@@ -58,12 +58,12 @@ struct ExistingSpaceLinkPickerView: View {
                                     Text(space.name)
                                         .font(.body.weight(.semibold))
                                         .foregroundStyle(.primary)
-                                    Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
+                                    Text(WhikDate.short(space.capturedAt))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                     if alreadyLinkedTargetIds.contains(space.id)
                                         || alreadyLinkedTargetIds.contains(space.sessionId ?? "") {
-                                        Text("이미 연결됨")
+                                        Text(L("Already linked"))
                                             .font(.caption2.weight(.semibold))
                                             .foregroundStyle(.orange)
                                     }
@@ -80,43 +80,43 @@ struct ExistingSpaceLinkPickerView: View {
                     .listStyle(.plain)
                 }
             }
-            .navigationTitle("기존 공간 연결")
+            .navigationTitle(L("Link an existing space"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { onCancel() }
+                    Button(L("Cancel")) { onCancel() }
                 }
             }
-            .alert("이 공간으로 연결할까요?", isPresented: Binding(
+            .alert(L("Link to this space?"), isPresented: Binding(
                 get: { pendingConfirm != nil && !showDuplicateWarn },
                 set: { if !$0 { pendingConfirm = nil } }
             )) {
-                Button("연결") {
+                Button(L("Link")) {
                     if let space = pendingConfirm {
                         onConfirm(space)
                     }
                     pendingConfirm = nil
                 }
-                Button("취소", role: .cancel) { pendingConfirm = nil }
+                Button(L("Cancel"), role: .cancel) { pendingConfirm = nil }
             } message: {
                 if let name = pendingConfirm?.name {
                     Text(name)
                 }
             }
-            .alert("이미 연결된 공간입니다", isPresented: $showDuplicateWarn) {
-                Button("연결") {
+            .alert(L("This space is already linked"), isPresented: $showDuplicateWarn) {
+                Button(L("Link")) {
                     if let space = pendingConfirm {
                         onConfirm(space)
                     }
                     pendingConfirm = nil
                     showDuplicateWarn = false
                 }
-                Button("취소", role: .cancel) {
+                Button(L("Cancel"), role: .cancel) {
                     pendingConfirm = nil
                     showDuplicateWarn = false
                 }
             } message: {
-                Text("다른 위치에 한 번 더 연결할까요?")
+                Text(L("Link it once more at another spot?"))
             }
         }
     }

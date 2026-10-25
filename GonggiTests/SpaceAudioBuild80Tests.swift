@@ -121,7 +121,7 @@ final class SpaceAudioBuild80Tests: XCTestCase {
         }
         let ready = SpaceRecord(
             id: "r1",
-            name: "완료",
+            name: L("Done"),
             capturedAt: Date(),
             status: .ready,
             thumbnailSystemImage: "cube",

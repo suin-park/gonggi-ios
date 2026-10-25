@@ -22,7 +22,7 @@ struct SpaceLinkHotspotActionCard: View {
             }
 
             Button(action: onNavigate) {
-                Label("연결된 공간으로 이동", systemImage: "arrow.triangle.turn.up.right.diamond.fill")
+                Label(L("Go to the linked space"), systemImage: "arrow.triangle.turn.up.right.diamond.fill")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -32,7 +32,7 @@ struct SpaceLinkHotspotActionCard: View {
             .buttonStyle(.plain)
 
             Button(action: onOpenLink) {
-                Label("링크 열기", systemImage: "safari")
+                Label(L("Open link"), systemImage: "safari")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -40,7 +40,7 @@ struct SpaceLinkHotspotActionCard: View {
             }
             .buttonStyle(.plain)
 
-            Button("취소", action: onCancel)
+            Button(L("Cancel"), action: onCancel)
                 .font(.subheadline)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -65,18 +65,18 @@ struct SpaceLinkExternalLinkConfirmView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("외부 링크를 열까요?")
+            Text(L("Open the external link?"))
                 .font(.headline)
             Text(hostname)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
             HStack(spacing: 12) {
-                Button("취소", action: onCancel)
+                Button(L("Cancel"), action: onCancel)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                     .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                Button("링크 열기", action: onConfirm)
+                Button(L("Open link"), action: onConfirm)
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)

@@ -25,12 +25,12 @@ struct SpaceShareSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("공유하면 핫스팟으로 연결된 내 공간도 함께 볼 수 있어요.")
+                    Text(L("When shared, your spaces linked by hotspots can be viewed too."))
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Toggle("링크 공유", isOn: Binding(
+                    Toggle(L("Share link"), isOn: Binding(
                         get: { shareEnabled },
                         set: { newValue in
                             Task { await setEnabled(newValue) }
@@ -38,16 +38,16 @@ struct SpaceShareSheet: View {
                     ))
                     .disabled(isLoading || isSaving)
 
-                    Text("링크를 아는 사람은 공간을 볼 수 있어요.")
+                    Text(L("Anyone with the link can view the space."))
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 } footer: {
-                    Text("공유를 끄면 기존 링크와 연결된 공간 접근이 모두 차단돼요. 연결된 공간은 공개(PUBLIC)로 바뀌지 않아요.")
+                    Text(L("Turning sharing off blocks the existing link and the linked spaces. Linked spaces don't become public."))
                 }
 
                 if shareEnabled, let shareURL, !shareURL.isEmpty {
-                    Section("공유 링크") {
+                    Section(L("Share link")) {
                         Text(shareURL)
                             .font(GonggiTypography.caption(13))
                             .foregroundStyle(GonggiColors.textSecondary)
@@ -58,13 +58,13 @@ struct SpaceShareSheet: View {
                             copied = true
                             GonggiHaptics.light()
                         } label: {
-                            Label(copied ? "복사됨" : "링크 복사", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            Label(copied ? L("Copied") : L("Copy link"), systemImage: copied ? "checkmark" : "doc.on.doc")
                         }
 
                         Button {
                             presentSystemShare(urlString: shareURL)
                         } label: {
-                            Label("공유하기", systemImage: "square.and.arrow.up")
+                            Label(L("Share"), systemImage: "square.and.arrow.up")
                         }
                     }
                 }
@@ -73,19 +73,19 @@ struct SpaceShareSheet: View {
                     Section {
                         ForEach(tourLinkedSpaces) { space in
                             Text(space.title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-                                  ?? "공간")
+                                  ?? L("Space"))
                                 .font(GonggiTypography.body(15))
                         }
                     } header: {
-                        Text("함께 볼 수 있는 연결 공간")
+                        Text(L("Linked spaces viewers can see"))
                     } footer: {
-                        Text("핫스팟으로 연결된 내 공간은 선택 없이 자동으로 포함돼요. 공개 목록에는 나타나지 않아요.")
+                        Text(L("Your spaces linked by hotspots are included automatically. They don't appear in public lists."))
                     }
                 }
 
                 if shareEnabled {
                     Section {
-                        Toggle("공간 오디오 포함", isOn: Binding(
+                        Toggle(L("Include space audio"), isOn: Binding(
                             get: { shareAudioEnabled },
                             set: { newValue in
                                 Task { await setShareAudio(newValue) }
@@ -94,12 +94,12 @@ struct SpaceShareSheet: View {
                         .disabled(isLoading || isSaving || !hasAudio)
 
                         if !hasAudio {
-                            Text("이 공간에 업로드/녹음된 오디오가 없어요.")
+                            Text(L("This space has no uploaded or recorded audio."))
                                 .font(GonggiTypography.caption(13))
                                 .foregroundStyle(GonggiColors.textSecondary)
                         }
                     } footer: {
-                        Text("켠 공간의 오디오만 공유 링크에서 들을 수 있어요. 연결된 공간은 각 공간의 공유 설정에서 따로 켜야 해요. 메모와는 별개예요.")
+                        Text(L("Only spaces with this on can be heard from the share link. Turn it on for linked spaces in each space's sharing settings. Separate from notes."))
                     }
                 }
 
@@ -111,11 +111,11 @@ struct SpaceShareSheet: View {
                     }
                 }
             }
-            .navigationTitle("공간 공유")
+            .navigationTitle(L("Share space"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("닫기") { onClose() }
+                    Button(L("Close")) { onClose() }
                 }
             }
             .overlay {
@@ -140,7 +140,7 @@ struct SpaceShareSheet: View {
         isLoading = true
         defer { isLoading = false }
         guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
-            errorMessage = "로그인이 필요해요."
+            errorMessage = L("Please sign in.")
             return
         }
         do {
@@ -150,7 +150,7 @@ struct SpaceShareSheet: View {
         } catch let err as MobileAuthAPIError {
             errorMessage = err.userFacingMessage
         } catch {
-            errorMessage = "공유 설정을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+            errorMessage = L("Couldn't load sharing settings. Please try again in a moment.")
         }
     }
 
@@ -158,7 +158,7 @@ struct SpaceShareSheet: View {
         isSaving = true
         defer { isSaving = false }
         guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
-            errorMessage = "로그인이 필요해요."
+            errorMessage = L("Please sign in.")
             return
         }
         do {
@@ -171,7 +171,7 @@ struct SpaceShareSheet: View {
             errorMessage = err.userFacingMessage
             shareEnabled = !enabled
         } catch {
-            errorMessage = "공유 설정을 저장하지 못했어요. 잠시 후 다시 시도해주세요."
+            errorMessage = L("Couldn't save sharing settings. Please try again in a moment.")
             shareEnabled = !enabled
         }
     }
@@ -180,7 +180,7 @@ struct SpaceShareSheet: View {
         isSaving = true
         defer { isSaving = false }
         guard let token = MobileAuthTokenStore.shared.getAccessToken(), !token.isEmpty else {
-            errorMessage = "로그인이 필요해요."
+            errorMessage = L("Please sign in.")
             return
         }
         do {
@@ -196,7 +196,7 @@ struct SpaceShareSheet: View {
             errorMessage = err.userFacingMessage
             shareAudioEnabled = !enabled
         } catch {
-            errorMessage = "공유 설정을 저장하지 못했어요. 잠시 후 다시 시도해주세요."
+            errorMessage = L("Couldn't save sharing settings. Please try again in a moment.")
             shareAudioEnabled = !enabled
         }
     }
@@ -233,17 +233,15 @@ private extension MobileAuthAPIError {
     var userFacingMessage: String {
         switch self {
         case .network:
-            return "네트워크에 연결할 수 없습니다."
+            return L("Can't connect to the network.")
         case .invalidResponse:
-            return "응답을 처리하지 못했어요."
-        case .server(let code, let message, _):
-            if Self.isUnsafeServerMessage(message) {
-                if code.contains("LOAD") {
-                    return "공유 설정을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
-                }
-                return "공유 설정을 저장하지 못했어요. 잠시 후 다시 시도해주세요."
+            return L("Couldn't process the response.")
+        case .server(let code, _, _):
+            // Server text is never shown as is (it may be in another language); see WhikServerMessage.
+            if code.contains("LOAD") {
+                return L("Couldn't load sharing settings. Please try again in a moment.")
             }
-            return message
+            return L("Couldn't save sharing settings. Please try again in a moment.")
         }
     }
 

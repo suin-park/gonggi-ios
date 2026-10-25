@@ -62,7 +62,7 @@ struct Quick360OverlayView: View {
         ZStack {
             VStack(spacing: 0) {
                 CaptureTopBar(
-                    modeTitle: "공간 기록",
+                    modeTitle: L("Space capture"),
                     showFinish: uiState.canFinish,
                     enoughCoverage: enoughCoverage,
                     onClose: onClose,
@@ -103,17 +103,17 @@ struct Quick360OverlayView: View {
             GonggiHaptics.success()
         }
         .confirmationDialog(
-            "아직 비어 있는 공간이 있어요",
+            L("Some areas are still empty"),
             isPresented: $showFinishConfirm,
             titleVisibility: .visible
         ) {
-            Button("지금 마무리") {
+            Button(L("Finish now")) {
                 GonggiHaptics.medium()
                 onFinish()
             }
-            Button("조금 더 기록하기", role: .cancel) {}
+            Button(L("Capture a bit more"), role: .cancel) {}
         } message: {
-            Text("위/아래를 조금 더 비추면 공간이 더 완전해져요.")
+            Text(L("Pointing a bit more up and down makes the space more complete."))
         }
     }
 
@@ -137,13 +137,13 @@ struct Quick360OverlayView: View {
             CaptureGuidanceCard(
                 title: uiState.guidance.primaryText,
                 subtitle: isReady && uiState.canStart
-                    ? "정면을 먼저 비추고, 천천히 주변을 기록해보세요"
+                    ? L("Point straight ahead first, then slowly capture around you")
                     : guidanceSubtitle,
                 emphasis: guidanceEmphasis
             )
 
             if uiState.canStart {
-                CapturePrimaryCTA(title: "촬영 시작", action: onStart)
+                CapturePrimaryCTA(title: L("Start capture"), action: onStart)
                     .padding(.bottom, GonggiSpacing.sm)
             }
         }

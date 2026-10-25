@@ -33,7 +33,7 @@ struct CaptureSummaryView: View {
                         candidateSafetyCapReached: summary.quality.candidateSafetyCapReached
                     )
 
-                    Text("촬영 결과")
+                    Text(L("Capture result"))
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textTertiary)
 
@@ -43,7 +43,8 @@ struct CaptureSummaryView: View {
                         remainingSection(summary.quality.captureRemaining)
                     }
 
-                    if let report = summary.texturedMeshReport {
+                    // Engine diagnostics: internal testers only (TestFlight/DEBUG unlock), never general users.
+                    if GonggiFeatureFlags.isInternalToolsUnlocked, let report = summary.texturedMeshReport {
                         texturedMeshReportSection(report)
                     }
 
@@ -57,15 +58,15 @@ struct CaptureSummaryView: View {
                         warningBanner
                     }
 
-                    if summary.manifestURL != nil {
-                        Text("촬영 데이터는 기기에만 저장됩니다. 진단 공유에는 원본 사진이 포함되지 않습니다.")
+                    if summary.manifestURL != nil, GonggiFeatureFlags.isInternalToolsUnlocked {
+                        Text(L("Capture data is saved only on this device. Diagnostic sharing doesn't include original photos."))
                             .font(GonggiTypography.caption(12))
                             .foregroundStyle(GonggiColors.textTertiary)
                     }
 
                     VStack(spacing: GonggiSpacing.sm) {
-                        if summary.texturedSpaceURL != nil, onPreviewSpace != nil {
-                            SecondaryButton(title: "공간 미리보기 (Experimental)", icon: "cube") {
+                        if summary.texturedSpaceURL != nil, onPreviewSpace != nil, GonggiFeatureFlags.isInternalToolsUnlocked {
+                            SecondaryButton(title: L("Space preview (Experimental)"), icon: "cube") {
                                 onPreviewSpace?()
                             }
                         }
@@ -88,12 +89,12 @@ struct CaptureSummaryView: View {
                                 onContinueCapture()
                             }
                         }
-                        if !summary.sessionId.isEmpty {
-                            SecondaryButton(title: "촬영 진단 공유 (사진 제외)", icon: "doc.text") {
+                        if !summary.sessionId.isEmpty, GonggiFeatureFlags.isInternalToolsUnlocked {
+                            SecondaryButton(title: L("Share capture diagnostics (no photos)"), icon: "doc.text") {
                                 prepareDiagnosticsShare()
                             }
                             SecondaryButton(
-                                title: isExportingOriginal ? "원본 패키지 준비 중…" : "원본 패키지 내보내기",
+                                title: isExportingOriginal ? L("Preparing original package…") : L("Export original package"),
                                 icon: "square.and.arrow.up"
                             ) {
                                 prepareOriginalPackageShare()
@@ -112,7 +113,7 @@ struct CaptureSummaryView: View {
                         }
                         #if DEBUG
                         if summary.manifestURL != nil, !summary.captureId.isEmpty {
-                            SecondaryButton(title: "촬영 데이터보내기 (Debug)", icon: "square.and.arrow.up") {
+                            SecondaryButton(title: L("Export capture data (Debug)"), icon: "square.and.arrow.up") {
                                 prepareExport()
                             }
                         }
@@ -128,7 +129,7 @@ struct CaptureSummaryView: View {
                 .padding(GonggiSpacing.lg)
             }
             .background(GonggiAmbientBackground())
-            .navigationTitle("촬영 요약")
+            .navigationTitle(L("Capture summary"))
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showDiagShare) {
                 CaptureExportShareSheet(items: diagShareItems) {
@@ -161,7 +162,7 @@ struct CaptureSummaryView: View {
             diagShareItems = [folder]
             showDiagShare = true
         } catch {
-            diagShareError = "진단 공유 준비에 실패했어요. (원본 사진은 포함되지 않습니다)"
+            diagShareError = L("Couldn't prepare diagnostic sharing. (Original photos aren't included.)")
         }
     }
 
@@ -182,7 +183,7 @@ struct CaptureSummaryView: View {
                 originalShareItems = [folder]
                 showOriginalShare = true
             } catch {
-                originalShareError = "원본 패키지를 내보낼 수 없어요. 패키지가 완전한지 확인해 주세요."
+                originalShareError = L("Couldn't export the original package. Check that it's complete.")
             }
         }
     }
@@ -227,38 +228,38 @@ struct CaptureSummaryView: View {
         ) {
             GonggiMetricTile(
                 icon: "square.3.layers.3d",
-                title: "촬영 범위",
+                title: L("Coverage"),
                 value: CaptureUIPresenter.userGradeLabel("coverage", quality: summary.quality),
                 accent: GonggiColors.successGreen
             )
             GonggiMetricTile(
                 icon: "move.3d",
-                title: "입체 정보",
+                title: L("Depth information"),
                 value: CaptureUIPresenter.userGradeLabel("baseline", quality: summary.quality),
                 warning: summary.quality.translationBaselineGrade == .insufficient
             )
             GonggiMetricTile(
                 icon: "link",
-                title: "카메라 연결",
+                title: L("Camera connection"),
                 value: CaptureUIPresenter.userGradeLabel("overlap", quality: summary.quality),
                 warning: summary.quality.overlapState == .lost || summary.quality.overlapState == .weak
             )
             GonggiMetricTile(
                 icon: "eye",
-                title: "화면 선명도",
+                title: L("Sharpness"),
                 value: CaptureUIPresenter.userGradeLabel("sharpness", quality: summary.quality),
                 warning: summary.quality.sharpnessState == .blurry
             )
             GonggiMetricTile(
                 icon: "location",
-                title: "카메라 추적",
+                title: L("Camera tracking"),
                 value: CaptureUIPresenter.userGradeLabel("tracking", quality: summary.quality),
                 warning: summary.quality.trackingQuality < 0.7
             )
             GonggiMetricTile(
                 icon: "hare.fill",
-                title: "빠른 이동",
-                value: "\(summary.fastMotionSegments)구간",
+                title: L("Fast movement"),
+                value: L("%@ sections", "\(summary.fastMotionSegments)"),
                 warning: summary.fastMotionSegments > 0
             )
         }
@@ -389,7 +390,7 @@ struct CaptureSummaryView: View {
             exportShareItems = CaptureSessionExporter.shareItems(from: result)
             showExportShare = true
         } catch {
-            exportError = "보내기 실패: \(error.localizedDescription)"
+            exportError = L("Export failed: %@", "\(error.localizedDescription)")
         }
     }
     #endif
@@ -398,7 +399,7 @@ struct CaptureSummaryView: View {
         HStack(alignment: .top, spacing: GonggiSpacing.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(GonggiColors.warning)
-            Text("저텍스처 구간이 감지되었습니다. 생성 후 품질이 낮을 수 있습니다.")
+            Text(L("Low-texture areas were detected. The result may be lower quality."))
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textSecondary)
         }
@@ -414,7 +415,7 @@ struct CaptureSummaryView: View {
     private func formattedDuration(_ interval: TimeInterval) -> String {
         let m = Int(interval) / 60
         let s = Int(interval) % 60
-        return m > 0 ? "\(m)분 \(s)초" : "\(s)초"
+        return m > 0 ? L("%1$@ min %2$@ s", "\(m)", "\(s)") : L("%@ s", "\(s)")
     }
 
     private func percentString(_ value: Double) -> String {

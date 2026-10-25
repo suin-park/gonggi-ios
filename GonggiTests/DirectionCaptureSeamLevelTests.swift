@@ -84,7 +84,7 @@ final class DirectionCaptureSeamLevelTests: XCTestCase {
     func testLevelGuidanceAtMinus18() {
         XCTAssertEqual(
             DirectionCaptureGuide.horizontalLevelGuidanceMessage(elevationDeg: -18),
-            "카메라를 조금 위로 들어주세요"
+            L("Raise the camera a little")
         )
     }
 
@@ -97,7 +97,7 @@ final class DirectionCaptureSeamLevelTests: XCTestCase {
     func testLevelGuidanceTooHigh() {
         XCTAssertEqual(
             DirectionCaptureGuide.horizontalLevelGuidanceMessage(elevationDeg: 12),
-            "카메라를 조금 내려주세요"
+            L("Lower the camera a little")
         )
     }
 
@@ -108,7 +108,7 @@ final class DirectionCaptureSeamLevelTests: XCTestCase {
             unwrappedYaw: -322,
             elevationDeg: -18
         )
-        XCTAssertEqual(msg, "조금 더 오른쪽으로 돌아주세요")
+        XCTAssertEqual(msg, L("Turn a little more to the right"))
     }
 
     func testGuidePriorityLevelOverFastWhenNotSeam() {
@@ -118,7 +118,7 @@ final class DirectionCaptureSeamLevelTests: XCTestCase {
             unwrappedYaw: -90,
             elevationDeg: -18
         )
-        XCTAssertEqual(msg, "카메라를 조금 위로 들어주세요")
+        XCTAssertEqual(msg, L("Raise the camera a little"))
     }
 
     func testEngineRejects322ThenAcceptsPreferredOnLastShot() {
@@ -138,7 +138,7 @@ final class DirectionCaptureSeamLevelTests: XCTestCase {
 
         engine.ingestMotionSample(unwrappedYaw: -322, pitchDeg: -5, elevationDeg: 0, timestamp: 50)
         XCTAssertNil(engine.captured[.frontLeft330], "−322 must not accept")
-        XCTAssertTrue(engine.guideText.contains("오른쪽"))
+        XCTAssertTrue(engine.guideText.contains(L("Right")))
 
         engine.ingestMotionSample(unwrappedYaw: -327, pitchDeg: -5, elevationDeg: 0, timestamp: 51)
         XCTAssertNotNil(engine.captured[.frontLeft330], "−327 preferred must accept")

@@ -43,7 +43,7 @@ enum GaussianGenerationResumer {
         } catch ResumeError.packageMissing {
             return SpaceGenerationErrorPresenter.packageMissingUnrecoverable
         } catch ResumeError.notRetryable {
-            return "이 작업은 다시 시도할 수 없어요.\n새로 촬영해 주세요."
+            return L("This job can't be retried.\nPlease capture again.")
         } catch let error as SpaceGenerationError {
             if case .server(let code, _) = error {
                 // Server confirmed the failure (e.g. NATIVE_UNAVAILABLE); keep the real code on the card.

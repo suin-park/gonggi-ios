@@ -174,7 +174,7 @@ actor MobileAuthAPIClient {
         else {
             throw MobileAuthAPIError.server(
                 code: "AUTH_EXPIRED",
-                message: "세션이 만료되었습니다.",
+                message: L("Your session expired."),
                 status: http.statusCode
             )
         }
@@ -256,7 +256,7 @@ actor MobileAuthAPIClient {
         guard (200..<300).contains(http.statusCode) else {
             throw MobileAuthAPIError.server(
                 code: (json?["error"] as? String) ?? "ERROR",
-                message: "링크를 만들지 못했어요.",
+                message: L("Couldn't create the link."),
                 status: http.statusCode
             )
         }
@@ -313,9 +313,9 @@ actor MobileAuthAPIClient {
         guard (200..<300).contains(http.statusCode) else {
             let fallback: String
             switch http.statusCode {
-            case 400: fallback = "입력한 공간 정보를 확인해주세요."
-            case 404: fallback = "공간을 찾을 수 없어요."
-            default: fallback = "공간 정보를 저장하지 못했어요."
+            case 400: fallback = L("Check the space details you entered.")
+            case 404: fallback = L("Space not found.")
+            default: fallback = L("Couldn't save the space details.")
             }
             throw MobileAuthAPIError.server(
                 code: (json?["error"] as? String) ?? "ERROR",
@@ -392,7 +392,7 @@ actor MobileAuthAPIClient {
         else {
             throw MobileAuthAPIError.server(
                 code: (json?["error"] as? String) ?? "ERROR",
-                message: (json?["message"] as? String) ?? "공유 설정을 불러오지 못했어요.",
+                message: (json?["message"] as? String) ?? L("Couldn't load sharing settings."),
                 status: http.statusCode
             )
         }
@@ -431,7 +431,7 @@ actor MobileAuthAPIClient {
         else {
             throw MobileAuthAPIError.server(
                 code: (json?["error"] as? String) ?? "ERROR",
-                message: (json?["message"] as? String) ?? "공유 설정을 저장하지 못했어요.",
+                message: (json?["message"] as? String) ?? L("Couldn't save sharing settings."),
                 status: http.statusCode
             )
         }
@@ -457,7 +457,7 @@ actor MobileAuthAPIClient {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         throw MobileAuthAPIError.server(
             code: (json?["error"] as? String) ?? "ERROR",
-            message: (json?["message"] as? String) ?? "공간을 삭제하지 못했어요",
+            message: (json?["message"] as? String) ?? L("Couldn't delete the space"),
             status: http.statusCode
         )
     }
@@ -478,7 +478,7 @@ actor MobileAuthAPIClient {
         if http.statusCode >= 400 || (json["ok"] as? Bool) == false {
             throw MobileAuthAPIError.server(
                 code: (json["error"] as? String) ?? "ERROR",
-                message: (json["message"] as? String) ?? "로그인에 실패했습니다.",
+                message: (json["message"] as? String) ?? L("Sign-in failed."),
                 status: http.statusCode
             )
         }
@@ -511,7 +511,7 @@ actor MobileAuthAPIClient {
         if http.statusCode >= 400 || (json?["ok"] as? Bool) == false {
             throw MobileAuthAPIError.server(
                 code: (json?["error"] as? String) ?? "ERROR",
-                message: (json?["message"] as? String) ?? "요청에 실패했습니다.",
+                message: (json?["message"] as? String) ?? L("The request failed."),
                 status: http.statusCode
             )
         }

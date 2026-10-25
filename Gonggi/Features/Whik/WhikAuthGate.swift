@@ -35,7 +35,7 @@ final class WhikAuthGate: ObservableObject {
     }
 
     /// Plain sign-in (profile button), nothing to continue.
-    func signIn(reason: String = "Sign in to save your captures to your account.") {
+    func signIn(reason: String = L("Sign in to save your captures to your account.")) {
         guard !isSignedIn else { return }
         pending = nil
         request = Request(reason: reason)

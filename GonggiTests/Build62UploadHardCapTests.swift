@@ -137,7 +137,7 @@ final class Build62UploadHardCapTests: XCTestCase {
                 jobId: "dir-b62-f",
                 createdAt: Date(),
                 serverStatus: "failed",
-                displayName: "실패",
+                displayName: L("Failed"),
                 resultImageURL: nil,
                 localLatLongPath: nil,
                 width: nil,
@@ -160,11 +160,11 @@ final class Build62UploadHardCapTests: XCTestCase {
     func testPayloadTooLargeLocalUserMessage() {
         XCTAssertEqual(
             SpaceJobErrorPresentation.userMessage(for: "payload_too_large_local"),
-            "사진 용량이 커서 업로드할 수 없어요. 다시 촬영해 주세요."
+            L("The photo is too large to upload. Please capture again.")
         )
         XCTAssertEqual(
             SpaceJobErrorPresentation.userMessage(for: "payload_too_large"),
-            "사진을 업로드하지 못했어요."
+            L("Couldn't upload the photo.")
         )
     }
 

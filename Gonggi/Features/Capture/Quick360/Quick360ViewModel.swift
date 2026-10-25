@@ -197,7 +197,7 @@ final class Quick360ViewModel: ObservableObject {
             metadataURL: result?.metadataURL,
             floorTextureURL: result?.floorTextureURL,
             report: result?.report,
-            suggestedName: "공간 \(formattedDate(endedAt))"
+            suggestedName: L("Space %@", "\(formattedDate(endedAt))")
         )
         isStopping = false
     }

@@ -140,10 +140,10 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
 
     private static func jsonObject(from data: Data) throws -> [String: Any] {
         guard !data.isEmpty else {
-            throw AdvancedCaptureError.unknown("서버 응답이 비어 있어요.")
+            throw AdvancedCaptureError.unknown(L("The server response was empty."))
         }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw AdvancedCaptureError.unknown("서버 응답 형식을 읽지 못했어요. 잠시 후 다시 시도해 주세요.")
+            throw AdvancedCaptureError.unknown(L("Couldn't read the server response. Please try again in a moment."))
         }
         return obj
     }
@@ -161,17 +161,17 @@ final class LockerAdvancedCaptureAPIClient: AdvancedCaptureAPIClienting, @unchec
     private static func userFacingServerCode(_ code: String?) -> String {
         switch code {
         case "space_not_ready":
-            return "공간이 아직 준비되지 않았어요. LatLong 생성이 끝난 뒤 다시 시도해 주세요."
+            return L("The space isn't ready yet. Try again after the 360° image is made.")
         case "missing_latlong":
-            return "LatLong 이미지를 서버에서 찾지 못했어요."
+            return L("Couldn't find the 360° image on the server.")
         case "missing_inputs":
-            return "촬영 원본을 서버에서 찾지 못했어요."
+            return L("Couldn't find the original capture on the server.")
         case "feature_disabled":
-            return "3D 공간으로 확장이 잠시 비활성화되어 있어요."
+            return L("Extending to a 3D Space is turned off for now.")
         case "forbidden", "auth_required":
-            return "로그인이 필요하거나 이 공간에 대한 권한이 없어요."
+            return L("Sign-in is required, or you don't have access to this space.")
         case "astra_failed":
-            return "분석 서버에서 오류가 났어요."
+            return L("The analysis server had an error.")
         case let c?:
             return c
         default:

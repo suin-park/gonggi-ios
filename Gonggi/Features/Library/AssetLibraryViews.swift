@@ -21,9 +21,9 @@ struct AssetLibraryView: View {
         VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
             header
             if hasProductEntries, let productSection {
-                sectionTitle("촬영으로 만든 3D 자산")
+                sectionTitle(L("3D Objects from captures"))
                 productSection
-                sectionTitle("사진으로 만든 3D")
+                sectionTitle(L("3D from photos"))
             }
             content
         }
@@ -50,7 +50,7 @@ struct AssetLibraryView: View {
             CreateAssetFlowView(
                 onClose: { showCreate = false },
                 onAccepted: {
-                    toastMessage = "3D 생성을 시작했어요"
+                    toastMessage = L("3D creation has started")
                     store.refresh(force: true)
                 }
             )
@@ -88,7 +88,7 @@ struct AssetLibraryView: View {
                     retryJob = nil
                     pendingRetryImage = nil
                     pendingRetryJPEG = nil
-                    toastMessage = "3D 생성을 시작했어요"
+                    toastMessage = L("3D creation has started")
                     store.refresh(force: true)
                 },
                 retrySourceImage: pendingRetryImage,
@@ -113,10 +113,10 @@ struct AssetLibraryView: View {
                         .background(GonggiColors.surfaceElevated.opacity(0.8))
                         .clipShape(Circle())
                 }
-                .accessibilityLabel("새 3D 자산 만들기")
+                .accessibilityLabel(L("New 3D Object"))
             }
             if store.mayBeTruncated {
-                Text("최근 \(AssetLibraryStore.knownServerTakeLimit)개까지 표시돼요")
+                Text(L("Showing the latest %@", "\(AssetLibraryStore.knownServerTakeLimit)"))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
@@ -133,7 +133,7 @@ struct AssetLibraryView: View {
         case .loaded:
             if store.isTrueEmpty {
                 if hasProductEntries {
-                    Text("아직 없어요. 오른쪽 위 +로 사진에서 3D 자산을 만들 수 있어요.")
+                    Text(L("Nothing yet. Tap + at the top right to make a 3D Object from a photo."))
                         .font(GonggiTypography.caption(14))
                         .foregroundStyle(GonggiColors.textSecondary)
                 } else {
@@ -149,7 +149,7 @@ struct AssetLibraryView: View {
         VStack(spacing: GonggiSpacing.md) {
             ProgressView()
                 .tint(GonggiColors.accentTeal)
-            Text("3D 자산을 불러오는 중…")
+            Text(L("Loading 3D Objects…"))
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
         }
@@ -171,15 +171,15 @@ struct AssetLibraryView: View {
                 .font(.system(size: 48, weight: .ultraLight))
                 .foregroundStyle(GonggiColors.accentTeal.opacity(0.8))
                 .accessibilityHidden(true)
-            Text("아직 3D 자산이 없어요")
+            Text(L("No 3D Objects yet"))
                 .font(GonggiTypography.headline(18))
                 .foregroundStyle(GonggiColors.textPrimary)
-            Text("사진으로 새 3D 자산을 만들어 보세요.")
+            Text(L("Make a new 3D Object from a photo."))
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
-            PrimaryButton(title: "새 3D 자산 만들기", icon: "plus") {
+            PrimaryButton(title: L("New 3D Object"), icon: "plus") {
                 GonggiHaptics.medium()
                 showCreate = true
             }
@@ -195,7 +195,7 @@ struct AssetLibraryView: View {
                 .font(.system(size: 40, weight: .ultraLight))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .accessibilityHidden(true)
-            Text(store.errorMessage ?? "3D 자산을 불러오지 못했어요")
+            Text(store.errorMessage ?? L("Couldn't load 3D Objects"))
                 .font(GonggiTypography.headline(18))
                 .foregroundStyle(GonggiColors.textPrimary)
                 .multilineTextAlignment(.center)
@@ -203,7 +203,7 @@ struct AssetLibraryView: View {
                 GonggiHaptics.light()
                 store.refresh(force: true)
             } label: {
-                Text("다시 시도")
+                Text(L("Try again"))
                     .font(GonggiTypography.body(16))
                     .fontWeight(.semibold)
                     .foregroundStyle(GonggiColors.accentTeal)
@@ -225,7 +225,7 @@ struct AssetLibraryView: View {
                         assetCard(asset)
                     }
                     .buttonStyle(GonggiPressableStyle())
-                    .accessibilityLabel("\(asset.name), 3D 어셋 상세 보기")
+                    .accessibilityLabel(L("%@, view 3D Object details", "\(asset.name)"))
                     .accessibilityHint(asset.libraryStatus.label)
                 case .generation(let job):
                     generationCard(job)
@@ -273,7 +273,7 @@ struct AssetLibraryView: View {
                             retryJob = job
                         }
                     } label: {
-                        Text("다시 시도")
+                        Text(L("Try again"))
                             .font(GonggiTypography.caption(13))
                             .fontWeight(.semibold)
                             .foregroundStyle(GonggiColors.accentTeal)
@@ -349,7 +349,7 @@ struct AssetLibraryView: View {
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
                 if let date = asset.parsedCreatedAt {
-                    Text(date.formatted(date: .abbreviated, time: .omitted))
+                    Text(WhikDate.short(date))
                         .font(GonggiTypography.caption(11))
                         .foregroundStyle(GonggiColors.textTertiary)
                 }
@@ -429,7 +429,7 @@ struct AssetDetailView: View {
         }
         .background(GonggiAmbientBackground(showGlow: false))
         .navigationBarTitleDisplayMode(.inline)
-        .navigationTitle("3D 자산")
+        .navigationTitle(L("3D Objects"))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(role: .destructive) {
@@ -438,22 +438,22 @@ struct AssetDetailView: View {
                     Image(systemName: "trash")
                 }
                 .disabled(isDeleting)
-                .accessibilityLabel("자산 삭제")
+                .accessibilityLabel(L("Delete object"))
             }
         }
-        .confirmationDialog("이 3D 자산을 삭제할까요?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
-            Button("삭제", role: .destructive) {
+        .confirmationDialog(L("Delete this 3D Object?"), isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+            Button(L("Delete"), role: .destructive) {
                 Task { await deleteAsset() }
             }
-            Button("취소", role: .cancel) {}
+            Button(L("Cancel"), role: .cancel) {}
         } message: {
-            Text("3D Locker와 WHIK 앱에서 함께 삭제되며, 공간에 배치된 경우 배치도 제거돼요. 되돌릴 수 없어요.")
+            Text(L("It will be deleted from both 3D Locker and WHIK, and removed from any space it's placed in. This can't be undone."))
         }
-        .alert("삭제하지 못했어요", isPresented: Binding(
+        .alert(L("Couldn't delete"), isPresented: Binding(
             get: { deleteError != nil },
             set: { if !$0 { deleteError = nil } }
         )) {
-            Button("확인", role: .cancel) { deleteError = nil }
+            Button(L("OK"), role: .cancel) { deleteError = nil }
         } message: {
             Text(deleteError ?? "")
         }
@@ -503,11 +503,11 @@ struct AssetDetailView: View {
                     VStack(spacing: GonggiSpacing.md) {
                         ProgressView().tint(.white).scaleEffect(1.2)
                         if isDeleting {
-                            Text("삭제하는 중…")
+                            Text(L("Deleting…"))
                                 .font(GonggiTypography.caption(14))
                                 .foregroundStyle(.white)
                         } else if isDownloadingAR {
-                            Text("AR을 준비하는 중…")
+                            Text(L("Preparing AR…"))
                                 .font(GonggiTypography.caption(14))
                                 .foregroundStyle(.white)
                         }
@@ -515,11 +515,11 @@ struct AssetDetailView: View {
                 }
             }
         }
-        .alert("배치할 수 없어요", isPresented: Binding(
+        .alert(L("Can't place this"), isPresented: Binding(
             get: { placementMessage != nil },
             set: { if !$0 { placementMessage = nil } }
         )) {
-            Button("확인", role: .cancel) { placementMessage = nil }
+            Button(L("OK"), role: .cancel) { placementMessage = nil }
         } message: {
             Text(placementMessage ?? "")
         }
@@ -567,24 +567,24 @@ struct AssetDetailView: View {
 
     private var metaRows: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            metaRow(title: "상태", value: asset.libraryStatus.label)
+            metaRow(title: L("Status"), value: asset.libraryStatus.label)
             if let date = asset.parsedCreatedAt {
                 metaRow(
-                    title: "생성일",
-                    value: date.formatted(date: .long, time: .shortened)
+                    title: L("Created"),
+                    value: date.formatted(Date.FormatStyle(date: .long, time: .shortened).locale(AppLanguage.shared.locale))
                 )
             }
             metaRow(
                 title: "3D",
-                value: !(asset.glbKey ?? "").isEmpty ? "준비됨" : "없음"
+                value: !(asset.glbKey ?? "").isEmpty ? L("Ready") : L("None")
             )
             metaRow(
                 title: "AR",
                 value: userFacingARMeta(asset.usdzStatus)
             )
             metaRow(
-                title: "공간 배치",
-                value: canPlace ? "가능" : (asset.placementUnavailableReason ?? "준비 후 가능")
+                title: L("Place in space"),
+                value: canPlace ? L("Available") : (asset.placementUnavailableReason ?? L("Available after preparing"))
             )
         }
         .padding(GonggiSpacing.md)
@@ -602,13 +602,13 @@ struct AssetDetailView: View {
                 }
             )) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("둘러보기에 공개")
+                    Text(L("Show in Explore"))
                         .font(GonggiTypography.headline(16))
                         .foregroundStyle(GonggiColors.textPrimary)
                     Text(
                         exploreCanList
-                            ? "다른 사용자가 홈 둘러보기에서 이 자산을 볼 수 있어요."
-                            : "AR 준비가 끝난 뒤에 공개할 수 있어요."
+                            ? L("Other people can see this object in Explore on Home.")
+                            : L("You can publish it after AR is ready.")
                     )
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textSecondary)
@@ -633,42 +633,42 @@ struct AssetDetailView: View {
     private var actionSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
             if asset.isUsdzReady {
-                PrimaryButton(title: "AR로 보기", icon: "arkit") {
+                PrimaryButton(title: L("View in AR"), icon: "arkit") {
                     GonggiHaptics.medium()
                     Task { await openAR() }
                 }
                 .disabled(!canOpenAR)
                 .opacity(canOpenAR ? 1 : 0.45)
-                .accessibilityLabel("AR로 보기")
-                .accessibilityHint("카메라로 실제 공간에 3D 어셋을 배치합니다")
+                .accessibilityLabel(L("View in AR"))
+                .accessibilityHint(L("Place the 3D Object in your real space with the camera"))
 
-                SecondaryButton(title: "공간에 배치", icon: "square.stack.3d.up") {
+                SecondaryButton(title: L("Place in a space"), icon: "square.stack.3d.up") {
                     GonggiHaptics.light()
                     showSpacePicker = true
                 }
                 .disabled(!canPlace || isLaunchingPlacement)
                 .opacity(canPlace ? 1 : 0.45)
-                .accessibilityLabel("공간에 배치")
+                .accessibilityLabel(L("Place in a space"))
             } else if asset.isUsdzProcessing || isPreparingAR {
-                Text("AR/공간 배치 준비 중…")
+                Text(L("Preparing AR and placement…"))
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textSecondary)
-                    .accessibilityLabel("AR과 공간 배치를 준비하는 중")
+                    .accessibilityLabel(L("Preparing AR and placement"))
             } else if asset.isUsdzFailed {
-                PrimaryButton(title: "AR 다시 준비하기", icon: "arrow.clockwise") {
+                PrimaryButton(title: L("Prepare AR again"), icon: "arrow.clockwise") {
                     GonggiHaptics.light()
                     Task { await prepareAR(invalidateCache: true) }
                 }
                 .disabled(isPreparingAR)
-                .accessibilityLabel("AR과 공간 배치를 다시 준비하기")
+                .accessibilityLabel(L("Prepare AR and placement again"))
             } else {
                 // NONE / legacy
-                PrimaryButton(title: "AR/공간 배치 준비하기", icon: "sparkles") {
+                PrimaryButton(title: L("Prepare AR and placement"), icon: "sparkles") {
                     GonggiHaptics.light()
                     Task { await prepareAR(invalidateCache: false) }
                 }
                 .disabled(isPreparingAR)
-                .accessibilityLabel("AR과 공간 배치를 준비하기")
+                .accessibilityLabel(L("Prepare AR and space placement"))
             }
 
             if !asset.isUsdzReady, let reason = asset.placementUnavailableReason {
@@ -680,13 +680,13 @@ struct AssetDetailView: View {
             Button(role: .destructive) {
                 showDeleteConfirm = true
             } label: {
-                Label("자산 삭제", systemImage: "trash")
+                Label(L("Delete object"), systemImage: "trash")
                     .font(GonggiTypography.headline(16))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, GonggiSpacing.sm)
             }
             .disabled(isDeleting)
-            .accessibilityLabel("자산 삭제")
+            .accessibilityLabel(L("Delete object"))
         }
     }
 
@@ -702,7 +702,7 @@ struct AssetDetailView: View {
             GonggiHaptics.medium()
             dismiss()
         } catch {
-            deleteError = "자산을 삭제하지 못했어요. 잠시 후 다시 시도해주세요."
+            deleteError = L("Couldn't delete the object. Please try again in a moment.")
         }
     }
 
@@ -722,10 +722,10 @@ struct AssetDetailView: View {
 
     private func userFacingARMeta(_ raw: String?) -> String {
         switch (raw ?? "NONE").uppercased() {
-        case "READY": return "준비됨"
-        case "PROCESSING": return "준비 중"
-        case "FAILED": return "준비되지 않음"
-        default: return "준비되지 않음"
+        case "READY": return L("Ready")
+        case "PROCESSING": return L("Preparing")
+        case "FAILED": return L("Not ready")
+        default: return L("Not ready")
         }
     }
 
@@ -754,12 +754,12 @@ struct AssetDetailView: View {
             loadError = nil
         } catch let error as MobileAssetsAPIError {
             if case .server(let status) = error, status == 401 {
-                loadError = "로그인이 필요해요"
+                loadError = L("Please sign in")
             } else {
-                loadError = "3D 어셋 정보를 불러오지 못했어요"
+                loadError = L("Couldn't load the 3D Object details")
             }
         } catch {
-            loadError = "3D 어셋 정보를 불러오지 못했어요"
+            loadError = L("Couldn't load the 3D Object details")
         }
     }
 
@@ -798,7 +798,7 @@ struct AssetDetailView: View {
             exploreCanList = state.canList
         } catch {
             exploreListed = previous
-            exploreMessage = "공개 설정을 저장하지 못했어요. 다시 시도해주세요."
+            exploreMessage = L("Couldn't save the visibility setting. Please try again.")
         }
     }
 
@@ -825,23 +825,23 @@ struct AssetDetailView: View {
             }
             syncPolling()
         } catch let error as MobilePrepareARError {
-            actionError = "AR 파일을 준비하지 못했어요. 다시 시도해주세요."
+            actionError = L("Couldn't prepare the AR file. Please try again.")
             _ = error
         } catch {
-            actionError = "AR 파일을 준비하지 못했어요. 다시 시도해주세요."
+            actionError = L("Couldn't prepare the AR file. Please try again.")
         }
     }
 
     private func openAR() async {
         guard let urlString = asset.usdzUrl, let remote = URL(string: urlString) else {
-            actionError = "AR 파일을 불러오지 못했어요"
+            actionError = L("Couldn't load the AR file")
             return
         }
         isDownloadingAR = true
         actionError = nil
         defer { isDownloadingAR = false }
         guard let local = await VRUsdzCache().localURL(assetId: asset.id, remoteURL: remote) else {
-            actionError = "AR 파일을 불러오지 못했어요"
+            actionError = L("Couldn't load the AR file")
             return
         }
         quickLookURL = IdentifiedURL(url: local)
@@ -912,7 +912,7 @@ struct AssetThumbnailView: View {
     var debugAssetId: String? = nil
     /// Explicitly labeled input-photo fallback (not a result thumb). Nil = do not use input photo.
     var inputPhotoURLString: String? = nil
-    var inputPhotoCaption: String = "입력 사진"
+    var inputPhotoCaption: String = L("Input photo")
 
     @State private var phase: AssetThumbnailLoadPhase = .noURL
     @State private var image: UIImage?
@@ -953,7 +953,7 @@ struct AssetThumbnailView: View {
                     .foregroundStyle(GonggiColors.textTertiary)
                     .lineLimit(1)
             } else if showsMissingCaption, phase == .noURL || isFailurePhase {
-                Text("미리보기 없음")
+                Text(L("No preview"))
                     .font(GonggiTypography.caption(10))
                     .foregroundStyle(GonggiColors.textTertiary)
                     .lineLimit(1)

@@ -97,16 +97,16 @@ struct ObjectTrackingGate {
     static func recoveryText(_ s: Status) -> (line: String, helper: String?)? {
         switch s {
         case .stable: return nil
-        case .settling: return ("위치를 확인하는 중이에요. 잠시 그대로 천천히 비춰 주세요", nil)
-        case .initializing: return ("휴대폰을 천천히 좌우로 움직여 주변을 인식시켜 주세요", nil)
-        case .excessiveMotion: return ("너무 빨라요. 더 천천히 움직여 주세요", nil)
+        case .settling: return (L("Finding the position. Keep pointing slowly for a moment"), nil)
+        case .initializing: return (L("Move the phone slowly left and right so it can see the surroundings"), nil)
+        case .excessiveMotion: return (L("Too fast. Move more slowly"), nil)
         case .insufficientFeatures:
-            return ("바닥이 잘 인식되지 않아요. 무늬나 모서리가 보이는 곳을 천천히 비춰 주세요",
-                    "도움이 되면: 물체 옆에 무늬 있는 천이나 신문을 두어도 돼요 (꼭 필요한 것은 아니에요)")
-        case .relocalizing: return ("위치를 다시 찾는 중이에요. 처음 있던 쪽을 비추며 천천히 움직여 주세요", nil)
-        case .notAvailable: return ("추적이 멈췄어요. 휴대폰을 천천히 움직여 주세요", nil)
-        case .floorUnsteady: return ("바닥 인식이 흔들려요. 바닥을 천천히 비춰 주세요", nil)
-        case .noFloor: return ("바닥이 보이게 천천히 비춰 주세요", nil)
+            return (L("The floor isn't recognized well. Slowly point at an area with patterns or edges"),
+                    L("If it helps: a patterned cloth or newspaper next to the object is fine (not required)"))
+        case .relocalizing: return (L("Finding the position again. Move slowly while pointing where you started"), nil)
+        case .notAvailable: return (L("Tracking stopped. Move the phone slowly"), nil)
+        case .floorUnsteady: return (L("Floor detection is unstable. Point slowly at the floor"), nil)
+        case .noFloor: return (L("Point slowly so the floor is visible"), nil)
         }
     }
 }

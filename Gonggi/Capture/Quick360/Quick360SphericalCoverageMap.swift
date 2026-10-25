@@ -267,14 +267,14 @@ final class Quick360SphericalCoverageMap {
         let compass = compassLabel(yawDeg: yawDeg)
         let vertical: String
         switch phase {
-        case .upper: vertical = "위"
-        case .lower: vertical = "아래"
+        case .upper: vertical = L("Up")
+        case .lower: vertical = L("Down")
         default: vertical = ""
         }
         if vertical.isEmpty {
-            return ("\(compass)쪽이 조금 비어 있어요", yawDeg)
+            return (L("The %@ side has a small gap", "\(compass)"), yawDeg)
         }
-        return ("\(compass)쪽 \(vertical)가 조금 비어 있어요", yawDeg)
+        return (L("The %1$@ side, %2$@, has a small gap", "\(compass)", "\(vertical)"), yawDeg)
     }
 
     private static func compassLabel(yawDeg: Float) -> String {
@@ -282,9 +282,9 @@ final class Quick360SphericalCoverageMap {
         while y > 180 { y -= 360 }
         while y < -180 { y += 360 }
         let a = abs(y)
-        if a < 35 { return "앞" }
-        if a > 145 { return "뒤" }
-        return y > 0 ? "오른쪽" : "왼쪽"
+        if a < 35 { return L("Front") }
+        if a > 145 { return L("Back") }
+        return y > 0 ? L("Right") : L("Left")
     }
 }
 

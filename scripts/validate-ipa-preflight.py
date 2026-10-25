@@ -14,7 +14,7 @@ from preflight_common import BUNDLE_ID, collect_car_icon_assets
 REQUIRED_ICON_PIXELS = {120, 180, 1024}
 
 
-EXPECTED_DISPLAY_NAME = "WHIK: 3D Scanner"
+EXPECTED_DISPLAY_NAME = "WHIK"
 
 def fail(message: str) -> None:
     print(f"FAIL: {message}")
@@ -216,7 +216,7 @@ def main() -> None:
         icon_name = info.get("CFBundleIconName")
         if not icon_name:
             fail("CFBundleIconName missing from Info.plist")
-        # 3.1 (WHIK: 3D Scanner rework): the installed name changed on purpose; the check still pins it.
+        # 3.1: home-screen name "WHIK" (store name "WHIK: 3D Scanner" lives in App Store Connect); still pinned.
         if info.get("CFBundleDisplayName") != EXPECTED_DISPLAY_NAME:
             fail(f"CFBundleDisplayName is {info.get('CFBundleDisplayName')!r}, expected {EXPECTED_DISPLAY_NAME!r}")
         ok(f"Installed app display name: {info.get('CFBundleDisplayName')} (CFBundleName={info.get('CFBundleName')})")

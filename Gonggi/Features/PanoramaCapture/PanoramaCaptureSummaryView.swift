@@ -11,7 +11,7 @@ struct PanoramaCaptureSummaryView: View {
                 GonggiAmbientBackground()
                 ScrollView {
                     VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                        Text("파노라마 미리보기")
+                        Text(L("Panorama preview"))
                             .font(GonggiTypography.title(24))
                             .foregroundStyle(GonggiColors.textPrimary)
 
@@ -20,10 +20,10 @@ struct PanoramaCaptureSummaryView: View {
                         statsCard
 
                         VStack(spacing: GonggiSpacing.sm) {
-                            PrimaryButton(title: "보관함에 두기", icon: "checkmark") {
+                            PrimaryButton(title: L("Keep in Library"), icon: "checkmark") {
                                 onDone()
                             }
-                            SecondaryButton(title: "다시 촬영", icon: "arrow.counterclockwise") {
+                            SecondaryButton(title: L("Capture again"), icon: "arrow.counterclockwise") {
                                 onRetake()
                             }
                         }
@@ -34,7 +34,7 @@ struct PanoramaCaptureSummaryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("닫기") { onDone() }
+                    Button(L("Close")) { onDone() }
                         .foregroundStyle(GonggiColors.accentTeal)
                 }
             }
@@ -57,22 +57,22 @@ struct PanoramaCaptureSummaryView: View {
                 RoundedRectangle(cornerRadius: GonggiRadius.md)
                     .fill(GonggiColors.surface)
                     .frame(height: 160)
-                    .overlay(Text("미리보기 없음").foregroundStyle(GonggiColors.textTertiary))
+                    .overlay(Text(L("No preview")).foregroundStyle(GonggiColors.textTertiary))
             }
         }
     }
 
     private var statsCard: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            labelRow("회전 각도", String(format: "%.0f°", result.report.yawSpanDeg))
-            labelRow("스트립", "\(result.report.acceptedStripCount)")
+            labelRow(L("Rotation angle"), String(format: "%.0f°", result.report.yawSpanDeg))
+            labelRow(L("Strips"), "\(result.report.acceptedStripCount)")
             labelRow(
-                "해상도",
+                L("Resolution"),
                 "\(result.report.outputWidth)×\(result.report.outputHeight)"
             )
             labelRow(
-                "처리 시간",
-                String(format: "%.1f초", result.report.processingTimeSec)
+                L("Processing time"),
+                String(format: L("%.1f s"), result.report.processingTimeSec)
             )
         }
         .padding(GonggiSpacing.md)

@@ -65,7 +65,7 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
             height: nil
         )
         XCTAssertEqual(job.uiStatus, .processing)
-        XCTAssertEqual(job.statusNote, "공간을 만들고 있어요")
+        XCTAssertEqual(job.statusNote, L("Creating your space"))
     }
 
     func testG_Completed3840Accepted() {
@@ -85,12 +85,12 @@ final class SpaceRecordAsyncContractTests: XCTestCase {
             height: nil
         )
         XCTAssertEqual(job.uiStatus, .failed)
-        XCTAssertEqual(job.statusNote, "생성 실패")
+        XCTAssertEqual(job.statusNote, L("Creation failed"))
         var withPayload = job
         withPayload.lastErrorCode = "payload_too_large_local"
         XCTAssertEqual(
             withPayload.statusNote,
-            "사진 용량이 커서 업로드할 수 없어요. 다시 촬영해 주세요."
+            L("The photo is too large to upload. Please capture again.")
         )
     }
 

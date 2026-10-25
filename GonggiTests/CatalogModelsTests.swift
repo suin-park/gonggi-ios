@@ -465,7 +465,7 @@ final class CatalogModelsTests: XCTestCase {
         let payload = CatalogListPayload.normalize(products: products, categories: nil)
         XCTAssertEqual(payload.categories.count, 1)
         XCTAssertEqual(payload.categories[0].id, "all")
-        XCTAssertEqual(payload.categories[0].name, "제휴 상품")
+        XCTAssertEqual(payload.categories[0].name, L("Partner products"))
         XCTAssertEqual(payload.categories[0].products.count, products.count)
         XCTAssertFalse(CatalogListPayload.shouldShowCategoryTitles(payload.categories))
     }

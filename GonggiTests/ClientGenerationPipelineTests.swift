@@ -121,7 +121,7 @@ final class ClientGenerationPipelineTests: XCTestCase {
         try await waitUntil(timeout: 8) { vm.errorMessage != nil || vm.handoff != nil }
 
         XCTAssertNotNil(vm.errorMessage)
-        XCTAssertTrue(vm.errorMessage?.contains("업로드") == true)
+        XCTAssertTrue(vm.errorMessage?.contains(L("Upload")) == true)
         XCTAssertTrue(vm.canRetrySameCapture)
         let uploadCount = await service.uploadCount
         let createCount = await service.createCount
@@ -129,7 +129,7 @@ final class ClientGenerationPipelineTests: XCTestCase {
         XCTAssertEqual(createCount, 1)
         XCTAssertEqual(uploadCount, 1)
         XCTAssertEqual(startCount, 0)
-        XCTAssertEqual(vm.pipelineSteps[1].status, .failed("업로드 실패"))
+        XCTAssertEqual(vm.pipelineSteps[1].status, .failed(L("Upload failed")))
     }
 
     func testCreateFailureInjectionDoesNotStartUpload() async throws {
@@ -163,7 +163,7 @@ final class ClientGenerationPipelineTests: XCTestCase {
         let startCount = await service.startCount
         XCTAssertEqual(uploadCount, 1)
         XCTAssertEqual(startCount, 1)
-        XCTAssertEqual(vm.pipelineSteps[2].status, .failed("요청 실패"))
+        XCTAssertEqual(vm.pipelineSteps[2].status, .failed(L("Request failed")))
         XCTAssertTrue(vm.canRetrySameCapture)
     }
 

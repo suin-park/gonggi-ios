@@ -3,7 +3,7 @@ import SwiftUI
 /// Shared placement-ready asset picker (Space Detail + VR Edit).
 struct AssetPickerSheet: View {
     @ObservedObject var store: AssetLibraryStore
-    var title: String = "3D 오브젝트"
+    var title: String = L("3D Objects")
     /// When true, non-ready rows stay visible but disabled.
     var showNonReadyDisabled: Bool = true
     var isAtCapacity: Bool = false
@@ -28,20 +28,20 @@ struct AssetPickerSheet: View {
             Group {
                 switch store.phase {
                 case .idle, .loading:
-                    ProgressView("3D 오브젝트를 불러오는 중")
+                    ProgressView(L("Loading 3D Objects"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .failed:
                     ContentUnavailableView(
-                        store.errorMessage ?? "3D 어셋을 불러오지 못했어요",
+                        store.errorMessage ?? L("Couldn't load 3D Objects"),
                         systemImage: "exclamationmark.triangle",
-                        description: Text("다시 시도해 주세요.")
+                        description: Text(L("Please try again."))
                     )
                 case .loaded:
                     if rows.isEmpty {
                         ContentUnavailableView(
-                            "배치할 수 있는 3D 어셋이 없어요",
+                            L("No 3D Objects can be placed"),
                             systemImage: "cube.transparent",
-                            description: Text("AR/배치 준비가 완료된 어셋만 사용할 수 있어요")
+                            description: Text(L("Only objects with AR and placement ready can be used"))
                         )
                     } else {
                         List(rows) { asset in
@@ -73,7 +73,7 @@ struct AssetPickerSheet: View {
                                                 .font(GonggiTypography.caption(12))
                                                 .foregroundStyle(GonggiColors.textTertiary)
                                         } else if isAtCapacity {
-                                            Text("이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요")
+                                            Text(L("You can place up to 8 3D Objects in this space"))
                                                 .font(GonggiTypography.caption(12))
                                                 .foregroundStyle(GonggiColors.textTertiary)
                                         }
@@ -93,12 +93,12 @@ struct AssetPickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("닫기") { onClose() }
+                    Button(L("Close")) { onClose() }
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
                 if store.phase == .failed {
                     ToolbarItem(placement: .primaryAction) {
-                        Button("다시 시도") {
+                        Button(L("Try again")) {
                             store.refresh(force: true)
                         }
                     }

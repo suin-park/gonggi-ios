@@ -88,7 +88,7 @@ struct CaptureTopBar: View {
                     GonggiHaptics.medium()
                     onFinish()
                 }) {
-                    Text("완료")
+                    Text(L("Done"))
                         .font(GonggiTypography.body(15))
                         .fontWeight(.semibold)
                         .foregroundStyle(.white)
@@ -101,7 +101,7 @@ struct CaptureTopBar: View {
                         )
                 }
                 .buttonStyle(GonggiPressableStyle())
-                .accessibilityLabel("촬영 완료")
+                .accessibilityLabel(L("Capture complete"))
             } else {
                 Color.clear.frame(width: 40, height: 40)
             }
@@ -158,9 +158,9 @@ struct CaptureProgressChips: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 6) {
             HStack(spacing: GonggiSpacing.xs) {
-                chip(label: "공간", value: "\(spherePercent)%", active: enough || spherePercent >= 40)
+                chip(label: L("Space"), value: "\(spherePercent)%", active: enough || spherePercent >= 40)
                 if enough {
-                    Text("충분해요")
+                    Text(L("That's enough"))
                         .font(GonggiTypography.label(11))
                         .foregroundStyle(GonggiColors.accentTeal)
                         .padding(.horizontal, 10)
@@ -171,9 +171,9 @@ struct CaptureProgressChips: View {
                 }
             }
             HStack(spacing: GonggiSpacing.xs) {
-                chip(label: "수평", value: "\(horizontalPercent)%", active: horizontalPercent >= 60)
-                chip(label: "위", value: "\(upperPercent)%", active: upperPercent >= 45)
-                chip(label: "아래", value: "\(lowerPercent)%", active: lowerPercent >= 45)
+                chip(label: L("Horizontal"), value: "\(horizontalPercent)%", active: horizontalPercent >= 60)
+                chip(label: L("Up"), value: "\(upperPercent)%", active: upperPercent >= 45)
+                chip(label: L("Down"), value: "\(lowerPercent)%", active: lowerPercent >= 45)
             }
         }
     }
@@ -206,7 +206,7 @@ struct LiveSourceInsetCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("현재 시점")
+            Text(L("Current view"))
                 .font(GonggiTypography.label(10))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .padding(.horizontal, 2)
@@ -233,7 +233,7 @@ struct LiveSourceInsetCard: View {
             )
             .shadow(color: Quick360CaptureTheme.chromeShadow, radius: 12, y: 4)
         }
-        .accessibilityLabel("현재 카메라 시점")
+        .accessibilityLabel(L("Current camera view"))
     }
 }
 

@@ -3,10 +3,10 @@ import XCTest
 
 final class ServiceIATests: XCTestCase {
     func testRecordTabTitleIsRecordNotScan() {
-        XCTAssertEqual(AppTab.record.title, "기록")
-        XCTAssertEqual(AppTab.home.title, "홈")
-        XCTAssertEqual(AppTab.library.title, "보관함")
-        XCTAssertEqual(AppTab.profile.title, "내 정보")
+        XCTAssertEqual(AppTab.record.title, L("Capture"))
+        XCTAssertEqual(AppTab.home.title, L("Home"))
+        XCTAssertEqual(AppTab.library.title, L("Library"))
+        XCTAssertEqual(AppTab.profile.title, L("Profile"))
     }
 
     func testProductionCaptureDefaultIsDirectionCaptureOnly() {
@@ -37,7 +37,7 @@ final class ServiceIATests: XCTestCase {
     }
 
     func testLibraryCategories() {
-        XCTAssertEqual(LibraryCategory.allCases.map(\.title), ["공간", "3D 자산", "작업 결과", "저장한 상품"])
+        XCTAssertEqual(LibraryCategory.allCases.map(\.title), [L("Space"), L("3D Objects"), L("Results"), L("Saved products")])
     }
 
     @MainActor

@@ -379,11 +379,11 @@ enum AssetLibraryStatusPresentation: Equatable {
 
     var label: String {
         switch self {
-        case .complete: return "준비 완료"
-        case .arPreparing: return "AR/공간 배치를 준비하는 중"
-        case .glbReadyArNeeded: return "AR 준비가 필요해요"
-        case .notReady: return "AR 준비가 필요해요"
-        case .arFailed: return "AR 준비가 필요해요"
+        case .complete: return L("Ready")
+        case .arPreparing: return L("Preparing AR and space placement")
+        case .glbReadyArNeeded: return L("AR needs to be prepared")
+        case .notReady: return L("AR needs to be prepared")
+        case .arFailed: return L("AR needs to be prepared")
         }
     }
 
@@ -452,11 +452,11 @@ extension MobileAssetDTO {
         }
         switch normalizedUsdzStatus {
         case "PROCESSING":
-            return "AR/공간 배치를 준비하는 중"
+            return L("Preparing AR and space placement")
         case "FAILED":
             return nil
         default:
-            return "AR 준비가 필요해요"
+            return L("AR needs to be prepared")
         }
     }
 }

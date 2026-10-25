@@ -173,7 +173,7 @@ enum Quick360TranslationLevel: String, Codable, Equatable {
     var guidanceMessage: String? {
         switch self {
         case .safe, .warning: return nil
-        case .excessive: return "가능하면 같은 자리에서 촬영해 주세요"
+        case .excessive: return L("Stay in the same spot if you can")
         }
     }
 }
@@ -203,27 +203,27 @@ enum Quick360GuidanceKind: Equatable {
     var primaryText: String {
         switch self {
         case .faceForward, .alignTarget:
-            return "정면을 먼저 비춰주세요"
+            return L("Point straight ahead first")
         case .readyToStart:
-            return "준비가 되면 촬영을 시작해보세요"
+            return L("Start the capture when you're ready")
         case .lookAround, .rotateRight, .rotateLeft:
-            return "천천히 주변을 한 바퀴 비춰보세요"
+            return L("Slowly turn all the way around")
         case .lookUp:
-            return "이제 위쪽을 천천히 비춰보세요"
+            return L("Now slowly point upward")
         case .lookDown, .lookDownFloor:
-            return "바닥 쪽도 천천히 비춰주세요"
+            return L("Slowly point at the floor too")
         case .fillGaps:
-            return "아직 비어 있는 공간이 있어요"
+            return L("Some areas are still empty")
         case .floorRecorded:
-            return "바닥도 잘 기록됐어요"
+            return L("The floor is captured well")
         case .spaceReady, .spaceReadyNoFloor:
-            return "공간이 충분히 기록됐어요"
+            return L("The space is fully captured")
         case .stayInPlace, .returnToOrigin, .holdStill:
-            return "가능하면 같은 자리에서 촬영해 주세요"
+            return L("Stay in the same spot if you can")
         case .waitForClear:
-            return "잠시 기다렸다 다시 비춰주세요"
+            return L("Wait a moment, then point again")
         case .success:
-            return "이제 마무리해도 괜찮아요"
+            return L("You can finish now")
         }
     }
 
@@ -231,19 +231,19 @@ enum Quick360GuidanceKind: Equatable {
     var secondaryText: String? {
         switch self {
         case .faceForward, .alignTarget:
-            return "정면을 맞춘 뒤 천천히 주변을 기록해보세요"
+            return L("Face forward, then slowly capture the surroundings")
         case .readyToStart:
             return nil
         case .lookAround, .rotateRight, .rotateLeft:
             return nil
         case .lookUp:
-            return "천장 근처까지 천천히 올려 주세요"
+            return L("Slowly raise it up near the ceiling")
         case .lookDown, .lookDownFloor:
-            return "발밑을 너무 가깝지 않게 비춰 주세요"
+            return L("Point at the floor below you, not too close")
         case .fillGaps:
-            return "안내된 방향을 한 번 더 비춰보세요"
+            return L("Point once more in the direction shown")
         case .spaceReady, .success:
-            return "이제 마무리해도 괜찮아요"
+            return L("You can finish now")
         case .spaceReadyNoFloor:
             return nil
         default:

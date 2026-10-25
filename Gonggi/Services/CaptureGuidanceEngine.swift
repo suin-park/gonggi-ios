@@ -6,7 +6,7 @@ import simd
 @MainActor
 final class CaptureGuidanceEngine: ObservableObject {
     @Published private(set) var quality = CaptureQualityState.zero
-    @Published private(set) var coachMessage: String = "천천히 이동하세요"
+    @Published private(set) var coachMessage: String = L("Move slowly")
     @Published var isFlashOn = false
     @Published var showGuideOverlay = false
     @Published var isRecording = false
@@ -15,7 +15,7 @@ final class CaptureGuidanceEngine: ObservableObject {
 
     func start() {
         quality = CaptureQualityState.zero
-        coachMessage = "천천히 이동하세요"
+        coachMessage = L("Move slowly")
     }
 
     func applySnapshot(quality: CaptureQualityState, message: String) {

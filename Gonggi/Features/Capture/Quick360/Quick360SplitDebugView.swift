@@ -73,7 +73,7 @@ struct Quick360SplitDebugView: View {
                         FOVOutlineOverlay(corners: brushDebug.fovCorners)
                     }
             } else {
-                Text("neutral gray — paint 전")
+                Text(L("neutral gray — before paint"))
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.55))
             }
@@ -101,7 +101,7 @@ struct Quick360SplitDebugView: View {
             if !isFrozen {
                 VStack {
                     Spacer()
-                    Text("정면의 기준 물체를 중앙에 맞춰주세요")
+                    Text(L("Center the reference object in front of you"))
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
                         .shadow(radius: 3)

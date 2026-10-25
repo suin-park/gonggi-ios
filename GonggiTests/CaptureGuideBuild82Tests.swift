@@ -35,9 +35,9 @@ final class CaptureGuideBuild82Tests: XCTestCase {
             .init(area: .ceilingEdge, count: 1, status: .promptedUnfilled),
             .init(area: .floorEdge, count: 1, status: .notPrompted),
         ])
-        XCTAssertEqual(items.map(\.statusLabel), ["미해결", "남음", "미해결", "남음"])
-        XCTAssertEqual(items[0].statusDetail, "안내했지만 아직 부족해요")
-        XCTAssertEqual(items[1].statusDetail, "아직 담지 않았어요")
+        XCTAssertEqual(items.map(\.statusLabel), [L("Unresolved"), L("Remaining"), L("Unresolved"), L("Remaining")])
+        XCTAssertEqual(items[0].statusDetail, L("Guided, but still not enough"))
+        XCTAssertEqual(items[1].statusDetail, L("Not captured yet"))
         XCTAssertEqual(items[0].shortLine, "반대 방향 1곳(미해결)")
     }
 
@@ -52,15 +52,15 @@ final class CaptureGuideBuild82Tests: XCTestCase {
             openGaps: [(.opposite, r1, true)], savedUpPhotos: 5, savedDownPhotos: 5, photoLimitReached: false)
         let g = CaptureUIPresenter.primaryGuidance(quality: q)
         XCTAssertTrue(g.isReadyToFinish, "never a finish gate")
-        XCTAssertEqual(g.finishButtonTitle, "기록 완료")
-        XCTAssertEqual(g.title, "촬영을 마칠 수 있어요")
-        XCTAssertFalse(g.title.contains("충분"))
+        XCTAssertEqual(g.finishButtonTitle, L("Finish capture"))
+        XCTAssertEqual(g.title, L("You can finish the capture"))
+        XCTAssertFalse(g.title.contains(L("Enough")))
         XCTAssertTrue((g.subtitle ?? "").contains("반대 방향 1곳(미해결)"))
-        XCTAssertFalse((g.subtitle ?? "").contains("충분"))
-        XCTAssertEqual(CaptureQuietUIPresenter.statusLine(for: q), "기록을 마칠 수 있어요")
+        XCTAssertFalse((g.subtitle ?? "").contains(L("Enough")))
+        XCTAssertEqual(CaptureQuietUIPresenter.statusLine(for: q), L("You can finish the capture"))
         q.captureRemaining = []
-        XCTAssertEqual(CaptureUIPresenter.primaryGuidance(quality: q).title, "촬영이 충분합니다")
-        XCTAssertEqual(CaptureQuietUIPresenter.statusLine(for: q), "공간이 충분히 기록됐어요")
+        XCTAssertEqual(CaptureUIPresenter.primaryGuidance(quality: q).title, L("You have enough"))
+        XCTAssertEqual(CaptureQuietUIPresenter.statusLine(for: q), L("The space is fully captured"))
     }
 
     /// Synthetic: no recorded capture reached 520 photos.
@@ -73,7 +73,7 @@ final class CaptureGuideBuild82Tests: XCTestCase {
             .init(area: .ceilingEdge, count: 1, status: .photoLimit),
             .init(area: .floorEdge, count: 1, status: .photoLimit),
         ])
-        XCTAssertTrue(items.allSatisfy { $0.statusLabel == "사진 한도" })
+        XCTAssertTrue(items.allSatisfy { $0.statusLabel == L("Photo limit") })
         XCTAssertTrue(items[0].statusDetail.contains("\(SpatialCaptureConfig.candidateSafetyCap)장"))
 
         var q = readyQuality()
@@ -81,14 +81,14 @@ final class CaptureGuideBuild82Tests: XCTestCase {
         q.captureRemaining = items
         let g = CaptureUIPresenter.primaryGuidance(quality: q)
         XCTAssertTrue(g.isReadyToFinish)
-        XCTAssertEqual(g.title, "촬영을 마칠 수 있어요")
+        XCTAssertEqual(g.title, L("You can finish the capture"))
         XCTAssertTrue((g.subtitle ?? "").contains("반대 방향 2곳(사진 한도)"))
-        XCTAssertEqual(CaptureQuietUIPresenter.statusLine(for: q), "새 사진이 더 이상 저장되지 않습니다")
+        XCTAssertEqual(CaptureQuietUIPresenter.statusLine(for: q), L("New photos are no longer being saved"))
 
         let rows = CaptureSummaryPresentation.remainingRows(items)
-        XCTAssertEqual(rows.map { $0.status }, ["사진 한도", "사진 한도", "사진 한도"])
+        XCTAssertEqual(rows.map { $0.status }, [L("Photo limit"), L("Photo limit"), L("Photo limit")])
         XCTAssertEqual(rows.first?.name, "반대 방향 2곳")
-        XCTAssertFalse(rows.contains { $0.detail.contains("충분") })
+        XCTAssertFalse(rows.contains { $0.detail.contains(L("Enough")) })
     }
 
     /// Synthetic 520-photo capture through the replay: the saved-photo count hits the limit with directions still open.
@@ -173,8 +173,8 @@ final class CaptureGuideBuild82Tests: XCTestCase {
         let opp = CaptureUIPresenter.gapCopy(gapPrompt(.opposite, turn: .left))
         XCTAssertTrue((opp.subtitle ?? "").contains("걸을 수 있는 쪽"))
         let target = CaptureUIPresenter.coachCopy(.init(kind: .targetStep, shownAt: 0, id: 1, spot: .zero))
-        XCTAssertEqual(target.title, "지금 보이는 곳을 화면에 둔 채 걸을 수 있는 쪽으로 두세 걸음 옮겨 주세요")
-        for side in ["왼쪽", "오른쪽", "앞쪽", "뒤쪽"] {
+        XCTAssertEqual(target.title, L("Keep what you see on screen and take two or three steps where you can walk"))
+        for side in [L("Left"), L("Right"), L("Ahead"), L("Back")] {
             XCTAssertFalse(target.title.contains(side) || (target.subtitle ?? "").contains(side), "no side chosen for the user")
         }
     }

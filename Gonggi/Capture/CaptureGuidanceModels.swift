@@ -93,11 +93,11 @@ enum CapturePhase: String, Codable, Equatable, Sendable {
 
     var userLabel: String {
         switch self {
-        case .stabilizing: return "공간을 확인하고 있어요"
-        case .perimeter: return "벽을 따라 천천히 이동하세요"
-        case .parallaxPass: return "공간 안쪽도 천천히 이동해주세요"
-        case .coverageFill: return "촬영이 부족한 영역을 확인하고 있어요"
-        case .readyToFinish: return "촬영을 완료할 수 있어요"
+        case .stabilizing: return L("Checking the space")
+        case .perimeter: return L("Move slowly along the walls")
+        case .parallaxPass: return L("Move slowly through the middle of the space too")
+        case .coverageFill: return L("Checking for areas that need more photos")
+        case .readyToFinish: return L("You can finish the capture")
         }
     }
 }

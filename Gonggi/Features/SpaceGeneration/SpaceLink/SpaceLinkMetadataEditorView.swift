@@ -16,7 +16,7 @@ struct SpaceLinkMetadataEditorView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("예: 작품 정보", text: $displayName)
+                    TextField(L("e.g. About this artwork"), text: $displayName)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onChange(of: displayName) { _, new in
@@ -25,7 +25,7 @@ struct SpaceLinkMetadataEditorView: View {
                             }
                         }
                 } header: {
-                    Text("핫스팟 이름 (선택)")
+                    Text(L("Hotspot name (optional)"))
                 }
 
                 Section {
@@ -40,14 +40,14 @@ struct SpaceLinkMetadataEditorView: View {
                             .foregroundStyle(.red)
                     }
                 } header: {
-                    Text("웹 주소 (선택)")
+                    Text(L("Web address (optional)"))
                 } footer: {
-                    Text("링크를 입력하면 공간을 보는 사람이 열어볼 수 있어요")
+                    Text(L("Add a link and people viewing the space can open it"))
                 }
 
                 if showsLabelSizePicker {
-                    Section("텍스트 크기") {
-                        Picker("텍스트 크기", selection: $labelSize) {
+                    Section(L("Text size")) {
+                        Picker(L("Text size"), selection: $labelSize) {
                             ForEach(SpaceLinkLabelSize.allCases, id: \.self) { size in
                                 Text(size.displayTitle).tag(size)
                             }
@@ -60,7 +60,7 @@ struct SpaceLinkMetadataEditorView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("취소") { onCancel() }
+                    Button(L("Cancel")) { onCancel() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(confirmTitle) { attemptConfirm() }

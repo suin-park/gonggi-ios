@@ -80,26 +80,26 @@ enum DirectionName: String, CaseIterable, Codable, Identifiable, Equatable {
 
     var userFacingHint: String {
         switch self {
-        case .front: return "정면"
-        case .frontRight30: return "정면 오른쪽 30°"
-        case .frontRight60: return "정면 오른쪽 60°"
-        case .right: return "오른쪽"
-        case .backRight120: return "뒤쪽 오른쪽 120°"
-        case .backRight150: return "뒤쪽 오른쪽 150°"
-        case .back: return "뒤쪽"
-        case .backLeft210: return "뒤쪽 왼쪽 210°"
-        case .backLeft240: return "뒤쪽 왼쪽 240°"
-        case .left: return "왼쪽"
-        case .frontLeft300: return "정면 왼쪽 300°"
-        case .frontLeft330: return "정면 왼쪽 330°"
-        case .upFrontRight: return "정면 오른쪽 위"
-        case .upBackRight: return "뒤쪽 오른쪽 위"
-        case .upBackLeft: return "뒤쪽 왼쪽 위"
-        case .upFrontLeft: return "정면 왼쪽 위"
-        case .downFrontRight: return "정면 오른쪽 아래"
-        case .downBackRight: return "뒤쪽 오른쪽 아래"
-        case .downBackLeft: return "뒤쪽 왼쪽 아래"
-        case .downFrontLeft: return "정면 왼쪽 아래"
+        case .front: return L("Front")
+        case .frontRight30: return L("Front right 30°")
+        case .frontRight60: return L("Front right 60°")
+        case .right: return L("Right")
+        case .backRight120: return L("Back right 120°")
+        case .backRight150: return L("Back right 150°")
+        case .back: return L("Back")
+        case .backLeft210: return L("Back left 210°")
+        case .backLeft240: return L("Back left 240°")
+        case .left: return L("Left")
+        case .frontLeft300: return L("Front left 300°")
+        case .frontLeft330: return L("Front left 330°")
+        case .upFrontRight: return L("Front right, up")
+        case .upBackRight: return L("Back right, up")
+        case .upBackLeft: return L("Back left, up")
+        case .upFrontLeft: return L("Front left, up")
+        case .downFrontRight: return L("Front right, down")
+        case .downBackRight: return L("Back right, down")
+        case .downBackLeft: return L("Back left, down")
+        case .downFrontLeft: return L("Front left, down")
         }
     }
 

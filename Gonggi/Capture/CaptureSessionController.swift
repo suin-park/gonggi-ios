@@ -87,8 +87,8 @@ final class CaptureSessionController {
     private let continuityThumbnailStore = ContinuityAnchorThumbnailStore()
     private var lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
         jpegData: nil, visible: false, signedYawDeg: nil, proximity: 0,
-        title: "마지막 연결 화면",
-        guidance: "이 장면이 다시 보이도록 천천히 움직여주세요"
+        title: L("Last connected view"),
+        guidance: L("Move slowly until this view appears again")
     )
     /// Candidate pending-hold + angular rescue (default OFF — no effect when disabled).
     private let pendingAngularRescue = PendingAngularRescueCoordinator()
@@ -180,8 +180,8 @@ final class CaptureSessionController {
         continuityThumbnailStore.reset()
         lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
             jpegData: nil, visible: false, signedYawDeg: nil, proximity: 0,
-            title: "마지막 연결 화면",
-            guidance: "이 장면이 다시 보이도록 천천히 움직여주세요"
+            title: L("Last connected view"),
+            guidance: L("Move slowly until this view appears again")
         )
         pendingAngularRescue.reset()
         durableJPEGContinuity.reset()
@@ -815,8 +815,8 @@ final class CaptureSessionController {
                     visible: true,
                     signedYawDeg: lastReacquireThumbnail.signedYawDeg,
                     proximity: lastReacquireThumbnail.proximity,
-                    title: "연결이 불확실합니다",
-                    guidance: "저장된 사진 사이 연결이 끊겼습니다. 마지막 연결 화면이 다시 보이도록 천천히 움직여 연결을 보강해주세요"
+                    title: L("Connection is uncertain"),
+                    guidance: L("The saved photos lost their connection. Move slowly until the last connected view appears again.")
                 )
                 frameContinuityTelemetry.recordHeldFlushCandidate(
                     arTimestampSeconds: snapshot.arTimestampSeconds,
@@ -912,14 +912,14 @@ final class CaptureSessionController {
         lastBridgeVerdict = .reacquire
         lastGuidanceAction = .reacquireView
         let guidanceBody = repair.restoreContinuityTransform == nil
-            ? "첫 저장에 실패했습니다. 같은 장면을 다시 맞춰 연결을 시작해 주세요"
-            : "저장에 실패한 장면이 있습니다. 마지막 연결 화면이 다시 보이도록 천천히 움직여 연결을 보강해주세요"
+            ? L("The first save failed. Line up the same view again to start.")
+            : L("Some views failed to save. Move slowly until the last connected view appears again.")
         lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
             jpegData: lastReacquireThumbnail.jpegData,
             visible: true,
             signedYawDeg: lastReacquireThumbnail.signedYawDeg,
             proximity: lastReacquireThumbnail.proximity,
-            title: "연결이 불확실합니다",
+            title: L("Connection is uncertain"),
             guidance: guidanceBody
         )
         frameContinuityTelemetry.recordHeldFlushCandidate(
@@ -1570,7 +1570,7 @@ final class CaptureSessionController {
             fastMotionSegments: telemetry.fastMotionSegmentCount,
             lowTextureWarnings: lowTextureWarnings,
             areasNeedingRevisit: revisitAreas,
-            suggestedName: "새 공간 \(DateFormatter.captureName.string(from: endedAt))",
+            suggestedName: WhikAutoName.space(endedAt),
             videoURL: videoResult?.url,
             manifestURL: manifestURL,
             videoByteSize: videoResult?.byteSize,
@@ -2541,11 +2541,4 @@ final class CaptureSessionController {
     }
 }
 
-private extension DateFormatter {
-    static let captureName: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "M월 d일"
-        return f
-    }()
-}
+

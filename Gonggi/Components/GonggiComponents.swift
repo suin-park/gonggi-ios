@@ -133,7 +133,7 @@ struct GonggiGlassCapsule: View {
                     .stroke(accent.opacity(0.35), lineWidth: 1)
             )
             .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
-            .accessibilityLabel("촬영 안내. \(message)")
+            .accessibilityLabel(L("Capture tip. %@", "\(message)"))
     }
 }
 
@@ -190,8 +190,8 @@ struct ProgressRing: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             showsPercent
-                ? "스캔 진행률 \(Int(progress * 100))퍼센트"
-                : (label ?? "촬영 진행 표시")
+                ? L("Scan progress %@ percent", "\(Int(progress * 100))")
+                : (label ?? L("Capture progress"))
         )
     }
 }
@@ -202,7 +202,7 @@ struct CaptureFinishPillButton: View {
     let action: () -> Void
 
     private var resolvedTitle: String {
-        title ?? (isReady ? "기록 완료" : "촬영 종료")
+        title ?? (isReady ? L("Finish capture") : L("End capture"))
     }
 
     var body: some View {
@@ -240,7 +240,7 @@ struct CaptureFinishPillButton: View {
             )
         }
         .buttonStyle(GonggiPressableStyle(scale: 0.97))
-        .accessibilityLabel(isReady ? "\(resolvedTitle). 기록을 완료할 수 있어요" : resolvedTitle)
+        .accessibilityLabel(isReady ? L("%@. You can finish the capture", "\(resolvedTitle)") : resolvedTitle)
     }
 }
 
@@ -248,7 +248,7 @@ struct CaptureControlBar: View {
     let progress: Double
     let emphasis: CaptureProgressEmphasis
     let isReady: Bool
-    var finishTitle: String = "촬영 종료"
+    var finishTitle: String = L("End capture")
     var centerSystemImage: String = "circle.dotted"
     let isFlashOn: Bool
     let showGuideOverlay: Bool
@@ -264,7 +264,7 @@ struct CaptureControlBar: View {
                 style: .dimmed,
                 action: onFlash
             )
-            .accessibilityLabel(isFlashOn ? "플래시 끄기" : "플래시 켜기")
+            .accessibilityLabel(isFlashOn ? L("Turn off flash") : L("Turn on flash"))
 
             ProgressRing(
                 progress: progress,
@@ -285,7 +285,7 @@ struct CaptureControlBar: View {
                 style: .dimmed,
                 action: onGuide
             )
-            .accessibilityLabel(showGuideOverlay ? "가이드 오버레이 끄기" : "가이드 오버레이 켜기")
+            .accessibilityLabel(showGuideOverlay ? L("Hide guide overlay") : L("Show guide overlay"))
         }
         .padding(.horizontal, GonggiSpacing.sm)
         .padding(.vertical, GonggiSpacing.xs)
@@ -315,13 +315,13 @@ struct CaptureFinishButton: View {
                 Circle()
                     .fill(GonggiColors.accentTeal)
                     .frame(width: 58, height: 58)
-                Text("완료")
+                Text(L("Done"))
                     .font(GonggiTypography.headline(15))
                     .foregroundStyle(GonggiColors.backgroundPrimary)
             }
         }
         .buttonStyle(GonggiPressableStyle(scale: 0.95))
-        .accessibilityLabel("촬영 완료")
+        .accessibilityLabel(L("Capture complete"))
     }
 }
 
@@ -330,8 +330,8 @@ struct CoverageLegend: View {
 
     var body: some View {
         HStack(spacing: compact ? GonggiSpacing.xs : GonggiSpacing.sm) {
-            legendDot(color: GonggiColors.successGreen, text: "충분")
-            legendDot(color: GonggiColors.accentCyan, text: "보강")
+            legendDot(color: GonggiColors.successGreen, text: L("Enough"))
+            legendDot(color: GonggiColors.accentCyan, text: L("Needs more"))
         }
         .padding(.horizontal, GonggiSpacing.sm)
         .padding(.vertical, GonggiSpacing.xs)
@@ -339,7 +339,7 @@ struct CoverageLegend: View {
         .clipShape(Capsule())
         .overlay(Capsule().stroke(GonggiColors.borderSubtle, lineWidth: 1))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("커버리지 범례. 초록 충분, 청록 보강 필요")
+        .accessibilityLabel(L("Coverage legend. Green is enough, teal needs more"))
     }
 
     private func legendDot(color: Color, text: String) -> some View {
@@ -515,12 +515,12 @@ struct StatusStepRow: View {
 
     private var statusText: String {
         switch status {
-        case .waiting: return "곧 시작됩니다"
-        case .completed: return "완료"
+        case .waiting: return L("Starting soon")
+        case .completed: return L("Done")
         case .failed(let msg): return msg
         case .active(let p):
-            if let p { return "\(Int(p * 100))% 진행 중" }
-            return "진행 중"
+            if let p { return L("%@%% in progress", "\(Int(p * 100))") }
+            return L("In progress")
         }
     }
 }
@@ -557,7 +557,7 @@ struct MemoryArchiveCard: View {
                                 .padding(.top, 4)
                                 .accessibilityHidden(true)
                         }
-                        Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
+                        Text(WhikDate.short(space.capturedAt))
                             .font(GonggiTypography.caption(13))
                             .foregroundStyle(GonggiColors.textTertiary)
                         if let note = space.note, !note.isEmpty {
@@ -574,7 +574,7 @@ struct MemoryArchiveCard: View {
                 }
             }
             .buttonStyle(GonggiPressableStyle(scale: 0.98))
-            .accessibilityLabel("\(space.name), 상세 보기")
+            .accessibilityLabel(L("%@, view details", "\(space.name)"))
 
             secondaryCTA
                 .padding(.horizontal, GonggiSpacing.md)
@@ -615,7 +615,7 @@ struct MemoryArchiveCard: View {
                 onOpenDetail()
             } label: {
                 HStack(spacing: 6) {
-                    Text("다시 시도")
+                    Text(L("Try again"))
                         .font(GonggiTypography.caption(14))
                         .foregroundStyle(GonggiColors.error)
                     Image(systemName: "arrow.clockwise")
@@ -627,7 +627,7 @@ struct MemoryArchiveCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("다시 시도")
+            .accessibilityLabel(L("Try again"))
         } else {
             // Generating / uploading / draft — no viewer; open Detail for status.
             Button {
@@ -650,15 +650,15 @@ struct MemoryArchiveCard: View {
 
     private func ctaTitle(for space: SpaceRecord) -> String {
         switch space.status {
-        case .failed: return "다시 시도"
-        case .processing, .uploading: return "진행 상태"
-        case .draft: return "이어서 보기"
+        case .failed: return L("Try again")
+        case .processing, .uploading: return L("View status")
+        case .draft: return L("Continue viewing")
         case .ready: return viewTitle
         }
     }
 
     /// Product results turn around an object; spaces are looked around from inside.
-    private var viewTitle: String { space.isProductResult ? "3D로 보기" : "360° 보기" }
+    private var viewTitle: String { space.isProductResult ? L("View in 3D") : L("View 360°") }
 
     private var thumbnailHero: some View {
         SpaceThumbnailView(
@@ -772,7 +772,7 @@ struct GonggiSummaryHero: View {
                         .foregroundStyle(GonggiColors.warning)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("품질 \(qualityLabel), \(duration)")
+                Text(L("Quality %1$@, %2$@", "\(qualityLabel)", "\(duration)"))
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textSecondary)
             }

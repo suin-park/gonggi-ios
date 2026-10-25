@@ -178,8 +178,8 @@ final class ObjectLooseBoxTests: XCTestCase {
     // MARK: naming and scope
 
     func testNamingIsThe3DAssetAndOnlyStillObjectsAreSupported() {
-        XCTAssertEqual(ObjectCaptureCopy.title, "3D 자산 만들기")
-        XCTAssertEqual(RecordHomeCopy.productCapture.title, "3D 자산 만들기")
+        XCTAssertEqual(ObjectCaptureCopy.title, L("Create a 3D Object"))
+        XCTAssertEqual(RecordHomeCopy.productCapture.title, L("Create a 3D Object"))
         XCTAssertTrue(ObjectCaptureSubject.stillObject.isSupported)
         XCTAssertFalse(ObjectCaptureSubject.person.isSupported)
         XCTAssertFalse(ObjectCaptureSubject.pet.isSupported)

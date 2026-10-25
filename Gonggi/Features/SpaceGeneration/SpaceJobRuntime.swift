@@ -703,7 +703,7 @@ final class SpaceJobRuntime: ObservableObject {
             "latitude": location.latitude,
             "longitude": location.longitude,
             "locationSource": "AUTO",
-            "locationName": "현재 위치",
+            "locationName": L("Current location"),
             "locationCapturedAt": SpaceMetadataDateParser.string(location.capturedAt),
         ]
         do {
@@ -714,7 +714,7 @@ final class SpaceJobRuntime: ObservableObject {
             )
             guard AuthSessionGeneration.isCurrent(generation) else { return }
             store.update(jobId: jobId) { job in
-                job.locationName = (response["locationName"] as? String) ?? "현재 위치"
+                job.locationName = (response["locationName"] as? String) ?? L("Current location")
                 job.latitude = (response["latitude"] as? NSNumber)?.doubleValue
                     ?? (response["latitude"] as? String).flatMap(Double.init)
                     ?? location.latitude
@@ -744,10 +744,7 @@ final class SpaceJobRuntime: ObservableObject {
     }
 
     private static func displayName(for sessionId: String) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
-        formatter.dateFormat = "M월 d일 공간"
-        return formatter.string(from: Date())
+        WhikAutoName.dailySpace(Date())
     }
 
     private static func loadFilesFromDisk(sessionId: String) -> [(direction: String, fileURL: URL)]? {

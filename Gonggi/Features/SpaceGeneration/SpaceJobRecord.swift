@@ -95,21 +95,21 @@ struct SpaceJobRecord: Codable, Identifiable, Equatable {
     var statusNote: String? {
         switch serverStatus {
         case "uploading":
-            return "사진을 올리고 있어요"
+            return L("Uploading photos")
         case "queued", "uploaded", "preprocessing", "generating":
-            return "공간을 만들고 있어요"
+            return L("Creating your space")
         case "failed":
             return SpaceJobErrorPresentation.userMessage(for: lastErrorCode)
         case "completed":
             if isDeviceReadyForVR { return nil }
-            if isDownloadingLatLong { return "공간을 불러오는 중…" }
+            if isDownloadingLatLong { return L("Loading the space…") }
             if lastErrorCode == "download_failed" || lastErrorCode == "invalid_image" {
                 return SpaceJobErrorPresentation.userMessage(for: lastErrorCode)
             }
             // Idle without local file — do not show permanent loading; open/retry starts download.
             return nil
         default:
-            return "공간을 만들고 있어요"
+            return L("Creating your space")
         }
     }
 
@@ -181,7 +181,7 @@ enum SpaceViewerError: Error, Equatable {
     var userMessage: String {
         switch self {
         case .jobNotFound, .notCompleted, .missingResultURL, .downloadFailed, .invalidImage:
-            return "공간을 불러오지 못했어요"
+            return L("Couldn't load the space")
         }
     }
 }

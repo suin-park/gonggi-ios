@@ -19,10 +19,10 @@ struct Panorama360ViewerView: View {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.system(size: 36, weight: .light))
                             .foregroundStyle(GonggiColors.accentTeal)
-                        Text("Couldn't load the preview")
+                        Text(L("Couldn't load the preview"))
                             .font(GonggiTypography.body(17))
                             .foregroundStyle(GonggiColors.textPrimary)
-                        Text("The panorama file is missing or damaged.")
+                        Text(L("The panorama file is missing or damaged."))
                             .font(GonggiTypography.caption(13))
                             .foregroundStyle(GonggiColors.textSecondary)
                             .multilineTextAlignment(.center)
@@ -39,11 +39,11 @@ struct Panorama360ViewerView: View {
                     .ignoresSafeArea()
                 }
             }
-            .navigationTitle("360° view")
+            .navigationTitle(L("360° view"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { dismiss() }
+                    Button(L("Close")) { dismiss() }
                 }
             }
         }

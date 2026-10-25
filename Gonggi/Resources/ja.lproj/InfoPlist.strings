@@ -1,0 +1,7 @@
+"CFBundleDisplayName" = "WHIK";
+"CFBundleName" = "WHIK";
+"NSCameraUsageDescription" = "空間やモノを3Dで撮影するためにカメラを使用します。";
+"NSLocationWhenInUseUsageDescription" = "撮影した場所を記録に保存します。";
+"NSMicrophoneUsageDescription" = "撮影時に空間の音も一緒に記録できます。";
+"NSPhotoLibraryAddUsageDescription" = "選択したときに撮影結果を写真ライブラリに保存します。";
+"NSMotionUsageDescription" = "ブレの少ない撮影をガイドするためにモーションセンサーを使用します。";

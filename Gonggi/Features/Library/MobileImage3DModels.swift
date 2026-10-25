@@ -25,10 +25,10 @@ struct MobileGenerationJobDTO: Codable, Equatable, Identifiable, Hashable, Senda
 
     var statusLabel: String {
         switch status {
-        case "queued": return "3D 생성 대기 중"
-        case "processing": return "3D를 만드는 중"
-        case "failed": return "3D 생성에 실패했어요"
-        case "done": return "3D 준비 완료"
+        case "queued": return L("Waiting to create 3D")
+        case "processing": return L("Making 3D")
+        case "failed": return L("3D creation failed")
+        case "done": return L("3D ready")
         default: return status
         }
     }
@@ -116,30 +116,30 @@ enum MobileImage3DAPIError: Error, Equatable {
     var userMessage: String {
         switch self {
         case .unauthorized:
-            return "로그인이 필요해요"
+            return L("Please sign in")
         case .featureDisabled:
-            return "모바일 3D 생성이 아직 열려 있지 않아요"
+            return L("Mobile 3D creation isn't open yet")
         case .insufficientCredits(let required, let available):
             if let required, let available {
-                return "3D 생성 크레딧이 부족해요\n필요 \(required), 보유 \(available)"
+                return L("Not enough 3D credits\nNeeded %1$@, you have %2$@", "\(required)", "\(available)")
             }
-            return "3D 생성 크레딧이 부족해요"
+            return L("Not enough 3D credits")
         case .generationLimitReached:
-            return "이미 여러 3D 생성 작업이 진행 중이에요.\n완료된 뒤 다시 시도해주세요."
+            return L("Several 3D jobs are already running.\nTry again when they finish.")
         case .rateLimited:
-            return "잠시 후 다시 시도해주세요"
+            return L("Please try again in a moment")
         case .nsfwBlocked:
-            return "이 이미지는 3D 생성에 사용할 수 없어요"
+            return L("This image can't be used for 3D creation")
         case .invalidSource(_, let message):
-            return message.isEmpty ? "사진이 올바르지 않아요" : message
+            return message.isEmpty ? L("The photo isn't valid") : message
         case .generationStartFailed:
-            return "3D 생성을 시작하지 못했어요"
+            return L("Couldn't start 3D creation")
         case .network:
-            return "네트워크 연결을 확인해주세요"
+            return L("Check your network connection")
         case .server(_, let message, _):
-            return message.isEmpty ? "요청을 처리하지 못했어요" : message
+            return message.isEmpty ? L("Couldn't process the request") : message
         case .invalidResponse:
-            return "서버 응답을 확인하지 못했어요"
+            return L("Couldn't check the server response")
         }
     }
 }

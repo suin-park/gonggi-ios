@@ -59,13 +59,13 @@ enum SpaceGenerationError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .networkUnavailable: return "네트워크에 연결할 수 없습니다."
-        case .unauthorized: return "로그인이 필요합니다."
-        case .jobNotFound: return "작업을 찾을 수 없습니다."
-        case .uploadFailed: return "업로드에 실패했습니다."
-        case .unknown(let msg): return msg
-        case .server(let code, _):
-            return code
+        case .networkUnavailable: return L("Can't connect to the network.")
+        case .unauthorized: return L("Please sign in.")
+        case .jobNotFound: return L("Couldn't find the job.")
+        case .uploadFailed: return L("Upload failed.")
+        // Raw server text / codes stay in `backendErrorCode` and the logs; users get a localized line.
+        case .unknown, .server:
+            return L("Something went wrong. Please try again.")
         }
     }
 

@@ -309,7 +309,7 @@ struct VRSphereSpaceView: View {
             .sheet(isPresented: $assetPickerPresented) {
                 AssetPickerSheet(
                     store: AssetLibraryStore.shared,
-                    title: "3D 오브젝트",
+                    title: L("3D Objects"),
                     showNonReadyDisabled: true,
                     isAtCapacity: draftLayout.assets.count >= VRPlacementLayout.maxAssets,
                     onSelect: { asset in
@@ -365,8 +365,8 @@ struct VRSphereSpaceView: View {
             }
             .sheet(isPresented: $showSpaceLinkMetadataSheet) {
                 SpaceLinkMetadataEditorView(
-                    title: spaceLinkMetadataIsEdit ? "핫스팟 편집" : "핫스팟 정보",
-                    confirmTitle: spaceLinkMetadataIsEdit ? "저장" : "연결",
+                    title: spaceLinkMetadataIsEdit ? L("Edit hotspot") : L("Hotspot info"),
+                    confirmTitle: spaceLinkMetadataIsEdit ? L("Save") : L("Link"),
                     displayName: $spaceLinkLabelDraft,
                     externalUrl: $spaceLinkURLDraft,
                     labelSize: $spaceLinkLabelSizeDraft,
@@ -402,16 +402,16 @@ struct VRSphereSpaceView: View {
                 }
             }
             .confirmationDialog(
-                "이 공간 연결을 삭제할까요?",
+                L("Delete this space link?"),
                 isPresented: $showDeleteLinkedConfirm,
                 titleVisibility: .visible
             ) {
-                Button("삭제", role: .destructive) {
+                Button(L("Delete"), role: .destructive) {
                     deleteSelectedSpaceLink(confirmed: true)
                 }
-                Button("취소", role: .cancel) {}
+                Button(L("Cancel"), role: .cancel) {}
             } message: {
-                Text("연결된 공간 자체는 삭제되지 않습니다.")
+                Text(L("The linked space itself isn't deleted."))
             }
             .fullScreenCover(isPresented: $showSpaceLinkDirectionCapture) {
                 DirectionCaptureView(
@@ -440,27 +440,27 @@ struct VRSphereSpaceView: View {
                     }
                 )
             }
-            .alert("부분 수정에 실패했어요", isPresented: Binding(
+            .alert(L("Partial fix failed"), isPresented: Binding(
                 get: { uploadError != nil },
                 set: { if !$0 { uploadError = nil } }
             )) {
-                Button("확인", role: .cancel) { uploadError = nil }
+                Button(L("OK"), role: .cancel) { uploadError = nil }
             } message: {
                 Text(uploadError ?? "")
             }
-            .alert("공간을 만들지 못했어요", isPresented: Binding(
+            .alert(L("Couldn't create the space"), isPresented: Binding(
                 get: { appState.spaceLinkUserMessage != nil },
                 set: { if !$0 { appState.spaceLinkUserMessage = nil } }
             )) {
-                Button("확인", role: .cancel) { appState.spaceLinkUserMessage = nil }
+                Button(L("OK"), role: .cancel) { appState.spaceLinkUserMessage = nil }
             } message: {
                 Text(appState.spaceLinkUserMessage ?? "")
             }
-            .alert("배치할 수 없어요", isPresented: Binding(
+            .alert(L("Can't place this"), isPresented: Binding(
                 get: { placementBlockedMessage != nil },
                 set: { if !$0 { placementBlockedMessage = nil } }
             )) {
-                Button("확인", role: .cancel) { placementBlockedMessage = nil }
+                Button(L("OK"), role: .cancel) { placementBlockedMessage = nil }
             } message: {
                 Text(placementBlockedMessage ?? "")
             }
@@ -485,7 +485,7 @@ struct VRSphereSpaceView: View {
         spaceLinks.removeAll { $0.id == link.id }
         self.selectedSpaceLinkId = nil
         appState.startSpaceGenerationFromSpaceLink(result: result, pending: pending)
-        spaceLinkBusyMessage = "공간을 만드는 중…"
+        spaceLinkBusyMessage = L("Creating the space…")
         onClose()
     }
 
@@ -542,7 +542,7 @@ struct VRSphereSpaceView: View {
                     Text(String(format: "yaw %+.1f°  pitch %+.1f°", my, mp))
                         .font(.caption.monospacedDigit())
                     Text(
-                        "mask ±\(Int(VRSphereEquirectBridge.defaultYawRadiusDeg))° / ±\(Int(VRSphereEquirectBridge.defaultPitchRadiusDeg))°, 넓게 적용됨"
+                        L("mask ±%1$@° / ±%2$@°, applied widely", "\(Int(VRSphereEquirectBridge.defaultYawRadiusDeg))", "\(Int(VRSphereEquirectBridge.defaultPitchRadiusDeg))")
                     )
                         .font(.caption2)
                 }
@@ -710,7 +710,7 @@ struct VRSphereSpaceView: View {
                         displayName: actionLink.label,
                         externalUrl: actionLink.externalUrl,
                         targetSpaceName: targetSpaceName(for: actionLink)
-                    ) ?? "공간 연결",
+                    ) ?? L("Space link"),
                     hostname: SpaceLinkExternalURL.hostname(from: actionLink.externalUrl) ?? "",
                     onNavigate: {
                         actionCardLink = nil
@@ -760,17 +760,17 @@ struct VRSphereSpaceView: View {
             }
         }
         .confirmationDialog(
-            "편집을 종료할까요?",
+            L("Stop editing?"),
             isPresented: $showExitEditConfirm,
             titleVisibility: .visible
         ) {
-            Button("계속 편집", role: .cancel) {}
-            Button("변경사항 버리고 나가기", role: .destructive) {
+            Button(L("Keep editing"), role: .cancel) {}
+            Button(L("Discard changes and leave"), role: .destructive) {
                 exitEditMode()
                 performExitToLibrary()
             }
         } message: {
-            Text("저장하지 않은 변경사항이 사라질 수 있어요.")
+            Text(L("Unsaved changes may be lost."))
         }
     }
 
@@ -800,7 +800,7 @@ struct VRSphereSpaceView: View {
                 .background(Color.black.opacity(0.45))
                 .clipShape(Circle())
         }
-        .accessibilityLabel("이전 공간으로 돌아가기")
+        .accessibilityLabel(L("Back to the previous space"))
         .disabled(spaceLinkTransitionLocked || isExitingToLibrary || isExitingToHome)
     }
 
@@ -812,7 +812,7 @@ struct VRSphereSpaceView: View {
             HStack(spacing: 6) {
                 Image(systemName: "archivebox")
                     .font(.system(size: 13, weight: .semibold))
-                Text("보관함")
+                Text(L("Library"))
                     .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -823,7 +823,7 @@ struct VRSphereSpaceView: View {
             .background(Color.black.opacity(0.45))
             .clipShape(Capsule())
         }
-        .accessibilityLabel("VR을 닫고 보관함으로 이동")
+        .accessibilityLabel(L("Close VR and go to Library"))
         .disabled(spaceLinkTransitionLocked || isExitingToLibrary || isExitingToHome || spaceLinkLinking)
     }
 
@@ -835,7 +835,7 @@ struct VRSphereSpaceView: View {
             HStack(spacing: 6) {
                 Image(systemName: "house")
                     .font(.system(size: 13, weight: .semibold))
-                Text("홈")
+                Text(L("Home"))
                     .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
@@ -846,7 +846,7 @@ struct VRSphereSpaceView: View {
             .background(Color.black.opacity(0.45))
             .clipShape(Capsule())
         }
-        .accessibilityLabel("VR을 닫고 홈으로 이동")
+        .accessibilityLabel(L("Close VR and go Home"))
         .disabled(spaceLinkTransitionLocked || isExitingToLibrary || isExitingToHome || spaceLinkLinking)
     }
 
@@ -1090,7 +1090,7 @@ struct VRSphereSpaceView: View {
     }
 
     private var editDoneButton: some View {
-        Button("완료") {
+        Button(L("Done")) {
             GonggiHaptics.light()
             Task { await saveAndFinishEditing() }
         }
@@ -1117,7 +1117,7 @@ struct VRSphereSpaceView: View {
             if let selectedPlacementId,
                let entry = draftLayout.assets.first(where: { $0.id == selectedPlacementId }),
                modelURLs[entry.assetId] == nil {
-                Text("원본을 불러올 수 없어요")
+                Text(L("Can't load the original"))
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.8))
                     .padding(.horizontal, 12)
@@ -1127,7 +1127,7 @@ struct VRSphereSpaceView: View {
 
             HStack(spacing: 8) {
                 if selectedSpaceLinkId != nil {
-                    Text("포인트를 드래그해 위치를 옮기세요")
+                    Text(L("Drag the point to move it"))
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.85))
                         .padding(.horizontal, 4)
@@ -1138,15 +1138,15 @@ struct VRSphereSpaceView: View {
                         let w = entry.catalogWidthMm ?? 0
                         let d = entry.catalogDepthMm ?? 0
                         let h = entry.catalogHeightMm ?? 0
-                        Text("상품 규격 W \(CatalogDimensionRuler.formatMm(w)), D \(CatalogDimensionRuler.formatMm(d)), H \(CatalogDimensionRuler.formatMm(h)), 크기 잠금")
+                        Text(L("Product size W %1$@, D %2$@, H %3$@, size locked", "\(CatalogDimensionRuler.formatMm(w))", "\(CatalogDimensionRuler.formatMm(d))", "\(CatalogDimensionRuler.formatMm(h))"))
                             .font(.caption2)
                             .foregroundStyle(.white.opacity(0.85))
                             .padding(.horizontal, 4)
                             .lineLimit(2)
                             .minimumScaleFactor(0.85)
-                            .accessibilityLabel("너비 \(w)밀리미터, 깊이 \(d)밀리미터, 높이 \(h)밀리미터, 크기 조절 잠금")
+                            .accessibilityLabel(L("Width %1$@ mm, depth %2$@ mm, height %3$@ mm, resizing locked", "\(w)", "\(d)", "\(h)"))
                     } else {
-                        Text("한 손가락으로 이동, 두 손가락으로 회전/크기 조절")
+                        Text(L("Move with one finger, rotate or resize with two"))
                             .font(.caption2)
                             .foregroundStyle(.white.opacity(0.85))
                             .padding(.horizontal, 4)
@@ -1157,7 +1157,7 @@ struct VRSphereSpaceView: View {
                     Button {
                         deleteSelectedPlacement()
                     } label: {
-                        Label("삭제", systemImage: "trash")
+                        Label(L("Delete"), systemImage: "trash")
                     }
                     .buttonStyle(.bordered)
                     .tint(.red)
@@ -1165,7 +1165,7 @@ struct VRSphereSpaceView: View {
                     Button {
                         addMenuPresented = true
                     } label: {
-                        Label("추가", systemImage: "plus")
+                        Label(L("Add"), systemImage: "plus")
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(
@@ -1186,7 +1186,7 @@ struct VRSphereSpaceView: View {
         let offset = draftLayout.assets[index].heightOffset(floorY: floorY)
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("높이")
+                Text(L("Height"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white)
                 Spacer()
@@ -1194,7 +1194,7 @@ struct VRSphereSpaceView: View {
                     GonggiHaptics.light()
                     snapSelectedToFloor(index: index)
                 } label: {
-                    Text("바닥에 놓기")
+                    Text(L("Place on the floor"))
                         .font(.caption.weight(.semibold))
                 }
                 .buttonStyle(.bordered)
@@ -1217,7 +1217,7 @@ struct VRSphereSpaceView: View {
                 }
             )
             .tint(.white)
-            Text("테이블/선반 위에 놓을 때 높이를 조절하세요")
+            Text(L("Adjust the height when placing on a table or shelf"))
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.75))
         }
@@ -1228,9 +1228,9 @@ struct VRSphereSpaceView: View {
 
     private var saveErrorBanner: some View {
         HStack(spacing: 10) {
-            Text("배치를 저장하지 못했어요. 다시 시도해 주세요.")
+            Text(L("Couldn't save the placement. Please try again."))
                 .font(.footnote.weight(.medium))
-            Button("다시 시도") {
+            Button(L("Try again")) {
                 Task { await retrySavePlacement() }
             }
             .font(.footnote.weight(.semibold))
@@ -1247,7 +1247,7 @@ struct VRSphereSpaceView: View {
                 Button {
                     enterEditMode()
                 } label: {
-                    Text("편집")
+                    Text(L("Edit"))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
                         .frame(height: 40)
@@ -1267,7 +1267,7 @@ struct VRSphereSpaceView: View {
                         .background(Color.black.opacity(0.45))
                         .clipShape(Circle())
                 }
-                .accessibilityLabel(spaceAudio.isMuted ? "소리 켜기" : "소리 끄기")
+                .accessibilityLabel(spaceAudio.isMuted ? L("Sound on") : L("Sound off"))
             }
 
             Button {
@@ -1281,7 +1281,7 @@ struct VRSphereSpaceView: View {
                     .background(Color.black.opacity(0.45))
                     .clipShape(Circle())
             }
-            .accessibilityLabel("시점 재설정")
+            .accessibilityLabel(L("Reset view"))
 
             Button {
                 GonggiHaptics.light()
@@ -1303,7 +1303,7 @@ struct VRSphereSpaceView: View {
                         }
                     }
             }
-            .accessibilityLabel(motionEnabled ? "모션 끄기" : "모션 켜기")
+            .accessibilityLabel(motionEnabled ? L("Motion off") : L("Motion on"))
 
             if allowsOwnerControls {
                 Menu {
@@ -1315,7 +1315,7 @@ struct VRSphereSpaceView: View {
                     Button {
                         exportSpaceDiagnostics()
                     } label: {
-                        Label("공간 진단 정보 내보내기", systemImage: "doc.text")
+                        Label(L("Export space diagnostics"), systemImage: "doc.text")
                     }
                     .disabled(diagnosticsExporting)
                 } label: {
@@ -1326,7 +1326,7 @@ struct VRSphereSpaceView: View {
                         .background(Color.black.opacity(0.45))
                         .clipShape(Circle())
                 }
-                .accessibilityLabel("더보기")
+                .accessibilityLabel(L("More"))
             }
         }
     }
@@ -1517,7 +1517,7 @@ struct VRSphereSpaceView: View {
                 "[vr-place-catalog] PUT failed status=\(status.map(String.init) ?? "n/a") draftCount=\(draftLayout.assets.count) catalogCount=\(snapshot.assets.filter { $0.catalogAssetId != nil }.count)"
             )
             #endif
-            saveError = "배치를 저장하지 못했어요. 다시 시도해 주세요."
+            saveError = L("Couldn't save the placement. Please try again.")
         }
     }
 
@@ -1574,7 +1574,7 @@ struct VRSphereSpaceView: View {
             guard !catalogAssetId.isEmpty else { continue }
 
             var resolvedSpec: CatalogPlacementSpec?
-            var displayName = entry.catalogDisplayName ?? "제휴 상품"
+            var displayName = entry.catalogDisplayName ?? L("Partner products")
             var thumb: String?
 
             if let productId = entry.catalogProductId {
@@ -1650,7 +1650,7 @@ struct VRSphereSpaceView: View {
                 "[vr-place-catalog] retry PUT failed status=\(status.map(String.init) ?? "n/a") draftCount=\(draftLayout.assets.count)"
             )
             #endif
-            saveError = "배치를 저장하지 못했어요. 다시 시도해 주세요."
+            saveError = L("Couldn't save the placement. Please try again.")
         }
     }
 
@@ -1777,7 +1777,7 @@ struct VRSphereSpaceView: View {
         discardDraftOnExitEdit = true
 
         guard draftLayout.assets.count < VRPlacementLayout.maxAssets else {
-            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            placementBlockedMessage = L("You can place up to 8 3D Objects in this space")
             return
         }
 
@@ -1792,7 +1792,7 @@ struct VRSphereSpaceView: View {
             do {
                 asset = try await assetsClient.fetchAsset(id: pending.assetId)
             } catch {
-                placementBlockedMessage = "3D 어셋을 불러오지 못했어요"
+                placementBlockedMessage = L("Couldn't load 3D Objects")
                 return
             }
         }
@@ -1801,7 +1801,7 @@ struct VRSphereSpaceView: View {
               let usdz = asset.usdzUrl,
               let remoteURL = URL(string: usdz)
         else {
-            placementBlockedMessage = asset.placementUnavailableReason ?? "AR/배치 준비 필요"
+            placementBlockedMessage = asset.placementUnavailableReason ?? L("AR and placement need preparing")
             return
         }
 
@@ -1828,13 +1828,13 @@ struct VRSphereSpaceView: View {
         discardDraftOnExitEdit = true
 
         guard draftLayout.assets.count < VRPlacementLayout.maxAssets else {
-            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            placementBlockedMessage = L("You can place up to 8 3D Objects in this space")
             return
         }
 
         switch CatalogPlacementSpecValidator.validate(pending.placementSpec) {
         case .failure(let error):
-            placementBlockedMessage = error.errorDescription ?? "배치 정보가 올바르지 않아요"
+            placementBlockedMessage = error.errorDescription ?? L("The placement info isn't valid")
             return
         case .success:
             break
@@ -1846,7 +1846,7 @@ struct VRSphereSpaceView: View {
         if let url = URL(string: spec.usdzSignedUrl), url.scheme?.lowercased() == "https" {
             remoteURL = url
         } else {
-            placementBlockedMessage = "3D 파일 주소를 확인할 수 없어요"
+            placementBlockedMessage = L("Can't check the 3D file address")
             return
         }
 
@@ -1869,8 +1869,8 @@ struct VRSphereSpaceView: View {
                 modelURLs[assetKey] = local
             } else {
                 placementBlockedMessage = isMockModeCatalogURL(remoteURL)
-                    ? "Mock 3D URL은 실제 파일이 아닙니다. Production Catalog USDZ가 필요합니다."
-                    : "3D 모델을 다운로드하지 못했어요. 상품을 다시 열어 주세요."
+                    ? L("A mock 3D URL isn't a real file. A production catalog USDZ is required.")
+                    : L("Couldn't download the 3D model. Open the product again.")
                 return
             }
         }
@@ -1937,7 +1937,7 @@ struct VRSphereSpaceView: View {
 
     private func finishPendingCatalogInsert(_ pending: PendingCatalogPlacement, at point: SIMD3<Float>) {
         guard draftLayout.assets.count < VRPlacementLayout.maxAssets else {
-            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            placementBlockedMessage = L("You can place up to 8 3D Objects in this space")
             return
         }
 
@@ -1947,7 +1947,7 @@ struct VRSphereSpaceView: View {
             floorY: draftLayout.floorY
         )
         guard draftLayout.append(entry) else {
-            placementBlockedMessage = "이 공간에는 최대 8개의 3D 오브젝트를 배치할 수 있어요"
+            placementBlockedMessage = L("You can place up to 8 3D Objects in this space")
             return
         }
         selectedPlacementId = entry.id
@@ -2040,7 +2040,7 @@ struct VRSphereSpaceView: View {
                 .ignoresSafeArea()
                 .onTapGesture { addMenuPresented = false }
             VStack(spacing: 0) {
-                Text("추가")
+                Text(L("Add"))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.7))
                     .frame(maxWidth: .infinity)
@@ -2050,7 +2050,7 @@ struct VRSphereSpaceView: View {
                     addMenuPresented = false
                     assetPickerPresented = true
                 } label: {
-                    Text("3D 오브젝트")
+                    Text(L("3D Objects"))
                         .font(.body.weight(.semibold))
                         .foregroundStyle(Color.white)
                         .frame(maxWidth: .infinity)
@@ -2063,7 +2063,7 @@ struct VRSphereSpaceView: View {
                     addMenuPresented = false
                     spaceLinkSpawnToken += 1
                 } label: {
-                    Text("공간 연결")
+                    Text(L("Space link"))
                         .font(.body.weight(.semibold))
                         .foregroundStyle(Color.white)
                         .frame(maxWidth: .infinity)
@@ -2075,7 +2075,7 @@ struct VRSphereSpaceView: View {
                 Button {
                     addMenuPresented = false
                 } label: {
-                    Text("취소")
+                    Text(L("Cancel"))
                         .font(.body.weight(.medium))
                         .foregroundStyle(Color.white.opacity(0.85))
                         .frame(maxWidth: .infinity)
@@ -2099,9 +2099,9 @@ struct VRSphereSpaceView: View {
 
     private var spaceLinkCaptureIntroSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("공간 연결")
+            Text(L("Space link"))
                 .font(.headline)
-            Text("이 위치로 이동한 뒤 새 공간을 촬영해주세요.")
+            Text(L("Go to this spot, then capture a new space."))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             Button {
@@ -2110,13 +2110,13 @@ struct VRSphereSpaceView: View {
                     showSpaceLinkDirectionCapture = true
                 }
             } label: {
-                Text("촬영 시작")
+                Text(L("Start capture"))
                     .font(.body.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
             }
             .buttonStyle(.borderedProminent)
-            Button("취소", role: .cancel) {
+            Button(L("Cancel"), role: .cancel) {
                 showSpaceLinkCaptureIntro = false
             }
             .frame(maxWidth: .infinity)
@@ -2251,7 +2251,7 @@ struct VRSphereSpaceView: View {
             if let i = spaceLinks.firstIndex(where: { $0.id == id }) {
                 spaceLinks[i] = previous
             }
-            spaceLinkBusyMessage = "저장하지 못했어요"
+            spaceLinkBusyMessage = L("Couldn't save")
         }
     }
 
@@ -2336,7 +2336,7 @@ struct VRSphereSpaceView: View {
                         pitch: checkpoint.pitch,
                         radius: checkpoint.radius
                     )
-                    spaceLinkBusyMessage = "위치를 저장하지 못했어요"
+                    spaceLinkBusyMessage = L("Couldn't save the position")
                 }
                 #if DEBUG
                 print("[spaceLink74] pose PATCH failed \(error)")
@@ -2420,23 +2420,23 @@ struct VRSphereSpaceView: View {
             GonggiHaptics.light()
             spaceLinkBusyMessage = nil
         } catch SpaceLinkStoreError.tooManyLinks {
-            spaceLinkBusyMessage = "공간 연결은 최대 \(SpaceLink.maxLinksPerSource)개까지 가능해요"
+            spaceLinkBusyMessage = L("You can link up to %@ spaces", "\(SpaceLink.maxLinksPerSource)")
         } catch SpaceLinkStoreError.targetNotReady {
-            spaceLinkBusyMessage = "이 공간은 아직 연결할 수 없어요"
+            spaceLinkBusyMessage = L("This space can't be linked yet")
             #if DEBUG
             print("[spaceLink76] existing link TARGET_NOT_READY target=\(targetId)")
             #endif
         } catch SpaceLinkStoreError.network {
-            spaceLinkBusyMessage = "연결하려면 네트워크가 필요해요"
+            spaceLinkBusyMessage = L("Linking needs a network connection")
         } catch let SpaceLinkStoreError.server(status, code, message) {
-            spaceLinkBusyMessage = "연결하지 못했어요"
+            spaceLinkBusyMessage = L("Couldn't link")
             #if DEBUG
             print(
                 "[spaceLink76] existing link POST failed status=\(status) code=\(code ?? "nil") message=\(message ?? "nil") source=\(sessionId) target=\(targetId)"
             )
             #endif
         } catch {
-            spaceLinkBusyMessage = "연결하지 못했어요"
+            spaceLinkBusyMessage = L("Couldn't link")
             #if DEBUG
             print("[spaceLink76] existing link POST failed \(error)")
             #endif
@@ -2452,7 +2452,7 @@ struct VRSphereSpaceView: View {
             HStack(spacing: 10) {
                 ProgressView()
                     .tint(.white)
-                Text("선택한 부분을 수정하고 있어요")
+                Text(L("Fixing the selected part"))
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.white)
             }
@@ -2464,7 +2464,7 @@ struct VRSphereSpaceView: View {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text("선택한 부분을 수정했어요.")
+                Text(L("The selected part was fixed."))
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(.white)
             }
@@ -2475,11 +2475,11 @@ struct VRSphereSpaceView: View {
             .onTapGesture { repairController.dismissCompletedBanner() }
         case .failed(let retryTarget):
             HStack(spacing: 12) {
-                Text("부분 수정에 실패했어요.")
+                Text(L("Partial fix failed."))
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.white)
                 if let retryTarget {
-                    Button("다시 시도") {
+                    Button(L("Try again")) {
                         repairController.clearFailedBanner()
                         pendingTarget = retryTarget
                         captureTarget = retryTarget
@@ -2628,7 +2628,7 @@ struct VRSphereSpaceView: View {
         guard !diagnosticsExporting else { return }
         diagnosticsExporting = true
         GonggiHaptics.light()
-        spaceLinkBusyMessage = "진단 정보를 준비하는 중…"
+        spaceLinkBusyMessage = L("Preparing diagnostics…")
 
         let host = SpaceLinkTransitionBridge.shared.sourceHostForExit
             ?? SpaceLinkTransitionBridge.shared.activeHost
@@ -2722,7 +2722,7 @@ struct VRSphereSpaceView: View {
             } catch {
                 await MainActor.run {
                     diagnosticsExporting = false
-                    spaceLinkBusyMessage = "진단 파일을 만들지 못했어요"
+                    spaceLinkBusyMessage = L("Couldn't create the diagnostics file")
                 }
             }
         }
@@ -2753,15 +2753,15 @@ private struct RepairConfirmSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("이 부분을 다시 기록할까요?")
+            Text(L("Capture this part again?"))
                 .font(.headline)
-            Text("현재 위치에서 이 방향을 한 장 다시 촬영하면\n선택한 부분만 더 정확하게 수정할 수 있어요.")
+            Text(L("Take one more photo of this direction from where you are,\nand only the selected part will be fixed more accurately."))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             HStack(spacing: 12) {
-                Button("취소", action: onCancel)
+                Button(L("Cancel"), action: onCancel)
                     .buttonStyle(.bordered)
-                Button("다시 촬영", action: onRecapture)
+                Button(L("Capture again"), action: onRecapture)
                     .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -2815,11 +2815,11 @@ struct RepairManualCaptureView: View {
             }
         }
         .background(Color.black.ignoresSafeArea())
-        .alert("업로드에 실패했어요", isPresented: Binding(
+        .alert(L("Upload failed"), isPresented: Binding(
             get: { submitError != nil },
             set: { if !$0 { submitError = nil } }
         )) {
-            Button("확인", role: .cancel) { submitError = nil }
+            Button(L("OK"), role: .cancel) { submitError = nil }
         } message: {
             Text(submitError ?? "")
         }
@@ -2859,10 +2859,10 @@ struct RepairManualCaptureView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 44))
                     .foregroundStyle(Color.green.opacity(0.95))
-                Text("수정을 시작했어요")
+                Text(L("Fix started"))
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
-                Text("완료되면 보관함에서 확인할 수 있어요.")
+                Text(L("You can check it in Library when it's done."))
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.88))
                     .multilineTextAlignment(.center)
@@ -2870,7 +2870,7 @@ struct RepairManualCaptureView: View {
             .padding(28)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("수정을 시작했어요. 완료되면 보관함에서 확인할 수 있어요.")
+        .accessibilityLabel(L("Fix started. You can check it in Library when it's done."))
     }
 
     private var cameraLayer: some View {
@@ -2883,19 +2883,19 @@ struct RepairManualCaptureView: View {
                 .frame(width: 28, height: 28)
 
             VStack(spacing: 10) {
-                Text("수정할 부분을 다시 촬영해주세요.")
+                Text(L("Capture the part to fix again."))
                     .font(.headline)
                     .foregroundStyle(.white)
                     .shadow(radius: 2)
                     .multilineTextAlignment(.center)
-                Text("처음 기록했던 위치에서\n수정할 부분이 잘 보이도록 한 장 촬영해주세요.")
+                Text(L("From where you first captured,\ntake one photo that clearly shows the part to fix."))
                     .font(.subheadline)
                     .foregroundStyle(.white.opacity(0.92))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
 
                 if model.softMisalignmentWarning {
-                    Text("선택한 부분이 화면에 잘 보이는지 확인해주세요.")
+                    Text(L("Check that the selected part is clearly visible."))
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.yellow)
                         .padding(.top, 4)
@@ -2904,7 +2904,7 @@ struct RepairManualCaptureView: View {
                 Spacer()
 
                 HStack {
-                    Button("취소") {
+                    Button(L("Cancel")) {
                         GonggiHaptics.light()
                         model.cancelAndStop()
                         onCancel()
@@ -2927,7 +2927,7 @@ struct RepairManualCaptureView: View {
                                 .frame(width: 58, height: 58)
                         }
                     }
-                    .accessibilityLabel("촬영")
+                    .accessibilityLabel(L("Capture"))
 
                     Spacer()
                     Color.clear.frame(width: 72)
@@ -2949,7 +2949,7 @@ struct RepairManualCaptureView: View {
                 .onTapGesture { intentFieldFocused = false }
 
             if showSoftWarning, phase == .preview {
-                Text("선택한 부분이 화면에 잘 보이는지 확인해주세요.")
+                Text(L("Check that the selected part is clearly visible."))
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(.yellow)
                     .padding(.top, 8)
@@ -2988,7 +2988,7 @@ struct RepairManualCaptureView: View {
                     }
 
                     TextField(
-                        "어떻게 고칠까요? (예: 간판 글자를 사진과 똑같이)",
+                        L("How should it be fixed? (e.g. match the sign text to the photo)"),
                         text: $userIntentText,
                         axis: .vertical
                     )
@@ -3006,7 +3006,7 @@ struct RepairManualCaptureView: View {
             if phase == .uploading {
                 HStack(spacing: 10) {
                     ProgressView().tint(.white)
-                    Text("사진을 올리고 있어요…")
+                    Text(L("Uploading the photo…"))
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(.white)
                 }
@@ -3014,7 +3014,7 @@ struct RepairManualCaptureView: View {
             }
 
             HStack(spacing: 12) {
-                Button("취소") {
+                Button(L("Cancel")) {
                     GonggiHaptics.light()
                     guard phase == .preview || phase == .camera else { return }
                     model.cancelAndStop()
@@ -3023,7 +3023,7 @@ struct RepairManualCaptureView: View {
                 .buttonStyle(.bordered)
                 .disabled(phase == .uploading || phase == .accepted)
 
-                Button("다시 촬영") {
+                Button(L("Capture again")) {
                     GonggiHaptics.light()
                     guard phase == .preview else { return }
                     previewImage = nil
@@ -3034,7 +3034,7 @@ struct RepairManualCaptureView: View {
                 .buttonStyle(.bordered)
                 .disabled(phase == .uploading || phase == .accepted)
 
-                Button("이 사진으로 수정") {
+                Button(L("Fix with this photo")) {
                     GonggiHaptics.medium()
                     intentFieldFocused = false
                     Task { await submit(image: image) }
@@ -3065,7 +3065,7 @@ struct RepairManualCaptureView: View {
             guard SpaceRepairStore.shared.job(repairJobId: job.repairJobId) != nil else {
                 phase = .preview
                 model.start()
-                submitError = "수정 요청을 저장하지 못했어요. 다시 시도해주세요."
+                submitError = L("Couldn't save the fix request. Please try again.")
                 return
             }
             await SpaceRepairRuntime.shared.ensurePolling(
@@ -3085,7 +3085,7 @@ struct RepairManualCaptureView: View {
             // POST failed — stay on preview; do not auto-dismiss.
             phase = .preview
             model.start()
-            submitError = "사진을 올리지 못했어요. 다시 시도해주세요."
+            submitError = L("Couldn't upload the photo. Please try again.")
         }
     }
 }

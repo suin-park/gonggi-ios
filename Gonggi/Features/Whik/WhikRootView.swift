@@ -39,6 +39,7 @@ struct WhikRootView: View {
         }
         .environmentObject(gate)
         .environmentObject(viewers)
+        .whikLanguageEnvironment()
         .preferredColorScheme(.dark)
         .onAppear {
             viewers.appState = appState
@@ -112,18 +113,18 @@ struct WhikRootView: View {
                     Color.black.opacity(0.35).ignoresSafeArea()
                     ProgressView().tint(.white).scaleEffect(1.2)
                 }
-                .accessibilityLabel("Opening")
+                .accessibilityLabel(L("Opening"))
             }
         }
-        .alert("Couldn't open this capture", isPresented: Binding(
+        .alert(L("Couldn't open this capture"), isPresented: Binding(
             get: { viewers.error != nil },
             set: { if !$0 { viewers.error = nil } }
         )) {
-            Button("Try again") {
+            Button(L("Try again")) {
                 viewers.error = nil
                 if let id = viewers.retryJobId { viewers.openSpace(jobId: id) }
             }
-            Button("Close", role: .cancel) { viewers.error = nil }
+            Button(L("Close"), role: .cancel) { viewers.error = nil }
         } message: {
             Text(viewers.error ?? "")
         }
@@ -138,13 +139,10 @@ struct WhikRootView: View {
         }
     }
 
+    /// Profile and settings, signed in or not (Language works for guests).
     private func openAccount() {
         GonggiHaptics.light()
-        if gate.isSignedIn {
-            showAccount = true
-        } else {
-            gate.signIn()
-        }
+        showAccount = true
     }
 
     /// A push tapped before sign-in finished restoring is opened once the session is back.
@@ -163,9 +161,9 @@ struct WhikTabBar: View {
     @Binding var selection: WhikTab
 
     private let items: [(WhikTab, String, String, String)] = [
-        (.home, "Home", "house", "house.fill"),
-        (.capture, "Capture", "camera", "camera.fill"),
-        (.library, "Library", "folder", "folder.fill"),
+        (.home, L("Home"), "house", "house.fill"),
+        (.capture, L("Capture"), "camera", "camera.fill"),
+        (.library, L("Library"), "folder", "folder.fill"),
     ]
 
     var body: some View {

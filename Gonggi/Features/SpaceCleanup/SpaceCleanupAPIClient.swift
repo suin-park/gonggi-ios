@@ -10,12 +10,12 @@ enum SpaceCleanupAPIError: Error, Equatable {
 
     var userMessage: String {
         switch self {
-        case .consentRequired: return "AI 이용 동의가 필요합니다."
-        case .offline: return "네트워크 연결을 확인해 주세요."
-        case .unauthorized: return "로그인이 필요합니다."
-        case .notFound: return "작업을 찾을 수 없습니다."
-        case .invalidResponse: return "서버 응답을 확인하지 못했습니다."
-        case .server: return "요청을 처리하지 못했습니다."
+        case .consentRequired: return L("Consent to AI use is required.")
+        case .offline: return L("Check your network connection.")
+        case .unauthorized: return L("Please sign in.")
+        case .notFound: return L("Couldn't find the job.")
+        case .invalidResponse: return L("Couldn't check the server response.")
+        case .server: return L("Couldn't process the request.")
         }
     }
 }

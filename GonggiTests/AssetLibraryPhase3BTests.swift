@@ -63,13 +63,13 @@ final class AssetLibraryPhase3BTests: XCTestCase {
 
     func testErrorCopyInsufficientCredits() {
         let err = MobileImage3DAPIError.insufficientCredits(required: 10, available: 3)
-        XCTAssertTrue(err.userMessage.contains("크레딧"))
+        XCTAssertTrue(err.userMessage.contains(L("Credits")))
         XCTAssertTrue(err.userMessage.contains("10"))
         XCTAssertTrue(err.userMessage.contains("3"))
     }
 
     func testErrorCopyCapRateNsfw() {
-        XCTAssertTrue(MobileImage3DAPIError.generationLimitReached.userMessage.contains("진행 중"))
+        XCTAssertTrue(MobileImage3DAPIError.generationLimitReached.userMessage.contains(L("In progress")))
         XCTAssertTrue(MobileImage3DAPIError.rateLimited.userMessage.contains("잠시"))
         XCTAssertTrue(MobileImage3DAPIError.nsfwBlocked.userMessage.contains("사용할 수 없어요"))
     }
@@ -103,7 +103,7 @@ final class AssetLibraryPhase3BTests: XCTestCase {
         let job = try JSONDecoder().decode(MobileGenerationJobDTO.self, from: json)
         XCTAssertEqual(job.jobId, "j1")
         XCTAssertTrue(job.isActive)
-        XCTAssertEqual(job.statusLabel, "3D를 만드는 중")
+        XCTAssertEqual(job.statusLabel, L("Making 3D"))
     }
 
     func testClientRequestIdStableAcrossSameIntentRetries() {
@@ -116,8 +116,8 @@ final class AssetLibraryPhase3BTests: XCTestCase {
     }
 
     func testStatusLabels() {
-        XCTAssertEqual(MobileGenerationJobDTO(jobId: "1", status: "queued").statusLabel, "3D 생성 대기 중")
-        XCTAssertEqual(MobileGenerationJobDTO(jobId: "1", status: "failed").statusLabel, "3D 생성에 실패했어요")
+        XCTAssertEqual(MobileGenerationJobDTO(jobId: "1", status: "queued").statusLabel, L("Waiting to create 3D"))
+        XCTAssertEqual(MobileGenerationJobDTO(jobId: "1", status: "failed").statusLabel, L("3D creation failed"))
     }
 
     func testDebounceFlagOnBeginSubmitWithoutImage() {
@@ -129,7 +129,7 @@ final class AssetLibraryPhase3BTests: XCTestCase {
 
     func testInvalidSourceCopies() {
         XCTAssertTrue(
-            MobileImage3DAPIError.invalidSource(code: "FILE_TOO_LARGE", message: "파일이 너무 커요")
+            MobileImage3DAPIError.invalidSource(code: "FILE_TOO_LARGE", message: L("The file is too large"))
                 .userMessage.contains("커요")
         )
         XCTAssertEqual(
@@ -141,7 +141,7 @@ final class AssetLibraryPhase3BTests: XCTestCase {
     func testQueuedLabelAndFailedCardCopy() {
         XCTAssertEqual(
             MobileGenerationJobDTO(jobId: "1", status: "queued").statusLabel,
-            "3D 생성 대기 중"
+            L("Waiting to create 3D")
         )
         XCTAssertTrue(MobileGenerationJobDTO(jobId: "1", status: "failed").isFailed)
     }

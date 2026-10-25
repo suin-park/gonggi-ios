@@ -240,7 +240,7 @@ final class CaptureGapGuidanceTests: XCTestCase {
     func testGapCopyAsksForASlowContinuousTurn() {
         let c = CaptureUIPresenter.gapCopy(prompt(.opposite, turn: .left))
         // Build 82: the side is where to end up facing; walking stays the user's choice ("걸을 수 있는 쪽으로").
-        XCTAssertTrue(c.title.contains("왼쪽"))
+        XCTAssertTrue(c.title.contains(L("Left")))
         XCTAssertTrue((c.subtitle ?? "").contains("천천히"))
         XCTAssertTrue((c.subtitle ?? "").contains("걸을 수 있는 쪽"))
         XCTAssertFalse(c.title.contains("45"), "the 45° sector is only where to end up facing")

@@ -227,14 +227,14 @@ final class AdvancedCaptureAnalysisRuntime: ObservableObject {
         guard !notifiedCompleteSessionIds.contains(sessionId) else { return }
         notifiedCompleteSessionIds.insert(sessionId)
 
-        userBannerMessage = "분석이 끝났습니다. 촬영 가이드에 따라 촬영을 시작하세요."
+        userBannerMessage = L("Analysis is done. Start capturing with the guide.")
         scheduleLocalNotification(sessionId: sessionId)
     }
 
     private func scheduleLocalNotification(sessionId: String) {
         let content = UNMutableNotificationContent()
         content.title = "WHIK"
-        content.body = "분석이 끝났습니다. 촬영 가이드에 따라 촬영을 시작하세요."
+        content.body = L("Analysis is done. Start capturing with the guide.")
         content.sound = .default
         content.userInfo = [
             "advancedCaptureSessionId": sessionId,

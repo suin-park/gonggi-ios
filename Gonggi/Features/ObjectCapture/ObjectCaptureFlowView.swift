@@ -3,64 +3,61 @@ import RealityKit
 import SwiftUI
 
 enum ObjectCaptureCopy {
-    static let title = "3D 자산 만들기"
-    static let introLines = [
+    static var title: String { L("Create a 3D Object") }
+    static var introLines: [String] { [
         ObjectCaptureSubject.stillObject.startLine,
-        "물체는 그대로 두고, 휴대폰을 들고 천천히 주위를 걸어요",
-        "벽에 붙은 물체는 조금 떼어 놓아 주세요",
-        "바닥과 주변이 함께 찍혀도 괜찮아요. 결과에서는 물체만 남겨요",
-    ]
+        L("Leave the object in place and walk slowly around it holding the phone"),
+        L("Move objects away from the wall a little"),
+        L("It's fine if the floor and surroundings are in the shot. Only the object is kept in the result"),
+    ] }
     /// Shown under the lines above, in a different style: what is NOT supported in this version.
     static let unsupportedLine = ObjectCaptureSubject.person.startLine
-    static let start = "시작"
+    static var start: String { L("Start") }
     /// After the box is placed (automatically or by tap). The box is a guide the user fits; it does not know the product.
-    static let sizingHint = "상자가 물체를 넉넉하게 감싸도록 위치와 크기를 맞춰 주세요."
+    static var sizingHint: String { L("Adjust the box's position and size so it fully surrounds the object.") }
     /// Loose box switched on (internal test): the box only has to roughly surround the object.
-    static let sizingHintLoose = "상자가 물체를 대략 감싸면 돼요. 정확히 맞추지 않아도 괜찮아요."
+    static var sizingHintLoose: String { L("The box only needs to roughly surround the object. It doesn't have to be exact.") }
     /// Default placing: tap the support surface under the product (floor / table).
-    static let manualPlacementHint = "물체 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요."
+    static var manualPlacementHint: String { L("Tap the floor or table under the object to place the box.") }
     /// The worker keeps only what is inside the box, so a tight box cuts the product off.
-    static let sizingTips = "상자가 물체를 감싸도록 맞추세요. 크기는 슬라이더로, 위치는 상자를 끌어 옮기세요"
+    static var sizingTips: String { L("Fit the box around the object. Use the slider for size and drag the box to move it") }
     /// Capture-screen footnote: green means a good place to take photos, not that the whole object is verified in frame.
-    static let captureNote = "초록 상자는 촬영하기 좋은 위치예요. 물체가 화면 밖으로 잘리지 않는지 직접 확인해 주세요"
+    static var captureNote: String { L("A green box is a good position to capture. Check that the object isn't cut off at the edges") }
     /// Optional auxiliary locating: tap the object itself from two places.
-    static let tapObjectHint = "물체의 가운데를 눌러 주세요"
-    static let secondTapHint = "옆으로 두세 걸음 이동한 뒤, 물체 가운데를 한 번 더 눌러 주세요"
-    static let readyHint = "상자가 물체를 감싸면 돼요. 손가락으로 옮기고 크기를 맞춰 주세요"
-    static let walkProgress = "이동한 각도"
-    static let showDiagnostics = "위치 유지 진단 표시"
-    static let twoTapInstead = "물체를 두 번 눌러 놓기 (보조)"
-    static let floorTapInstead = "바닥을 눌러 직접 놓기"
-    static let showCube = "상자 보이기"
-    static let shareTrace = "위치 진단 기록 공유"
-    static let uniformSize = "크기"
-    static let advanced = "자세히 조절"
-    static let advancedTips = "길쭉한 물체는 가로/높이/깊이를 따로 맞추세요. 높이는 물체 맨 위보다 조금 높게 잡아 주세요"
-    static let looseToggle = "넉넉한 박스 방식 (내부 테스트)"
-    static let looseToggleNote = "끄면 지금까지의 방식 그대로예요. 켜는 것은 새 3D 처리 서버가 준비된 뒤에 해 주세요"
-    static let reviewTitle = "아직 부족한 방향이 있어요"
-    static let reviewMore = "더 찍기"
-    static let reviewAsIs = "그대로 3D 자산 만들기"
-    static let width = "가로"
-    static let height = "높이"
-    static let depth = "깊이"
-    static let placeAgain = "다시 놓기"
-    static let beginCapture = "촬영 시작"
-    static let finish = "마침"
-    static let finishing = "사진을 정리하고 있어요"
-    static let close = "닫기"
-    static let bands = ["낮게", "중간", "높게"]
-    static let rangeHoldResume = "이어서 촬영"
-    static let rangeHoldFinish = "지금까지 사진으로 마치기"
-    static let rangeHoldNewSession = "새 촬영 시작"
+    static var tapObjectHint: String { L("Tap the center of the object") }
+    static var secondTapHint: String { L("Move two or three steps to the side, then tap the center of the object again") }
+    static var readyHint: String { L("The box just needs to surround the object. Move and resize it with your fingers") }
+    static var walkProgress: String { L("Angle moved") }
+    static var showDiagnostics: String { L("Show position diagnostics") }
+    static var twoTapInstead: String { L("Place by tapping the object twice (assist)") }
+    static var floorTapInstead: String { L("Place by tapping the floor") }
+    static var showCube: String { L("Show box") }
+    static var shareTrace: String { L("Share position diagnostics") }
+    static var uniformSize: String { L("Size") }
+    static var advanced: String { L("Fine-tune") }
+    static var advancedTips: String { L("For long objects, set width, height and depth separately. Make the height a little above the top of the object") }
+    static var looseToggle: String { L("Loose box mode (internal test)") }
+    static var looseToggleNote: String { L("Off keeps the current behavior. Turn it on only after the new 3D server is ready") }
+    static var reviewTitle: String { L("Some directions still need photos") }
+    static var reviewMore: String { L("Take more") }
+    static var reviewAsIs: String { L("Create the 3D Object anyway") }
+    static var width: String { L("Width") }
+    static var height: String { L("Height") }
+    static var depth: String { L("Depth") }
+    static var placeAgain: String { L("Place again") }
+    static var beginCapture: String { L("Start capture") }
+    static var finish: String { L("Finish") }
+    static var finishing: String { L("Organizing photos") }
+    static var close: String { L("Close") }
+    static var bands: [String] { [L("Low"), L("Middle"), L("High")] }
+    static var rangeHoldResume: String { L("Continue capturing") }
+    static var rangeHoldFinish: String { L("Finish with these photos") }
+    static var rangeHoldNewSession: String { L("Start a new capture") }
 
-    static func photos(_ n: Int) -> String { "사진 \(n)장" }
+    static func photos(_ n: Int) -> String { L("%@ photos", "\(n)") }
 
     static func defaultName(date: Date) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "M월 d일 HH:mm"
-        return "3D 자산 \(f.string(from: date))"
+        WhikAutoName.object(date)
     }
 }
 
@@ -128,7 +125,7 @@ struct ObjectCaptureFlowView: View {
                 },
                 onHandedOff: { _, _ in
                     summary = nil
-                    appState.gaussianLibraryBanner = "3D 자산 생성을 시작했어요."
+                    appState.gaussianLibraryBanner = L("3D Object creation has started.")
                     appState.rebuildSpaces()
                     appState.ensureGaussianGenerationPolling()
                     onClose()
@@ -285,9 +282,9 @@ struct ObjectSizingPanel: View {
                     sizeSlider(ObjectCaptureCopy.depth, value: session.box.size.z) { session.setSize(depth: $0) }
                     HStack(spacing: 12) {
                         Button { session.rotate(byRadians: -.pi / 36) } label: { Image(systemName: "rotate.left") }
-                            .accessibilityLabel("상자 왼쪽으로 돌리기")
+                            .accessibilityLabel(L("Rotate box left"))
                         Button { session.rotate(byRadians: .pi / 36) } label: { Image(systemName: "rotate.right") }
-                            .accessibilityLabel("상자 오른쪽으로 돌리기")
+                            .accessibilityLabel(L("Rotate box right"))
                         Spacer()
                     }
                     Toggle(ObjectCaptureCopy.showCube, isOn: $session.showsCube)
@@ -438,7 +435,7 @@ struct ObjectCapturingPanel: View {
 
     private var ringsAccessibility: String {
         zip(ObjectCaptureCopy.bands, session.bandFill)
-            .map { "\($0) \(Int(($1 * 100).rounded()))퍼센트" }
+            .map { L("%1$@ %2$@ percent", "\($0)", "\(Int(($1 * 100).rounded()))") }
             .joined(separator: ", ")
     }
 

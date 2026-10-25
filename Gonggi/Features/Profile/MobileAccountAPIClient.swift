@@ -187,7 +187,7 @@ actor MobileAccountAPIClient {
         guard (200..<300).contains(http.statusCode), (json?["ok"] as? Bool) != false else {
             throw MobileAuthAPIError.server(
                 code: (json?["error"] as? String) ?? "ERROR",
-                message: (json?["message"] as? String) ?? "요청에 실패했습니다.",
+                message: (json?["message"] as? String) ?? L("The request failed."),
                 status: http.statusCode
             )
         }

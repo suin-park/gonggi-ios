@@ -16,8 +16,8 @@ final class DirectionCaptureEngine: NSObject {
     private(set) var captured: [DirectionName: DirectionCaptureRecord] = [:]
     private(set) var images: [DirectionName: UIImage] = [:]
     private(set) var currentTarget: DirectionName?
-    private(set) var guideText: String = "공간 기록 시작을 눌러주세요"
-    private(set) var progressText: String = "준비"
+    private(set) var guideText: String = L("Tap Start space capture")
+    private(set) var progressText: String = L("Get ready")
     private(set) var lastMotion = DirectionMotionReading(
         timestamp: 0, relativeYawDeg: 0, yaw0to360: 0,
         pitchDeg: 0, rollDeg: 0, rotationRate: 0, elevationDeg: 0
@@ -71,7 +71,7 @@ final class DirectionCaptureEngine: NSObject {
         useMock = mockMode
         if mockMode {
             phase = .ready
-            guideText = "공간 기록 시작을 눌러주세요"
+            guideText = L("Tap Start space capture")
             notify()
             return
         }
@@ -107,7 +107,7 @@ final class DirectionCaptureEngine: NSObject {
         }
         session.commitConfiguration()
         phase = .ready
-        guideText = "공간 기록 시작을 눌러주세요"
+        guideText = L("Tap Start space capture")
         notify()
     }
 
@@ -146,7 +146,7 @@ final class DirectionCaptureEngine: NSObject {
         do {
             outputDirectory = try CaptureSessionStore.createDirectionCaptureDirectory(sessionId: sessionId)
         } catch {
-            phase = .failed("저장 폴더를 만들 수 없습니다")
+            phase = .failed(L("Can't create the save folder"))
             notify()
             return
         }
@@ -165,7 +165,7 @@ final class DirectionCaptureEngine: NSObject {
         isCapturing = false
         pendingDirection = nil
         phase = .ready
-        guideText = "공간 기록 시작을 눌러주세요"
+        guideText = L("Tap Start space capture")
         notify()
     }
 
@@ -523,7 +523,7 @@ final class DirectionCaptureEngine: NSObject {
         }
         guard let dirURL = outputDirectory else {
             pendingDirection = nil
-            phase = .failed("저장 폴더 없음")
+            phase = .failed(L("No save folder"))
             notify()
             return
         }
@@ -539,7 +539,7 @@ final class DirectionCaptureEngine: NSObject {
             try data.write(to: fileURL, options: .atomic)
         } catch {
             pendingDirection = nil
-            phase = .failed("JPEG 저장 실패: \(direction.rawValue)")
+            phase = .failed(L("JPEG save failed: %@", "\(direction.rawValue)"))
             notify()
             return
         }
@@ -675,7 +675,7 @@ final class DirectionCaptureEngine: NSObject {
                 unwrappedYaw: lastMotion.relativeYawDeg,
                 elevationDeg: lastMotion.elevationDeg
             )
-            progressText = "수평 \(capturedHorizontalCount) / 12"
+            progressText = L("Horizontal %@ / 12", "\(capturedHorizontalCount)")
         case .capturingUpperOblique:
             currentTarget = upperObliqueTargetIndex < DirectionName.upperObliqueOrder.count
                 ? DirectionName.upperObliqueOrder[upperObliqueTargetIndex]
@@ -698,7 +698,7 @@ final class DirectionCaptureEngine: NSObject {
                 tooSteep: tooSteep,
                 inPreferredBand: preferred && obliquePhaseSettled
             )
-            progressText = "위쪽 \(capturedUpperCount) / 4"
+            progressText = L("Up %@ / 4", "\(capturedUpperCount)")
         case .capturingLowerOblique:
             currentTarget = lowerObliqueTargetIndex < DirectionName.lowerObliqueOrder.count
                 ? DirectionName.lowerObliqueOrder[lowerObliqueTargetIndex]
@@ -721,13 +721,13 @@ final class DirectionCaptureEngine: NSObject {
                 tooSteep: tooSteep,
                 inPreferredBand: preferred && obliquePhaseSettled
             )
-            progressText = "아래쪽 \(capturedLowerCount) / 4"
+            progressText = L("Down %@ / 4", "\(capturedLowerCount)")
         case .completed:
             currentTarget = nil
-            guideText = "촬영 완료"
-            progressText = "완료 20 / 20"
+            guideText = L("Capture complete")
+            progressText = L("Done 20 / 20")
         case .ready, .idle:
-            progressText = "준비"
+            progressText = L("Get ready")
         default:
             break
         }
@@ -886,7 +886,7 @@ extension DirectionCaptureEngine: AVCapturePhotoCaptureDelegate {
             pendingDirection = nil
             motionAtPhotoRequest = nil
             pendingNominalYawOverride = nil
-            phase = .failed("사진 촬영 실패: \(error.localizedDescription)")
+            phase = .failed(L("Photo capture failed: %@", "\(error.localizedDescription)"))
             notify()
             return
         }

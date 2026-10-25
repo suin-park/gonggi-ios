@@ -126,7 +126,7 @@ final class CaptureFramePipeline {
             fastMotionSegments: 3,
             lowTextureWarnings: quality.lowTextureScore > 0.5 ? 2 : 0,
             areasNeedingRevisit: max(revisit, 2),
-            suggestedName: "새 공간 \(DateFormatter.captureName.string(from: endedAt))",
+            suggestedName: WhikAutoName.space(endedAt),
             avgAngularVelocity: quality.angularVelocity,
             maxAngularVelocity: quality.angularVelocity * 1.4,
             revisitScore: 0.4,
@@ -153,11 +153,4 @@ final class CaptureFramePipeline {
     }
 }
 
-private extension DateFormatter {
-    static let captureName: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "M월 d일"
-        return f
-    }()
-}
+

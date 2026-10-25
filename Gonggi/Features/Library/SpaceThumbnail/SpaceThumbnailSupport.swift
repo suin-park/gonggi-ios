@@ -115,6 +115,12 @@ enum SpaceThumbnailSource: Equatable {
 /// Chooses local vs remote only when local revision stamp matches the current server result revision.
 enum SpaceThumbnailSourceResolver {
     static func resolve(space: SpaceRecord) -> SpaceThumbnailSource {
+        // 3D results carry their saved thumbnail as a file URL (GaussianGenerationStore.asSpaceRecords).
+        // `remoteImageURL(for:)` only accepts http(s), so these were dropped and every 3D card showed an icon.
+        if let s = space.remoteImageURL, let url = URL(string: s), url.isFileURL,
+           FileManager.default.fileExists(atPath: url.path) {
+            return .localFile(url)
+        }
         let remote = SpaceThumbnailImageURL.remoteImageURL(for: space)
         let serverToken = SpaceThumbnailCacheKey.serverRevisionToken(for: space)
 

@@ -40,8 +40,8 @@ final class StoreShelfTests: XCTestCase {
         // Existing sections are untouched.
         XCTAssertEqual(RecordProductOption.visible(productCaptureAvailable: true), [.photoTo3D, .productCapture])
         XCTAssertEqual(RecordSpaceOption.visible(walkableVisible: true), [.space360, .walkable])
-        XCTAssertEqual(RecordHomeCopy.productSection, "3D 자산")
-        XCTAssertEqual(RecordHomeCopy.spaceSection, "공간")
+        XCTAssertEqual(RecordHomeCopy.productSection, L("3D Objects"))
+        XCTAssertEqual(RecordHomeCopy.spaceSection, L("Space"))
     }
 
     // MARK: Flags
@@ -58,7 +58,7 @@ final class StoreShelfTests: XCTestCase {
         XCTAssertFalse(StoreShelfFeatureFlags.productRecognitionAvailable)
         StoreShelfFeatureFlags.setOverrideForTesting(menu: true, markers: true)
         XCTAssertFalse(StoreShelfFeatureFlags.productRecognitionAvailable, "no override can turn recognition on")
-        XCTAssertTrue(StoreShelfCopy.recognitionUnavailable.contains("준비 중"))
+        XCTAssertTrue(StoreShelfCopy.recognitionUnavailable.contains(L("Preparing")))
         XCTAssertTrue(StoreShelfCopy.testMarkerNotice.contains("실제 제품 위치가 아니에요"))
     }
 

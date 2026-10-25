@@ -101,11 +101,11 @@ enum RepairIntentHint: String, CaseIterable, Identifiable, Equatable {
 
     var labelKo: String {
         switch self {
-        case .preserveText: return "글자 보존"
-        case .fixGeometry: return "구조 수정"
-        case .fillGap: return "빈 곳 채우기"
-        case .removeObject: return "객체 제거"
-        case .generalRefine: return "일반 다듬기"
+        case .preserveText: return L("Keep text")
+        case .fixGeometry: return L("Fix structure")
+        case .fillGap: return L("Fill gaps")
+        case .removeObject: return L("Remove object")
+        case .generalRefine: return L("General touch-up")
         }
     }
 }

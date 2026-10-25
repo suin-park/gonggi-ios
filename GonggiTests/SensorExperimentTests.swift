@@ -19,7 +19,7 @@ final class SensorExperimentTests: XCTestCase {
     }
 
     func testRecordHomeCopyHasExperimentRow() {
-        XCTAssertEqual(RecordHomeCopy.experimentSection, "실험")
+        XCTAssertEqual(RecordHomeCopy.experimentSection, L("Experiments"))
         XCTAssertFalse(RecordHomeCopy.sensorExperiment.line.contains("\n"))
     }
 

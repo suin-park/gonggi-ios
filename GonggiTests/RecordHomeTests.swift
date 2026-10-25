@@ -7,19 +7,19 @@ final class RecordHomeTests: XCTestCase {
                            RecordHomeCopy.space360, RecordHomeCopy.walkableSpace]
 
     func testCopy() {
-        XCTAssertEqual(RecordHomeCopy.title, "기록하기")
-        XCTAssertEqual(RecordHomeCopy.productSection, "3D 자산")
-        XCTAssertEqual(RecordHomeCopy.spaceSection, "공간")
-        XCTAssertEqual(RecordHomeCopy.photoTo3D.title, "사진으로 3D 만들기")
-        XCTAssertEqual(RecordHomeCopy.photoTo3D.line, "사진 한 장으로 입체 모습을 만들어요")
-        XCTAssertEqual(RecordHomeCopy.space360.title, "360 공간")
-        XCTAssertEqual(RecordHomeCopy.space360.line, "한 자리에서 주변을 둘러봐요")
-        XCTAssertEqual(RecordHomeCopy.walkableSpace.title, "걸어보는 공간")
-        XCTAssertEqual(RecordHomeCopy.walkableSpace.line, "공간 안을 이동하며 볼 수 있어요")
+        XCTAssertEqual(RecordHomeCopy.title, L("Capture"))
+        XCTAssertEqual(RecordHomeCopy.productSection, L("3D Objects"))
+        XCTAssertEqual(RecordHomeCopy.spaceSection, L("Space"))
+        XCTAssertEqual(RecordHomeCopy.photoTo3D.title, L("Make 3D from a photo"))
+        XCTAssertEqual(RecordHomeCopy.photoTo3D.line, L("Make a 3D shape from a single photo"))
+        XCTAssertEqual(RecordHomeCopy.space360.title, L("360 space"))
+        XCTAssertEqual(RecordHomeCopy.space360.line, L("Look around from one spot"))
+        XCTAssertEqual(RecordHomeCopy.walkableSpace.title, L("Walkable space"))
+        XCTAssertEqual(RecordHomeCopy.walkableSpace.line, L("Move around inside the space"))
         for c in choices {
             XCTAssertFalse(c.line.contains("\n"), c.title)
             XCTAssertLessThanOrEqual(c.line.count, 24, "\(c.title): one short line")
-            for word in ["3DGS", "Gaussian", "Lat Long", "LatLong", "Meshy", "파노라마", "MCMC", "베타", "BETA", "Beta"] {
+            for word in ["3DGS", "Gaussian", "Lat Long", "LatLong", "Meshy", L("Panorama"), "MCMC", "베타", "BETA", "Beta"] {
                 XCTAssertFalse((c.title + c.line).contains(word), "\(c.title): \(word)")
             }
         }

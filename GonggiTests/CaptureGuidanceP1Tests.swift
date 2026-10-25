@@ -259,7 +259,7 @@ final class CaptureGuidanceP1Tests: XCTestCase {
             currentSector: .left
         )
         XCTAssertEqual(progress.nextCoachingFocus?.sector, .front)
-        XCTAssertEqual(progress.focusUserLabel, "정면")
+        XCTAssertEqual(progress.focusUserLabel, L("Front"))
     }
 
     // MARK: - Astra plan normalize

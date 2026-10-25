@@ -97,7 +97,7 @@ actor SpaceLinkStore {
         case .success(let u):
             normalizedURL = u
         case .failure:
-            throw SpaceLinkStoreError.server(status: 400, code: "INVALID_URL", message: "웹 주소가 올바르지 않아요")
+            throw SpaceLinkStoreError.server(status: 400, code: "INVALID_URL", message: L("The web address isn't valid"))
         }
         let body = CreateBody(
             targetSpaceId: targetSpaceId,
@@ -217,7 +217,7 @@ actor SpaceLinkStore {
                         body.encodeExternalUrlNull = true
                     }
                 case .failure:
-                    throw SpaceLinkStoreError.server(status: 400, code: "INVALID_URL", message: "웹 주소가 올바르지 않아요")
+                    throw SpaceLinkStoreError.server(status: 400, code: "INVALID_URL", message: L("The web address isn't valid"))
                 }
             } else {
                 body.encodeExternalUrlNull = true

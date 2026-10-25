@@ -485,45 +485,45 @@ private extension JSONEncoder {
 /// User-facing mapping for SpaceGenerationError (never show raw QUALITY_PROFILE_INVALID).
 enum SpaceGenerationErrorPresenter {
     static let genericCreateFailure =
-        "3D 공간 생성을 시작하지 못했어요.\n잠시 후 다시 시도해주세요."
+        L("Couldn't start creating the 3D Space.\nPlease try again in a moment.")
 
     static let uploadFailure =
-        "업로드에 실패했어요.\n네트워크 연결이 끊겼을 수 있어요. Wi‑Fi에서 다시 시도해 주세요."
+        L("Upload failed.\nThe connection may have dropped. Try again on Wi‑Fi.")
 
     static let packageMissingUnrecoverable =
-        "기기에서 원본 촬영 패키지를 찾을 수 없어요.\n같은 촬영으로 다시 시도할 수 없습니다. 새로 촬영해 주세요."
+        L("The original capture isn't on this device anymore.\nIt can't be retried. Please capture again.")
 
     static let uploadContinuesInBackground =
-        "업로드는 백그라운드에서 계속되고 있어요.\n끝나면 3D 생성이 자동으로 시작돼요. 진행 상황은 보관함에서 볼 수 있어요."
+        L("The upload continues in the background.\n3D creation starts automatically when it finishes. Track it in Library.")
 
     static let uploadCancelled =
-        "업로드가 중단됐어요.\n원본 촬영 데이터는 기기에 남아 있어요. 보관함에서 같은 촬영으로 다시 시도할 수 있어요."
+        L("The upload stopped.\nThe original capture is still on this device. You can retry it from Library.")
 
     /// Server error codes of the 3D 공간 기록 path → user copy (never raw codes / tokens).
     static func message(forServerCode code: String) -> String? {
         switch code {
         case "OBJECT_INIT_POINTS_INSUFFICIENT", "OBJECT_NO_SPARSE_POINTS":
-            return "선택 범위 안에 학습에 필요한 점이 부족해요.\n상자가 물체를 감싸도록 다시 촬영해 주세요. 원본은 기기에 보관돼 있어요."
+            return L("Not enough points inside the box.\nCapture again so the box surrounds the object. The original stays on this device.")
         case "OBJECT_PACKAGE_INVALID":
-            return "3D 자산 촬영 정보를 읽지 못했어요.\n보관함에서 다시 시도하거나 새로 촬영해 주세요."
+            return L("Couldn't read the 3D Object capture.\nRetry from Library or capture again.")
         case "NATIVE_UNAVAILABLE":
-            return "3D 공간 생성 서버가 아직 준비되지 않았어요.\n촬영 원본은 기기에 보관돼 있어요. 잠시 후 보관함에서 다시 시도해 주세요."
+            return L("The 3D creation server isn't ready yet.\nThe original capture stays on this device. Try again from Library in a moment.")
         case "RUNPOD_SUBMIT_FAILED":
-            return "3D 공간 생성 요청을 서버에 전달하지 못했어요.\n촬영 원본은 기기에 보관돼 있어요. 잠시 후 보관함에서 다시 시도해 주세요."
+            return L("Couldn't send the 3D creation request.\nThe original capture stays on this device. Try again from Library in a moment.")
         case "JOB_LIMIT_ACTIVE":
-            return "이미 만들고 있는 3D 공간이 있어요.\n완료된 뒤 다시 시도해 주세요. 촬영 원본은 기기에 보관돼 있어요."
+            return L("A 3D Space is already being created.\nTry again when it's done. The original capture stays on this device.")
         case "JOB_LIMIT_DAILY":
-            return "오늘 만들 수 있는 3D 공간 수를 모두 사용했어요.\n내일 다시 시도해 주세요. 촬영 원본은 기기에 보관돼 있어요."
+            return L("You've reached today's 3D Space limit.\nTry again tomorrow. The original capture stays on this device.")
         case "RETRY_LIMIT":
-            return "이 촬영으로 다시 시도할 수 있는 횟수를 모두 사용했어요.\n새로 촬영해 주세요."
+            return L("No retries left for this capture.\nPlease capture again.")
         case "ORG_REQUIRED":
-            return "계정에 조직 정보가 없어 3D 공간을 만들 수 없어요.\n도움말 및 문의에서 알려 주세요."
+            return L("Your account has no organization, so a 3D Space can't be created.\nPlease contact us from Help.")
         case "VIDEO_GAUSSIAN_DISABLED", "VIDEO_GAUSSIAN_CREATE_FORBIDDEN":
-            return "지금은 3D 공간 기록을 이용할 수 없어요.\n잠시 후 다시 시도해 주세요. 촬영 원본은 기기에 보관돼 있어요."
+            return L("3D Space isn't available right now.\nTry again in a moment. The original capture stays on this device.")
         case "PACKAGE_TOO_LARGE", "VIDEO_TOO_LARGE":
-            return "촬영 데이터가 너무 커서 올릴 수 없어요.\n조금 더 짧게 다시 촬영해 주세요."
+            return L("The capture is too large to upload.\nPlease capture a little shorter.")
         case "JOB_EXPIRED":
-            return "생성 대기 시간이 지나 작업이 만료됐어요.\n보관함에서 같은 촬영으로 다시 시도해 주세요."
+            return L("The job expired while waiting.\nRetry the same capture from Library.")
         default:
             return nil
         }
@@ -536,9 +536,9 @@ enum SpaceGenerationErrorPresenter {
         if let gen = error as? SpaceGenerationError {
             switch gen {
             case .networkUnavailable:
-                return "네트워크에 연결할 수 없습니다."
+                return L("Can't connect to the network.")
             case .unauthorized:
-                return "로그인이 필요합니다."
+                return L("Please sign in.")
             case .jobNotFound:
                 return genericCreateFailure
             case .uploadFailed:

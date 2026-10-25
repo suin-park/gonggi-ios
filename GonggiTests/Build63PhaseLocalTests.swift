@@ -172,7 +172,7 @@ final class Build63PhaseLocalTests: XCTestCase {
         completeHorizontal(engine)
         engine.ingestMotionSample(unwrappedYaw: -20, elevationDeg: 67, timestamp: 10)
         XCTAssertNil(engine.captured[.upFrontRight])
-        XCTAssertEqual(engine.guideText, "조금 덜 위로 들어주세요")
+        XCTAssertEqual(engine.guideText, L("Raise it a little less"))
     }
 
     /// G: lower −47 preferred → capture OK.
@@ -206,7 +206,7 @@ final class Build63PhaseLocalTests: XCTestCase {
 
         engine.ingestMotionSample(unwrappedYaw: -300, elevationDeg: -67, timestamp: t + 1)
         XCTAssertNil(engine.captured[.downFrontRight])
-        XCTAssertEqual(engine.guideText, "조금 덜 아래로 내려주세요")
+        XCTAssertEqual(engine.guideText, L("Lower it a little less"))
     }
 
     /// I: phase-local orbit ignores global multi-revolution magnitude.
@@ -245,19 +245,19 @@ final class Build63PhaseLocalTests: XCTestCase {
             DirectionCaptureGuide.upperObliqueGuideMessage(
                 warnFast: false, waitingForElevation: true
             ),
-            "벽과 하늘(천장) 경계가 보이게"
+            L("Show where the wall meets the sky (ceiling)")
         )
         XCTAssertEqual(
             DirectionCaptureGuide.upperObliqueGuideMessage(
                 warnFast: false, waitingForElevation: false, tooSteep: true
             ),
-            "조금 덜 위로 들어주세요"
+            L("Raise it a little less")
         )
         XCTAssertEqual(
             DirectionCaptureGuide.lowerObliqueGuideMessage(
                 warnFast: false, waitingForElevation: true
             ),
-            "바닥과 벽 아래가 함께 보이게"
+            L("Show the floor and the bottom of the wall")
         )
         XCTAssertTrue(DirectionCaptureGuide.isGravityUpright(gravityY: -0.8))
         XCTAssertFalse(DirectionCaptureGuide.isGravityUpright(gravityY: 0.8))

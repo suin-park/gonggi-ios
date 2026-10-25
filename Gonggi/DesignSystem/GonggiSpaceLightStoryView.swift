@@ -342,17 +342,17 @@ enum GonggiSpaceLightStoryMath {
 /// Four storyboard frames for visual review contact sheets.
 struct GonggiSpaceLightStoryboardView: View {
     private let phases: [(label: String, phase: Double)] = [
-        ("시작", 0.06),
-        ("선이 그려짐", 0.32),
-        ("공간 완성", 0.70),
-        ("잔상", 0.92),
+        (L("Start"), 0.06),
+        (L("Lines appear"), 0.32),
+        (L("Space complete"), 0.70),
+        (L("Afterimage"), 0.92),
     ]
 
     var body: some View {
         ZStack {
             GonggiAmbientBackground()
             VStack(spacing: GonggiSpacing.md) {
-                Text("빛으로 그려지는 공간")
+                Text(L("A space drawn in light"))
                     .font(GonggiTypography.headline(18))
                     .foregroundStyle(GonggiColors.textPrimary)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: GonggiSpacing.md) {

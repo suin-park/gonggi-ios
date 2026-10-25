@@ -8,7 +8,7 @@ final class PublicSpacesTests: XCTestCase {
             PublicSpacesPolicy.pickerSubtitle(for: .privateSpace),
             "나만 이 공간을 볼 수 있어요."
         )
-        XCTAssertEqual(PublicSpacesPolicy.pickerTitle(for: .unlisted), "링크 공유")
+        XCTAssertEqual(PublicSpacesPolicy.pickerTitle(for: .unlisted), L("Share link"))
         XCTAssertEqual(
             PublicSpacesPolicy.pickerSubtitle(for: .unlisted),
             "링크를 받은 사람이 공간을 볼 수 있어요."
@@ -41,9 +41,9 @@ final class PublicSpacesTests: XCTestCase {
         XCTAssertTrue(body.contains("공간 이미지와 오디오, 핫스팟, 배치된 3D 자산을 다른 사용자가 볼 수 있어요."))
         XCTAssertTrue(body.contains("사람의 얼굴이나 목소리, 주소와 개인정보가 포함되지 않았는지 확인해주세요."))
         XCTAssertTrue(body.contains(PublicSpacesPolicy.publishedItemsSummary))
-        XCTAssertTrue(body.contains("공간 오디오"))
+        XCTAssertTrue(body.contains(L("Space audio")))
         XCTAssertTrue(body.contains("좋아요 수"))
-        XCTAssertTrue(body.contains("댓글"))
+        XCTAssertTrue(body.contains(L("Comments")))
         XCTAssertFalse(body.contains("공개되지 않는 항목"))
     }
 
@@ -331,7 +331,7 @@ final class PublicSpacesTests: XCTestCase {
     func testVisibilitySaveFailedCopyAndUnsafeSanitizer() {
         XCTAssertEqual(
             PublicSpacesPolicy.visibilitySaveFailedMessage,
-            "공개 설정을 저장하지 못했어요. 다시 시도해주세요."
+            L("Couldn't save the visibility setting. Please try again.")
         )
         XCTAssertTrue(PublicSpacesAPIMessageSanitizer.isUnsafeServerMessage("PrismaClientKnownRequestError"))
         XCTAssertEqual(
@@ -402,7 +402,7 @@ final class PublicSpacesTests: XCTestCase {
     func testParseCommentDTO() {
         let row: [String: Any] = [
             "id": "c1",
-            "body": "좋아요",
+            "body": L("Likes"),
             "createdAt": "2026-09-10T00:00:00Z",
             "editedAt": "2026-09-10T01:00:00Z",
             "authorDisplayName": "neo",

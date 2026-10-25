@@ -57,9 +57,9 @@ struct ThreeDSpaceRecordFlowView: View {
             case .introStep1:
                 stepIntro(
                     stepLabel: "1 / 2",
-                    title: "공간을 먼저 확인할게요",
-                    body: "여러 방향을 촬영해 공간을 파악한 뒤, 이어서 입체 기록을 진행해요.",
-                    primaryTitle: "시작하기",
+                    title: L("Let's check the space first"),
+                    body: L("Capture several directions to understand the space, then continue to the 3D capture."),
+                    primaryTitle: L("Get started"),
                     primaryIcon: "camera.aperture",
                     showsBack: true,
                     onBack: { phase = .chooseEntry }
@@ -73,8 +73,8 @@ struct ThreeDSpaceRecordFlowView: View {
 
             case .preparingSpace:
                 waitingPanel(
-                    title: "공간을 준비하고 있어요",
-                    detail: "촬영본은 저장됐어요. 준비가 끝나면 입체 기록으로 이어집니다.",
+                    title: L("Preparing the space"),
+                    detail: L("Your capture is saved. The 3D capture continues when it's ready."),
                     allowsLeaveToHome: true,
                     recovery: nil
                 )
@@ -87,13 +87,13 @@ struct ThreeDSpaceRecordFlowView: View {
 
             case .introStep2(_, let plan, let sourceLatLong):
                 stepIntro(
-                    stepLabel: sourceLatLong == nil ? "바로 3D" : "2 / 2",
-                    title: "촬영 준비가 완료됐어요.",
+                    stepLabel: sourceLatLong == nil ? L("Direct 3D") : "2 / 2",
+                    title: L("Ready to capture."),
                     body: sourceLatLong == nil
-                        ? "공간 분석 없이 기본 안내로 바로 촬영을 시작해요."
-                        : (plan.globalTips.first.map(AdvancedCaptureCopy.withoutMiddleDot)
-                            ?? "공간에 맞는 촬영 안내가 준비되었습니다."),
-                    primaryTitle: "입체 기록 시작",
+                        ? L("Start capturing right away with the standard guide, without space analysis.")
+                        : (AdvancedCaptureCopy.serverCopy(plan.globalTips.first)
+                            ?? L("A capture guide for this space is ready.")),
+                    primaryTitle: L("Start 3D capture"),
                     primaryIcon: "figure.walk",
                     showsBack: false,
                     onBack: nil
@@ -132,12 +132,12 @@ struct ThreeDSpaceRecordFlowView: View {
                         .foregroundStyle(GonggiColors.textSecondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, GonggiSpacing.lg)
-                    PrimaryButton(title: "다시 촬영", icon: "camera.aperture") {
+                    PrimaryButton(title: L("Capture again"), icon: "camera.aperture") {
                         waitTask?.cancel()
                         startDirect3DCapture()
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
-                    Text("기존 360° 공간은 그대로 보관함에 남아 있어요.")
+                    Text(L("Your existing 360° space stays in Library."))
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textTertiary)
                         .multilineTextAlignment(.center)
@@ -195,7 +195,7 @@ struct ThreeDSpaceRecordFlowView: View {
 
     private var chooseEntryPanel: some View {
         VStack(spacing: 0) {
-            flowChrome(title: "3D 공간 기록", onBack: nil, onClose: {
+            flowChrome(title: L("3D Space capture"), onBack: nil, onClose: {
                 waitTask?.cancel()
                 onClose()
             })
@@ -203,15 +203,15 @@ struct ThreeDSpaceRecordFlowView: View {
             if Self.showLegacyEntryChoices {
                 ScrollView {
                     VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                        Text("어떻게 시작할까요?")
+                        Text(L("How do you want to start?"))
                             .font(GonggiTypography.body(16))
                             .foregroundStyle(GonggiColors.textSecondary)
                             .padding(.top, GonggiSpacing.md)
 
                         entryChoiceCard(
                             icon: "rectangle.stack",
-                            title: "기존 공간에서 시작",
-                            subtitle: "기록해둔 360° 공간을\n3D 공간으로 확장해요"
+                            title: L("Start from an existing space"),
+                            subtitle: L("Turn a saved 360° space\ninto a 3D Space")
                         ) {
                             GonggiHaptics.medium()
                             phase = .pickExisting
@@ -219,8 +219,8 @@ struct ThreeDSpaceRecordFlowView: View {
 
                         entryChoiceCard(
                             icon: "camera.aperture",
-                            title: "새 공간 기록",
-                            subtitle: "공간을 먼저 확인한 뒤\n맞춤 안내로 3D를 기록해요"
+                            title: L("New space"),
+                            subtitle: L("Check the space first,\nthen capture 3D with a tailored guide")
                         ) {
                             GonggiHaptics.medium()
                             phase = .introStep1
@@ -228,8 +228,8 @@ struct ThreeDSpaceRecordFlowView: View {
 
                         entryChoiceCard(
                             icon: "figure.walk",
-                            title: "바로 3D 촬영",
-                            subtitle: "공간 분석 없이\n바로 3D 촬영을 시작해요"
+                            title: L("Capture 3D now"),
+                            subtitle: L("Start a 3D capture right away\nwithout space analysis")
                         ) {
                             GonggiHaptics.medium()
                             startDirect3DCapture()
@@ -242,7 +242,7 @@ struct ThreeDSpaceRecordFlowView: View {
                 Spacer()
                 ProgressView()
                     .tint(GonggiColors.accentCyan)
-                Text("촬영을 준비하고 있어요")
+                Text(L("Preparing the capture"))
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .padding(.top, GonggiSpacing.sm)
@@ -254,7 +254,7 @@ struct ThreeDSpaceRecordFlowView: View {
     private var pickExistingPanel: some View {
         VStack(spacing: 0) {
             flowChrome(
-                title: "3D로 확장할 공간 선택",
+                title: L("Choose a space to extend to 3D"),
                 onBack: {
                     waitTask?.cancel()
                     phase = .chooseEntry
@@ -278,7 +278,7 @@ struct ThreeDSpaceRecordFlowView: View {
                                 existingSpaceCard(space)
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("\(space.name), \(space.capturedAt.formatted(date: .abbreviated, time: .omitted))")
+                            .accessibilityLabel("\(space.name), \(WhikDate.short(space.capturedAt))")
                         }
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
@@ -295,14 +295,14 @@ struct ThreeDSpaceRecordFlowView: View {
             Image(systemName: "photo.on.rectangle.angled")
                 .font(.system(size: 44, weight: .light))
                 .foregroundStyle(GonggiColors.textTertiary)
-            Text("아직 사용할 수 있는 360° 공간이 없어요.")
+            Text(L("You don't have a 360° space to use yet."))
                 .font(GonggiTypography.title(20))
                 .foregroundStyle(GonggiColors.textPrimary)
                 .multilineTextAlignment(.center)
-            Text("먼저 공간을 기록해주세요.")
+            Text(L("Capture a space first."))
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
-            PrimaryButton(title: "새 공간 기록", icon: "camera.aperture") {
+            PrimaryButton(title: L("New space"), icon: "camera.aperture") {
                 GonggiHaptics.medium()
                 phase = .introStep1
             }
@@ -326,7 +326,7 @@ struct ThreeDSpaceRecordFlowView: View {
                         .font(GonggiTypography.headline(17))
                         .foregroundStyle(GonggiColors.textPrimary)
                         .lineLimit(2)
-                    Text(space.capturedAt.formatted(date: .abbreviated, time: .omitted))
+                    Text(WhikDate.short(space.capturedAt))
                         .font(GonggiTypography.caption(12))
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
@@ -406,14 +406,14 @@ struct ThreeDSpaceRecordFlowView: View {
 
     private func analyzingCopy(elapsed: TimeInterval) -> (title: String, detail: String) {
         if elapsed < 15 {
-            return ("공간을 확인하고 있어요", "3D 촬영 경로를 준비하고 있습니다.")
+            return (L("Checking the space"), L("Preparing the 3D capture path."))
         }
         if elapsed < ThreeDExpansionSupport.PrepareConfig.softTimeoutSec {
-            return ("촬영 경로를 준비하고 있어요", "조금만 기다려 주세요.")
+            return (L("Preparing the capture path"), L("Just a moment."))
         }
         return (
-            "분석이 예상보다 오래 걸리고 있어요.",
-            "다시 시도하거나, 기본 안내로 바로 촬영을 시작할 수 있어요."
+            L("Analysis is taking longer than expected."),
+            L("Try again, or start capturing now with the standard guide.")
         )
     }
 
@@ -439,16 +439,16 @@ struct ThreeDSpaceRecordFlowView: View {
                 .foregroundStyle(GonggiColors.textPrimary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, GonggiSpacing.lg)
-            Text("기본 안내로도 입체 기록을 시작할 수 있어요.")
+            Text(L("You can also start the 3D capture with the standard guide."))
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, GonggiSpacing.lg)
-            PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
+            PrimaryButton(title: L("Try again"), icon: "arrow.clockwise") {
                 retryAnalysis(sessionId: sessionId)
             }
             .padding(.horizontal, GonggiSpacing.lg)
-            SecondaryButton(title: "바로 3D 촬영", icon: "figure.walk") {
+            SecondaryButton(title: L("Capture 3D now"), icon: "figure.walk") {
                 enterWithDefaultPlan(sessionId: sessionId)
             }
             .padding(.horizontal, GonggiSpacing.lg)
@@ -469,7 +469,7 @@ struct ThreeDSpaceRecordFlowView: View {
                         .background(GonggiColors.surfaceElevated)
                         .clipShape(Circle())
                 }
-                .accessibilityLabel("뒤로")
+                .accessibilityLabel(L("Back"))
             } else {
                 Color.clear.frame(width: 40, height: 40)
             }
@@ -486,7 +486,7 @@ struct ThreeDSpaceRecordFlowView: View {
                     .background(GonggiColors.surfaceElevated)
                     .clipShape(Circle())
             }
-            .accessibilityLabel("닫기")
+            .accessibilityLabel(L("Close"))
         }
         .padding(.horizontal, GonggiSpacing.lg)
         .padding(.top, GonggiSpacing.md)
@@ -565,9 +565,9 @@ struct ThreeDSpaceRecordFlowView: View {
                 .padding(.horizontal, GonggiSpacing.lg)
 
             if let recovery {
-                PrimaryButton(title: "다시 시도", icon: "arrow.clockwise", action: recovery.onRetry)
+                PrimaryButton(title: L("Try again"), icon: "arrow.clockwise", action: recovery.onRetry)
                     .padding(.horizontal, GonggiSpacing.lg)
-                SecondaryButton(title: "바로 3D 촬영", icon: "figure.walk", action: recovery.onSkipToDefault)
+                SecondaryButton(title: L("Capture 3D now"), icon: "figure.walk", action: recovery.onSkipToDefault)
                     .padding(.horizontal, GonggiSpacing.lg)
             }
             Spacer()
@@ -719,7 +719,7 @@ struct ThreeDSpaceRecordFlowView: View {
             let spaceReady = await waitUntilSpaceReady(sessionId: sessionId)
             guard !Task.isCancelled else { return }
             guard spaceReady else {
-                phase = .failed("공간 준비를 마치지 못했어요.")
+                phase = .failed(L("Couldn't finish preparing the space."))
                 return
             }
 

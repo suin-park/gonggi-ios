@@ -98,8 +98,8 @@ final class ContinuityAnchorThumbnailStore: @unchecked Sendable {
             visible: visible,
             signedYawDeg: visible ? lastSignedYawDeg : nil,
             proximity: lastProximity,
-            title: "마지막 연결 화면",
-            guidance: "이 장면이 다시 보이도록 천천히 움직여주세요"
+            title: L("Last connected view"),
+            guidance: L("Move slowly until this view appears again")
         )
     }
 

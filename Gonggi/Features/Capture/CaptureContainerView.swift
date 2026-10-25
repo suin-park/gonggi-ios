@@ -28,32 +28,32 @@ enum CaptureMode: String, Identifiable {
 
     var title: String {
         switch self {
-        case .directionCapture: return "360° 공간 기록"
-        case .panoramaCapture: return "파노라마 기록"
-        case .spaceScan3DGS: return "3D 공간 스캔 (DEBUG)"
-        case .quick360Experimental: return "실험, 360 공간 기록"
-        case .productObjectCapture: return "3D 자산 만들기"
+        case .directionCapture: return L("360° space capture")
+        case .panoramaCapture: return L("Panorama capture")
+        case .spaceScan3DGS: return L("3D space scan (DEBUG)")
+        case .quick360Experimental: return L("Experiment, 360 space capture")
+        case .productObjectCapture: return L("Create a 3D Object")
         }
     }
 
     var subtitle: String {
         switch self {
         case .directionCapture:
-            return "한 자리에서 공간을 촬영해 빠르게 둘러볼 수 있어요."
+            return L("Capture a space from one spot and look around quickly.")
         case .panoramaCapture:
-            return "제자리에서 천천히 회전하며 수평 파노라마를 만들어요"
+            return L("Turn slowly in place to make a horizontal panorama")
         case .spaceScan3DGS:
-            return "DEBUG: spaceScan3DGS 직접 진입 (P0.5 파이프라인)"
+            return L("DEBUG: open spaceScan3DGS directly (P0.5 pipeline)")
         case .quick360Experimental:
-            return "실험용 full-sphere / OpenCV A/B (기본 경로 아님)"
+            return L("Experimental full-sphere / OpenCV A/B (not the default path)")
         case .productObjectCapture:
-            return "움직이지 않는 물체 주위를 걸으며 촬영해요"
+            return L("Walk around an object that stays still while capturing")
         }
     }
 
     var secondaryCaption: String? {
         switch self {
-        case .spaceScan3DGS: return "내부 전용"
+        case .spaceScan3DGS: return L("Internal only")
         default: return nil
         }
     }
@@ -204,11 +204,11 @@ struct CaptureContainerView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
-        .alert("걸어보는 공간", isPresented: Binding(
+        .alert(L("Walkable space"), isPresented: Binding(
             get: { walkableAlert != nil },
             set: { if !$0 { walkableAlert = nil } }
         )) {
-            Button("확인", role: .cancel) { walkableAlert = nil }
+            Button(L("OK"), role: .cancel) { walkableAlert = nil }
         } message: {
             Text(walkableAlert ?? "")
         }
@@ -333,7 +333,7 @@ struct CaptureContainerView: View {
             Button {
                 showDebugModes.toggle()
             } label: {
-                Text(showDebugModes ? "개발자 모드 숨기기" : "개발자 모드")
+                Text(showDebugModes ? L("Hide developer mode") : L("Developer mode"))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
@@ -366,7 +366,7 @@ struct CaptureContainerView: View {
                             .font(GonggiTypography.body(17))
                             .foregroundStyle(GonggiColors.textPrimary)
                         if mode.isExperimental {
-                            Text("실험")
+                            Text(L("Experiments"))
                                 .font(GonggiTypography.caption(10))
                                 .foregroundStyle(GonggiColors.warning)
                                 .padding(.horizontal, 6)
@@ -425,7 +425,7 @@ struct CaptureFlowView: View {
     private var astraSegmentInstruction: String? {
         guard let plan = guidePlan, !plan.segments.isEmpty else { return nil }
         let idx = min(max(0, viewModel.guidedSegmentIndex), plan.segments.count - 1)
-        return AdvancedCaptureCopy.withoutMiddleDot(plan.segments[idx].instructionKo)
+        return AdvancedCaptureCopy.serverCopy(plan.segments[idx].instructionKo)
     }
 
     private func finishCapture(finishedBy: CaptureFinishedBy) {
@@ -459,7 +459,7 @@ struct CaptureFlowView: View {
                 VStack(spacing: GonggiSpacing.sm) {
                     ProgressView()
                         .tint(GonggiColors.accentCyan)
-                    Text("카메라 준비 중…")
+                    Text(L("Preparing the camera…"))
                         .font(GonggiTypography.caption(14))
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
@@ -507,7 +507,7 @@ struct CaptureFlowView: View {
                 VStack(spacing: GonggiSpacing.sm) {
                     ProgressView()
                         .tint(GonggiColors.accentCyan)
-                    Text(viewModel.isReconstructingTexturedMesh ? "공간 mesh 재구성 중…" : "촬영 마무리 중…")
+                    Text(viewModel.isReconstructingTexturedMesh ? L("Rebuilding the space mesh…") : L("Finishing the capture…"))
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
@@ -532,11 +532,11 @@ struct CaptureFlowView: View {
             titleVisibility: .visible
         ) {
             if viewModel.guidance.quality.candidateSafetyCapReached {
-                Button("촬영 종료") { finishCapture(finishedBy: .manualEarlyFinish) }
-                Button("닫기", role: .cancel) {}
+                Button(L("End capture")) { finishCapture(finishedBy: .manualEarlyFinish) }
+                Button(L("Close"), role: .cancel) {}
             } else {
-                Button("추가 촬영", role: .cancel) {}
-                Button("이대로 완료") { finishCapture(finishedBy: .manualEarlyFinish) }
+                Button(L("Capture more"), role: .cancel) {}
+                Button(L("Finish as is")) { finishCapture(finishedBy: .manualEarlyFinish) }
             }
         }
         .sheet(isPresented: $showSummary) {
@@ -589,7 +589,7 @@ struct CaptureFlowView: View {
                         }
                         showProcessing = false
                         appState.pendingCapture = nil
-                        appState.gaussianLibraryBanner = "3D 공간 생성을 시작했어요."
+                        appState.gaussianLibraryBanner = L("3D Space creation has started.")
                         appState.rebuildSpaces()
                         appState.ensureGaussianGenerationPolling()
                         onClose()
@@ -626,13 +626,13 @@ private struct HighResStillBadge: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "camera.aperture")
-            Text("고화질 · 멈추면 촬영 \(writer.savedCount)장")
+            Text(L("High quality · stop to capture · %@", "\(writer.savedCount)"))
         }
         .font(GonggiTypography.caption(12))
         .foregroundStyle(.white)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(Capsule().fill(Color.black.opacity(0.55)))
-        .accessibilityLabel("고화질 촬영 켜짐, 고화질 사진 \(writer.savedCount)장")
+        .accessibilityLabel(L("High-quality capture on, %@ high-quality photos", "\(writer.savedCount)"))
     }
 }

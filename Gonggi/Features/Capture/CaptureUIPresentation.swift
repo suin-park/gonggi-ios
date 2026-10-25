@@ -209,9 +209,9 @@ enum CaptureUIPresenter {
 
     static func statusLabel(for state: CaptureCompletionState) -> String {
         switch state {
-        case .notReady: return "공간 기록 중"
-        case .nearlyReady: return "조금 더 둘러봐 주세요"
-        case .ready: return "촬영 완료"
+        case .notReady: return L("Capturing the space")
+        case .nearlyReady: return L("Look around a bit more")
+        case .ready: return L("Capture complete")
         }
     }
 
@@ -221,7 +221,7 @@ enum CaptureUIPresenter {
     }
 
     static func finishButtonTitle(isReady: Bool) -> String {
-        isReady ? "기록 완료" : "촬영 종료"
+        isReady ? L("Finish capture") : L("End capture")
     }
 
     /// Only the way back to an area already filmed gets a glyph (the user walked there). No arrow ever picks a new
@@ -408,72 +408,72 @@ enum CaptureUIPresenter {
         switch action {
         case .continueCapture:
             return (
-                "벽을 따라 천천히 걸으며 담아 주세요",
-                "앞 장면이 조금씩 겹치게 이어 가며, 같은 물건을 다른 위치에서도 비춰 주세요"
+                L("Walk slowly along the walls while capturing"),
+                L("Let each view overlap the last, and capture the same things from other spots too")
             )
         case .moveLaterally, .improveBaseline:
             return (
-                "걸을 수 있는 쪽으로 한두 걸음 옮겨 주세요",
-                "같은 곳을 다른 위치에서 보면 3D 공간이 더 정확해져요"
+                L("Take a step or two where you can walk"),
+                L("Seeing the same spot from other positions makes the 3D Space more accurate")
             )
         case .moveForward:
-            return ("걸을 수 있는 쪽으로 천천히 옮겨 주세요", nil)
+            return (L("Move slowly where you can walk"), nil)
         case .slowDown:
-            return ("조금 천천히 움직여주세요", nil)
+            return (L("Please move a little more slowly"), nil)
         case .holdSteady:
-            return ("잠시 천천히 움직여주세요", nil)
+            return (L("Move slowly for a moment"), nil)
         case .returnToPreviousArea:
             // True spatial revisit (separate from reacquireView screen-overlap recovery).
-            return ("방금 촬영한 곳이 다시 보이도록 이동해주세요", "연결을 다시 찾고 있어요")
+            return (L("Move until the spot you just captured is visible again"), L("Finding the connection again"))
         case .reacquireView:
             return (
-                "이 장면이 다시 보이도록 천천히 움직여주세요",
-                "갑자기 크게 돌리면 3D 연결이 끊길 수 있어요"
+                L("Move slowly until this view appears again"),
+                L("Turning sharply can break the 3D connection")
             )
         case .bridgeContinuity:
             return (
-                "방향을 조금 더 천천히 이어가 주세요",
-                "중간 장면을 담아 연결을 유지하고 있어요"
+                L("Keep turning a little more slowly"),
+                L("Capturing in-between views to keep the connection")
             )
         case .saveStalled:
             return (
-                "사진이 저장되지 않고 있어요",
-                "잠시 멈춰 한 곳을 비추면 다시 저장돼요. 방향은 천천히 바꿔 주세요"
+                L("Photos aren't being saved"),
+                L("Pause and point at one spot to start saving again. Turn slowly")
             )
         case .finishBlockedWeakTerminal:
             return (
-                "마지막 방향을 천천히 다시 연결해 주세요",
-                "끝난 직전 장면이 약해 완료할 수 없어요. 방금 본 곳과 이어지게 조금씩 돌려 촬영해 주세요"
+                L("Slowly reconnect the last direction"),
+                L("The last view is too weak to finish. Turn little by little so it connects to what you just saw")
             )
         case .scanNewArea:
-            return ("아직 덜 담긴 영역을 천천히 비춰주세요", "조금씩 위치를 옮기면 더 정확한 3D 공간을 만들 수 있어요")
+            return (L("Slowly point at areas not captured yet"), L("Moving a little at a time makes a more accurate 3D Space"))
         case .needMoreYaw:
             return (
-                "걸으며 다른 방향도 담아 주세요",
-                "지금 보이는 곳을 화면에 둔 채, 걸을 수 있는 쪽으로 옮기며 천천히 방향을 바꿔 주세요"
+                L("Walk and capture other directions too"),
+                L("Keep what you see on screen and slowly turn while moving where you can walk")
             )
         case .needUpperCoverage:
             return (
-                "벽과 천장이 만나는 선을 함께 담아 주세요",
-                "휴대폰을 조금 들고 걸을 수 있는 쪽으로 천천히 옮겨 주세요. 천장만 비추지는 말아 주세요"
+                L("Include where the wall meets the ceiling"),
+                L("Raise the phone a little and move slowly where you can walk. Don't point only at the ceiling")
             )
         case .needLowerCoverage:
             return (
-                "벽과 바닥이 만나는 곳을 함께 담아 주세요",
-                "휴대폰을 조금 내려 가구 다리나 매트 끝이 보이게 해 주세요"
+                L("Include where the wall meets the floor"),
+                L("Lower the phone a little so furniture legs or the edge of a mat are visible")
             )
         case .trackingRecovery:
-            return ("천천히 주변을 비춰주세요", "카메라 위치를 다시 확인하고 있어요")
+            return (L("Slowly point around you"), L("Checking the camera position again"))
         case .lowTextureWarning:
-            return ("가구나 모서리도 화면에 함께 담아주세요", nil)
+            return (L("Include furniture or corners in the frame too"), nil)
         case .captureNearlyComplete:
-            return ("거의 다 담았어요", "천장/바닥 경계와 반대쪽도 걸으며 조금 더 담아 주세요")
+            return (L("Almost done"), L("Walk and capture a bit more of the ceiling and floor edges and the opposite side"))
         case .captureGap:
-            return ("부족한 방향을 조금 더 담아 주세요", "사진이 계속 저장되도록 천천히 움직여 주세요")
+            return (L("Capture the missing directions a bit more"), L("Move slowly so photos keep saving"))
         case .captureCoach:
-            return ("걸을 수 있는 쪽으로 한두 걸음 옮겨 주세요", nil)
+            return (L("Take a step or two where you can walk"), nil)
         case .captureComplete:
-            return ("촬영이 충분합니다", "공간을 충분히 담았어요. 기록을 완료할 수 있어요")
+            return (L("You have enough"), L("You've captured enough of the space. You can finish"))
         }
     }
 
@@ -482,23 +482,23 @@ enum CaptureUIPresenter {
     static func gapCopy(_ gap: CaptureGapModel.Prompt) -> (title: String, subtitle: String?) {
         let side: String = {
             switch gap.turn {
-            case .ahead: return "앞쪽"
-            case .left: return "왼쪽"
-            case .right: return "오른쪽"
-            case .behind: return "뒤쪽"
+            case .ahead: return L("Ahead")
+            case .left: return L("Left")
+            case .right: return L("Right")
+            case .behind: return L("Back")
             }
         }()
         switch gap.kind {
         case .up:
-            return ("천장 경계도 담아 주세요", "벽과 천장이 만나는 선이나 조명이 보이게 휴대폰을 조금 들어 주세요")
+            return (L("Capture the ceiling edge too"), L("Raise the phone a little so the wall-ceiling line or lights are visible"))
         case .opposite:
             // The side is where to end up *facing* (the missing view), not a walking path.
-            return (gap.turn == .ahead ? "지금 보는 방향을 조금 더 담아 주세요" : "\(side) 방향도 담아 주세요",
-                    "걸을 수 있는 쪽으로 몇 걸음 옮기며 천천히 방향을 바꾸면 사진이 끊기지 않고 이어져요")
+            return (gap.turn == .ahead ? L("Capture a bit more of the direction you're facing") : L("Capture the %@ direction too", "\(side)"),
+                    L("Take a few steps where you can walk and turn slowly so the photos keep connecting"))
         case .tops:
-            return ("\(side) 가구 윗면도 담아 주세요", "다가갈 수 있으면 한 걸음 가까이 가서 위에서 비춰 주세요")
+            return (L("Capture the tops of the furniture %@ too", "\(side)"), L("If you can, step closer and point down from above"))
         case .farEnd:
-            return ("\(side) 쪽은 멀리서만 담겼어요", "걸어갈 수 있으면 몇 걸음 가까이 가서 담아 주세요. 어려우면 그대로 계속해도 돼요")
+            return (L("The %@ side was only captured from far away", "\(side)"), L("If you can walk there, step a few steps closer. If not, you can keep going"))
         }
     }
 
@@ -506,29 +506,29 @@ enum CaptureUIPresenter {
     static func coachCopy(_ c: CaptureMotionCoach.Prompt) -> (title: String, subtitle: String?) {
         switch c.kind {
         case .sideStep:
-            return ("걸을 수 있는 쪽으로 한두 걸음 옮겨 주세요", "같은 곳을 다른 위치에서 보면 3D 공간이 더 정확해져요")
+            return (L("Take a step or two where you can walk"), L("Seeing the same spot from other positions makes the 3D Space more accurate"))
         case .ceilingContext:
-            return ("조금 내려 경계를 함께 담아 주세요", "천장만 보이면 위치를 잡기 어려워요. 벽과 천장이 만나는 선이나 조명을 함께 담아 주세요")
+            return (L("Lower it a little to include the edge"), L("Only the ceiling makes it hard to track. Include the wall-ceiling line or lights"))
         case .floorFeet:
-            return ("조금 앞쪽 바닥을 비춰 주세요", "발밑을 오래 비추면 발이 사진에 찍힐 수 있어요")
+            return (L("Point at the floor a little ahead"), L("Pointing at your feet too long may put your feet in the photos"))
         case .floorContext:
-            return ("바닥은 경계와 함께 담아 주세요", "가구 다리, 매트 끝, 벽과 바닥이 만나는 곳이 보이게 해 주세요")
+            return (L("Capture the floor along with its edges"), L("Show furniture legs, mat edges and where walls meet the floor"))
         case .targetStep:
-            return ("지금 보이는 곳을 화면에 둔 채 걸을 수 있는 쪽으로 두세 걸음 옮겨 주세요", "어려우면 그대로 계속 찍어도 돼요")
+            return (L("Keep what you see on screen and take two or three steps where you can walk"), L("If that's hard, you can keep capturing as is"))
         }
     }
 
     /// "충분" only when nothing is open. Open items (not asked yet, asked and still missing, photo limit) keep the
     /// finish button as it is but never read as enough.
     static func completionTitle(quality: CaptureQualityState) -> String {
-        completionLines(quality).isEmpty ? "촬영이 충분합니다" : "촬영을 마칠 수 있어요"
+        completionLines(quality).isEmpty ? L("You have enough") : L("You can finish the capture")
     }
 
     /// Completion copy with the open items and their status (never a finish gate).
     static func completionSubtitle(quality: CaptureQualityState) -> String {
         let lines = completionLines(quality)
-        guard !lines.isEmpty else { return "공간을 충분히 담았어요. 기록을 완료할 수 있어요" }
-        return "지금 완료해도 돼요. 남은 곳: " + lines.prefix(3).joined(separator: ", ")
+        guard !lines.isEmpty else { return L("You've captured enough of the space. You can finish") }
+        return L("You can finish now. Remaining: ") + lines.prefix(3).joined(separator: ", ")
     }
 
     private static func completionLines(_ quality: CaptureQualityState) -> [String] {
@@ -538,7 +538,7 @@ enum CaptureUIPresenter {
     private static func secondaryHint(for action: GuidanceAction) -> String? {
         switch action {
         case .continueCapture, .moveLaterally, .improveBaseline, .needMoreYaw:
-            return "조금씩 위치를 옮기면서 촬영해 주세요"
+            return L("Capture while moving a little at a time")
         default:
             return nil
         }
@@ -571,31 +571,31 @@ enum CaptureUIPresenter {
     static func userGradeLabel(_ kind: String, quality: CaptureQualityState) -> String {
         switch kind {
         case "coverage":
-            if quality.qualityCoverage >= 0.72 { return "충분" }
-            if quality.qualityCoverage >= 0.45 { return "보통" }
-            return "추가 촬영 권장"
+            if quality.qualityCoverage >= 0.72 { return L("Enough") }
+            if quality.qualityCoverage >= 0.45 { return L("Fair") }
+            return L("More photos recommended")
         case "baseline":
             switch quality.translationBaselineGrade {
-            case .good: return "좋음"
-            case .acceptable: return "보통"
-            case .insufficient: return "추가 촬영 권장"
+            case .good: return L("Good")
+            case .acceptable: return L("Fair")
+            case .insufficient: return L("More photos recommended")
             }
         case "overlap":
             switch quality.overlapState {
-            case .good: return "안정적"
-            case .weak: return "보통"
-            case .lost: return "추가 촬영 권장"
+            case .good: return L("Stable")
+            case .weak: return L("Fair")
+            case .lost: return L("More photos recommended")
             case .notAvailable: return "—"
             }
         case "sharpness":
             switch quality.sharpnessState {
-            case .sharp: return "좋음"
-            case .acceptable: return "보통"
-            case .blurry: return "추가 촬영 권장"
+            case .sharp: return L("Good")
+            case .acceptable: return L("Fair")
+            case .blurry: return L("More photos recommended")
             case .unknown: return "—"
             }
         case "tracking":
-            return quality.trackingQuality >= 0.7 ? "안정적" : "추가 촬영 권장"
+            return quality.trackingQuality >= 0.7 ? L("Stable") : L("More photos recommended")
         default:
             return "—"
         }

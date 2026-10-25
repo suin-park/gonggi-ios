@@ -5,6 +5,8 @@ enum WhikLayout {
     /// Space kept free above the floating tab bar.
     static let tabBarClearance: CGFloat = 104
     static let sideInset: CGFloat = 20
+    /// Below the safe area: 8 pt before 3.1(35), +14 pt so the logo and profile button do not hug the status bar.
+    static let homeTopInset: CGFloat = 22
 }
 
 /// Home: photo-led sample browser. Open without signing in.
@@ -39,19 +41,21 @@ struct WhikHomeView: View {
             .ignoresSafeArea()
             .id(category)
 
-            VStack(spacing: 18) {
-                HStack(alignment: .top) {
+            // Top group (logo, profile, Spaces / Objects) sits inside the safe area; the photo runs behind the
+            // status bar and a soft gradient keeps the controls readable.
+            VStack(spacing: 16) {
+                HStack(alignment: .center) {
                     WhikLogo(width: 150)
                     Spacer(minLength: 12)
-                    WhikCircleButton(systemImage: "person", label: "Profile", action: onProfile)
+                    WhikCircleButton(systemImage: "person", label: L("Profile and settings"), action: onProfile)
                 }
-                WhikSegmented(items: [(.spaces, "Spaces"), (.objects, "Objects")], selection: $category)
-                    .frame(maxWidth: 300)
+                WhikSegmented(items: [(.spaces, L("Spaces")), (.objects, L("Objects"))], selection: $category)
+                    .frame(maxWidth: 320)
                     .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 Spacer()
             }
             .padding(.horizontal, WhikLayout.sideInset)
-            .padding(.top, 8)
+            .padding(.top, WhikLayout.homeTopInset)
         }
         }
         .fullScreenCover(isPresented: $openedPanorama) {
@@ -102,13 +106,13 @@ private struct WhikSamplePage: View {
                         WhikCircleButton(
                             systemImage: sample.opensViewer ? "arrow.right" : "photo",
                             size: 54,
-                            label: sample.opensViewer ? "Open \(sample.title)" : "View photo",
+                            label: sample.opensViewer ? L("Open %@", sample.title) : L("View photo"),
                             action: onOpen
                         )
                     }
                     HStack(spacing: 12) {
                         Rectangle().fill(WhikColors.textTertiary).frame(width: 48, height: 1)
-                        Text("Swipe to explore")
+                        Text(L("Swipe to explore"))
                             .font(.system(.footnote))
                             .foregroundStyle(WhikColors.textSecondary)
                         Rectangle().fill(WhikColors.textTertiary).frame(width: 48, height: 1)
@@ -181,7 +185,7 @@ struct WhikPhotoPreview: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(sample.title).font(.headline).foregroundStyle(.white)
-                    Text("Photo preview").font(.footnote).foregroundStyle(WhikColors.textSecondary)
+                    Text(L("Photo preview")).font(.footnote).foregroundStyle(WhikColors.textSecondary)
                 }
                 Spacer()
                 Button(action: onClose) {
@@ -191,7 +195,7 @@ struct WhikPhotoPreview: View {
                         .frame(width: 44, height: 44)
                         .background(Circle().fill(Color.white.opacity(0.15)))
                 }
-                .accessibilityLabel("Close")
+                .accessibilityLabel(L("Close"))
             }
             .padding(.horizontal, WhikLayout.sideInset)
             .padding(.top, 8)

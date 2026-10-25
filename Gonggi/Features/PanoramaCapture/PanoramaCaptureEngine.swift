@@ -133,7 +133,7 @@ final class PanoramaCaptureEngine: NSObject {
         let duration = t0 - captureStartedAt
 
         guard let composed = composer.composeUIImage(cropToContent: true) else {
-            phase = .failed("파노라마를 만들 프레임이 부족해요")
+            phase = .failed(L("Not enough frames to make a panorama"))
             notify()
             throw PanoramaCaptureError.insufficientStrips
         }
@@ -594,10 +594,10 @@ enum PanoramaCaptureError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .cameraUnavailable: return "카메라를 열 수 없어요"
-        case .insufficientStrips: return "파노라마를 만들 프레임이 부족해요"
-        case .encodeFailed: return "이미지 저장에 실패했어요"
-        case .notAuthorized: return "카메라 권한이 필요해요"
+        case .cameraUnavailable: return L("Can't open the camera")
+        case .insufficientStrips: return L("Not enough frames to make a panorama")
+        case .encodeFailed: return L("Couldn't save the image")
+        case .notAuthorized: return L("Camera access is required")
         }
     }
 }

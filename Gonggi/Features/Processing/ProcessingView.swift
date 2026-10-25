@@ -119,7 +119,7 @@ final class ProcessingViewModel: ObservableObject {
                 )
                 if !packageRetained {
                     canRetrySameCapture = false
-                    setStep(.preparePackage, .failed("원본 없음"))
+                    setStep(.preparePackage, .failed(L("No original")))
                     errorMessage = SpaceGenerationErrorPresenter.packageMissingUnrecoverable
                     isRunning = false
                     generation.failedStage = "prepare_package"
@@ -333,7 +333,7 @@ final class ProcessingViewModel: ObservableObject {
                await BackgroundCaptureUploader.shared.isTransferring(jobId: jobId) {
                 generation.backendErrorCode = "upload_continues_in_background"
                 persistGeneration()
-                failActiveStep(currentStage, message: "백그라운드에서 업로드 중")
+                failActiveStep(currentStage, message: L("Uploading in the background"))
                 errorMessage = SpaceGenerationErrorPresenter.uploadContinuesInBackground
                 canRetrySameCapture = false
                 isRunning = false
@@ -343,7 +343,7 @@ final class ProcessingViewModel: ObservableObject {
             generation.failedStage = "cancelled"
             generation.backendErrorCode = "cancelled"
             persistGeneration()
-            failActiveStep(currentStage, message: "중단됨")
+            failActiveStep(currentStage, message: L("Stopped"))
             if let createdSpaceId {
                 GaussianGenerationStore.shared.markInterrupted(spaceId: createdSpaceId)
             }
@@ -397,18 +397,18 @@ final class ProcessingViewModel: ObservableObject {
             let failLabel: String = {
                 switch currentStage {
                 case .preparePackage:
-                    return "준비 실패"
+                    return L("Preparation failed")
                 case .upload:
                     if case .uploadFailed = error as? SpaceGenerationError {
-                        return "업로드 실패"
+                        return L("Upload failed")
                     }
                     if SpaceGenerationErrorPresenter.looksLikeUploadNetworkLoss(error.localizedDescription) {
-                        return "업로드 실패"
+                        return L("Upload failed")
                     }
                     // createSpace failure while on upload stage
-                    return "요청 실패"
+                    return L("Request failed")
                 case .requestGeneration:
-                    return "요청 실패"
+                    return L("Request failed")
                 }
             }()
             failActiveStep(currentStage, message: failLabel)
@@ -518,7 +518,7 @@ struct ProcessingView: View {
                     } else if let err = viewModel.errorMessage {
                         errorBanner(err)
                         if viewModel.canRetrySameCapture {
-                            PrimaryButton(title: "같은 촬영으로 다시 시도", icon: "arrow.clockwise") {
+                            PrimaryButton(title: L("Retry with the same capture"), icon: "arrow.clockwise") {
                                 GonggiHaptics.light()
                                 viewModel.retrySameCapture(
                                     summary: summary,
@@ -527,7 +527,7 @@ struct ProcessingView: View {
                                 )
                             }
                         }
-                        SecondaryButton(title: "촬영 진단 공유 (사진 제외)", icon: "doc.text") {
+                        SecondaryButton(title: L("Share capture diagnostics (no photos)"), icon: "doc.text") {
                             shareDiagnostics()
                         }
                         if viewModel.canRetrySameCapture || CapturePackageRetention.hasRetainedSpatialPackage(
@@ -535,7 +535,7 @@ struct ProcessingView: View {
                             packageRootHint: summary.dataFoundation?.spatialCapturePackageURL
                         ) {
                             SecondaryButton(
-                                title: isExportingOriginal ? "원본 패키지 준비 중…" : "원본 패키지 내보내기",
+                                title: isExportingOriginal ? L("Preparing original package…") : L("Export original package"),
                                 icon: "square.and.arrow.up"
                             ) {
                                 shareOriginalPackage()
@@ -557,7 +557,7 @@ struct ProcessingView: View {
                     if viewModel.isComplete,
                        let spaceId = viewModel.completedSpaceId {
                         let jobId = viewModel.status?.jobId ?? spaceId
-                        PrimaryButton(title: "3D 공간 둘러보기", icon: "move.3d") {
+                        PrimaryButton(title: L("Explore the 3D Space"), icon: "move.3d") {
                             GonggiHaptics.success()
                             onComplete(jobId, spaceId)
                         }
@@ -568,11 +568,11 @@ struct ProcessingView: View {
                 .padding(.bottom, GonggiSpacing.xxl)
             }
             .background(GonggiAmbientBackground(showGlow: false))
-            .navigationTitle("3D 공간 기록")
+            .navigationTitle(L("3D Space capture"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("닫기") {
+                    Button(L("Close")) {
                         onDismiss()
                     }
                     .foregroundStyle(GonggiColors.textSecondary)
@@ -624,7 +624,7 @@ struct ProcessingView: View {
             diagShareItems = [folder]
             showDiagShare = true
         } catch {
-            diagShareError = "진단 공유 준비에 실패했어요. (원본 사진은 포함되지 않습니다)"
+            diagShareError = L("Couldn't prepare diagnostic sharing. (Original photos aren't included.)")
         }
     }
 
@@ -645,7 +645,7 @@ struct ProcessingView: View {
                 originalShareItems = [folder]
                 showOriginalShare = true
             } catch {
-                originalShareError = "원본 패키지를 내보낼 수 없어요. 패키지가 완전한지 확인해 주세요."
+                originalShareError = L("Couldn't export the original package. Check that it's complete.")
             }
         }
     }
@@ -655,13 +655,13 @@ struct ProcessingView: View {
             Text("「\(summary.suggestedName)」")
                 .font(GonggiTypography.headline(18))
                 .foregroundStyle(GonggiColors.accentTeal)
-            Text(viewModel.errorMessage == nil ? "공간을 생성하고 있어요" : "생성을 완료하지 못했어요")
+            Text(viewModel.errorMessage == nil ? L("Creating your space") : L("Couldn't finish creating"))
                 .font(GonggiTypography.title(26))
                 .foregroundStyle(GonggiColors.textPrimary)
             Text(
                 viewModel.errorMessage == nil
-                    ? "패키지를 준비하고 업로드한 뒤 생성 요청을 보낼게요."
-                    : "원본 촬영 데이터는 실패 후에도 기기에 남아 있어요."
+                    ? L("We'll prepare and upload the package, then send the creation request.")
+                    : L("The original capture stays on this device even if this fails.")
             )
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
@@ -671,7 +671,7 @@ struct ProcessingView: View {
 
     private var clientPipelineSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("진행 단계")
+            Text(L("Steps"))
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
                 .padding(.bottom, GonggiSpacing.sm)
@@ -691,13 +691,13 @@ struct ProcessingView: View {
 
     private func progressHero(_ value: Double) -> some View {
         HStack(spacing: GonggiSpacing.lg) {
-            ProgressRing(progress: value, lineWidth: 6, label: "전체", compact: true)
+            ProgressRing(progress: value, lineWidth: 6, label: L("Overall"), compact: true)
                 .frame(width: 88, height: 88)
             VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-                Text(viewModel.isComplete ? "완료되었어요" : "진행 중")
+                Text(viewModel.isComplete ? L("Done") : L("In progress"))
                     .font(GonggiTypography.headline(17))
                     .foregroundStyle(viewModel.isComplete ? GonggiColors.successGreen : GonggiColors.textPrimary)
-                Text("전체 \(Int(value * 100))%")
+                Text(L("Overall %@%%", "\(Int(value * 100))"))
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textSecondary)
             }
@@ -715,7 +715,7 @@ struct ProcessingView: View {
 
     private func stepsList(_ steps: [ProcessingStepState]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("서버 진행")
+            Text(L("Server progress"))
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
                 .padding(.bottom, GonggiSpacing.sm)
@@ -736,7 +736,7 @@ struct ProcessingView: View {
         HStack(spacing: GonggiSpacing.sm) {
             Image(systemName: "clock")
                 .foregroundStyle(GonggiColors.accentTeal)
-            Text("약 \(minutes)분 후에 완료될 예정이에요")
+            Text(L("Expected to finish in about %@ min", "\(minutes)"))
                 .font(GonggiTypography.caption(14))
                 .foregroundStyle(GonggiColors.textSecondary)
         }

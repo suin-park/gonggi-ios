@@ -15,9 +15,9 @@ enum AdvancedCaptureAnalysisStatus: String, Codable, Equatable, Sendable {
     var userFacingLabel: String {
         switch self {
         case .idle: return ""
-        case .queued, .analyzing: return "분석 중"
-        case .ready: return "촬영 준비 완료"
-        case .failed: return "분석 실패"
+        case .queued, .analyzing: return L("Analyzing")
+        case .ready: return L("Ready to capture")
+        case .failed: return L("Analysis failed")
         }
     }
 }
@@ -61,7 +61,7 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
             segments: [
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-seg-1",
-                    instructionKo: "벽을 따라 천천히 이동하세요.",
+                    instructionKo: L("Move slowly along the walls."),
                     targetYawDeg: nil,
                     targetPitchDeg: 0,
                     pathHint: "wall_follow",
@@ -71,7 +71,7 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
                 ),
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-seg-2",
-                    instructionKo: "카메라를 공간 안쪽으로 향한 채 천천히 옆으로 이동하세요.",
+                    instructionKo: L("Keep the camera facing into the room and step slowly sideways."),
                     targetYawDeg: nil,
                     targetPitchDeg: 0,
                     pathHint: "lateral_parallax",
@@ -81,7 +81,7 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
                 ),
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-seg-3",
-                    instructionKo: "같은 가구를 바라보며 앞으로 천천히 걸어 주세요.",
+                    instructionKo: L("Keep looking at the same furniture and walk slowly forward."),
                     targetYawDeg: nil,
                     targetPitchDeg: 0,
                     pathHint: "forward_pass",
@@ -91,10 +91,10 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
                 ),
             ],
             globalTips: [
-                "제자리에서 돌기만 하면 입체 정보가 부족해집니다.",
-                "조명이 일정한 곳에서 촬영하세요.",
-                "거울/유리면은 천천히, 가까이 가지 마세요.",
-                "걷을 때는 흔들림을 줄이기 위해 속도를 일정하게 유지하세요.",
+                L("Turning in place alone gives too little depth."),
+                L("Capture where the lighting stays the same."),
+                L("Go slowly near mirrors and glass, and don't get too close."),
+                L("Keep a steady pace when walking to reduce shake."),
             ],
             estimatedTotalSec: 80,
             qualityProfile: "capture_dense_v2",
@@ -108,7 +108,7 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
             segments: [
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-stabilize",
-                    instructionKo: "공간을 확인하고 있어요. 휴대폰을 천천히 움직여 주세요.",
+                    instructionKo: L("Checking the space. Move the phone slowly."),
                     targetYawDeg: nil,
                     targetPitchDeg: 0,
                     pathHint: "stabilize",
@@ -118,7 +118,7 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
                 ),
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-perimeter",
-                    instructionKo: "벽을 따라 천천히 이동하세요.",
+                    instructionKo: L("Move slowly along the walls."),
                     targetYawDeg: nil,
                     targetPitchDeg: 0,
                     pathHint: "wall_follow",
@@ -128,7 +128,7 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
                 ),
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-parallax",
-                    instructionKo: "같은 영역을 바라보며 옆으로 조금 이동해주세요.",
+                    instructionKo: L("Keep looking at the same area and step a little sideways."),
                     targetYawDeg: nil,
                     targetPitchDeg: 0,
                     pathHint: "lateral_parallax",
@@ -138,7 +138,7 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
                 ),
                 AdvancedCaptureGuideSegment(
                     id: "\(sessionId)-fill",
-                    instructionKo: "아직 덜 담긴 영역을 천천히 비춰주세요.",
+                    instructionKo: L("Slowly point at areas not captured yet."),
                     targetYawDeg: nil,
                     targetPitchDeg: 0,
                     pathHint: "coverage_fill",
@@ -148,8 +148,8 @@ struct AdvancedCaptureGuidePlan: Codable, Equatable, Sendable {
                 ),
             ],
             globalTips: [
-                "제자리에서 돌기보다 옆으로 조금 이동해주세요.",
-                "화면 안내를 따라가면 3D 공간 기록에 충분합니다.",
+                L("Step a little sideways instead of turning in place."),
+                L("Following the on-screen guide is enough for a 3D Space."),
             ],
             estimatedTotalSec: 90,
             qualityProfile: "capture_default_p1",
@@ -198,29 +198,38 @@ enum AdvancedCaptureError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .notReady: return "아직 분석이 끝나지 않았어요."
-        case .timedOut: return "분석이 예상보다 오래 걸리고 있어요."
-        case .jobNotFound: return "분석 작업을 찾을 수 없어요."
-        case .unauthorized: return "로그인이 필요해요."
-        case .network: return "네트워크에 연결할 수 없어요."
+        case .notReady: return L("Analysis isn't finished yet.")
+        case .timedOut: return L("Analysis is taking longer than expected.")
+        case .jobNotFound: return L("Couldn't find the analysis job.")
+        case .unauthorized: return L("Please sign in.")
+        case .network: return L("Can't connect to the network.")
         case .server(let code):
             // Already localized phrases from the API client, or raw codes.
             if code.contains(" ") || code.contains("어요") || code.contains("아요") {
                 return code
             }
-            return "분석을 시작하지 못했어요 (\(code))."
-        case .missingLocalSources: return "원본 촬영본을 찾을 수 없어요. 같은 기기에서 다시 촬영해 주세요."
+            return L("Couldn't start the analysis (%@).", "\(code)")
+        case .missingLocalSources: return L("Couldn't find the original capture. Capture again on the same device.")
         case .unknown(let msg): return msg
         }
     }
 
     var userMessage: String {
-        errorDescription ?? "알 수 없는 오류가 발생했어요."
+        errorDescription ?? L("Something went wrong.")
     }
 }
 
 /// Advanced-capture copy helpers (avoid middle-dot · in user-facing Korean).
 enum AdvancedCaptureCopy {
+    /// Guide text written by the analysis server is Korean only. Show it only when the app is in Korean, so other
+    /// languages never mix; callers fall back to the app's own localized guidance.
+    static func serverCopy(_ text: String?) -> String? {
+        guard AppLanguage.shared.code == .ko,
+              let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty
+        else { return nil }
+        return withoutMiddleDot(t)
+    }
+
     static func withoutMiddleDot(_ text: String) -> String {
         text
             .replacingOccurrences(of: "·", with: "/")

@@ -137,7 +137,7 @@ final class ObjectCaptureTests: XCTestCase {
         let all: [ObjectCaptureGuidance] = [.trackingLimited, .productCutOff, .stepBack, .stepCloser, .centerProduct,
                                              .raisePhone, .lowerPhone, .walkAround(towardLeft: true), .enough]
         for g in all {
-            XCTAssertFalse(g.text.contains("천장") || g.text.contains("바닥") || g.text.contains("공간"), g.text)
+            XCTAssertFalse(g.text.contains(L("Ceiling")) || g.text.contains("바닥") || g.text.contains(L("Space")), g.text)
         }
     }
 
@@ -200,7 +200,7 @@ final class ObjectCaptureTests: XCTestCase {
         )
         XCTAssertEqual(GaussianGenerationStore.cardNote(job), "실물 촬영 · 사진 120장 · 2026-09-30")
         job.objectQualityResult = "failed"
-        XCTAssertEqual(GaussianGenerationStore.cardNote(job), "품질 확인 필요")
+        XCTAssertEqual(GaussianGenerationStore.cardNote(job), L("Quality check needed"))
         let product = SpaceRecord(id: "gaussian:s1", name: "제품", capturedAt: Date(), status: .ready,
                                   thumbnailSystemImage: "cube", note: nil, viewerURL: nil,
                                   sourceKind: ObjectCapturePackage.librarySourceKind, mediaKind: "gaussian")
@@ -294,7 +294,7 @@ final class ObjectCaptureTests: XCTestCase {
             ownerUserId: "u", isProduct: true
         )
         XCTAssertTrue(unsentProduct.suggestedName.hasPrefix("3D 자산 "), unsentProduct.suggestedName)
-        XCTAssertFalse(unsentProduct.suggestedName.contains("공간"))
+        XCTAssertFalse(unsentProduct.suggestedName.contains(L("Space")))
         let unsentSpace = UnsentCaptureResumer.Item(
             sessionId: "t", captureId: "GONGGI_CAPTURE_V1_060", capturedAt: date, photoCount: 300, durationSec: 120,
             ownerUserId: "u"
@@ -302,12 +302,12 @@ final class ObjectCaptureTests: XCTestCase {
         XCTAssertTrue(unsentSpace.suggestedName.hasPrefix("새 공간 "))
 
         let job = GaussianGenerationStore.GaussianGenerationRecord(
-            spaceId: "s1", jobId: "j", name: "3D 자산", captureId: nil, sessionId: nil, qualityProfile: "",
+            spaceId: "s1", jobId: "j", name: L("3D Objects"), captureId: nil, sessionId: nil, qualityProfile: "",
             status: "processing", stage: nil, progress: 0.3, failureCode: nil, thumbnailRelativePath: nil,
             createdAt: Date(), updatedAt: Date(), handedOffToLibraryAt: nil, completedAt: nil,
             captureKind: "object"
         )
-        XCTAssertEqual(job.userFacingStatusLabel, "3D 자산 생성 중")
+        XCTAssertEqual(job.userFacingStatusLabel, L("Creating 3D Object"))
     }
 }
 

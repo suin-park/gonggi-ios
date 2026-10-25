@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 
 /// One library entry: a capture result (space / 360° / object) or a 3D asset made earlier from a photo.
@@ -6,7 +7,17 @@ enum WhikLibraryItem: Identifiable, Equatable {
     case record(SpaceRecord)
     case asset(MobileAssetDTO)
 
-    enum Kind: Equatable { case space3D, space360, object3D }
+    enum Kind: Hashable, CaseIterable {
+        case space3D, space360, object3D
+
+        var label: String {
+            switch self {
+            case .space3D: return L("3D Space")
+            case .space360: return L("360° Space")
+            case .object3D: return L("3D Object")
+            }
+        }
+    }
 
     var id: String {
         switch self {
@@ -26,12 +37,15 @@ enum WhikLibraryItem: Identifiable, Equatable {
         }
     }
 
+    /// The stored name, exactly as saved (user-typed or created earlier). Never translated.
     var title: String {
         switch self {
         case .record(let r): return r.name
-        case .asset(let a): return a.name.isEmpty ? "Untitled" : a.name
+        case .asset(let a): return a.name
         }
     }
+
+    var displayTitle: String { title.isEmpty ? L("Untitled") : title }
 
     var date: Date {
         switch self {
@@ -40,11 +54,10 @@ enum WhikLibraryItem: Identifiable, Equatable {
         }
     }
 
-    var kindLabel: String {
-        switch kind {
-        case .space3D: return "3D Space"
-        case .space360: return "360° Space"
-        case .object3D: return "3D Object"
+    var status: WhikItemStatus {
+        switch self {
+        case .record(let r): return WhikItemStatus(r.status)
+        case .asset: return .ready // listed photo-made assets already exist; AR preparation is not a generation state
         }
     }
 
@@ -54,6 +67,27 @@ enum WhikLibraryItem: Identifiable, Equatable {
         if let d = f.date(from: s) { return d }
         f.formatOptions = [.withInternetDateTime]
         return f.date(from: s)
+    }
+}
+
+/// Library status filter, mapped from `SpaceGenerationStatus`.
+enum WhikItemStatus: Hashable, CaseIterable {
+    case ready, processing, failed
+
+    init(_ status: SpaceGenerationStatus) {
+        switch status {
+        case .ready: self = .ready
+        case .failed: self = .failed
+        case .draft, .uploading, .processing: self = .processing
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .ready: return L("Ready")
+        case .processing: return L("Processing")
+        case .failed: return L("Failed")
+        }
     }
 }
 
@@ -68,11 +102,77 @@ enum WhikLibraryFilter: Hashable, CaseIterable {
         }
     }
 
-    /// Newest first; filter applied.
+    /// Newest first; category applied (kept for callers that only need the tabs).
     static func items(records: [SpaceRecord], assets: [MobileAssetDTO], filter: WhikLibraryFilter) -> [WhikLibraryItem] {
-        let all = records.map(WhikLibraryItem.record) + assets.map(WhikLibraryItem.asset)
-        return all.filter { filter.includes($0.kind) }.sorted { $0.date > $1.date }
+        var q = WhikLibraryQuery()
+        q.category = filter
+        return q.apply(records.map(WhikLibraryItem.record) + assets.map(WhikLibraryItem.asset), locale: Locale(identifier: "en"))
     }
+}
+
+enum WhikLibrarySort: Hashable, CaseIterable {
+    case newest, oldest, nameAZ
+
+    var label: String {
+        switch self {
+        case .newest: return L("Newest first")
+        case .oldest: return L("Oldest first")
+        case .nameAZ: return L("Name A–Z")
+        }
+    }
+}
+
+/// Library search / sort / filters. One shared instance, so the query survives opening a detail screen and
+/// coming back (and tab switches).
+struct WhikLibraryQuery: Equatable {
+    var category: WhikLibraryFilter = .all
+    var search = ""
+    var sort: WhikLibrarySort = .newest
+    var kinds: Set<WhikLibraryItem.Kind> = []
+    var statuses: Set<WhikItemStatus> = []
+
+    var extraFilterCount: Int { kinds.count + statuses.count }
+    var isFiltering: Bool {
+        category != .all || !search.trimmingCharacters(in: .whitespaces).isEmpty || extraFilterCount > 0
+    }
+
+    mutating func clearAll() {
+        category = .all
+        search = ""
+        kinds = []
+        statuses = []
+    }
+
+    /// Category, type, status and name search together, then the chosen order. Name order and matching use the
+    /// selected language's rules.
+    func apply(_ all: [WhikLibraryItem], locale: Locale) -> [WhikLibraryItem] {
+        let needle = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = all.filter { item in
+            guard category.includes(item.kind) else { return false }
+            if !kinds.isEmpty, !kinds.contains(item.kind) { return false }
+            if !statuses.isEmpty, !statuses.contains(item.status) { return false }
+            if !needle.isEmpty {
+                return item.title.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                                        locale: locale) != nil
+            }
+            return true
+        }
+        switch sort {
+        case .newest: return filtered.sorted { $0.date > $1.date }
+        case .oldest: return filtered.sorted { $0.date < $1.date }
+        case .nameAZ:
+            return filtered.sorted {
+                let r = $0.displayTitle.compare($1.displayTitle, options: [.caseInsensitive, .numeric], range: nil, locale: locale)
+                return r == .orderedSame ? $0.date > $1.date : r == .orderedAscending
+            }
+        }
+    }
+}
+
+@Observable
+final class WhikLibraryState {
+    static let shared = WhikLibraryState()
+    var query = WhikLibraryQuery()
 }
 
 /// Status line for a record that is not ready yet. Progress comes from the server job only (no estimate).
@@ -81,10 +181,10 @@ enum WhikRecordStatus {
         if r.repairBadge != .none, r.status == .ready { return nil }
         switch r.status {
         case .ready: return nil
-        case .draft: return "Not sent"
-        case .uploading: return "Uploading"
-        case .processing: return "Processing"
-        case .failed: return "Failed"
+        case .draft: return L("Not sent")
+        case .uploading: return L("Uploading")
+        case .processing: return L("Processing")
+        case .failed: return L("Failed")
         }
     }
 
@@ -108,17 +208,22 @@ struct WhikLibraryView: View {
     @EnvironmentObject private var viewers: WhikViewerPresenter
     @ObservedObject private var auth = AuthSessionController.shared
     @ObservedObject private var assets = AssetLibraryStore.shared
-    @State private var filter: WhikLibraryFilter = .all
+    @Bindable private var state = WhikLibraryState.shared
     @State private var detail: SpaceRecord?
     @State private var assetDetail: MobileAssetDTO?
+    @State private var showFilters = false
 
     private var signedIn: Bool {
         if case .signedIn = auth.phase { return true }
         return false
     }
 
+    private var allItems: [WhikLibraryItem] {
+        appState.spaces.map(WhikLibraryItem.record) + assets.assets.map(WhikLibraryItem.asset)
+    }
+
     private var items: [WhikLibraryItem] {
-        WhikLibraryFilter.items(records: appState.spaces, assets: assets.assets, filter: filter)
+        state.query.apply(allItems, locale: AppLanguage.shared.locale)
     }
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
@@ -126,23 +231,29 @@ struct WhikLibraryView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 16) {
                     HStack(alignment: .center) {
-                        Text("Library")
+                        Text(L("Library"))
                             .font(WhikFont.largeTitle())
                             .foregroundStyle(WhikColors.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
                         Spacer()
-                        WhikCircleButton(systemImage: "person", label: "Profile", action: onProfile)
+                        WhikCircleButton(systemImage: "person", label: L("Profile and settings"), action: onProfile)
                     }
                     .padding(.top, 8)
-                    WhikChips(items: [(.all, "All"), (.spaces, "Spaces"), (.objects, "Objects")], selection: $filter)
+                    WhikChips(items: [(.all, L("All")), (.spaces, L("Spaces")), (.objects, L("Objects"))],
+                              selection: $state.query.category)
                         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                     if signedIn {
+                        searchRow
                         // Captures that never finished uploading stay resumable (original package on device).
-                        if filter != .objects { UnsentCapturesSection(products: false) }
-                        if filter != .spaces { UnsentCapturesSection(products: true) }
-                        if items.isEmpty {
-                            emptyState
+                        if state.query.category != .objects { UnsentCapturesSection(products: false) }
+                        if state.query.category != .spaces { UnsentCapturesSection(products: true) }
+                        if allItems.isEmpty {
+                            emptyLibrary
+                        } else if items.isEmpty {
+                            noResults
                         } else {
                             LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
                                 ForEach(items) { item in
@@ -160,6 +271,7 @@ struct WhikLibraryView: View {
                 .padding(.bottom, WhikLayout.tabBarClearance)
             }
             .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.immediately)
             .refreshable { await refresh(force: true) }
             .background(WhikColors.background.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
@@ -169,6 +281,10 @@ struct WhikLibraryView: View {
             .navigationDestination(item: $assetDetail) { asset in
                 AssetDetailView(listSnapshot: asset)
             }
+            .sheet(isPresented: $showFilters) {
+                WhikLibraryFilterSheet(query: $state.query)
+                    .presentationDetents([.medium, .large])
+            }
             .task(id: signedIn) { await refresh(force: false) }
             .onReceive(NotificationCenter.default.publisher(for: .gonggiSpaceDidDelete)) { note in
                 let jobId = note.userInfo?["jobId"] as? String
@@ -177,37 +293,120 @@ struct WhikLibraryView: View {
         }
     }
 
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            Text("No captures yet")
-                .font(.system(.title3).weight(.semibold))
-                .foregroundStyle(WhikColors.textPrimary)
-            Button(action: onCapture) {
-                Text("Capture")
-                    .font(.system(.body).weight(.semibold))
-                    .foregroundStyle(WhikColors.onMint)
-                    .padding(.horizontal, 28)
-                    .frame(minHeight: 48)
-                    .background(Capsule().fill(WhikColors.mint))
+    private var searchRow: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(WhikColors.textTertiary)
+                    .accessibilityHidden(true)
+                TextField(L("Search captures"), text: $state.query.search)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.search)
+                    .foregroundStyle(WhikColors.textPrimary)
+                if !state.query.search.isEmpty {
+                    Button {
+                        state.query.search = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(WhikColors.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L("Clear search"))
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(WhikColors.surface))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(WhikColors.border, lineWidth: 1))
+
+            Button {
+                showFilters = true
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "line.3.horizontal.decrease")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(WhikColors.textPrimary)
+                        .frame(width: 44, height: 44)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(WhikColors.surface))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(WhikColors.border, lineWidth: 1))
+                    if state.query.extraFilterCount > 0 {
+                        Text("\(state.query.extraFilterCount)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(WhikColors.onMint)
+                            .frame(minWidth: 18, minHeight: 18)
+                            .background(Circle().fill(WhikColors.mint))
+                            .offset(x: 5, y: -5)
+                            .accessibilityHidden(true)
+                    }
+                }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(L("Sort and filter"))
+            .accessibilityValue(state.query.extraFilterCount > 0 ? L("%@ filters on", "\(state.query.extraFilterCount)") : "")
+        }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+    }
+
+    private var emptyLibrary: some View {
+        VStack(spacing: 14) {
+            Text(L("No captures yet"))
+                .font(.system(.title3).weight(.semibold))
+                .foregroundStyle(WhikColors.textPrimary)
+                .multilineTextAlignment(.center)
+            pillButton(L("Capture"), action: onCapture)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 60)
+        .padding(.top, 48)
+    }
+
+    private var noResults: some View {
+        VStack(spacing: 14) {
+            Text(L("No matching captures"))
+                .font(.system(.title3).weight(.semibold))
+                .foregroundStyle(WhikColors.textPrimary)
+                .multilineTextAlignment(.center)
+            pillButton(L("Clear filters")) {
+                withAnimation(.easeOut(duration: 0.18)) { state.query.clearAll() }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 48)
+    }
+
+    private func pillButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(.body).weight(.semibold))
+                .foregroundStyle(WhikColors.onMint)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 12)
+                .frame(minHeight: 48)
+                .background(Capsule().fill(WhikColors.mint))
+        }
+        .buttonStyle(.plain)
     }
 
     private var guestState: some View {
         VStack(spacing: 20) {
-            emptyState
+            VStack(spacing: 14) {
+                Text(L("No captures yet"))
+                    .font(.system(.title3).weight(.semibold))
+                    .foregroundStyle(WhikColors.textPrimary)
+                pillButton(L("Capture"), action: onCapture)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 48)
             Divider().overlay(WhikColors.border)
             Button {
-                gate.signIn(reason: "Sign in to see your captures.")
+                gate.signIn(reason: L("Sign in to see your captures."))
             } label: {
-                HStack {
+                HStack(spacing: 10) {
                     Image(systemName: "person.crop.circle")
-                    Text("Sign in to see your captures")
-                    Spacer()
-                    Text("Sign in").foregroundStyle(WhikColors.mint)
+                    Text(L("Sign in to see your captures"))
+                        .multilineTextAlignment(.leading)
+                    Spacer(minLength: 8)
+                    Text(L("Sign in")).foregroundStyle(WhikColors.mint)
                     Image(systemName: "chevron.right").foregroundStyle(WhikColors.mint)
                 }
                 .font(.system(.subheadline))
@@ -224,11 +423,11 @@ struct WhikLibraryView: View {
         switch item {
         case .record(let r):
             if r.status == .ready {
-                Button { open(item) } label: { Label("Open", systemImage: "play.circle") }
+                Button { open(item) } label: { Label(L("Open"), systemImage: "play.circle") }
             }
-            Button { detail = r } label: { Label("Details, rename or delete", systemImage: "info.circle") }
+            Button { detail = r } label: { Label(L("Details, rename or delete"), systemImage: "info.circle") }
         case .asset(let a):
-            Button { assetDetail = a } label: { Label("Details", systemImage: "info.circle") }
+            Button { assetDetail = a } label: { Label(L("Details"), systemImage: "info.circle") }
         }
     }
 
@@ -261,6 +460,71 @@ struct WhikLibraryView: View {
     }
 }
 
+/// Sort and extra filters in a sheet (kept off the main screen).
+struct WhikLibraryFilterSheet: View {
+    @Binding var query: WhikLibraryQuery
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section(L("Sort")) {
+                    ForEach(WhikLibrarySort.allCases, id: \.self) { sort in
+                        row(sort.label, on: query.sort == sort) { query.sort = sort }
+                    }
+                }
+                Section(L("Type")) {
+                    ForEach(WhikLibraryItem.Kind.allCases, id: \.self) { kind in
+                        row(kind.label, on: query.kinds.contains(kind)) { toggle(&query.kinds, kind) }
+                    }
+                }
+                Section(L("Status")) {
+                    ForEach(WhikItemStatus.allCases, id: \.self) { status in
+                        row(status.label, on: query.statuses.contains(status)) { toggle(&query.statuses, status) }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(WhikColors.background.ignoresSafeArea())
+            .navigationTitle(L("Sort and filter"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(L("Reset")) {
+                        query.sort = .newest
+                        query.kinds = []
+                        query.statuses = []
+                    }
+                    .disabled(query.sort == .newest && query.extraFilterCount == 0)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(L("Done")) { dismiss() }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func toggle<T: Hashable>(_ set: inout Set<T>, _ value: T) {
+        if set.contains(value) { set.remove(value) } else { set.insert(value) }
+    }
+
+    private func row(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).foregroundStyle(WhikColors.textPrimary)
+                Spacer()
+                if on {
+                    Image(systemName: "checkmark").foregroundStyle(WhikColors.mint).fontWeight(.semibold)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+        .listRowBackground(WhikColors.surface)
+    }
+}
+
 private struct WhikLibraryTile: View {
     let item: WhikLibraryItem
 
@@ -274,13 +538,14 @@ private struct WhikLibraryTile: View {
                             Text(status)
                                 .font(.system(.caption).weight(.semibold))
                                 .foregroundStyle(r.status == .failed ? WhikColors.danger : WhikColors.textPrimary)
+                                .lineLimit(1)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
-                                .background(Capsule().fill(Color.black.opacity(0.55)))
+                                .background(Capsule().fill(Color.black.opacity(0.6)))
                             if let p = WhikRecordStatus.progress(r) {
                                 ProgressView(value: p)
                                     .tint(WhikColors.mint)
-                                    .accessibilityLabel("Server progress")
+                                    .accessibilityLabel(L("Server progress"))
                             }
                         }
                         .padding(8)
@@ -292,11 +557,11 @@ private struct WhikLibraryTile: View {
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(WhikColors.border, lineWidth: 1))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
+                Text(item.displayTitle)
                     .font(.system(.body).weight(.semibold))
                     .foregroundStyle(WhikColors.textPrimary)
                     .lineLimit(1)
-                Text(item.kindLabel)
+                Text(item.kind.label)
                     .font(.system(.subheadline))
                     .foregroundStyle(WhikColors.textSecondary)
                     .lineLimit(1)
@@ -312,7 +577,20 @@ private struct WhikLibraryTile: View {
     private func thumbnail(width: CGFloat, height: CGFloat) -> some View {
         switch item {
         case .record(let r):
-            SpaceThumbnailView(space: r, height: height, width: width, cornerRadius: 0, showsActivityOverlay: false)
+            if r.id.hasPrefix("gaussian:") {
+                // 3D results: persistent thumbnail store (saved image → sharpest capture photo → viewer snapshot).
+                WhikRecordThumbnail(
+                    libraryId: r.id,
+                    savedThumbnail: r.remoteImageURL.flatMap(URL.init(string:)).flatMap { $0.isFileURL ? $0 : nil },
+                    sessionId: GaussianGenerationStore.shared.spaceId(fromLibraryId: r.id)
+                        .flatMap { GaussianGenerationStore.shared.record(spaceId: $0)?.sessionId },
+                    placeholderSymbol: r.isProductResult ? "cube" : "cube.transparent"
+                )
+                .frame(width: width, height: height)
+            } else {
+                // 360° results: existing latlong thumbnail pipeline (memory + disk cache).
+                SpaceThumbnailView(space: r, height: height, width: width, cornerRadius: 0, showsActivityOverlay: false)
+            }
         case .asset(let a):
             ZStack {
                 WhikColors.surface

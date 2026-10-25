@@ -5,21 +5,21 @@ enum SpaceJobErrorPresentation {
     static func userMessage(for lastErrorCode: String?) -> String {
         switch lastErrorCode {
         case "payload_too_large_local":
-            return "사진 용량이 커서 업로드할 수 없어요. 다시 촬영해 주세요."
+            return L("The photo is too large to upload. Please capture again.")
         case "payload_too_large":
-            return "사진을 업로드하지 못했어요."
+            return L("Couldn't upload the photo.")
         case "network_error":
-            return "네트워크에 연결할 수 없습니다."
+            return L("Can't connect to the network.")
         case "cellular_blocked":
-            return "Wi‑Fi에서 업로드하거나, 설정에서 셀룰러 업로드를 허용해 주세요."
+            return L("Upload on Wi‑Fi, or allow cellular uploads in Settings.")
         case "download_failed":
-            return "공간을 불러오지 못했어요. 다시 시도해 주세요."
+            return L("Couldn't load the space. Please try again.")
         case "invalid_image":
-            return "공간 파일이 올바르지 않아요. 다시 시도해 주세요."
+            return L("The space file isn't valid. Please try again.")
         case "generation_failed":
-            return "생성 실패"
+            return L("Creation failed")
         default:
-            return "생성 실패"
+            return L("Creation failed")
         }
     }
 

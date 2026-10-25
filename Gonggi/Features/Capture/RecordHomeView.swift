@@ -13,18 +13,18 @@ enum RecordHomeCopy {
         var icon: String
     }
 
-    static let title = "기록하기"
-    static let productSection = "3D 자산"
-    static let spaceSection = "공간"
+    static var title: String { L("Capture") }
+    static var productSection: String { L("3D Objects") }
+    static var spaceSection: String { L("Space") }
     static let storeSection = StoreShelfCopy.sectionTitle
 
-    static let photoTo3D = Choice(title: "사진으로 3D 만들기", line: "사진 한 장으로 입체 모습을 만들어요",
-                                  icon: "photo.on.rectangle.angled")
-    static let productCapture = Choice(title: "3D 자산 만들기", line: "움직이지 않는 물체를 돌려 볼 수 있어요", icon: "rotate.3d")
+    static var photoTo3D: Choice { Choice(title: L("Make 3D from a photo"), line: L("Make a 3D shape from a single photo"),
+                                  icon: "photo.on.rectangle.angled") }
+    static var productCapture: Choice { Choice(title: L("Create a 3D Object"), line: L("Turn around an object that doesn't move"), icon: "rotate.3d") }
 
-    static let space360 = Choice(title: "360 공간", line: "한 자리에서 주변을 둘러봐요",
-                                 icon: "arrow.triangle.2.circlepath.circle")
-    static let walkableSpace = Choice(title: "걸어보는 공간", line: "공간 안을 이동하며 볼 수 있어요", icon: "figure.walk")
+    static var space360: Choice { Choice(title: L("360 space"), line: L("Look around from one spot"),
+                                 icon: "arrow.triangle.2.circlepath.circle") }
+    static var walkableSpace: Choice { Choice(title: L("Walkable space"), line: L("Move around inside the space"), icon: "figure.walk") }
 
     static let recordShelf = Choice(title: StoreShelfCopy.recordTitle, line: StoreShelfCopy.recordLine,
                                     icon: "square.stack.3d.up")
@@ -32,13 +32,13 @@ enum RecordHomeCopy {
                                     icon: "magnifyingglass")
 
     /// 실험 섹션(센서 검사). 빌드 설정 GONGGI_SENSOR_EXPERIMENTS가 켜진 빌드에서만 보인다.
-    static let experimentSection = "실험"
-    static let sensorExperiment = Choice(title: "센서 검사", line: "이 기기의 카메라·후면 깊이·ARKit를 직접 검사해요",
-                                         icon: "waveform.path.ecg")
+    static var experimentSection: String { L("Experiments") }
+    static var sensorExperiment: Choice { Choice(title: L("Sensor check"), line: L("Test this device's camera, rear depth and ARKit directly"),
+                                         icon: "waveform.path.ecg") }
 
-    static let photoAccepted = "3D 생성을 시작했어요. 보관함의 3D 자산에서 결과를 볼 수 있어요."
-    static let walkableUnavailable = "이 계정에서는 아직 걸어보는 공간을 사용할 수 없어요."
-    static let walkableUnknown = "지금은 걸어보는 공간을 확인할 수 없어요. 잠시 후 다시 시도해 주세요."
+    static var photoAccepted: String { L("3D creation started. See the result in Library under 3D Objects.") }
+    static var walkableUnavailable: String { L("Walkable spaces aren't available for this account yet.") }
+    static var walkableUnknown: String { L("Can't check walkable spaces right now. Please try again in a moment.") }
 }
 
 enum RecordProductOption: Equatable {

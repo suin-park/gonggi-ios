@@ -12,7 +12,7 @@ struct SpaceCleanupSelectionBanner: View {
     var body: some View {
         VStack(spacing: GonggiSpacing.sm) {
             if poleWarning {
-                Text("위/아래 극점에 가까워요. 가구가 잘 보이도록 시점을 조금 내려 주세요.")
+                Text(L("You're near the top or bottom. Tilt the view down a little so the furniture is visible."))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(.yellow)
                     .multilineTextAlignment(.center)
@@ -43,21 +43,21 @@ struct SpaceCleanupSelectionBanner: View {
                                 .background(Capsule().fill(Color.white.opacity(0.2)))
                             }
                             .buttonStyle(.plain)
-                            .accessibilityLabel("선택 \(index + 1) 삭제")
+                            .accessibilityLabel(L("Delete selection %@", "\(index + 1)"))
                         }
                     }
                 }
             }
 
             if session.job?.isAwaitingConfirmation == true {
-                TextField("무엇을 제거하시겠습니까? (예: 쇼파, 거울)", text: $session.removalTargetText)
+                TextField(L("What do you want to remove? (e.g. sofa, mirror)"), text: $session.removalTargetText)
                     .textFieldStyle(.roundedBorder)
                     .font(.footnote)
                     .submitLabel(.done)
-                    .accessibilityLabel("제거할 대상")
+                    .accessibilityLabel(L("To remove"))
 
                 HStack(spacing: GonggiSpacing.sm) {
-                    Button("다시 선택") {
+                    Button(L("Choose again")) {
                         GonggiHaptics.light()
                         session.resetForReselect()
                     }
@@ -65,7 +65,7 @@ struct SpaceCleanupSelectionBanner: View {
                     .buttonStyle(.bordered)
                     .tint(.white)
 
-                    Button("이 가구 비우기") {
+                    Button(L("Clear this furniture")) {
                         GonggiHaptics.medium()
                         onConfirm()
                     }
@@ -79,7 +79,7 @@ struct SpaceCleanupSelectionBanner: View {
                     .tint(.white)
             } else {
                 HStack(spacing: GonggiSpacing.sm) {
-                    Button("선택 추가") {
+                    Button(L("Add selection")) {
                         GonggiHaptics.light()
                         onAddCenter()
                     }
@@ -88,7 +88,7 @@ struct SpaceCleanupSelectionBanner: View {
                     .tint(GonggiColors.accentCyan)
                     .disabled(session.isSubmitting)
 
-                    Button("마지막 선택 취소") {
+                    Button(L("Undo last selection")) {
                         GonggiHaptics.light()
                         session.undoLast()
                     }
@@ -99,7 +99,7 @@ struct SpaceCleanupSelectionBanner: View {
                 }
 
                 HStack(spacing: GonggiSpacing.sm) {
-                    Button("다시 선택") {
+                    Button(L("Choose again")) {
                         GonggiHaptics.light()
                         session.resetForReselect()
                     }
@@ -108,7 +108,7 @@ struct SpaceCleanupSelectionBanner: View {
                     .tint(.white)
                     .disabled(session.points.isEmpty || session.isSubmitting)
 
-                    Button("이 가구 비우기") {
+                    Button(L("Clear this furniture")) {
                         GonggiHaptics.medium()
                         onSubmit()
                     }
@@ -126,7 +126,7 @@ struct SpaceCleanupSelectionBanner: View {
                     .multilineTextAlignment(.center)
             }
 
-            Button("닫기") { onCancel() }
+            Button(L("Close")) { onCancel() }
                 .font(GonggiTypography.caption(12))
                 .foregroundStyle(.white.opacity(0.8))
         }
@@ -140,16 +140,16 @@ struct SpaceCleanupSelectionBanner: View {
     private var bannerMessage: String {
         if session.job?.isAwaitingConfirmation == true {
             return session.canConfirm
-                ? "제거할 대상을 확인한 뒤 「이 가구 비우기」를 눌러 주세요"
-                : "핀 위치를 확인하고, 아래에 제거할 가구 이름을 입력해 주세요"
+                ? L("Check what will be removed, then tap “Clear this furniture”")
+                : L("Check the pin, then type the name of the furniture to remove below")
         }
         if session.job?.isInFlight == true {
-            return "선택한 가구를 찾는 중…"
+            return L("Finding the selected furniture…")
         }
         if session.points.isEmpty {
-            return "화면 중앙을 가구에 맞춘 뒤 「선택 추가」를 누르거나 탭하세요"
+            return L("Center the screen on the furniture, then tap “Add selection” or tap it")
         }
-        return "선택 \(session.points.count)개, 계속 추가하거나 「이 가구 비우기」"
+        return L("%@ selected, keep adding or tap “Clear this furniture”", "\(session.points.count)")
     }
 }
 
@@ -187,7 +187,7 @@ struct SpaceCleanupVROverlay: View {
                             .frame(width: 26, height: 26)
                             .background(Circle().fill(GonggiColors.accentCyan))
                             .position(clamped(screen, in: geo.size))
-                            .accessibilityLabel("선택 \(index + 1)")
+                            .accessibilityLabel(L("Selection %@", "\(index + 1)"))
                     }
                 }
             }

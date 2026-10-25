@@ -9,33 +9,33 @@ final class CaptureCompletionPresentationTests: XCTestCase {
                 completionState: .ready,
                 terminalContinuityOK: true
             ),
-            "촬영이 완료되었어요"
+            L("Capture complete")
         )
         XCTAssertEqual(
             CaptureSummaryPresentation.heroTitle(
                 completionState: .notReady,
                 terminalContinuityOK: false
             ),
-            "촬영 데이터가 저장되었어요"
+            L("Capture saved")
         )
         XCTAssertEqual(
             CaptureSummaryPresentation.heroTitle(
                 completionState: .nearlyReady,
                 terminalContinuityOK: false
             ),
-            "촬영 데이터가 저장되었어요"
+            L("Capture saved")
         )
         XCTAssertEqual(
             CaptureSummaryPresentation.createButtonTitle(weakTerminal: true),
-            "현재 데이터로 생성"
+            L("Create with current data")
         )
         XCTAssertEqual(
             CaptureSummaryPresentation.continueButtonTitle(weakTerminal: true),
-            "연결 보강 촬영"
+            L("Strengthen the connection")
         )
         XCTAssertEqual(
             CaptureSummaryPresentation.createButtonTitle(weakTerminal: false),
-            "이대로 공간 생성"
+            L("Create the space now")
         )
         XCTAssertEqual(
             CaptureSummaryPresentation.heroTitle(
@@ -43,7 +43,7 @@ final class CaptureCompletionPresentationTests: XCTestCase {
                 terminalContinuityOK: false,
                 candidateSafetyCapReached: true
             ),
-            "촬영 데이터가 부분 저장되었어요"
+            L("Part of the capture was saved")
         )
     }
 }

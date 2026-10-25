@@ -151,11 +151,11 @@ enum CaptureGuideReplay {
         var open: [String: Int] = [:]
         for (g, c) in gap.openGaps() { open[g.rawValue] = c }
         var legacy: [String] = []
-        if let n = open[CaptureGapModel.Kind.opposite.rawValue], n > 0 { legacy.append("반대 방향 \(n)곳") }
+        if let n = open[CaptureGapModel.Kind.opposite.rawValue], n > 0 { legacy.append(L("%@ opposite directions", "\(n)")) }
         if (open[CaptureGapModel.Kind.up.rawValue] ?? 0) > 0 || gap.savedUpPhotos < CaptureGapModel.Config.minUpPhotos {
-            legacy.append("천장 경계")
+            legacy.append(L("Ceiling edge"))
         }
-        if gap.savedDownPhotos < CaptureGapModel.Config.minUpPhotos { legacy.append("바닥 경계") }
+        if gap.savedDownPhotos < CaptureGapModel.Config.minUpPhotos { legacy.append(L("Floor edge")) }
         let remaining = CaptureCompletionRecommendation.remaining(
             openGaps: gap.openGapDetails(), savedUpPhotos: gap.savedUpPhotos, savedDownPhotos: gap.savedDownPhotos,
             photoLimitReached: frames.count >= SpatialCaptureConfig.candidateSafetyCap)

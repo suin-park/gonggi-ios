@@ -131,15 +131,15 @@ enum SpaceAudioAPIError: Error, Equatable {
     var userMessage: String {
         switch self {
         case .network, .invalidResponse:
-            return "네트워크에 연결할 수 없습니다."
+            return L("Can't connect to the network.")
         case .unauthorized, .missingToken:
-            return "로그인이 필요합니다."
+            return L("Please sign in.")
         case .fileTooLarge:
-            return "파일이 너무 커요. 20MB 이하로 올려 주세요."
+            return L("The file is too large. Upload 20 MB or less.")
         case .unsupportedType:
-            return "지원하지 않는 오디오 형식이에요. m4a, mp3, aac, wav만 가능해요."
+            return L("Unsupported audio format. Only m4a, mp3, aac and wav are supported.")
         case .generic:
-            return "오디오를 처리하지 못했어요."
+            return L("Couldn't process the audio.")
         }
     }
 }

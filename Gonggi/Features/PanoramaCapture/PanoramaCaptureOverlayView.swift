@@ -57,7 +57,7 @@ struct PanoramaCaptureOverlayView: View {
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
             }
             Spacer()
-            Text("파노라마 기록")
+            Text(L("Panorama capture"))
                 .font(GonggiTypography.caption(12))
                 .foregroundStyle(GonggiColors.textSecondary)
                 .padding(.horizontal, 12)
@@ -130,9 +130,9 @@ struct PanoramaCaptureOverlayView: View {
                 }
                 .frame(height: 6)
                 HStack {
-                    Text(String(format: "회전 %.0f°", viewModel.yawSpanDeg))
+                    Text(String(format: L("Rotation %.0f°"), viewModel.yawSpanDeg))
                     Spacer()
-                    Text(viewModel.phase == .capturing ? "기록 중" : "준비")
+                    Text(viewModel.phase == .capturing ? L("Recording") : L("Get ready"))
                 }
                 .font(GonggiTypography.caption(11))
                 .foregroundStyle(GonggiColors.textSecondary)
@@ -143,7 +143,7 @@ struct PanoramaCaptureOverlayView: View {
                 Button {
                     Task { await viewModel.finishCapture() }
                 } label: {
-                    Text("완료")
+                    Text(L("Done"))
                         .font(GonggiTypography.body(15))
                         .fontWeight(.semibold)
                         .foregroundStyle(.white)
@@ -200,11 +200,11 @@ struct PanoramaCaptureOverlayView: View {
     private var bottomHint: String {
         switch viewModel.phase {
         case .capturing:
-            return "제자리에서 천천히 회전, 다시 누르면 생성"
+            return L("Turn slowly in place; tap again to create")
         case .composing:
-            return "파노라마 생성 중…"
+            return L("Creating panorama…")
         default:
-            return "가이드 선을 유지하면 더 자연스럽게 이어져요"
+            return L("Keeping the guide line makes it join more naturally")
         }
     }
 }

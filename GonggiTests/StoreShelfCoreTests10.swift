@@ -194,9 +194,9 @@ final class KmoProductExperienceTests: XCTestCase {
         // 잘못된 구매 주소는 상담 주소로 대신하지 않고 문의로만 이어진다.
         XCTAssertEqual(KmoOfferPolicy.actions(arReady: false, purchaseUrl: "ftp://x", consultationUrl: "https://a.test/ask"),
                        [.inquire("https://a.test/ask")])
-        XCTAssertEqual(KmoOfferPolicy.label(.ar), "AR로 보기")
+        XCTAssertEqual(KmoOfferPolicy.label(.ar), L("View in AR"))
         XCTAssertEqual(KmoOfferPolicy.label(.buy("x")), "구매하러 가기")
-        XCTAssertEqual(KmoOfferPolicy.label(.inquire("x")), "문의하기")
+        XCTAssertEqual(KmoOfferPolicy.label(.inquire("x")), L("Contact us"))
     }
 
     func testPriceIsShownOnlyWhenConfirmed() {
@@ -221,7 +221,7 @@ final class KmoProductExperienceTests: XCTestCase {
     func testCategoryChipsExistOnlyWhenThereIsMoreThanOneRealKind() {
         XCTAssertTrue(KmoCategoryChips.make(hasFurniture3D: true, hasCurtain2D: false).isEmpty)
         XCTAssertTrue(KmoCategoryChips.make(hasFurniture3D: false, hasCurtain2D: false).isEmpty)
-        XCTAssertEqual(KmoCategoryChips.make(hasFurniture3D: true, hasCurtain2D: true).map(\.title), ["전체", "가구", "커튼"])
+        XCTAssertEqual(KmoCategoryChips.make(hasFurniture3D: true, hasCurtain2D: true).map(\.title), [L("Overall"), "가구", "커튼"])
     }
 
     func testSavedProductsTogglePerAccount() {

@@ -21,7 +21,7 @@ struct WhikSignInView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 8)
                     VStack(spacing: 12) {
-                        button("Continue with Apple", icon: "apple.logo") {
+                        button(L("Continue with Apple"), icon: "apple.logo") {
                             appleCoordinator.beginSignIn { result in
                                 Task { @MainActor in
                                     switch result {
@@ -33,16 +33,16 @@ struct WhikSignInView: View {
                                             email: payload.email
                                         )
                                     case .failure(let err):
-                                        session.lastError = err.errorDescription ?? "Apple sign-in failed."
+                                        session.lastError = err.errorDescription ?? L("Apple sign-in failed.")
                                     }
                                 }
                             }
                         }
-                        button("Continue with Google", icon: "g.circle") {
+                        button(L("Continue with Google"), icon: "g.circle") {
                             Task { await startGoogle() }
                         }
                         .disabled(googleBusy)
-                        button("Continue with Email", icon: "envelope") {
+                        button(L("Continue with Email"), icon: "envelope") {
                             session.emailSheetPresented = true
                         }
                     }
@@ -60,7 +60,7 @@ struct WhikSignInView: View {
             .background(WhikColors.background.ignoresSafeArea())
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Not now", action: onCancel)
+                    Button(L("Not now"), action: onCancel)
                         .foregroundStyle(WhikColors.textPrimary)
                 }
             }
@@ -82,7 +82,7 @@ struct WhikSignInView: View {
             let idToken = try await GoogleSignInCoordinator.shared.signIn()
             await session.signInWithGoogleIDToken(idToken)
         } catch {
-            session.lastError = (error as? LocalizedError)?.errorDescription ?? "Google sign-in couldn't start."
+            session.lastError = (error as? LocalizedError)?.errorDescription ?? L("Google sign-in couldn't start.")
         }
     }
 

@@ -23,8 +23,8 @@ final class AssetARCameraPlacementTests: XCTestCase {
     }
 
     func testPlacementHints() {
-        XCTAssertEqual(AssetARCopy.scanHint, "바닥이나 테이블을 천천히 비춰주세요")
-        XCTAssertEqual(AssetARCopy.tapHint, "놓을 위치를 탭하세요")
+        XCTAssertEqual(AssetARCopy.scanHint, L("Slowly point at the floor or a table"))
+        XCTAssertEqual(AssetARCopy.tapHint, L("Tap where to place it"))
     }
 
     func testScalePolicyOversizedNormalized() {

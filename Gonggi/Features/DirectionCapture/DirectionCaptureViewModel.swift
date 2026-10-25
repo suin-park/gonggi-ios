@@ -7,9 +7,9 @@ final class DirectionCaptureViewModel: ObservableObject {
     let engine = DirectionCaptureEngine()
 
     @Published var phase: DirectionCapturePhase = .idle
-    @Published var progressText: String = "준비"
+    @Published var progressText: String = L("Get ready")
     @Published var guideText: String = ""
-    @Published var phaseTitle: String = "공간 기록"
+    @Published var phaseTitle: String = L("Space capture")
     @Published var currentTarget: DirectionName?
     @Published var completed: Set<DirectionName> = []
     @Published var result: DirectionCaptureResult?
@@ -45,7 +45,7 @@ final class DirectionCaptureViewModel: ObservableObject {
             engine.startSession()
             syncFromEngine()
         } catch {
-            phase = .failed("카메라를 열 수 없습니다")
+            phase = .failed(L("Can't open the camera"))
         }
     }
 
@@ -85,12 +85,12 @@ final class DirectionCaptureViewModel: ObservableObject {
 
     private static func title(for phase: DirectionCapturePhase) -> String {
         switch phase {
-        case .capturingHorizontal: return "수평 한 바퀴"
-        case .capturingUpperOblique: return "위로 한 바퀴"
-        case .capturingLowerOblique: return "아래로 한 바퀴"
-        case .completed: return "촬영 완료"
-        case .failed: return "다시 시도"
-        default: return "공간 기록"
+        case .capturingHorizontal: return L("One turn at eye level")
+        case .capturingUpperOblique: return L("One turn looking up")
+        case .capturingLowerOblique: return L("One turn looking down")
+        case .completed: return L("Capture complete")
+        case .failed: return L("Try again")
+        default: return L("Space capture")
         }
     }
 }

@@ -14,17 +14,17 @@ enum SpatialCapturePackageValidationError: Error, Equatable, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingDirectory(let p): return "패키지 폴더가 없습니다: \(p)"
-        case .missingFile(let p): return "필수 파일이 없습니다: \(p)"
+        case .missingDirectory(let p): return L("Package folder missing: %@", "\(p)")
+        case .missingFile(let p): return L("Required file missing: %@", "\(p)")
         case .keyframeCountMismatch(let e, let j, let p, let i):
-            return "키프레임 수 불일치 (meta=\(e) jpeg=\(j) poses=\(p) intrinsics=\(i))"
-        case .missingJPEG(let id): return "이미지 파일이 없습니다: \(id)"
-        case .missingIntrinsics(let id): return "intrinsics가 없습니다: \(id)"
-        case .invalidTimestamp(let id): return "잘못된 timestamp: \(id)"
-        case .nonMonotonicTimestamp(let id): return "timestamp가 단조 증가하지 않습니다: \(id)"
-        case .duplicateFrameId(let id): return "중복 frameId: \(id)"
-        case .nanTransform(let id): return "잘못된 camera transform: \(id)"
-        case .emptyPackage: return "선택된 키프레임이 없습니다"
+            return L("Keyframe count mismatch (meta=%1$@ jpeg=%2$@ poses=%3$@ intrinsics=%4$@)", "\(e)", "\(j)", "\(p)", "\(i)")
+        case .missingJPEG(let id): return L("Image file missing: %@", "\(id)")
+        case .missingIntrinsics(let id): return L("Intrinsics missing: %@", "\(id)")
+        case .invalidTimestamp(let id): return L("Invalid timestamp: %@", "\(id)")
+        case .nonMonotonicTimestamp(let id): return L("Timestamps are not increasing: %@", "\(id)")
+        case .duplicateFrameId(let id): return L("Duplicate frameId: %@", "\(id)")
+        case .nanTransform(let id): return L("Invalid camera transform: %@", "\(id)")
+        case .emptyPackage: return L("No keyframes selected")
         }
     }
 }

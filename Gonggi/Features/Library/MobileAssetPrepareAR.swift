@@ -22,23 +22,23 @@ enum MobilePrepareARError: Error, Equatable {
     var userMessage: String {
         switch self {
         case .unauthorized:
-            return "로그인이 필요해요"
+            return L("Please sign in")
         case .assetNotFound:
-            return "3D 어셋을 찾을 수 없어요"
+            return L("Couldn't find the 3D Object")
         case .glbNotAvailable:
-            return "아직 3D 어셋이 준비되지 않았어요"
+            return L("The 3D Object isn't ready yet")
         case .prepareUnavailable:
-            return "AR 준비 기능을 현재 사용할 수 없어요"
+            return L("AR preparation isn't available right now")
         case .prepareFailed:
-            return "AR 준비에 실패했어요"
+            return L("AR preparation failed")
         case .rateLimited:
-            return "잠시 후 다시 시도해주세요"
+            return L("Please try again in a moment")
         case .network:
-            return "네트워크 연결을 확인해주세요"
+            return L("Check your network connection")
         case .server(_, let message, _):
-            return message.isEmpty ? "AR 준비에 실패했어요" : message
+            return message.isEmpty ? L("AR preparation failed") : message
         case .invalidResponse:
-            return "서버 응답을 확인하지 못했어요"
+            return L("Couldn't check the server response")
         }
     }
 }

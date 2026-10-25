@@ -13,10 +13,10 @@ enum SelectiveRepairHintPreferences {
     /// Legacy auto-fade toast flag (no longer drives presentation).
     static let legacyStorageKey = "gonggi.selectiveRepairHintSeen.v1"
 
-    static let title = "잘못 만들어진 부분이 있나요?"
-    static let body = "수정할 위치를 길게 누르면 다시 촬영할 수 있어요."
-    static let dismissAccessibilityLabel = "다시 촬영 안내 닫기"
-    static let reopenMenuTitle = "다시 촬영 안내"
+    static var title: String { L("Something not right?") }
+    static var body: String { L("Press and hold the spot to fix to capture it again.") }
+    static var dismissAccessibilityLabel: String { L("Close the recapture tip") }
+    static var reopenMenuTitle: String { L("Recapture tip") }
 
     /// After panorama is ready, brief delay before fade-in (no auto dismiss).
     static let postReadyDelaySeconds: TimeInterval = 0.5

@@ -20,26 +20,27 @@ struct WhikSample: Identifiable, Equatable {
 
     var subtitle: String {
         switch kind {
-        case .panorama360: return "Sample 360° space"
-        case .photo: return "Photo preview"
+        case .panorama360: return L("Sample 360° space")
+        case .photo: return L("Photo preview")
         }
     }
 
     /// Only real captures can be opened in a 3D/360 viewer.
     var opensViewer: Bool { kind == .panorama360 }
 
-    static let spaces: [WhikSample] = [
-        WhikSample(id: "sample-360", title: "Look around", kind: .panorama360, category: .spaces),
-        WhikSample(id: "photo-sunday", title: "Sunday at home", kind: .photo(assetName: "WhikPhotoLivingSunday"), category: .spaces),
-        WhikSample(id: "photo-autumn", title: "Autumn light", kind: .photo(assetName: "WhikPhotoLivingAutumn"), category: .spaces),
-        WhikSample(id: "photo-cafe", title: "Corner café", kind: .photo(assetName: "WhikPhotoCafe"), category: .spaces),
-        WhikSample(id: "photo-studio", title: "Home studio", kind: .photo(assetName: "WhikPhotoStudio"), category: .spaces),
-    ]
+    // Computed so titles follow the in-app language.
+    static var spaces: [WhikSample] { [
+        WhikSample(id: "sample-360", title: L("Look around"), kind: .panorama360, category: .spaces),
+        WhikSample(id: "photo-sunday", title: L("Sunday at home"), kind: .photo(assetName: "WhikPhotoLivingSunday"), category: .spaces),
+        WhikSample(id: "photo-autumn", title: L("Autumn light"), kind: .photo(assetName: "WhikPhotoLivingAutumn"), category: .spaces),
+        WhikSample(id: "photo-cafe", title: L("Corner café"), kind: .photo(assetName: "WhikPhotoCafe"), category: .spaces),
+        WhikSample(id: "photo-studio", title: L("Home studio"), kind: .photo(assetName: "WhikPhotoStudio"), category: .spaces),
+    ] }
 
-    static let objects: [WhikSample] = [
-        WhikSample(id: "photo-chair-walnut", title: "Lounge chair", kind: .photo(assetName: "WhikPhotoChairWalnut"), category: .objects),
-        WhikSample(id: "photo-chair-charcoal", title: "Bouclé chair", kind: .photo(assetName: "WhikPhotoChairCharcoal"), category: .objects),
-    ]
+    static var objects: [WhikSample] { [
+        WhikSample(id: "photo-chair-walnut", title: L("Lounge chair"), kind: .photo(assetName: "WhikPhotoChairWalnut"), category: .objects),
+        WhikSample(id: "photo-chair-charcoal", title: L("Bouclé chair"), kind: .photo(assetName: "WhikPhotoChairCharcoal"), category: .objects),
+    ] }
 
     static func items(_ category: Category) -> [WhikSample] {
         category == .spaces ? spaces : objects

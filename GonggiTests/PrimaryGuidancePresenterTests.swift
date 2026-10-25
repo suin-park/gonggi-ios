@@ -21,7 +21,7 @@ final class PrimaryGuidancePresenterTests: XCTestCase {
         XCTAssertTrue(state.title.contains("다시 보이도록") || state.title.contains("돌아가"))
         XCTAssertNotEqual(state.title, "같은 영역을 바라보며 옆으로 조금 이동해주세요")
         XCTAssertEqual(state.direction, .returnBack)
-        XCTAssertEqual(state.statusLabel, "공간 기록 중")
+        XCTAssertEqual(state.statusLabel, L("Capturing the space"))
         XCTAssertFalse(state.title.contains("%"))
     }
 
@@ -35,7 +35,7 @@ final class PrimaryGuidancePresenterTests: XCTestCase {
         quality.qualityCoverage = 0.4
         quality.motionSpeed = 0.1
 
-        let astra = "벽을 따라 천천히 이동하세요"
+        let astra = L("Move slowly along the walls")
         let state = CaptureUIPresenter.primaryGuidance(
             quality: quality,
             astraSegmentInstruction: astra
@@ -53,8 +53,8 @@ final class PrimaryGuidancePresenterTests: XCTestCase {
 
         let state = CaptureUIPresenter.primaryGuidance(quality: quality)
         XCTAssertTrue(state.isReadyToFinish)
-        XCTAssertEqual(state.finishButtonTitle, "기록 완료")
-        XCTAssertEqual(state.statusLabel, "촬영이 충분합니다")
+        XCTAssertEqual(state.finishButtonTitle, L("Finish capture"))
+        XCTAssertEqual(state.statusLabel, L("You have enough"))
         XCTAssertEqual(state.source, .completion)
     }
 
@@ -73,7 +73,7 @@ final class PrimaryGuidancePresenterTests: XCTestCase {
         XCTAssertEqual(state.action, .slowDown)
         XCTAssertFalse(state.isReadyToFinish)
         XCTAssertFalse(state.title.contains("준비가 됐어요"))
-        XCTAssertEqual(state.statusLabel, "공간 기록 중")
+        XCTAssertEqual(state.statusLabel, L("Capturing the space"))
     }
 
     func testHoldControllerKeepsNormalGuidanceBriefly() {
@@ -117,8 +117,8 @@ final class PrimaryGuidancePresenterTests: XCTestCase {
     }
 
     func testStatusLabelsForCompletionStates() {
-        XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .notReady), "공간 기록 중")
+        XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .notReady), L("Capturing the space"))
         XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .nearlyReady), "거의 다 기록했어요")
-        XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .ready), "촬영이 충분합니다")
+        XCTAssertEqual(CaptureUIPresenter.statusLabel(for: .ready), L("You have enough"))
     }
 }

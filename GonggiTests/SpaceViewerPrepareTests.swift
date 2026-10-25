@@ -235,7 +235,7 @@ final class SpaceViewerPrepareTests: XCTestCase {
         guard case .failure(let err) = result else {
             return XCTFail("must not open viewer without texture")
         }
-        XCTAssertEqual(err.userMessage, "공간을 불러오지 못했어요")
+        XCTAssertEqual(err.userMessage, L("Couldn't load the space"))
         XCTAssertFalse(store.job(id: sid)?.isDeviceReadyForVR == true)
     }
 

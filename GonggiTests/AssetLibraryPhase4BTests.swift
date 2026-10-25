@@ -5,19 +5,19 @@ final class AssetLibraryPhase4BTests: XCTestCase {
     func testStatusLabelsPhase4B() {
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "READY", availableForPlacement: true).libraryStatus.label,
-            "준비 완료"
+            L("Ready")
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "PROCESSING").libraryStatus.label,
-            "AR/공간 배치를 준비하는 중"
+            L("Preparing AR and space placement")
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "NONE", glbKey: "g.glb").libraryStatus.label,
-            "AR 준비가 필요해요"
+            L("AR needs to be prepared")
         )
         XCTAssertEqual(
             MobileAssetDTO(id: "1", name: "A", usdzStatus: "FAILED").libraryStatus.label,
-            "AR 준비가 필요해요"
+            L("AR needs to be prepared")
         )
     }
 
@@ -43,10 +43,10 @@ final class AssetLibraryPhase4BTests: XCTestCase {
     }
 
     func testPrepareErrorCopy() {
-        XCTAssertEqual(MobilePrepareARError.glbNotAvailable.userMessage, "아직 3D 어셋이 준비되지 않았어요")
-        XCTAssertEqual(MobilePrepareARError.prepareUnavailable.userMessage, "AR 준비 기능을 현재 사용할 수 없어요")
-        XCTAssertEqual(MobilePrepareARError.prepareFailed.userMessage, "AR 준비에 실패했어요")
-        XCTAssertEqual(MobilePrepareARError.rateLimited.userMessage, "잠시 후 다시 시도해주세요")
+        XCTAssertEqual(MobilePrepareARError.glbNotAvailable.userMessage, L("The 3D Object isn't ready yet"))
+        XCTAssertEqual(MobilePrepareARError.prepareUnavailable.userMessage, L("AR preparation isn't available right now"))
+        XCTAssertEqual(MobilePrepareARError.prepareFailed.userMessage, L("AR preparation failed"))
+        XCTAssertEqual(MobilePrepareARError.rateLimited.userMessage, L("Please try again in a moment"))
     }
 
     func testPrepareResponseShape() {
@@ -112,9 +112,9 @@ final class AssetLibraryPhase4BTests: XCTestCase {
 
     func testGenerationToAssetStatusSeparation() {
         let job = MobileGenerationJobDTO(jobId: "j1", status: "processing")
-        XCTAssertEqual(job.statusLabel, "3D를 만드는 중")
+        XCTAssertEqual(job.statusLabel, L("Making 3D"))
         let asset = MobileAssetDTO(id: "a1", name: "X", usdzStatus: "PROCESSING", glbKey: "g")
-        XCTAssertEqual(asset.libraryStatus.label, "AR/공간 배치를 준비하는 중")
+        XCTAssertEqual(asset.libraryStatus.label, L("Preparing AR and space placement"))
         XCTAssertNotEqual(job.statusLabel, asset.libraryStatus.label)
     }
 

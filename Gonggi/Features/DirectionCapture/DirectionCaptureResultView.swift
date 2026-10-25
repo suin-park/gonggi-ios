@@ -32,17 +32,17 @@ struct DirectionCaptureResultView: View {
                 .padding(16)
             }
             .background(GonggiAmbientBackground())
-            .navigationTitle("방향 캡처 결과")
+            .navigationTitle(L("Direction capture result"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .bottomBar) {
                     HStack(spacing: 12) {
-                        Button("다시 촬영") {
+                        Button(L("Capture again")) {
                             GonggiHaptics.medium()
                             onRetake()
                         }
                         Spacer()
-                        Button("완료") {
+                        Button(L("Done")) {
                             GonggiHaptics.medium()
                             onDone()
                         }

@@ -27,10 +27,10 @@ final class CaptureCandidateSafetyCapPresentationTests: XCTestCase {
         let q = quality(enqueueCount: cap - 1)
         XCTAssertFalse(q.candidateSafetyCapReached)
         XCTAssertEqual(CaptureQuietUIPresenter.phase(for: q), .capturing)
-        XCTAssertEqual(CaptureQuietUIPresenter.statusLine(for: q), "공간 기록 중")
+        XCTAssertEqual(CaptureQuietUIPresenter.statusLine(for: q), L("Capturing the space"))
         XCTAssertNotEqual(
             CaptureQuietUIPresenter.statusLine(for: q),
-            "새 사진이 더 이상 저장되지 않습니다"
+            L("New photos are no longer being saved")
         )
         XCTAssertNil(CaptureQuietUIPresenter.toastHint(for: q))
     }
@@ -40,7 +40,7 @@ final class CaptureCandidateSafetyCapPresentationTests: XCTestCase {
         XCTAssertTrue(q.candidateSafetyCapReached)
         XCTAssertEqual(CaptureQuietUIPresenter.phase(for: q), .storageCapReached)
         let line = CaptureQuietUIPresenter.statusLine(for: q)
-        XCTAssertEqual(line, "새 사진이 더 이상 저장되지 않습니다")
+        XCTAssertEqual(line, L("New photos are no longer being saved"))
         XCTAssertFalse(line.contains("520"))
         XCTAssertFalse(line.contains("장"))
         XCTAssertEqual(CaptureQuietUIPresenter.toastHint(for: q), line)
@@ -53,11 +53,11 @@ final class CaptureCandidateSafetyCapPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             CaptureQuietUIPresenter.statusLine(for: readyButCapped),
-            "새 사진이 더 이상 저장되지 않습니다"
+            L("New photos are no longer being saved")
         )
         XCTAssertNotEqual(
             CaptureQuietUIPresenter.statusLine(for: readyButCapped),
-            "공간이 충분히 기록됐어요"
+            L("The space is fully captured")
         )
     }
 
@@ -68,7 +68,7 @@ final class CaptureCandidateSafetyCapPresentationTests: XCTestCase {
                 terminalContinuityOK: false,
                 candidateSafetyCapReached: true
             ),
-            "촬영 데이터가 부분 저장되었어요"
+            L("Part of the capture was saved")
         )
         XCTAssertNotEqual(
             CaptureSummaryPresentation.heroTitle(
@@ -76,7 +76,7 @@ final class CaptureCandidateSafetyCapPresentationTests: XCTestCase {
                 terminalContinuityOK: false,
                 candidateSafetyCapReached: true
             ),
-            "촬영이 완료되었어요"
+            L("Capture complete")
         )
         let subtitle = CaptureSummaryPresentation.heroSubtitle(
             completionState: .notReady,
@@ -94,11 +94,11 @@ final class CaptureCandidateSafetyCapPresentationTests: XCTestCase {
         )
         XCTAssertTrue(
             CaptureSummaryPresentation.earlyFinishDialogTitle(candidateSafetyCapReached: true)
-                .contains("새 사진이 더 이상 저장되지 않습니다")
+                .contains(L("New photos are no longer being saved"))
         )
         XCTAssertFalse(
             CaptureSummaryPresentation.earlyFinishDialogTitle(candidateSafetyCapReached: true)
-                .contains("추가 촬영")
+                .contains(L("Capture more"))
         )
     }
 
@@ -109,7 +109,7 @@ final class CaptureCandidateSafetyCapPresentationTests: XCTestCase {
                 terminalContinuityOK: true,
                 candidateSafetyCapReached: true
             ),
-            "촬영이 완료되었어요"
+            L("Capture complete")
         )
         XCTAssertFalse(
             CaptureSummaryPresentation.shouldOfferContinueCapture(candidateSafetyCapReached: true)

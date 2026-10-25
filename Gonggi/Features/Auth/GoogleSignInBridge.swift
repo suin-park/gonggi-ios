@@ -48,17 +48,17 @@ final class GoogleSignInBridge: NSObject, ASWebAuthenticationPresentationContext
         var errorDescription: String? {
             switch self {
             case .missingClientID:
-                return "Info.plist에 GoogleClientID(iOS OAuth client)를 설정하세요."
+                return L("Google sign-in isn't set up in this build.")
             case .cancelled:
-                return "Google 로그인이 취소되었습니다."
+                return L("Google sign-in was cancelled.")
             case .stateMismatch:
-                return "Google 로그인 보안 검증에 실패했습니다. 다시 시도해 주세요."
+                return L("Google sign-in security check failed. Please try again.")
             case .missingAuthCode:
-                return "Google 인증 코드를 받지 못했습니다."
+                return L("Didn't receive a Google authorization code.")
             case .tokenExchangeFailed:
-                return "Google 토큰 교환에 실패했습니다."
+                return L("Google token exchange failed.")
             case .noIdToken:
-                return "Google ID 토큰을 받지 못했습니다."
+                return L("Didn't receive a Google ID token.")
             }
         }
     }

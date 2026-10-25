@@ -49,7 +49,7 @@ final class SpaceLinkExternalURLTests: XCTestCase {
                 externalUrl: nil,
                 targetSpaceName: nil
             ),
-            "연결된 공간으로 이동"
+            L("Go to the linked space")
         )
         XCTAssertEqual(
             SpaceLinkExternalURL.accessibilityLabel(
@@ -57,7 +57,7 @@ final class SpaceLinkExternalURLTests: XCTestCase {
                 externalUrl: nil,
                 targetSpaceName: "거실"
             ),
-            "연결된 공간으로 이동"
+            L("Go to the linked space")
         )
     }
 

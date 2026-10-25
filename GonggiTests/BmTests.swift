@@ -323,7 +323,7 @@ final class GSOptBmEngineTests: XCTestCase {
         let set = BmTest.photoSet(g: g, xs: [-0.04, 0.0, 0.04])
         let zero = [Double](repeating: 0, count: 6)
         let e = BmEngine(gaussians: g, photos: set, cachedDeltas: [0: zero, 1: zero, 2: zero])
-        guard let t = e.prepare(1) else { return XCTFail("준비 실패") }
+        guard let t = e.prepare(1) else { return XCTFail(L("Preparation failed")) }
         XCTAssertTrue(t.poseCached)
         let s = e.preparedSources.first { $0.index == 1 }
         XCTAssertNotNil(s)

@@ -13,7 +13,7 @@ struct AuthUserShell: Equatable {
     var creditsLabel: String?
 
     static let placeholder = AuthUserShell(
-        displayName: "WHIK user",
+        displayName: L("WHIK user"),
         email: "",
         photoSystemImage: "person.fill"
     )
@@ -93,10 +93,10 @@ final class AuthSessionController: ObservableObject {
             try await applyTokens(tokens)
             emailSheetPresented = false
             await afterSignedInSideEffects()
-        } catch let MobileAuthAPIError.server(_, message, _) {
-            lastError = message
+        } catch let MobileAuthAPIError.server(code, message, status) {
+            lastError = WhikServerMessage.auth(.signIn, code: code, status: status, raw: message)
         } catch {
-            lastError = "Sign-in failed."
+            lastError = L("Sign-in failed.")
         }
     }
 
@@ -105,11 +105,11 @@ final class AuthSessionController: ObservableObject {
         do {
             try await api.emailRegister(name: name, email: email, password: password)
             return true
-        } catch let MobileAuthAPIError.server(_, message, _) {
-            lastError = message
+        } catch let MobileAuthAPIError.server(code, message, status) {
+            lastError = WhikServerMessage.auth(.signUp, code: code, status: status, raw: message)
             return false
         } catch {
-            lastError = "Sign-up failed."
+            lastError = L("Sign-up failed.")
             return false
         }
     }
@@ -122,11 +122,11 @@ final class AuthSessionController: ObservableObject {
             emailSheetPresented = false
             await afterSignedInSideEffects()
             return true
-        } catch let MobileAuthAPIError.server(_, message, _) {
-            lastError = message
+        } catch let MobileAuthAPIError.server(code, message, status) {
+            lastError = WhikServerMessage.auth(.verifyEmail, code: code, status: status, raw: message)
             return false
         } catch {
-            lastError = "Email verification failed."
+            lastError = L("Email verification failed.")
             return false
         }
     }
@@ -136,11 +136,11 @@ final class AuthSessionController: ObservableObject {
         do {
             try await api.emailResendVerification(email: email)
             return true
-        } catch let MobileAuthAPIError.server(_, message, _) {
-            lastError = message
+        } catch let MobileAuthAPIError.server(code, message, status) {
+            lastError = WhikServerMessage.auth(.resendCode, code: code, status: status, raw: message)
             return false
         } catch {
-            lastError = "Couldn't resend the code."
+            lastError = L("Couldn't resend the code.")
             return false
         }
     }
@@ -150,11 +150,11 @@ final class AuthSessionController: ObservableObject {
         do {
             try await api.passwordResetRequest(email: email)
             return true
-        } catch let MobileAuthAPIError.server(_, message, _) {
-            lastError = message
+        } catch let MobileAuthAPIError.server(code, message, status) {
+            lastError = WhikServerMessage.auth(.resetRequest, code: code, status: status, raw: message)
             return false
         } catch {
-            lastError = "Couldn't send the reset email."
+            lastError = L("Couldn't send the reset email.")
             return false
         }
     }
@@ -164,11 +164,11 @@ final class AuthSessionController: ObservableObject {
         do {
             try await api.passwordReset(email: email, code: code, newPassword: newPassword)
             return true
-        } catch let MobileAuthAPIError.server(_, message, _) {
-            lastError = message
+        } catch let MobileAuthAPIError.server(code, message, status) {
+            lastError = WhikServerMessage.auth(.resetComplete, code: code, status: status, raw: message)
             return false
         } catch {
-            lastError = "Password reset failed."
+            lastError = L("Password reset failed.")
             return false
         }
     }
@@ -179,10 +179,10 @@ final class AuthSessionController: ObservableObject {
             let tokens = try await api.googleLogin(idToken: idToken)
             try await applyTokens(tokens)
             await afterSignedInSideEffects()
-        } catch let MobileAuthAPIError.server(_, message, _) {
-            lastError = message
+        } catch let MobileAuthAPIError.server(code, message, status) {
+            lastError = WhikServerMessage.auth(.google, code: code, status: status, raw: message)
         } catch {
-            lastError = "Google sign-in failed."
+            lastError = L("Google sign-in failed.")
         }
     }
 
@@ -202,10 +202,10 @@ final class AuthSessionController: ObservableObject {
             )
             try await applyTokens(tokens)
             await afterSignedInSideEffects()
-        } catch let MobileAuthAPIError.server(_, message, _) {
-            lastError = message
+        } catch let MobileAuthAPIError.server(code, message, status) {
+            lastError = WhikServerMessage.auth(.apple, code: code, status: status, raw: message)
         } catch {
-            lastError = "Apple sign-in failed."
+            lastError = L("Apple sign-in failed.")
         }
     }
 
@@ -287,7 +287,7 @@ final class AuthSessionController: ObservableObject {
 
     func updateDisplayName(_ name: String) async throws {
         guard let access = accessToken else {
-            throw MobileAuthAPIError.server(code: "AUTH_REQUIRED", message: "로그인이 필요합니다.", status: 401)
+            throw MobileAuthAPIError.server(code: "AUTH_REQUIRED", message: L("Please sign in."), status: 401)
         }
         let accountAPI = MobileAccountAPIClient()
         let user = try await accountAPI.updateProfile(accessToken: access, name: name)
@@ -302,7 +302,7 @@ final class AuthSessionController: ObservableObject {
         googleIdToken: String? = nil
     ) async throws {
         guard let access = accessToken else {
-            throw MobileAuthAPIError.server(code: "AUTH_REQUIRED", message: "로그인이 필요합니다.", status: 401)
+            throw MobileAuthAPIError.server(code: "AUTH_REQUIRED", message: L("Please sign in."), status: 401)
         }
         let accountAPI = MobileAccountAPIClient()
         try await accountAPI.deleteAccount(
@@ -525,12 +525,12 @@ struct AuthShellView: View {
                         .padding(.bottom, GonggiSpacing.md)
 
                         VStack(spacing: GonggiSpacing.sm) {
-                            authButton(title: "Google로 계속하기", icon: "g.circle") {
+                            authButton(title: L("Continue with Google"), icon: "g.circle") {
                                 Task { await startGoogle() }
                             }
                             .disabled(googleBusy)
 
-                            authButton(title: "Apple로 계속하기", icon: "apple.logo") {
+                            authButton(title: L("Continue with Apple"), icon: "apple.logo") {
                                 appleCoordinator.beginSignIn { result in
                                     Task { @MainActor in
                                         switch result {
@@ -542,13 +542,13 @@ struct AuthShellView: View {
                                                 email: payload.email
                                             )
                                         case .failure(let err):
-                                            session.lastError = err.errorDescription ?? "Apple 로그인에 실패했습니다."
+                                            session.lastError = err.errorDescription ?? L("Apple sign-in failed.")
                                         }
                                     }
                                 }
                             }
 
-                            authButton(title: "이메일로 계속하기", icon: "envelope") {
+                            authButton(title: L("Continue with Email"), icon: "envelope") {
                                 session.emailSheetPresented = true
                             }
                         }
@@ -623,7 +623,7 @@ struct AuthShellView: View {
             await session.signInWithGoogleIDToken(idToken)
         } catch {
             session.lastError = (error as? LocalizedError)?.errorDescription
-                ?? "Google 로그인을 시작하지 못했습니다. Client ID 설정을 확인하세요."
+                ?? L("Google sign-in couldn't start.")
         }
     }
 
@@ -699,8 +699,8 @@ struct EmailContinueView: View {
                             .foregroundStyle(GonggiColors.textPrimary)
 
                         if step == .form {
-                            Picker("Mode", selection: $mode) {
-                                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            Picker(L("Mode"), selection: $mode) {
+                                ForEach(Mode.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
                             }
                             .pickerStyle(.segmented)
                             .onChange(of: mode) { _, _ in
@@ -728,7 +728,7 @@ struct EmailContinueView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
 
-                        Text("WHIK and 3D Locker use the same account.")
+                        Text(L("WHIK and 3D Locker use the same account."))
                             .font(GonggiTypography.caption(12))
                             .foregroundStyle(GonggiColors.textTertiary)
                             .padding(.top, GonggiSpacing.sm)
@@ -741,7 +741,7 @@ struct EmailContinueView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button(L("Close")) { dismiss() }
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
             }
@@ -757,11 +757,11 @@ struct EmailContinueView: View {
 
     private var headerTitle: String {
         switch (mode, step) {
-        case (_, .verifyCode): return "Verify your email"
-        case (_, .resetCode): return "New password"
-        case (.login, _): return "Continue with Email"
-        case (.register, _): return "Sign up"
-        case (.reset, _): return "Reset password"
+        case (_, .verifyCode): return L("Verify your email")
+        case (_, .resetCode): return L("New password")
+        case (.login, _): return L("Continue with Email")
+        case (.register, _): return L("Sign up")
+        case (.reset, _): return L("Reset password")
         }
     }
 
@@ -770,27 +770,27 @@ struct EmailContinueView: View {
         VStack(spacing: GonggiSpacing.sm) {
             switch (mode, step) {
             case (.register, .form):
-                textField("Name", text: $name, field: .name, content: .name)
-                textField("Email", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
-                secureField("Password (8+ characters)", text: $password, field: .password, content: .newPassword)
-                secureField("Confirm password", text: $passwordConfirm, field: .passwordConfirm, content: .newPassword)
+                textField(L("Name"), text: $name, field: .name, content: .name)
+                textField(L("Email"), text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
+                secureField(L("Password (8+ characters)"), text: $password, field: .password, content: .newPassword)
+                secureField(L("Confirm password"), text: $passwordConfirm, field: .passwordConfirm, content: .newPassword)
             case (.login, .form):
-                textField("Email", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
-                secureField("Password", text: $password, field: .password, content: .password)
+                textField(L("Email"), text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
+                secureField(L("Password"), text: $password, field: .password, content: .password)
             case (.reset, .form):
-                textField("Email", text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
+                textField(L("Email"), text: $email, field: .email, content: .emailAddress, keyboard: .emailAddress)
             case (_, .verifyCode):
-                Text("Enter the 6-digit code sent to \(email).")
+                Text(L("Enter the 6-digit code sent to %@.", email))
                     .font(GonggiTypography.body(14))
                     .foregroundStyle(GonggiColors.textSecondary)
-                textField("Code", text: $otpCode, field: .otp, content: .oneTimeCode, keyboard: .numberPad)
+                textField(L("Code"), text: $otpCode, field: .otp, content: .oneTimeCode, keyboard: .numberPad)
             case (_, .resetCode):
-                Text("Enter the 6-digit code from the email and a new password.")
+                Text(L("Enter the 6-digit code from the email and a new password."))
                     .font(GonggiTypography.body(14))
                     .foregroundStyle(GonggiColors.textSecondary)
-                textField("Code", text: $otpCode, field: .otp, content: .oneTimeCode, keyboard: .numberPad)
-                secureField("New password (8+ characters)", text: $password, field: .password, content: .newPassword)
-                secureField("Confirm new password", text: $passwordConfirm, field: .passwordConfirm, content: .newPassword)
+                textField(L("Code"), text: $otpCode, field: .otp, content: .oneTimeCode, keyboard: .numberPad)
+                secureField(L("New password (8+ characters)"), text: $password, field: .password, content: .newPassword)
+                secureField(L("Confirm new password"), text: $passwordConfirm, field: .passwordConfirm, content: .newPassword)
             }
         }
         .foregroundStyle(GonggiColors.textPrimary)
@@ -800,42 +800,42 @@ struct EmailContinueView: View {
     private var actionButtons: some View {
         switch (mode, step) {
         case (.login, .form):
-            PrimaryButton(title: busy ? "Signing in…" : "Continue") {
+            PrimaryButton(title: busy ? L("Signing in…") : L("Continue")) {
                 Task { await submitLogin() }
             }
             .disabled(busy || email.isEmpty || password.isEmpty)
         case (.register, .form):
-            PrimaryButton(title: busy ? "Signing up…" : "Sign up") {
+            PrimaryButton(title: busy ? L("Signing up…") : L("Sign up")) {
                 Task { await submitRegister() }
             }
             .disabled(busy || !canRegister)
         case (.reset, .form):
-            PrimaryButton(title: busy ? "Sending…" : "Send code") {
+            PrimaryButton(title: busy ? L("Sending…") : L("Send code")) {
                 Task { await submitResetRequest() }
             }
             .disabled(busy || email.isEmpty)
         case (.register, .verifyCode):
-            PrimaryButton(title: busy ? "Checking…" : "Verify") {
+            PrimaryButton(title: busy ? L("Checking…") : L("Verify")) {
                 Task { await submitVerify() }
             }
             .disabled(busy || otpCode.filter(\.isNumber).count != 6)
-            Button("Resend code") {
+            Button(L("Resend code")) {
                 Task { await resendCode() }
             }
             .disabled(busy)
             .foregroundStyle(GonggiColors.brandCyan)
-            Button("Back") {
+            Button(L("Back")) {
                 step = .form
                 otpCode = ""
                 session.lastError = nil
             }
             .foregroundStyle(GonggiColors.textSecondary)
         case (_, .resetCode):
-            PrimaryButton(title: busy ? "Saving…" : "Change password") {
+            PrimaryButton(title: busy ? L("Saving…") : L("Change password")) {
                 Task { await submitResetComplete() }
             }
             .disabled(busy || !canCompleteReset)
-            Button("Back") {
+            Button(L("Back")) {
                 step = .form
                 otpCode = ""
                 password = ""
@@ -910,21 +910,21 @@ struct EmailContinueView: View {
                 password: password
             )
             session.lastError = nil
-            infoMessage = "We sent a code to your email."
+            infoMessage = L("We sent a code to your email.")
             step = .verifyCode
             focusedField = .otp
         } catch let MobileAuthAPIError.server(code, message, _) {
             if code == "EMAIL_EXISTS_UNVERIFIED" {
                 session.lastError = nil
-                infoMessage = message
+                infoMessage = L("This email isn't verified yet. We sent a new code.")
                 step = .verifyCode
                 focusedField = .otp
                 _ = await session.resendEmailVerification(email: email)
             } else {
-                session.lastError = message
+                session.lastError = WhikServerMessage.auth(.signUp, code: code, status: nil, raw: message)
             }
         } catch {
-            session.lastError = "Sign-up failed."
+            session.lastError = L("Sign-up failed.")
         }
     }
 
@@ -939,7 +939,7 @@ struct EmailContinueView: View {
         busy = true
         defer { busy = false }
         if await session.resendEmailVerification(email: email) {
-            infoMessage = "We sent a new code."
+            infoMessage = L("We sent a new code.")
         }
     }
 
@@ -947,7 +947,7 @@ struct EmailContinueView: View {
         busy = true
         defer { busy = false }
         if await session.requestPasswordReset(email: email) {
-            infoMessage = "If an account exists, we sent a code."
+            infoMessage = L("If an account exists, we sent a code.")
             step = .resetCode
             password = ""
             passwordConfirm = ""
@@ -960,7 +960,7 @@ struct EmailContinueView: View {
         busy = true
         defer { busy = false }
         if await session.completePasswordReset(email: email, code: otpCode, newPassword: password) {
-            infoMessage = "Password changed. Sign in with the new password."
+            infoMessage = L("Password changed. Sign in with the new password.")
             mode = .login
             step = .form
             otpCode = ""
@@ -1025,7 +1025,7 @@ final class AppleSignInCoordinator: NSObject, ObservableObject, ASAuthorizationC
               let tokenData = credential.identityToken,
               let identityToken = String(data: tokenData, encoding: .utf8)
         else {
-            continuation?(.failure(.message("Apple 토큰을 읽지 못했습니다.")))
+            continuation?(.failure(.message(L("Couldn't read the Apple token."))))
             continuation = nil
             return
         }

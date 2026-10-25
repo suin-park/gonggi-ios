@@ -46,19 +46,19 @@ enum CoverageState: String, CaseIterable, Identifiable, Codable {
 
     var label: String {
         switch self {
-        case .unseen: return "미촬영"
-        case .insufficient: return "보강 필요"
-        case .acceptable: return "양호"
-        case .good: return "충분"
+        case .unseen: return L("Not captured")
+        case .insufficient: return L("Needs more")
+        case .acceptable: return L("Good")
+        case .good: return L("Enough")
         }
     }
 
     var accessibilityDescription: String {
         switch self {
-        case .unseen: return "아직 촬영되지 않은 영역"
-        case .insufficient: return "보강 촬영이 필요한 영역"
-        case .acceptable: return "촬영이 어느 정도 된 영역"
-        case .good: return "충분히 촬영된 영역"
+        case .unseen: return L("Area not captured yet")
+        case .insufficient: return L("Area that needs more photos")
+        case .acceptable: return L("Area partly captured")
+        case .good: return L("Area fully captured")
         }
     }
 }
@@ -169,8 +169,8 @@ struct CaptureQualityState: Equatable {
         reacquireThumbnailVisible: Bool = false,
         reacquireSignedYawDeg: Double? = nil,
         reacquireProximity: Double = 0,
-        reacquireThumbnailTitle: String = "마지막 연결 화면",
-        reacquireThumbnailGuidance: String = "이 장면이 다시 보이도록 천천히 움직여주세요",
+        reacquireThumbnailTitle: String = L("Last connected view"),
+        reacquireThumbnailGuidance: String = L("Move slowly until this view appears again"),
         candidateSafetyCapReached: Bool = false,
         spatialKeyframeEnqueueCount: Int = 0
     ) {
@@ -455,15 +455,15 @@ struct CaptureSessionSummary: Identifiable, Equatable {
     var qualityLabel: String {
         switch quality.completionState {
         case .ready:
-            return "3D 공간 생성에 적합합니다"
+            return L("Good for creating a 3D Space")
         case .nearlyReady:
-            return "양호"
+            return L("Good")
         case .notReady:
             if quality.trackingQuality < 0.5 || quality.sharpnessState == .blurry {
-                return "추가 촬영 권장"
+                return L("More photos recommended")
             }
-            if quality.qualityCoverage >= 0.45 { return "보통" }
-            return "추가 촬영 권장"
+            if quality.qualityCoverage >= 0.45 { return L("Fair") }
+            return L("More photos recommended")
         }
     }
 }
@@ -477,11 +477,11 @@ enum SpaceGenerationStatus: String, CaseIterable {
 
     var label: String {
         switch self {
-        case .draft: return "준비 중"
-        case .uploading: return "업로드 중"
-        case .processing: return "생성 중"
-        case .ready: return "완료"
-        case .failed: return "실패"
+        case .draft: return L("Preparing")
+        case .uploading: return L("Uploading")
+        case .processing: return L("Creating")
+        case .ready: return L("Done")
+        case .failed: return L("Failed")
         }
     }
 }
@@ -496,9 +496,9 @@ enum SpaceRepairBadge: String, Equatable, Hashable {
     var label: String {
         switch self {
         case .none: return ""
-        case .repairing: return "수정 중"
-        case .repaired: return "수정 완료"
-        case .repairFailed: return "수정 실패"
+        case .repairing: return L("Fixing")
+        case .repaired: return L("Fixed")
+        case .repairFailed: return L("Fix failed")
         }
     }
 }
@@ -578,24 +578,24 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
     var locationDisplayLabel: String {
         guard let label = locationName?.trimmingCharacters(in: .whitespacesAndNewlines),
               !label.isEmpty
-        else { return "위치 정보 없음" }
+        else { return L("No location") }
         return label
     }
 
-    static let sampleArchive: [SpaceRecord] = [
+    static var sampleArchive: [SpaceRecord] { [
         SpaceRecord(
             id: "sample-1",
-            name: "어릴 적 우리 집",
+            name: L("My childhood home"),
             capturedAt: Calendar.current.date(byAdding: .month, value: -3, to: Date())!,
             status: .ready,
             thumbnailSystemImage: "house.fill",
             note: nil,
-            memo: "거실과 안방을 중심으로 촬영",
+            memo: L("Mostly the living room and bedroom"),
             viewerURL: URL(string: "https://www.3d-locker.com/spaces/example")
         ),
         SpaceRecord(
             id: "sample-2",
-            name: "첫 자취방",
+            name: L("My first apartment"),
             capturedAt: Calendar.current.date(byAdding: .month, value: -1, to: Date())!,
             status: .ready,
             thumbnailSystemImage: "sofa.fill",
@@ -604,7 +604,7 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
         ),
         SpaceRecord(
             id: "sample-3",
-            name: "할머니 댁",
+            name: L("Grandma's house"),
             capturedAt: Calendar.current.date(byAdding: .day, value: -12, to: Date())!,
             status: .processing,
             thumbnailSystemImage: "leaf.fill",
@@ -613,15 +613,15 @@ struct SpaceRecord: Identifiable, Equatable, Hashable {
         ),
         SpaceRecord(
             id: "sample-4",
-            name: "신혼집",
+            name: L("Newlywed home"),
             capturedAt: Calendar.current.date(byAdding: .day, value: -2, to: Date())!,
             status: .ready,
             thumbnailSystemImage: "heart.fill",
             note: nil,
-            memo: "주방/거실 포함",
+            memo: L("Includes kitchen and living room"),
             viewerURL: nil
         ),
-    ]
+    ] }
 }
 
 enum ProcessingStepKind: Int, CaseIterable, Identifiable {
@@ -634,10 +634,10 @@ enum ProcessingStepKind: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .upload: return "업로드"
-        case .frameAnalysis: return "프레임 분석"
-        case .spaceGeneration: return "공간 생성"
-        case .optimization: return "최적화"
+        case .upload: return L("Upload")
+        case .frameAnalysis: return L("Frame analysis")
+        case .spaceGeneration: return L("Space creation")
+        case .optimization: return L("Optimization")
         }
     }
 }

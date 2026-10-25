@@ -25,7 +25,7 @@ enum SpaceRepairCardPresentation {
             return Overlay(
                 badge: .repairing,
                 preferredLocalLatLongPath: latestSuccess?.localLatLongPath,
-                note: summary.isEmpty ? "수정 중" : summary
+                note: summary.isEmpty ? L("Fixing") : summary
             )
         }
 
@@ -34,13 +34,13 @@ enum SpaceRepairCardPresentation {
                 return Overlay(
                     badge: .repairFailed,
                     preferredLocalLatLongPath: success.localLatLongPath,
-                    note: "수정 실패"
+                    note: L("Fix failed")
                 )
             }
             return Overlay(
                 badge: .repaired,
                 preferredLocalLatLongPath: success.localLatLongPath,
-                note: "수정 완료"
+                note: L("Fixed")
             )
         }
 
@@ -48,7 +48,7 @@ enum SpaceRepairCardPresentation {
             return Overlay(
                 badge: .repairFailed,
                 preferredLocalLatLongPath: nil,
-                note: "수정 실패"
+                note: L("Fix failed")
             )
         }
 

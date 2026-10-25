@@ -62,55 +62,55 @@ struct SpaceDetailView: View {
             .onChange(of: appState.forceDismissViewerEpoch) { _, _ in
                 handleAccountForcedDismiss()
             }
-            .alert("공간을 불러오지 못했어요", isPresented: Binding(
+            .alert(L("Couldn't load the space"), isPresented: Binding(
                 get: { viewerError != nil },
                 set: { if !$0 { viewerError = nil } }
             )) {
-                Button("다시 불러오기") {
+                Button(L("Reload")) {
                     Task { await openViewer() }
                 }
-                Button("닫기", role: .cancel) { viewerError = nil }
+                Button(L("Close"), role: .cancel) { viewerError = nil }
             } message: {
                 Text(viewerError ?? "")
             }
-            .confirmationDialog("이 공간을 삭제할까요?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
-                Button("삭제", role: .destructive) {
+            .confirmationDialog(L("Delete this space?"), isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                Button(L("Delete"), role: .destructive) {
                     Task { await performDelete() }
                 }
-                Button("취소", role: .cancel) {}
+                Button(L("Cancel"), role: .cancel) {}
             }
-        .alert("삭제하지 못했어요", isPresented: Binding(
+        .alert(L("Couldn't delete"), isPresented: Binding(
             get: { deleteError != nil },
             set: { if !$0 { deleteError = nil } }
         )) {
-            Button("확인", role: .cancel) { deleteError = nil }
+            Button(L("OK"), role: .cancel) { deleteError = nil }
         } message: {
             Text(deleteError ?? "")
         }
-        .alert("공간 오디오를 삭제할까요?", isPresented: $showAudioDeleteConfirm) {
-            Button("삭제", role: .destructive) {
+        .alert(L("Delete the space audio?"), isPresented: $showAudioDeleteConfirm) {
+            Button(L("Delete"), role: .destructive) {
                 Task { await deleteSpaceAudio() }
             }
-            Button("취소", role: .cancel) {}
+            Button(L("Cancel"), role: .cancel) {}
         }
-        .confirmationDialog("오디오 교체", isPresented: $showAudioReplaceOptions, titleVisibility: .visible) {
-            Button("파일에서 선택") { showAudioImporter = true }
-            Button("직접 녹음") { showAudioRecorder = true }
-            Button("취소", role: .cancel) {}
+        .confirmationDialog(L("Replace audio"), isPresented: $showAudioReplaceOptions, titleVisibility: .visible) {
+            Button(L("Choose from Files")) { showAudioImporter = true }
+            Button(L("Record now")) { showAudioRecorder = true }
+            Button(L("Cancel"), role: .cancel) {}
         }
-        .alert("오디오를 처리하지 못했어요", isPresented: Binding(
+        .alert(L("Couldn't process the audio"), isPresented: Binding(
             get: { audioError != nil },
             set: { if !$0 { audioError = nil } }
         )) {
-            Button("확인", role: .cancel) { audioError = nil }
+            Button(L("OK"), role: .cancel) { audioError = nil }
         } message: {
             Text(audioError ?? "")
         }
-        .alert("분석을 시작하지 못했어요", isPresented: Binding(
+        .alert(L("Couldn't start the analysis"), isPresented: Binding(
             get: { advancedAnalyzeError != nil },
             set: { if !$0 { advancedAnalyzeError = nil } }
         )) {
-            Button("확인", role: .cancel) { advancedAnalyzeError = nil }
+            Button(L("OK"), role: .cancel) { advancedAnalyzeError = nil }
         } message: {
             Text(advancedAnalyzeError ?? "")
         }
@@ -256,17 +256,17 @@ struct SpaceDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
-                    Button("공개 범위", systemImage: "eye") {
+                    Button(L("Visibility"), systemImage: "eye") {
                         showVisibilitySheet = true
                     }
                     .disabled(liveSpace.status != .ready)
-                    Button("공간 삭제", systemImage: "trash", role: .destructive) {
+                    Button(L("Delete space"), systemImage: "trash", role: .destructive) {
                         showDeleteConfirm = true
                     }
                 } label: {
                     Image(systemName: "ellipsis")
                 }
-                Button("편집") {
+                Button(L("Edit")) {
                     showEditSheet = true
                 }
             }
@@ -323,7 +323,7 @@ struct SpaceDetailView: View {
             RoundedRectangle(cornerRadius: GonggiRadius.xl, style: .continuous)
                 .stroke(GonggiColors.border, lineWidth: 1)
         )
-        .accessibilityLabel("\(liveSpace.name) 미리보기")
+        .accessibilityLabel(L("%@ preview", "\(liveSpace.name)"))
     }
 
     private var metaSection: some View {
@@ -337,13 +337,13 @@ struct SpaceDetailView: View {
 
             detailRow(
                 icon: "calendar",
-                title: "생성일",
+                title: L("Created"),
                 value: liveSpace.capturedAt.formatted(
-                    .dateTime.year().month().day().locale(Locale(identifier: "ko_KR"))
+                    .dateTime.year().month().day().locale(AppLanguage.shared.locale)
                 )
             )
-            detailRow(icon: "mappin.and.ellipse", title: "위치", value: liveSpace.locationDisplayLabel)
-            detailRow(icon: "circle.fill", title: "상태", value: liveSpace.statusBadgeLabel)
+            detailRow(icon: "mappin.and.ellipse", title: L("Location"), value: liveSpace.locationDisplayLabel)
+            detailRow(icon: "circle.fill", title: L("Status"), value: liveSpace.statusBadgeLabel)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -369,13 +369,13 @@ struct SpaceDetailView: View {
 
     private var memoryNoteSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.xs) {
-            Text("메모")
+            Text(L("Notes"))
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
             GonggiElevatedCard {
                 Text(liveSpace.memo?.isEmpty == false
                     ? liveSpace.memo!
-                    : "이 공간에 대한 메모를 남겨보세요.")
+                    : L("Leave a note about this space."))
                     .font(GonggiTypography.body(15))
                     .foregroundStyle(
                         liveSpace.memo?.isEmpty == false
@@ -390,7 +390,7 @@ struct SpaceDetailView: View {
 
     private var spaceAudioSection: some View {
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            Text("공간 오디오")
+            Text(L("Space audio"))
                 .font(GonggiTypography.caption(13))
                 .foregroundStyle(GonggiColors.textTertiary)
 
@@ -399,7 +399,7 @@ struct SpaceDetailView: View {
                     VStack(alignment: .leading, spacing: GonggiSpacing.md) {
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(liveSpace.audioFileName ?? "오디오")
+                                Text(liveSpace.audioFileName ?? L("Audio"))
                                     .font(GonggiTypography.body(15))
                                     .foregroundStyle(GonggiColors.textPrimary)
                                     .lineLimit(2)
@@ -410,27 +410,27 @@ struct SpaceDetailView: View {
                             Spacer(minLength: 0)
                         }
                         HStack(spacing: GonggiSpacing.sm) {
-                            SecondaryButton(title: "재생", icon: "play.fill") {
+                            SecondaryButton(title: L("Play"), icon: "play.fill") {
                                 Task { await previewSpaceAudio() }
                             }
-                            SecondaryButton(title: "교체", icon: "arrow.triangle.2.circlepath") {
+                            SecondaryButton(title: L("Replace"), icon: "arrow.triangle.2.circlepath") {
                                 showAudioReplaceOptions = true
                             }
                         }
-                        SecondaryButton(title: "삭제", icon: "trash") {
+                        SecondaryButton(title: L("Delete"), icon: "trash") {
                             showAudioDeleteConfirm = true
                         }
                     }
                 } else {
                     VStack(alignment: .leading, spacing: GonggiSpacing.md) {
-                        Text("이 공간에 소리를 함께 남겨 둘 수 있어요.")
+                        Text(L("You can keep sound with this space."))
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        SecondaryButton(title: "파일 추가", icon: "doc.badge.plus") {
+                        SecondaryButton(title: L("Add file"), icon: "doc.badge.plus") {
                             showAudioImporter = true
                         }
-                        SecondaryButton(title: "직접 녹음", icon: "mic.fill") {
+                        SecondaryButton(title: L("Record now"), icon: "mic.fill") {
                             showAudioRecorder = true
                         }
                     }
@@ -443,18 +443,18 @@ struct SpaceDetailView: View {
         VStack(spacing: GonggiSpacing.sm) {
             // Primary: viewer when ready
             if liveSpace.canOpenExistingVR {
-                PrimaryButton(title: "360° 보기", icon: "cube.transparent") {
+                PrimaryButton(title: L("View 360°"), icon: "cube.transparent") {
                     GonggiHaptics.light()
                     Task { await openViewer() }
                 }
-                .accessibilityLabel("360° 보기")
+                .accessibilityLabel(L("View 360°"))
 
-                SecondaryButton(title: "공간 정리하기", icon: "sofa") {
+                SecondaryButton(title: L("Clear the space"), icon: "sofa") {
                     GonggiHaptics.light()
                     showSpaceCleanupSheet = true
                 }
-                .accessibilityLabel("공간 정리하기")
-                Text("원본 공간은 그대로 유지되고, 가구를 비운 새 버전이 만들어집니다.")
+                .accessibilityLabel(L("Clear the space"))
+                Text(L("The original space stays as is, and a new version without furniture is made."))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -469,7 +469,7 @@ struct SpaceDetailView: View {
                 if let note = liveSpace.note, !note.isEmpty {
                     GonggiElevatedCard {
                         HStack(spacing: GonggiSpacing.md) {
-                            if liveSpace.note == "공간을 불러오는 중…" {
+                            if liveSpace.note == L("Loading the space…") {
                                 ProgressView()
                                     .tint(GonggiColors.accentTeal)
                             }
@@ -477,8 +477,8 @@ struct SpaceDetailView: View {
                                 .font(GonggiTypography.body(15))
                                 .foregroundStyle(GonggiColors.textSecondary)
                             Spacer(minLength: 0)
-                            if liveSpace.note != "공간을 불러오는 중…" {
-                                Button("다시 시도") {
+                            if liveSpace.note != L("Loading the space…") {
+                                Button(L("Try again")) {
                                     Task { await openViewer() }
                                 }
                                 .font(GonggiTypography.caption(13))
@@ -491,7 +491,7 @@ struct SpaceDetailView: View {
                 if let gid = gaussianStore.spaceId(fromLibraryId: liveSpace.id) {
                     gaussianRetrySection(spaceId: gid)
                 } else {
-                    PrimaryButton(title: "다시 시도", icon: "arrow.clockwise") {
+                    PrimaryButton(title: L("Try again"), icon: "arrow.clockwise") {
                         GonggiHaptics.medium()
                         appState.retrySpaceGeneration(jobId: liveSpace.id)
                     }
@@ -501,14 +501,14 @@ struct SpaceDetailView: View {
                     HStack(spacing: GonggiSpacing.md) {
                         ProgressView()
                             .tint(GonggiColors.accentTeal)
-                        Text(liveSpace.note ?? "공간을 만들고 있어요")
+                        Text(liveSpace.note ?? L("Creating your space"))
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             case .draft:
-                PrimaryButton(title: "이어서 보기", icon: "cube.transparent") {
+                PrimaryButton(title: L("Continue viewing"), icon: "cube.transparent") {
                     showViewer = true
                 }
             }
@@ -516,10 +516,10 @@ struct SpaceDetailView: View {
             // Link sharing exists for 360 spaces only: a walkable (3D) space card would call the 360 share API with a
             // `gaussian:` id, which the server cannot find (SPACE_NOT_FOUND). No button until that is wired.
             if SpaceSharePolicy.offersLinkShare(liveSpace) {
-                SecondaryButton(title: "공유", icon: "square.and.arrow.up") {
+                SecondaryButton(title: L("Share"), icon: "square.and.arrow.up") {
                     showShareSheet = true
                 }
-                .accessibilityLabel("공유")
+                .accessibilityLabel(L("Share"))
                 .disabled(liveSpace.status != .ready)
             }
             // Physical product result: web link (orbit viewer with its "실물 촬영" badge on the page).
@@ -536,12 +536,12 @@ struct SpaceDetailView: View {
     private func gaussianRetrySection(spaceId: String) -> some View {
         let record = gaussianStore.record(spaceId: spaceId)
         VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-            Text(record?.failureLabel ?? "생성 실패")
+            Text(record?.failureLabel ?? L("Creation failed"))
                 .font(GonggiTypography.body(15))
                 .foregroundStyle(GonggiColors.textSecondary)
             if let record, record.canRetry {
                 PrimaryButton(
-                    title: isRetryingGaussian ? "다시 시도하는 중…" : "같은 촬영으로 다시 시도",
+                    title: isRetryingGaussian ? L("Retrying…") : L("Retry with the same capture"),
                     icon: "arrow.clockwise"
                 ) {
                     guard !isRetryingGaussian else { return }
@@ -554,11 +554,11 @@ struct SpaceDetailView: View {
                     }
                 }
                 .disabled(isRetryingGaussian)
-                Text("업로드가 끝날 때까지 앱을 열어 두세요. 촬영 원본은 기기에 보관돼 있어요.")
+                Text(L("Keep the app open until the upload finishes. The original capture stays on this device."))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             } else {
-                Text("이 기록은 다시 시도할 수 없어요. 새로 촬영해 주세요.")
+                Text(L("This capture can't be retried. Please capture again."))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             }
@@ -580,10 +580,10 @@ struct SpaceDetailView: View {
                     ProgressView()
                         .tint(GonggiColors.accentTeal)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("입체 기록을 위한 분석을 진행 중이에요")
+                        Text(L("Analyzing for the 3D capture"))
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
-                        Text("앱을 나가도 분석은 계속됩니다")
+                        Text(L("Analysis continues even if you leave the app"))
                             .font(GonggiTypography.caption(12))
                             .foregroundStyle(GonggiColors.textTertiary)
                     }
@@ -593,23 +593,23 @@ struct SpaceDetailView: View {
             }
         } else if let record, record.canOpenGaussianViewer {
             // 3D space already exists — show viewer only (no expand CTA).
-            SecondaryButton(title: "3D 공간 보기", icon: "move.3d") {
+            SecondaryButton(title: L("View 3D Space"), icon: "move.3d") {
                 GonggiHaptics.medium()
                 if let spaceId = advancedRecord?.linkedGaussianSpaceId {
                     gaussianViewer = GaussianViewerPresentation(spaceId: spaceId)
                 }
             }
-            .accessibilityLabel("3D 공간 보기")
+            .accessibilityLabel(L("View 3D Space"))
         } else if let record, record.canStartGuidedCapture,
                   let plan = ThreeDExpansionSupport.cachedGuidePlan(sessionId: advancedSessionKey)
                     ?? record.guidePlan.map(AdvancedCaptureCopy.sanitize)
         {
-            SecondaryButton(title: "입체 기록 시작", icon: "figure.walk") {
+            SecondaryButton(title: L("Start 3D capture"), icon: "figure.walk") {
                 GonggiHaptics.medium()
                 guidedPlan = plan
                 showGuidedCapture = true
             }
-            .accessibilityLabel("입체 기록 시작")
+            .accessibilityLabel(L("Start 3D capture"))
         } else if let record, record.status == .failed {
             if showAdvancedAnalyzeConfirm {
                 AdvancedAnalyzeConfirmCard(
@@ -623,7 +623,7 @@ struct SpaceDetailView: View {
                 )
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            SecondaryButton(title: "3D 공간으로 확장 다시 시도", icon: "arrow.clockwise") {
+            SecondaryButton(title: L("Retry extending to 3D Space"), icon: "arrow.clockwise") {
                 GonggiHaptics.medium()
                 withAnimation(GonggiMotion.quick) {
                     showAdvancedAnalyzeConfirm = true
@@ -647,13 +647,13 @@ struct SpaceDetailView: View {
                 )
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            SecondaryButton(title: "3D 공간으로 확장", icon: "cube.transparent") {
+            SecondaryButton(title: L("Extend to 3D Space"), icon: "cube.transparent") {
                 GonggiHaptics.medium()
                 withAnimation(GonggiMotion.quick) {
                     showAdvancedAnalyzeConfirm.toggle()
                 }
             }
-            .accessibilityLabel("3D 공간으로 확장")
+            .accessibilityLabel(L("Extend to 3D Space"))
             .disabled(isStartingAdvancedAnalyze)
         }
     }
@@ -795,10 +795,10 @@ struct ViewerPlaceholderView: View {
                         Image(systemName: "cube.transparent")
                             .font(.system(size: 56, weight: .ultraLight))
                             .foregroundStyle(GonggiColors.accentTeal)
-                        Text("3D 공간 뷰어")
+                        Text(L("3D Space viewer"))
                             .font(GonggiTypography.headline(20))
                             .foregroundStyle(GonggiColors.textPrimary)
-                        Text("이 공간은 아직 뷰어를 열 수 없어요.")
+                        Text(L("The viewer can't open this space yet."))
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
                             .multilineTextAlignment(.center)
@@ -813,7 +813,7 @@ struct ViewerPlaceholderView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("닫기") { dismiss() }
+                    Button(L("Close")) { dismiss() }
                         .foregroundStyle(GonggiColors.textSecondary)
                 }
             }
@@ -831,7 +831,7 @@ private struct AdvancedAnalyzeConfirmCard: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
                 HStack(alignment: .top) {
-                    Text("입체 기록을 위한 분석을 시작합니다.")
+                    Text(L("Starting the analysis for the 3D capture."))
                         .font(GonggiTypography.headline(16))
                         .foregroundStyle(GonggiColors.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -844,10 +844,10 @@ private struct AdvancedAnalyzeConfirmCard: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("닫기")
+                    .accessibilityLabel(L("Close"))
                 }
 
-                Text("이미 촬영한 360° 공간을 바탕으로 걸으며 촬영할 가이드를 만들어요. 앱을 나가도 분석은 계속됩니다.")
+                Text(L("Using your 360° space, we'll make a guide for capturing while you walk. Analysis continues even if you leave the app."))
                     .font(GonggiTypography.caption(13))
                     .foregroundStyle(GonggiColors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -861,7 +861,7 @@ private struct AdvancedAnalyzeConfirmCard: View {
                             ProgressView()
                                 .tint(GonggiColors.accentCyan)
                         }
-                        Text(isStarting ? "분석 시작 중…" : "분석 시작")
+                        Text(isStarting ? L("Starting analysis…") : L("Start analysis"))
                             .font(GonggiTypography.headline(16))
                     }
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -870,7 +870,7 @@ private struct AdvancedAnalyzeConfirmCard: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isStarting)
-                .accessibilityLabel("분석 시작")
+                .accessibilityLabel(L("Start analysis"))
             }
             .padding(GonggiSpacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)

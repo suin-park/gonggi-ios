@@ -273,12 +273,12 @@ enum SpaceImportMediaValidator {
     static func userMessage(for error: SpaceImportAPIClient.ImportError) -> String {
         switch error {
         case .notAuthenticated:
-            return "로그인 후 가져올 수 있어요"
+            return L("Sign in to import")
         case .invalidResponse, .network:
-            return "가져오기에 실패했어요. 잠시 후 다시 시도해 주세요"
+            return L("Import failed. Please try again in a moment")
         case .server(_, let message):
             if let message, !message.isEmpty { return message }
-            return "가져오기에 실패했어요"
+            return L("Import failed")
         }
     }
 }

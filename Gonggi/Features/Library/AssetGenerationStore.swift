@@ -102,7 +102,7 @@ final class AssetGenerationStore: ObservableObject {
             guard AuthSessionGeneration.isCurrent(generation) else { return false }
             consecutivePollFailures += 1
             lastErrorMessage = (error as? MobileImage3DAPIError)?.userMessage
-                ?? "생성 작업을 불러오지 못했어요"
+                ?? L("Couldn't load generation jobs")
             #if DEBUG
             print("[AssetGenerationStore] refresh failed (no secrets)")
             #endif

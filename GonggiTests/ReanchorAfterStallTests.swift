@@ -135,7 +135,7 @@ final class ReanchorAfterStallTests: XCTestCase {
         q.saveStalledSec = 5
         var tracking = GuidanceRuleEngine()
         XCTAssertEqual(tracking.evaluateDecision(quality: q, trackingLimited: true).action, .trackingRecovery)
-        XCTAssertEqual(CaptureUIPresenter.liveCopy(for: .saveStalled).title, "사진이 저장되지 않고 있어요")
+        XCTAssertEqual(CaptureUIPresenter.liveCopy(for: .saveStalled).title, L("Photos aren't being saved"))
     }
 
     func testSaveContinuitySummarisesGaps() {

@@ -38,23 +38,23 @@ enum GaussianViewerFailure: Equatable {
 
     var title: String {
         switch self {
-        case .network: return "공간 데이터를 받지 못했어요"
-        case .downloadStalled: return "다운로드가 멈췄어요"
-        case .prepareTimeout: return "공간 준비가 오래 걸리고 있어요"
-        case .viewNotReady: return "공간을 표시하지 못했어요"
-        case .recoveryExhausted: return "화면을 복구하지 못했어요"
-        case .noResponse: return "뷰어가 응답하지 않아요"
+        case .network: return L("Couldn't receive the space data")
+        case .downloadStalled: return L("The download stopped")
+        case .prepareTimeout: return L("The space is taking a long time to prepare")
+        case .viewNotReady: return L("Couldn't show the space")
+        case .recoveryExhausted: return L("Couldn't restore the view")
+        case .noResponse: return L("The viewer isn't responding")
         }
     }
 
     var detail: String {
         switch self {
-        case .network: return "네트워크 연결을 확인한 뒤 다시 시도해 주세요."
-        case .downloadStalled: return "네트워크가 불안정할 수 있어요. 다시 시도해 주세요."
-        case .prepareTimeout: return "기기 메모리가 부족할 수 있어요. 다른 앱을 닫고 다시 시도해 주세요."
-        case .viewNotReady: return "다시 시도하면 처음부터 불러와요."
-        case .recoveryExhausted: return "기기 메모리가 부족했을 수 있어요. 다시 시도해 주세요."
-        case .noResponse: return "다시 시도해 주세요."
+        case .network: return L("Check your network connection and try again.")
+        case .downloadStalled: return L("The network may be unstable. Please try again.")
+        case .prepareTimeout: return L("The device may be low on memory. Close other apps and try again.")
+        case .viewNotReady: return L("Trying again reloads from the start.")
+        case .recoveryExhausted: return L("The device may have run low on memory. Please try again.")
+        case .noResponse: return L("Please try again.")
         }
     }
 

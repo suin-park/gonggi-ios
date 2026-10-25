@@ -17,13 +17,15 @@ struct GuidedCapturePlanBanner: View {
         VStack {
             if !suppressForLivePriority, let segment {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("촬영 가이드 \(min(segmentIndex + 1, plan.segments.count))/\(plan.segments.count)")
+                    Text(L("Capture guide %1$@/%2$@", "\(min(segmentIndex + 1, plan.segments.count))", "\(plan.segments.count)"))
                         .font(GonggiTypography.caption(12))
                         .foregroundStyle(GonggiColors.accentCyan)
-                    Text(AdvancedCaptureCopy.withoutMiddleDot(segment.instructionKo))
-                        .font(GonggiTypography.body(16))
-                        .foregroundStyle(.white)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let text = AdvancedCaptureCopy.serverCopy(segment.instructionKo) {
+                        Text(text)
+                            .font(GonggiTypography.body(16))
+                            .foregroundStyle(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(GonggiSpacing.md)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -97,14 +99,14 @@ struct Guided3DGSCaptureFlowView: View {
                     .foregroundStyle(GonggiColors.accentTeal)
 
                 Text(introStep == 0
-                    ? "촬영 모드가 곧 시작됩니다."
-                    : "촬영을 시작해주세요.")
+                    ? L("Capture mode starts soon.")
+                    : L("Start capturing."))
                     .font(GonggiTypography.title(24))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .multilineTextAlignment(.center)
 
-                if introStep == 1, let tip = plan.globalTips.first {
-                    Text(AdvancedCaptureCopy.withoutMiddleDot(tip))
+                if introStep == 1, let tip = AdvancedCaptureCopy.serverCopy(plan.globalTips.first) {
+                    Text(tip)
                         .font(GonggiTypography.body(15))
                         .foregroundStyle(GonggiColors.textSecondary)
                         .multilineTextAlignment(.center)
@@ -112,7 +114,7 @@ struct Guided3DGSCaptureFlowView: View {
                 }
 
                 if let total = plan.estimatedTotalSec {
-                    Text("예상 \(Int(total))초 / \(plan.segments.count)단계")
+                    Text(L("About %1$@ s / %2$@ steps", "\(Int(total))", "\(plan.segments.count)"))
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textTertiary)
                 }
@@ -120,13 +122,13 @@ struct Guided3DGSCaptureFlowView: View {
                 Spacer()
 
                 if introStep == 0 {
-                    PrimaryButton(title: "계속", icon: "arrow.right") {
+                    PrimaryButton(title: L("Continue"), icon: "arrow.right") {
                         GonggiHaptics.light()
                         introStep = 1
                     }
                     .padding(.horizontal, GonggiSpacing.lg)
                 } else {
-                    PrimaryButton(title: "촬영 시작", icon: "video.fill") {
+                    PrimaryButton(title: L("Start capture"), icon: "video.fill") {
                         GonggiHaptics.medium()
                         withAnimation(GonggiMotion.quick) {
                             showIntro = false
@@ -135,7 +137,7 @@ struct Guided3DGSCaptureFlowView: View {
                     .padding(.horizontal, GonggiSpacing.lg)
                 }
 
-                Button("닫기") { onClose() }
+                Button(L("Close")) { onClose() }
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(GonggiColors.textTertiary)
                     .padding(.bottom, GonggiSpacing.lg)

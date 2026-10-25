@@ -19,7 +19,7 @@ struct PanoramaCaptureFlowView: View {
                     endPoint: .bottom
                 )
                 .ignoresSafeArea()
-                Text("Mock 카메라")
+                Text(L("Mock camera"))
                     .font(GonggiTypography.caption(12))
                     .foregroundStyle(GonggiColors.textTertiary)
             } else {
@@ -33,7 +33,7 @@ struct PanoramaCaptureFlowView: View {
                 Color.black.opacity(0.45).ignoresSafeArea()
                 VStack(spacing: GonggiSpacing.sm) {
                     ProgressView().tint(GonggiColors.accentCyan)
-                    Text("파노라마 생성 중…")
+                    Text(L("Creating panorama…"))
                         .font(GonggiTypography.caption(13))
                         .foregroundStyle(GonggiColors.textSecondary)
                 }

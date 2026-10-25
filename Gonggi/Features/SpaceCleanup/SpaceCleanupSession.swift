@@ -193,7 +193,7 @@ final class SpaceCleanupSession: ObservableObject {
 
     func submitAllFurniture() async {
         guard consentAccepted else {
-            errorMessage = "AI 이용 동의가 필요합니다."
+            errorMessage = L("Consent to AI use is required.")
             return
         }
         await create(mode: .allFurniture, points: nil)
@@ -204,11 +204,11 @@ final class SpaceCleanupSession: ObservableObject {
 
     func submitSelected() async {
         guard consentAccepted else {
-            errorMessage = "AI 이용 동의가 필요합니다."
+            errorMessage = L("Consent to AI use is required.")
             return
         }
         guard canSubmitSelected else {
-            errorMessage = "가구를 하나 이상 선택해 주세요."
+            errorMessage = L("Choose at least one piece of furniture.")
             return
         }
         maskOverlayReady = false
@@ -219,16 +219,16 @@ final class SpaceCleanupSession: ObservableObject {
     /// Confirm detected masks, then hand off to 보관함 immediately (no VR edit polling).
     func confirmMasks() async {
         guard canConfirm, let jobId = job?.id else {
-            errorMessage = "마스크를 확인한 뒤에만 정리할 수 있어요."
+            errorMessage = L("You can clear only after checking the mask.")
             return
         }
         guard job?.detectedObjects?.isEmpty == false else {
-            errorMessage = "감지된 가구가 없어 확인할 수 없어요."
+            errorMessage = L("No furniture was detected, so it can't be checked.")
             return
         }
         let label = removalTargetText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !label.isEmpty else {
-            errorMessage = "무엇을 제거할지 입력해 주세요."
+            errorMessage = L("Type what you want to remove.")
             return
         }
         isSubmitting = true
@@ -292,7 +292,7 @@ final class SpaceCleanupSession: ObservableObject {
                 let maxNs = self.maxPollDurationNanosecondsOverride ?? Self.maxPollDurationNanoseconds
                 if let started = self.pollStartedAt,
                    Date().timeIntervalSince(started) > Double(maxNs) / 1e9 {
-                    self.errorMessage = "작업이 너무 오래 걸려 중단되었습니다. 다시 시도해 주세요."
+                    self.errorMessage = L("The job took too long and was stopped. Please try again.")
                     self.cancelPolling()
                     return
                 }

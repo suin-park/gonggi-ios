@@ -44,7 +44,7 @@ final class SpatialRecordFormalFeatureTests: XCTestCase {
         store.markInterrupted(spaceId: "s1")
         let record = store.record(spaceId: "s1")!
         XCTAssertEqual(record.spaceStatus, .failed)
-        XCTAssertEqual(record.userFacingStatusLabel, "업로드 중단, 다시 시도할 수 있어요")
+        XCTAssertEqual(record.userFacingStatusLabel, L("Upload stopped, you can retry"))
         XCTAssertTrue(record.canRetry)
         XCTAssertTrue(store.activeJobs.isEmpty, "interrupted rows are not polled as in-progress")
     }
@@ -52,7 +52,7 @@ final class SpatialRecordFormalFeatureTests: XCTestCase {
     func testServerFailureCodeDrivesLabel() {
         let store = makeStore()
         store.applyRemote(spaceId: "s1", status: "failed", stage: nil, progress: 0, failureCode: "NATIVE_UNAVAILABLE")
-        XCTAssertEqual(store.record(spaceId: "s1")?.userFacingStatusLabel, "생성 서버 준비 안 됨, 다시 시도할 수 있어요")
+        XCTAssertEqual(store.record(spaceId: "s1")?.userFacingStatusLabel, L("Creation server not ready, you can retry"))
         store.applyRemote(spaceId: "s1", status: "failed", stage: nil, progress: 0, failureCode: "RETRY_LIMIT")
         XCTAssertEqual(store.record(spaceId: "s1")?.canRetry, false)
     }

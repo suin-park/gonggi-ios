@@ -241,8 +241,8 @@ final class KmoSnapshotTests: XCTestCase {
     }
 
     func testCustomTabBar() throws {
-        let items = [KmoTabItem(id: "h", tab: .home, title: "홈"), KmoTabItem(id: "r", tab: .record, title: "기록하기"),
-                     KmoTabItem(id: "l", tab: .library, title: "보관함"), KmoTabItem(id: "p", tab: .profile, title: "내 정보")]
+        let items = [KmoTabItem(id: "h", tab: .home, title: L("Home")), KmoTabItem(id: "r", tab: .record, title: L("Capture")),
+                     KmoTabItem(id: "l", tab: .library, title: L("Library")), KmoTabItem(id: "p", tab: .profile, title: L("Profile"))]
         let bar = VStack {
             Spacer()
             KmoTabBar(items: items, selection: .constant(.home))
@@ -257,8 +257,8 @@ final class KmoSnapshotTests: XCTestCase {
         try render(LibraryView(), name: "10-library")
         try render(ProfileView(), name: "11-profile")
         // 기록하기는 하단 바가 유지되는 일반 탭이다(닫기 버튼 없음).
-        let recordItems = [KmoTabItem(id: "h", tab: .home, title: "홈"), KmoTabItem(id: "r", tab: .record, title: "기록하기"),
-                           KmoTabItem(id: "l", tab: .library, title: "보관함"), KmoTabItem(id: "p", tab: .profile, title: "내 정보")]
+        let recordItems = [KmoTabItem(id: "h", tab: .home, title: L("Home")), KmoTabItem(id: "r", tab: .record, title: L("Capture")),
+                           KmoTabItem(id: "l", tab: .library, title: L("Library")), KmoTabItem(id: "p", tab: .profile, title: L("Profile"))]
         try render(VStack(spacing: 0) {
             KmoCustomerRecordTab()
             KmoTabBar(items: recordItems, selection: .constant(.record))
@@ -289,8 +289,8 @@ final class KmoSnapshotTests: XCTestCase {
         try render(NavigationStack {
             StoreProductEditSheet(item: item, shelves: catalog.shelves, model: model, onDone: {})
         }, name: "15b-product-edit-large-text", size: CGSize(width: 375, height: 1400), dynamic: .accessibility3)
-        try render(KmoTabBar(items: [KmoTabItem(id: "h", tab: .home, title: "우리 매장"), KmoTabItem(id: "r", tab: .record, title: "기록하기"),
-                                     KmoTabItem(id: "l", tab: .library, title: "상품"), KmoTabItem(id: "p", tab: .profile, title: "내 정보")],
+        try render(KmoTabBar(items: [KmoTabItem(id: "h", tab: .home, title: "우리 매장"), KmoTabItem(id: "r", tab: .record, title: L("Capture")),
+                                     KmoTabItem(id: "l", tab: .library, title: "상품"), KmoTabItem(id: "p", tab: .profile, title: L("Profile"))],
                              selection: .constant(.home)), name: "16-tab-bar-owner", size: CGSize(width: 320, height: 120))
     }
 }

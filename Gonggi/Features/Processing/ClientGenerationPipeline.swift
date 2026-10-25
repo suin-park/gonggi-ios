@@ -10,9 +10,9 @@ enum ClientGenerationPipelineStep: Int, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .preparePackage: return "패키지 준비"
-        case .upload: return "업로드"
-        case .requestGeneration: return "생성 요청"
+        case .preparePackage: return L("Preparing package")
+        case .upload: return L("Upload")
+        case .requestGeneration: return L("Request creation")
         }
     }
 

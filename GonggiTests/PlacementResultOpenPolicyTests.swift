@@ -55,7 +55,7 @@ final class PlacementResultOpenPolicyTests: XCTestCase {
                 createdAt: Date(),
                 completedAt: Date(),
                 serverStatus: "completed",
-                displayName: "공간",
+                displayName: L("Space"),
                 resultImageURL: nil,
                 localLatLongPath: nil,
                 width: nil,

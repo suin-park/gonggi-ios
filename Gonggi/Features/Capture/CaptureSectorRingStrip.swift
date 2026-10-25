@@ -33,7 +33,7 @@ struct CaptureSectorRingStrip: View {
         .background(GonggiColors.surfaceElevated.opacity(0.55))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("촬영 구간 진행")
+        .accessibilityLabel(L("Capture section progress"))
     }
 
     private func fillColor(for state: CaptureSectorFillState) -> Color {

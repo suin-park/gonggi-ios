@@ -3,9 +3,9 @@ import XCTest
 
 final class WelcomePanoramaSampleTests: XCTestCase {
     func testWelcomeCopyIsExact() {
-        XCTAssertEqual(WelcomePanoramaSampleAsset.headline, "제품을 찾고, 매장을 둘러보세요.")
-        XCTAssertEqual(WelcomePanoramaSampleAsset.subtitle, "내 공간에서 미리 체험하세요.")
-        XCTAssertEqual(WelcomePanoramaSampleAsset.accountFootnote, "제품과 공간을 하나의 계정으로 관리하세요.")
+        XCTAssertEqual(WelcomePanoramaSampleAsset.headline, L("Find products and explore stores."))
+        XCTAssertEqual(WelcomePanoramaSampleAsset.subtitle, L("Try it out in your own space."))
+        XCTAssertEqual(WelcomePanoramaSampleAsset.accountFootnote, L("Manage products and spaces with one account."))
         XCTAssertFalse(WelcomePanoramaSampleAsset.headline.contains("·"))
         XCTAssertFalse(WelcomePanoramaSampleAsset.subtitle.contains("·"))
     }
@@ -44,9 +44,9 @@ final class WelcomePanoramaSampleTests: XCTestCase {
 
     func testWelcomeSampleIsNotAButton() {
         // Presentation is inline-only; VoiceOver must not advertise "open".
-        let label = "360도 공간 샘플"
+        let label = L("360° space sample")
         XCTAssertFalse(label.contains("열기"))
-        XCTAssertFalse(label.contains("둘러보기"))
+        XCTAssertFalse(label.contains(L("Explore")))
     }
 
     func testInitialYawTargetsBrightLivingRoomWindows() {

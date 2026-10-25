@@ -46,7 +46,7 @@ final class DirectionCaptureGuideTests: XCTestCase {
         let u = DirectionCaptureGuide.upperObliqueGuideMessage(
             warnFast: false, waitingForElevation: false, stuckAtLastShot: true
         )
-        XCTAssertEqual(u, "조금만 더 돌아주세요.")
+        XCTAssertEqual(u, L("Turn just a little more."))
         XCTAssertFalse(u.contains("up_front"))
     }
 

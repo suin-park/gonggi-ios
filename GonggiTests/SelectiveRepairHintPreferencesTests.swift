@@ -29,15 +29,15 @@ final class SelectiveRepairHintPreferencesTests: XCTestCase {
     }
 
     func testCopyMatchesProductCopy() {
-        XCTAssertEqual(SelectiveRepairHintPreferences.title, "잘못 만들어진 부분이 있나요?")
+        XCTAssertEqual(SelectiveRepairHintPreferences.title, L("Something not right?"))
         XCTAssertEqual(
             SelectiveRepairHintPreferences.body,
-            "수정할 위치를 길게 누르면 다시 촬영할 수 있어요."
+            L("Press and hold the spot to fix to capture it again.")
         )
-        XCTAssertEqual(SelectiveRepairHintPreferences.reopenMenuTitle, "다시 촬영 안내")
+        XCTAssertEqual(SelectiveRepairHintPreferences.reopenMenuTitle, L("Recapture tip"))
         XCTAssertEqual(
             SelectiveRepairHintPreferences.dismissAccessibilityLabel,
-            "다시 촬영 안내 닫기"
+            L("Close the recapture tip")
         )
     }
 

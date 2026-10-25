@@ -13,17 +13,17 @@ enum CaptureElevationRing: String, Codable, CaseIterable, Sendable, Identifiable
 
     var userLabel: String {
         switch self {
-        case .middle: return "중앙"
-        case .upper: return "위쪽"
-        case .lower: return "아래쪽"
+        case .middle: return L("Center")
+        case .upper: return L("Up")
+        case .lower: return L("Down")
         }
     }
 
     var coachVerb: String {
         switch self {
-        case .middle: return "정면 높이"
-        case .upper: return "위쪽"
-        case .lower: return "아래쪽"
+        case .middle: return L("Eye level")
+        case .upper: return L("Up")
+        case .lower: return L("Down")
         }
     }
 }
@@ -40,10 +40,10 @@ enum CaptureYawSector: String, Codable, CaseIterable, Sendable, Identifiable {
 
     var userLabel: String {
         switch self {
-        case .left: return "왼쪽"
-        case .front: return "정면"
-        case .right: return "오른쪽"
-        case .back: return "뒤쪽"
+        case .left: return L("Left")
+        case .front: return L("Front")
+        case .right: return L("Right")
+        case .back: return L("Back")
         }
     }
 
@@ -69,12 +69,12 @@ enum CaptureGuidanceStage: String, Codable, Equatable, Sendable {
 
     var statusLabel: String {
         switch self {
-        case .eyeLevelSweep: return "정면 높이 촬영 중"
-        case .upperSweep: return "위쪽 촬영 필요"
-        case .lowerSweep: return "아래쪽 촬영 필요"
-        case .fillGaps: return "조금 더 둘러봐 주세요"
-        case .softComplete: return "거의 다 담았어요"
-        case .reconstructionReady: return "촬영 완료"
+        case .eyeLevelSweep: return L("Capturing at eye level")
+        case .upperSweep: return L("Capture upward")
+        case .lowerSweep: return L("Capture downward")
+        case .fillGaps: return L("Look around a bit more")
+        case .softComplete: return L("Almost done")
+        case .reconstructionReady: return L("Capture complete")
         }
     }
 }
@@ -151,8 +151,8 @@ struct CaptureSectorRingProgress: Equatable, Codable, Sendable {
         guard let focus = nextCoachingFocus else { return nil }
         switch focus.ring {
         case .middle: return focus.sector.userLabel
-        case .upper: return "\(focus.sector.userLabel) 위"
-        case .lower: return "\(focus.sector.userLabel) 아래"
+        case .upper: return L("%@ up", "\(focus.sector.userLabel)")
+        case .lower: return L("%@ down", "\(focus.sector.userLabel)")
         }
     }
 }

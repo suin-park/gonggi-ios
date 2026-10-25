@@ -194,7 +194,7 @@ final class ObjectProductEvidenceTests: XCTestCase {
     }
 
     func testAutoPlacementCopyIsTheCurrentTwoSentences() {
-        XCTAssertEqual(ObjectCaptureCopy.sizingHint, "상자가 물체를 넉넉하게 감싸도록 위치와 크기를 맞춰 주세요.")
-        XCTAssertEqual(ObjectCaptureCopy.manualPlacementHint, "물체 아래의 바닥이나 테이블을 눌러 상자를 놓아 주세요.")
+        XCTAssertEqual(ObjectCaptureCopy.sizingHint, L("Adjust the box's position and size so it fully surrounds the object."))
+        XCTAssertEqual(ObjectCaptureCopy.manualPlacementHint, L("Tap the floor or table under the object to place the box."))
     }
 }

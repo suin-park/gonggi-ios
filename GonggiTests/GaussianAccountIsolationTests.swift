@@ -21,7 +21,7 @@ final class GaussianAccountIsolationTests: XCTestCase {
         super.tearDown()
     }
 
-    private func remote(_ id: String, _ status: String = "ready", _ name: String = "공간") -> GaussianGenerationStore.RemoteSpace {
+    private func remote(_ id: String, _ status: String = "ready", _ name: String = L("Space")) -> GaussianGenerationStore.RemoteSpace {
         .init(spaceId: id, name: name, status: status, createdAt: Date())
     }
 
@@ -73,7 +73,7 @@ final class GaussianAccountIsolationTests: XCTestCase {
     func testRemoteMergeKeepsInFlightDropsDeletedSkipsRemoteFailures() {
         let store = GaussianGenerationStore(defaults: defaults)
         store.bind(userId: "u")
-        store.upsert(spaceId: "inflight", jobId: "j1", name: "생성 중", qualityProfile: "p", status: "processing")
+        store.upsert(spaceId: "inflight", jobId: "j1", name: L("Creating"), qualityProfile: "p", status: "processing")
         store.upsert(spaceId: "deleted-on-server", jobId: "j2", name: "삭제됨", qualityProfile: "p", status: "ready")
         store.applyRemote(spaceId: "deleted-on-server", status: "ready", stage: nil, progress: 1, failureCode: nil)
         store.applyRemoteCatalog([remote("remote-ready"), remote("remote-failed", "failed")], forUserId: "u")

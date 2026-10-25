@@ -37,12 +37,12 @@ enum AssetARFailureKind: Equatable {
 }
 
 enum AssetARCopy {
-    static let cameraNeeded = "AR을 사용하려면 카메라 권한이 필요해요"
-    static let unsupported = "이 기기에서는 AR 보기를 사용할 수 없어요"
-    static let usdzLoad = "AR 파일을 불러오지 못했어요"
-    static let scanHint = "바닥이나 테이블을 천천히 비춰주세요"
-    static let tapHint = "놓을 위치를 탭하세요"
-    static let placedHint = "손가락으로 이동/회전/크기를 조절할 수 있어요"
+    static var cameraNeeded: String { L("AR needs camera access") }
+    static var unsupported: String { L("AR isn't available on this device") }
+    static var usdzLoad: String { L("Couldn't load the AR file") }
+    static var scanHint: String { L("Slowly point at the floor or a table") }
+    static var tapHint: String { L("Tap where to place it") }
+    static var placedHint: String { L("Use your fingers to move, rotate and resize") }
 }
 
 /// Pure hierarchy check for placement taps (`entity(at:)` often returns a child mesh).
@@ -149,7 +149,7 @@ struct AssetARQuickLookView: View {
             VStack {
                 HStack {
                     Spacer()
-                    Button("닫기") {
+                    Button(L("Close")) {
                         dismiss()
                     }
                     .font(GonggiTypography.body(16))
@@ -192,7 +192,7 @@ struct AssetARQuickLookView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, GonggiSpacing.lg)
             if kind.showsSettingsButton {
-                Button("설정 열기") {
+                Button(L("Open Settings")) {
                     guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
                     UIApplication.shared.open(url)
                 }

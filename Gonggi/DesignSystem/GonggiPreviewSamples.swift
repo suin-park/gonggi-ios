@@ -2,10 +2,10 @@ import Foundation
 
 /// Preview-only UI states — does not affect capture logic.
 enum GonggiPreviewSamples {
-    static let coachDefault = "천천히 이동하세요"
-    static let coachTracking = "카메라를 천천히 움직여 위치를 다시 잡아주세요"
-    static let coachFastMove = "조금 더 천천히 이동하세요"
-    static let coachLowTexture = "주변 가구나 모서리가 함께 보이도록 촬영하세요"
+    static var coachDefault: String { L("Move slowly") }
+    static var coachTracking: String { L("Move the camera slowly to find your position again") }
+    static var coachFastMove: String { L("Move a little more slowly") }
+    static var coachLowTexture: String { L("Keep nearby furniture or corners in view") }
 
     static let coverage30 = CaptureQualityState(
         overallCoverage: 0.30,
@@ -93,7 +93,7 @@ enum GonggiPreviewSamples {
         fastMotionSegments: 2,
         lowTextureWarnings: 0,
         areasNeedingRevisit: 3,
-        suggestedName: "어릴 적 우리 집",
+        suggestedName: L("My childhood home"),
         avgAngularVelocity: 0.42,
         maxAngularVelocity: 1.1,
         trackingLimitedSec: 2.5,

@@ -45,10 +45,10 @@ struct SpaceRecordFlowView: View {
                     .progressViewStyle(.circular)
                     .tint(GonggiColors.accentTeal)
                     .scaleEffect(1.3)
-                Text("공간을 생성하고 있습니다…")
+                Text(L("Creating the space…"))
                     .font(GonggiTypography.title(22))
                     .foregroundStyle(.white)
-                Text("잠시만 기다려주세요")
+                Text(L("Please wait a moment"))
                     .font(GonggiTypography.caption(14))
                     .foregroundStyle(.white.opacity(0.7))
             }
@@ -72,7 +72,7 @@ struct SpaceRecordFlowView: View {
                         coordinator.resetForRecapture()
                         onRecapture()
                     } label: {
-                        Text("다시 촬영")
+                        Text(L("Capture again"))
                             .font(GonggiTypography.body(17))
                             .foregroundStyle(.black)
                             .frame(maxWidth: .infinity)
@@ -86,7 +86,7 @@ struct SpaceRecordFlowView: View {
                         GonggiHaptics.medium()
                         coordinator.retryGenerate()
                     } label: {
-                        Text("다시 생성")
+                        Text(L("Create again"))
                             .font(GonggiTypography.body(17))
                             .foregroundStyle(.black)
                             .frame(maxWidth: .infinity)
@@ -101,13 +101,13 @@ struct SpaceRecordFlowView: View {
                         coordinator.resetForRecapture()
                         onRecapture()
                     } label: {
-                        Text("다시 촬영")
+                        Text(L("Capture again"))
                             .font(GonggiTypography.body(16))
                             .foregroundStyle(.white.opacity(0.85))
                     }
                 }
 
-                Button("닫기") {
+                Button(L("Close")) {
                     onClose()
                 }
                 .font(GonggiTypography.caption(14))

@@ -21,11 +21,11 @@ enum SpaceRecordFailure: Error, Equatable {
     var userMessage: String {
         switch self {
         case .captureIncomplete:
-            return "공간 기록을 완료하지 못했습니다."
+            return L("Couldn't finish the space capture.")
         case .network:
-            return "네트워크에 연결할 수 없습니다."
+            return L("Can't connect to the network.")
         case .generationFailed, .invalidResult, .timeout:
-            return "공간 생성에 실패했습니다."
+            return L("Space creation failed.")
         }
     }
 }

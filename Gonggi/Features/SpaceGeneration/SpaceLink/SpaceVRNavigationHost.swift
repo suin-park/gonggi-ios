@@ -108,11 +108,11 @@ struct SpaceVRNavigationHost: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(isTransitioning && fadeOpacity > 0.01)
         }
-        .alert("공간을 불러오지 못했어요", isPresented: Binding(
+        .alert(L("Couldn't load the space"), isPresented: Binding(
             get: { navigateError != nil },
             set: { if !$0 { navigateError = nil } }
         )) {
-            Button("확인", role: .cancel) { navigateError = nil }
+            Button(L("OK"), role: .cancel) { navigateError = nil }
         } message: {
             Text(navigateError ?? "")
         }
@@ -183,7 +183,7 @@ struct SpaceVRNavigationHost: View {
         guard !isTransitioning else { return }
         let targetKey = link.targetSessionId ?? link.targetSpaceId
         guard let targetKey, !targetKey.isEmpty else {
-            navigateError = "연결할 공간을 찾을 수 없어요"
+            navigateError = L("Couldn't find the space to link")
             return
         }
 
@@ -368,7 +368,7 @@ struct SpaceVRNavigationHost: View {
             targetEntryFOV = VRViewingFOVMath.defaultFOV
             suppressStackAudio = false
             isTransitioning = false
-            navigateError = "공간을 불러오지 못했어요"
+            navigateError = L("Couldn't load the space")
             await playAudioForTopOfStack()
         }
     }
@@ -445,7 +445,7 @@ struct SpaceVRNavigationHost: View {
             }
             suppressStackAudio = false
             isTransitioning = false
-            navigateError = "공간을 불러오지 못했어요"
+            navigateError = L("Couldn't load the space")
             await playAudioForTopOfStack()
         }
     }
@@ -596,7 +596,7 @@ struct SpaceVRNavigationHost: View {
             targetEntryFOV = VRViewingFOVMath.defaultFOV
             suppressStackAudio = false
             isTransitioning = false
-            navigateError = "공간을 불러오지 못했어요"
+            navigateError = L("Couldn't load the space")
         }
     }
 
@@ -625,7 +625,7 @@ struct SpaceVRNavigationHost: View {
             }
             suppressStackAudio = false
             isTransitioning = false
-            navigateError = "공간을 불러오지 못했어요"
+            navigateError = L("Couldn't load the space")
         }
     }
 

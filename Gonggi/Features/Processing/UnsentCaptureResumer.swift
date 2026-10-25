@@ -2,12 +2,6 @@ import Foundation
 import OSLog
 
 /// Same wording as the capture flow's space name ("새 공간 9월 29일").
-private let unsentCaptureNameFormatter: DateFormatter = {
-    let f = DateFormatter()
-    f.locale = Locale(identifier: "ko_KR")
-    f.dateFormat = "M월 d일"
-    return f
-}()
 
 /// "업로드하지 못한 촬영": a 3D 공간 기록 whose create request never produced a server job, so the Library card
 /// path (`GaussianGenerationResumer`, needs a space id) cannot pick it up after the processing screen is gone.
@@ -32,7 +26,7 @@ enum UnsentCaptureResumer {
 
         var suggestedName: String {
             if isProduct { return ObjectCaptureCopy.defaultName(date: capturedAt ?? Date()) }
-            return "새 공간 \(unsentCaptureNameFormatter.string(from: capturedAt ?? Date()))"
+            return WhikAutoName.space(capturedAt ?? Date())
         }
     }
 
@@ -86,7 +80,7 @@ enum UnsentCaptureResumer {
         guard let userId = GaussianGenerationStore.shared.boundUserId,
               isVisible(ownerUserId: item.ownerUserId, currentUserId: userId)
         else {
-            return "지금 로그인한 계정의 촬영이 아니에요."
+            return L("This capture isn't from the signed-in account.")
         }
         let work = Task { @MainActor in try await run(item, userId: userId, service: service) }
         let background = UploadBackgroundTask(name: "gonggi.3d-record.unsent") { work.cancel() }

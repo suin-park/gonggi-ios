@@ -258,8 +258,8 @@ enum ObjectCaptureSubject: String, CaseIterable {
     /// The subject's own line on the start screen; unsupported subjects say so plainly.
     var startLine: String {
         switch self {
-        case .stillObject: return "움직이지 않는 물체만 만들 수 있어요"
-        case .person, .pet: return "사람과 반려동물은 아직 지원하지 않아요"
+        case .stillObject: return L("Only objects that stay still can be captured")
+        case .person, .pet: return L("People and pets aren't supported yet")
         }
     }
 }

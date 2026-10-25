@@ -100,12 +100,12 @@ struct GaussianSplatWebViewer: View {
                         .padding(.trailing, 12)
                         .padding(.top, 8)
                 }
-                .accessibilityLabel("닫기")
+                .accessibilityLabel(L("Close"))
 
                 if hasCollision, !isLoading {
-                    Picker("이동 모드", selection: $navigationMode) {
-                        Text("자유 이동").tag(GaussianNavMode.fly)
-                        Text("걷기").tag(GaussianNavMode.walk)
+                    Picker(L("Navigation mode"), selection: $navigationMode) {
+                        Text(L("Fly")).tag(GaussianNavMode.fly)
+                        Text(L("Walk")).tag(GaussianNavMode.walk)
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 180)
@@ -195,12 +195,12 @@ struct GaussianSplatWebViewer: View {
 
     private var overlayTitle: String {
         switch session.phase {
-        case .connecting: return "공간 연결 중"
-        case .downloading: return "공간 다운로드 중"
-        case .preparing: return "공간 준비 중"
-        case .displaying: return "공간 준비 중"
+        case .connecting: return L("Connecting to the space")
+        case .downloading: return L("Downloading the space")
+        case .preparing: return L("Preparing the space")
+        case .displaying: return L("Preparing the space")
         case .ready: return ""
-        case .recovering: return "화면을 복구하고 있어요"
+        case .recovering: return L("Restoring the view")
         case .failed(let f): return f.title
         }
     }
@@ -219,9 +219,9 @@ struct GaussianSplatWebViewer: View {
                 }
             }
             return parts.isEmpty ? nil : parts.joined(separator: ", ")
-        case .preparing: return "3D 데이터를 읽고 있어요"
-        case .displaying: return "화면에 그릴 준비를 하고 있어요"
-        case .recovering: return "마지막 위치에서 다시 열어요"
+        case .preparing: return L("Reading 3D data")
+        case .displaying: return L("Getting ready to draw")
+        case .recovering: return L("Reopening at your last position")
         case .failed(let f): return f.detail
         default: return nil
         }
@@ -259,7 +259,7 @@ struct GaussianSplatWebViewer: View {
                     Button {
                         reload(manual: true, reason: "retry_tapped")
                     } label: {
-                        Text("다시 시도")
+                        Text(L("Try again"))
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(.black)
                             .padding(.horizontal, 20)
@@ -390,6 +390,15 @@ struct GaussianSplatWebViewer: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 webBridge?.probeCollision()
             }
+            // Library thumbnail for records that have no capture photo on this device (e.g. made elsewhere).
+            let libraryId = "gaussian:\(spaceId)"
+            if !WhikThumbnailStore.shared.has(id: libraryId) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    webBridge?.webView?.takeSnapshot(with: nil) { image, _ in
+                        if let image { WhikThumbnailStore.shared.noteViewerSnapshot(image, libraryId: libraryId) }
+                    }
+                }
+            }
 
         case .error(let code):
             GaussianViewerLoadLog.mark("viewer_error code=\(code)", since: session.openedAt)
@@ -518,6 +527,8 @@ enum GaussianViewerURL {
             URLQueryItem(name: "navigationMode", value: "fly"),
             URLQueryItem(name: "gamingControls", value: "1"),
             URLQueryItem(name: "mobileChrome", value: "1"),
+            // In-app language for any viewer-page copy (the page may ignore it; the native overlay is localized).
+            URLQueryItem(name: "lang", value: AppLanguage.shared.code.rawValue),
             URLQueryItem(name: "assetRev", value: "\(assetRev)-\(reloadToken)"),
         ]
         // Resume at the last camera after a recovery (one-shot, never persisted server-side).
@@ -532,8 +543,8 @@ enum GaussianViewerURL {
 
     static func hint(hasCollision: Bool) -> String {
         hasCollision
-            ? "걷기/자유이동 전환, 왼쪽 조이스틱 이동, 드래그로 시점"
-            : "왼쪽 조이스틱으로 이동, 화면을 드래그해 시점 변경"
+            ? L("Switch walk or fly, move with the left joystick, drag to look around")
+            : L("Move with the left joystick, drag the screen to look around")
     }
 }
 

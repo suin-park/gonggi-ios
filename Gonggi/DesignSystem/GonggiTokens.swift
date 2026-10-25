@@ -233,7 +233,7 @@ enum GonggiMotion {
 
 enum GonggiBrandCopy {
     /// Logo subtext — present in SVG only; do not re-typeset in UI next to logo.
-    static let logoSubtext = "공간을 기록하다"
+    static var logoSubtext: String { L("Record your space") }
     static let welcomeHeadline = WelcomePanoramaSampleAsset.headline
     static let welcomeSupport = WelcomePanoramaSampleAsset.subtitle
 }
@@ -243,10 +243,10 @@ enum GonggiBrandCopy {
 extension ProcessingStepKind {
     var friendlyTitle: String {
         switch self {
-        case .upload: return "촬영 영상 전송"
-        case .frameAnalysis: return "공간 분석"
-        case .spaceGeneration: return "3D 공간 생성"
-        case .optimization: return "품질 다듬기"
+        case .upload: return L("Uploading capture")
+        case .frameAnalysis: return L("Analyzing space")
+        case .spaceGeneration: return L("Creating 3D Space")
+        case .optimization: return L("Refining quality")
         }
     }
 }

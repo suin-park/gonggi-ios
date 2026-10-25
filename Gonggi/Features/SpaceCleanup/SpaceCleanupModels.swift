@@ -6,17 +6,17 @@ enum SpaceCleanupMode: String, Codable, Sendable, Equatable, CaseIterable {
 
     var title: String {
         switch self {
-        case .allFurniture: return "전체 가구 비우기"
-        case .selectedObjects: return "가구 선택해서 비우기"
+        case .allFurniture: return L("Clear all furniture")
+        case .selectedObjects: return L("Choose furniture to clear")
         }
     }
 
     var subtitle: String {
         switch self {
         case .allFurniture:
-            return "공간의 구조는 유지하고 이동 가능한 가구와 생활용품을 비웁니다."
+            return L("Keeps the room's structure and clears movable furniture and everyday items.")
         case .selectedObjects:
-            return "360° 공간에서 없애고 싶은 가구를 하나 이상 선택합니다."
+            return L("Choose one or more pieces of furniture to remove from the 360° space.")
         }
     }
 }

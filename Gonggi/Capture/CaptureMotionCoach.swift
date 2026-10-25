@@ -421,25 +421,25 @@ struct CaptureRemainingItem: Codable, Equatable, Sendable {
 
     var name: String {
         switch area {
-        case .oppositeDirection: return "반대 방향 \(count)곳"
-        case .ceilingEdge: return "천장 경계"
-        case .floorEdge: return "바닥 경계"
+        case .oppositeDirection: return L("%@ opposite directions", "\(count)")
+        case .ceilingEdge: return L("Ceiling edge")
+        case .floorEdge: return L("Floor edge")
         }
     }
 
     var statusLabel: String {
         switch status {
-        case .notPrompted: return "남음"
-        case .promptedUnfilled: return "미해결"
-        case .photoLimit: return "사진 한도"
+        case .notPrompted: return L("Remaining")
+        case .promptedUnfilled: return L("Unresolved")
+        case .photoLimit: return L("Photo limit")
         }
     }
 
     var statusDetail: String {
         switch status {
-        case .notPrompted: return "아직 담지 않았어요"
-        case .promptedUnfilled: return "안내했지만 아직 부족해요"
-        case .photoLimit: return "사진 한도(\(SpatialCaptureConfig.candidateSafetyCap)장)에 도달해 더 담지 못했어요"
+        case .notPrompted: return L("Not captured yet")
+        case .promptedUnfilled: return L("Guided, but still not enough")
+        case .photoLimit: return L("Reached the photo limit (%@), so no more could be added", "\(SpatialCaptureConfig.candidateSafetyCap)")
         }
     }
 

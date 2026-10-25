@@ -306,7 +306,7 @@ final class AppState: ObservableObject {
         let status = job.serverStatus.lowercased()
         if status == "failed" {
             PendingSpaceLinkCaptureStore.shared.clear()
-            spaceLinkUserMessage = "공간을 만들지 못했어요"
+            spaceLinkUserMessage = L("Couldn't create the space")
             return
         }
         guard status == "completed" else { return }
@@ -388,7 +388,7 @@ final class AppState: ObservableObject {
                     createdAt: Date(),
                     completedAt: nil,
                     serverStatus: "generating",
-                    displayName: "공간",
+                    displayName: L("Space"),
                     resultImageURL: nil,
                     localLatLongPath: nil,
                     width: nil,
@@ -811,9 +811,9 @@ enum SpaceDeleteError: Error, Equatable {
     var userMessage: String {
         switch self {
         case .network:
-            return "네트워크 연결을 확인해주세요"
+            return L("Check your network connection")
         case .generic, .notFound:
-            return "공간을 삭제하지 못했어요"
+            return L("Couldn't delete the space")
         }
     }
 }
@@ -828,14 +828,16 @@ enum SpaceMetadataUpdateError: Error {
     var userMessage: String {
         switch self {
         case .notFound:
-            return "공간을 찾을 수 없어요."
+            return L("Space not found.")
         case .notAuthenticated, .sessionChanged:
-            return "로그인 상태를 확인한 뒤 다시 시도해주세요."
+            return L("Check that you're signed in and try again.")
         case .network:
-            return "네트워크 연결을 확인해주세요."
+            return L("Check your network connection.")
         case .api(let error):
-            if case .server(_, let message, _) = error { return message }
-            return "공간 정보를 저장하지 못했어요."
+            if case .server(let code, let message, let status) = error {
+                return WhikServerMessage.generic(code: code, status: status, raw: message, context: "space_update")
+            }
+            return L("Couldn't save the space details.")
         }
     }
 }
@@ -854,10 +856,10 @@ enum AppTab: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .home: return "둘러보기"
-        case .record: return "기록"
-        case .library: return "보관함"
-        case .profile: return "내 정보"
+        case .home: return L("Explore")
+        case .record: return L("Capture")
+        case .library: return L("Library")
+        case .profile: return L("Profile")
         }
     }
 

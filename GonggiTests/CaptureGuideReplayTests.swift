@@ -128,7 +128,7 @@ final class CaptureGuideReplayTests: XCTestCase {
     /// Completion list at the end: build 81 wording vs build 82 status. An asked item never turns into "enough".
     func testCompletionListStatusOnRecordedCaptures() throws {
         let r229 = try result("c229", .v4)
-        XCTAssertEqual(r229.legacyRecommendationsAtEnd, ["반대 방향 2곳", "천장 경계"])
+        XCTAssertEqual(r229.legacyRecommendationsAtEnd, ["반대 방향 2곳", L("Ceiling edge")])
         XCTAssertEqual(r229.remainingAtEnd.map(\.shortLine), ["반대 방향 1곳(미해결)", "반대 방향 1곳(남음)", "천장 경계(미해결)"])
         let r414 = try result("c414", .v4)
         XCTAssertEqual(r414.remainingAtEnd.map(\.shortLine), ["반대 방향 2곳(미해결)", "천장 경계(미해결)"])

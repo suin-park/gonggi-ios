@@ -13,10 +13,10 @@ enum SpaceLinkExternalURL {
 
         var message: String {
             switch self {
-            case .invalid: return "웹 주소 형식이 올바르지 않아요"
-            case .scheme: return "HTTPS 주소만 사용할 수 있어요"
-            case .credentials: return "주소에 계정 정보를 넣을 수 없어요"
-            case .host: return "이 주소는 사용할 수 없어요"
+            case .invalid: return L("The web address isn't valid")
+            case .scheme: return L("Only HTTPS addresses can be used")
+            case .credentials: return L("Addresses can't include account details")
+            case .host: return L("This address can't be used")
             }
         }
     }
@@ -103,7 +103,7 @@ enum SpaceLinkExternalURL {
         ) {
             return text
         }
-        return "연결된 공간으로 이동"
+        return L("Go to the linked space")
     }
 
     // MARK: - Private

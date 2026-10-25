@@ -29,7 +29,7 @@ struct CaptureSectorPOVTargetView: View {
                     .clipShape(Capsule())
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("목표 지점 \(label). 화면 중앙에 두고 벽을 따라 천천히 이동해 주세요")
+            .accessibilityLabel(L("Target %@. Keep it in the center and walk slowly along the wall", "\(label)"))
         }
     }
 }

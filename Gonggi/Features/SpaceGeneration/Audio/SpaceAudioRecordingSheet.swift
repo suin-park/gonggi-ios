@@ -26,7 +26,7 @@ struct SpaceAudioRecordingSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: GonggiSpacing.lg) {
-                Text("직접 녹음")
+                Text(L("Record now"))
                     .font(GonggiTypography.title(22))
                     .foregroundStyle(GonggiColors.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -38,10 +38,10 @@ struct SpaceAudioRecordingSheet: View {
 
                 if permissionDenied {
                     VStack(alignment: .leading, spacing: GonggiSpacing.sm) {
-                        Text("마이크 권한이 필요해요. 설정에서 허용해 주세요.")
+                        Text(L("Microphone access is required. Allow it in Settings."))
                             .font(GonggiTypography.body(15))
                             .foregroundStyle(GonggiColors.textSecondary)
-                        SecondaryButton(title: "설정 열기", icon: "gear") {
+                        SecondaryButton(title: L("Open Settings"), icon: "gear") {
                             if let url = URL(string: UIApplication.openSettingsURLString) {
                                 UIApplication.shared.open(url)
                             }
@@ -64,7 +64,7 @@ struct SpaceAudioRecordingSheet: View {
             .background(GonggiAmbientBackground(showGlow: false))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("취소") {
+                    Button(L("Cancel")) {
                         cleanup(deleteFile: true)
                         onCancel()
                     }
@@ -81,22 +81,22 @@ struct SpaceAudioRecordingSheet: View {
     private var controls: some View {
         switch phase {
         case .idle:
-            PrimaryButton(title: "녹음 시작", icon: "mic.fill") {
+            PrimaryButton(title: L("Start recording"), icon: "mic.fill") {
                 Task { await startRecording() }
             }
         case .recording:
-            PrimaryButton(title: "녹음 중지", icon: "stop.fill") {
+            PrimaryButton(title: L("Stop recording"), icon: "stop.fill") {
                 stopRecording()
             }
         case .preview:
             VStack(spacing: GonggiSpacing.sm) {
-                SecondaryButton(title: "미리듣기", icon: "play.fill") {
+                SecondaryButton(title: L("Preview"), icon: "play.fill") {
                     previewPlayback()
                 }
-                SecondaryButton(title: "다시 녹음", icon: "arrow.counterclockwise") {
+                SecondaryButton(title: L("Record again"), icon: "arrow.counterclockwise") {
                     reRecord()
                 }
-                PrimaryButton(title: "이 녹음 사용", icon: "checkmark") {
+                PrimaryButton(title: L("Use this recording"), icon: "checkmark") {
                     guard let recordedURL else { return }
                     let url = recordedURL
                     let duration = recordedDuration
@@ -134,7 +134,7 @@ struct SpaceAudioRecordingSheet: View {
             let rec = try AVAudioRecorder(url: url, settings: settings)
             rec.prepareToRecord()
             guard rec.record() else {
-                errorMessage = "녹음을 시작하지 못했어요."
+                errorMessage = L("Couldn't start recording.")
                 return
             }
             recorder = rec
@@ -143,7 +143,7 @@ struct SpaceAudioRecordingSheet: View {
             phase = .recording
             startTicker()
         } catch {
-            errorMessage = "녹음을 시작하지 못했어요."
+            errorMessage = L("Couldn't start recording.")
         }
     }
 
@@ -183,7 +183,7 @@ struct SpaceAudioRecordingSheet: View {
             player.play()
             previewPlayer = player
         } catch {
-            errorMessage = "미리듣기를 재생하지 못했어요."
+            errorMessage = L("Couldn't play the preview.")
         }
     }
 

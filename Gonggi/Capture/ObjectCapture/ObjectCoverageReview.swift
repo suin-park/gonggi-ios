@@ -22,25 +22,25 @@ struct ObjectCoverageReview: Equatable {
     static let minPhotos = 12
 
     /// Where each band looks from, in the user's words.
-    static let bandLines = [
-        "낮은 각도(옆면)",
-        "중간 각도",
-        "높은 각도(윗부분)",
-    ]
+    static var bandLines: [String] { [
+        L("Low angle (sides)"),
+        L("Middle angle"),
+        L("High angle (top)"),
+    ] }
 
     static func make(coverage: ObjectOrbitCoverage, savedPhotos: Int) -> ObjectCoverageReview {
         var gaps: [Gap] = []
         for (band, fill) in coverage.bandFill.enumerated() where fill < gapFill {
-            let name = band < bandLines.count ? bandLines[band] : "일부 각도"
-            gaps.append(Gap(band: band, fill: fill, line: "\(name) 사진이 부족해요 (\(Int((fill * 100).rounded()))%)"))
+            let name = band < bandLines.count ? bandLines[band] : L("Some angles")
+            gaps.append(Gap(band: band, fill: fill, line: L("Not enough photos from %1$@ (%2$@%%)", "\(name)", "\(Int((fill * 100).rounded()))")))
         }
         return ObjectCoverageReview(gaps: gaps, tooFewPhotos: savedPhotos < minPhotos)
     }
 
     /// One sentence for the sheet.
     var message: String {
-        if tooFewPhotos && gaps.isEmpty { return "사진이 아직 적어요. 조금 더 돌며 찍어 주세요." }
+        if tooFewPhotos && gaps.isEmpty { return L("Not many photos yet. Walk around a bit more.") }
         guard let first = gaps.first else { return "" }
-        return gaps.count == 1 ? first.line : "\(first.line) 외 \(gaps.count - 1)곳이 부족해요"
+        return gaps.count == 1 ? first.line : L("%1$@ and %2$@ more need photos", "\(first.line)", "\(gaps.count - 1)")
     }
 }

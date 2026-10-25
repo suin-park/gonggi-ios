@@ -1,2 +1,7 @@
-"CFBundleDisplayName" = "WHIK: 3D Scanner";
+"CFBundleDisplayName" = "WHIK";
 "CFBundleName" = "WHIK";
+"NSCameraUsageDescription" = "WHIK uses the camera to capture spaces and objects in 3D.";
+"NSLocationWhenInUseUsageDescription" = "WHIK saves where a capture was taken.";
+"NSMicrophoneUsageDescription" = "WHIK can record the sound of a space with your capture.";
+"NSPhotoLibraryAddUsageDescription" = "WHIK saves captures to your photo library when you choose to.";
+"NSMotionUsageDescription" = "WHIK uses motion sensors to guide steady captures.";

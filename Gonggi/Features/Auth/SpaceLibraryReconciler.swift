@@ -71,7 +71,7 @@ final class SpaceLibraryReconciler {
                     createdAt: ISO8601DateFormatter().date(from: row["createdAt"] as? String ?? "") ?? Date(),
                     completedAt: status == "completed" ? Date() : nil,
                     serverStatus: status == "queued" ? "generating" : status,
-                    displayName: (title?.isEmpty == false ? title! : "공간"),
+                    displayName: (title?.isEmpty == false ? title! : L("Space")),
                     resultImageURL: resultURL,
                     localLatLongPath: nil,
                     latestRevisionId: latestRevisionId,

@@ -28,9 +28,9 @@ final class SpaceImportViewModel: ObservableObject {
 
     var statusLine: String? {
         switch phase {
-        case .validating: return "파일을 확인하는 중…"
-        case .uploading: return "업로드 중…"
-        case .finishing: return "공간을 등록하는 중…"
+        case .validating: return L("Checking the file…")
+        case .uploading: return L("Uploading…")
+        case .finishing: return L("Adding the space…")
         case .failed(let m): return m
         default: return nil
         }
@@ -50,7 +50,7 @@ final class SpaceImportViewModel: ObservableObject {
         phase = .validating
         guard let validated = SpaceImportMediaValidator.validateStillImage(image) else {
             phase = .failed(
-                "2:1 파노라마(LatLong) 이미지만 가져올 수 있어요. 360 카메라에서 equirectangular(경위도)로 내보낸 파일을 선택해 주세요."
+                L("Only 2:1 panorama (LatLong) images can be imported. Choose a file exported as equirectangular from a 360 camera.")
             )
             return
         }
@@ -68,7 +68,7 @@ final class SpaceImportViewModel: ObservableObject {
         do {
             let asset = AVURLAsset(url: url)
             guard let track = try await asset.loadTracks(withMediaType: .video).first else {
-                phase = .failed("영상을 읽을 수 없어요")
+                phase = .failed(L("Can't read the video"))
                 return
             }
             let size = try await track.load(.naturalSize)
@@ -78,7 +78,7 @@ final class SpaceImportViewModel: ObservableObject {
             let h = Int(abs(rendered.height))
             guard w > 0, h > 0, w == h * 2, w >= 1024, w <= 8192 else {
                 phase = .failed(
-                    "2:1 파노라마(equirectangular) 영상만 가져올 수 있어요. 360 카메라에서 경위도 형식으로 내보낸 영상을 선택해 주세요."
+                    L("Only 2:1 panorama (equirectangular) videos can be imported. Choose a video exported in that format from a 360 camera.")
                 )
                 return
             }
@@ -87,7 +87,7 @@ final class SpaceImportViewModel: ObservableObject {
             let cg = try generator.copyCGImage(at: .zero, actualTime: nil)
             let poster = UIImage(cgImage: cg)
             guard SpaceImportMediaValidator.validateStillImage(poster) != nil else {
-                phase = .failed("영상에서 파노라마 포스터를 만들 수 없어요")
+                phase = .failed(L("Can't make a panorama poster from the video"))
                 return
             }
             previewImage = poster
@@ -97,7 +97,7 @@ final class SpaceImportViewModel: ObservableObject {
             mediaKind = "video"
             phase = .picking
         } catch {
-            phase = .failed("영상을 확인할 수 없어요")
+            phase = .failed(L("Can't check the video"))
         }
     }
 
@@ -108,14 +108,14 @@ final class SpaceImportViewModel: ObservableObject {
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         let name = url.lastPathComponent
         guard name.lowercased().hasSuffix(".ply") else {
-            phase = .failed("PLY 파일만 가져올 수 있어요")
+            phase = .failed(L("Only PLY files can be imported"))
             return
         }
         do {
             let values = try url.resourceValues(forKeys: [.fileSizeKey])
             let size = values.fileSize ?? 0
             guard size > 0 else {
-                phase = .failed("파일을 읽을 수 없어요")
+                phase = .failed(L("Can't read the file"))
                 return
             }
             if size > MobileGaussianPLYAPIClient.maxFileBytes {
@@ -129,14 +129,14 @@ final class SpaceImportViewModel: ObservableObject {
             mediaKind = "ply"
             phase = .picking
         } catch {
-            phase = .failed("PLY 파일을 확인할 수 없어요")
+            phase = .failed(L("Can't check the PLY file"))
         }
     }
 
     /// Returns Gaussian space id when mediaKind == ply; otherwise LatLong session/job id.
     func submit() async -> String? {
         let title = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayName = title.isEmpty ? "가져온 공간" : title
+        let displayName = title.isEmpty ? L("Imported space") : title
 
         if mediaKind == "ply", let plyURL = pickedPlyURL {
             return await submitPly(fileURL: plyURL, displayName: displayName)
@@ -147,7 +147,7 @@ final class SpaceImportViewModel: ObservableObject {
         guard let image = previewImage,
               let validated = SpaceImportMediaValidator.validateStillImage(image)
         else {
-            phase = .failed("가져올 이미지를 선택해 주세요")
+            phase = .failed(L("Choose an image to import"))
             return nil
         }
         phase = .uploading
@@ -186,14 +186,14 @@ final class SpaceImportViewModel: ObservableObject {
             phase = .failed(SpaceImportMediaValidator.userMessage(for: err))
             return nil
         } catch {
-            phase = .failed("가져오기에 실패했어요")
+            phase = .failed(L("Import failed"))
             return nil
         }
     }
 
     private func submitVideo(videoURL: URL, poster: UIImage, displayName: String) async -> String? {
         guard let validated = SpaceImportMediaValidator.validateStillImage(poster) else {
-            phase = .failed("포스터 이미지가 올바르지 않아요")
+            phase = .failed(L("The poster image isn't valid"))
             return nil
         }
         phase = .uploading
@@ -256,7 +256,7 @@ final class SpaceImportViewModel: ObservableObject {
             phase = .failed(SpaceImportMediaValidator.userMessage(for: err))
             return nil
         } catch {
-            phase = .failed("영상 가져오기에 실패했어요")
+            phase = .failed(L("Video import failed"))
             return nil
         }
     }
@@ -271,7 +271,7 @@ final class SpaceImportViewModel: ObservableObject {
             phase = .failed(err.userMessage)
             return nil
         } catch {
-            phase = .failed("PLY 가져오기에 실패했어요")
+            phase = .failed(L("PLY import failed"))
             return nil
         }
     }
@@ -294,11 +294,11 @@ struct SpaceImportSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: GonggiSpacing.lg) {
-                    Text("360 카메라에서 내보낸 2:1 파노라마(LatLong) 이미지나 영상을 공간으로 등록합니다.")
+                    Text(L("Add a 2:1 panorama (LatLong) image or video exported from a 360 camera as a space."))
                         .font(GonggiTypography.body(15))
                         .foregroundStyle(GonggiColors.textSecondary)
 
-                    TextField("공간 이름 (선택)", text: $model.titleText)
+                    TextField(L("Space name (optional)"), text: $model.titleText)
                         .textFieldStyle(.roundedBorder)
 
                     HStack(spacing: GonggiSpacing.md) {
@@ -307,14 +307,14 @@ struct SpaceImportSheet: View {
                             matching: .images,
                             photoLibrary: .shared()
                         ) {
-                            labelChip(title: "이미지", systemImage: "photo")
+                            labelChip(title: L("Image"), systemImage: "photo")
                         }
                         PhotosPicker(
                             selection: $videoItem,
                             matching: .videos,
                             photoLibrary: .shared()
                         ) {
-                            labelChip(title: "영상", systemImage: "video")
+                            labelChip(title: L("Video"), systemImage: "video")
                         }
                     }
 
@@ -335,7 +335,7 @@ struct SpaceImportSheet: View {
                                 Text(plyName)
                                     .font(GonggiTypography.body(15))
                                     .lineLimit(2)
-                                Text("가우시안 스플래팅 공간으로 등록됩니다")
+                                Text(L("It will be added as a Gaussian splatting space"))
                                     .font(GonggiTypography.caption(13))
                                     .foregroundStyle(GonggiColors.textSecondary)
                             }
@@ -349,7 +349,7 @@ struct SpaceImportSheet: View {
                             .scaledToFit()
                             .frame(maxHeight: 180)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
-                        Text(model.mediaKind == "video" ? "동영상 VR로 등록됩니다" : "정지 파노라마로 등록됩니다")
+                        Text(model.mediaKind == "video" ? L("It will be added as a video VR") : L("It will be added as a still panorama"))
                             .font(GonggiTypography.caption(13))
                             .foregroundStyle(GonggiColors.textSecondary)
                     }
@@ -376,7 +376,7 @@ struct SpaceImportSheet: View {
                             }
                         }
                     } label: {
-                        Text("공간으로 가져오기")
+                        Text(L("Import as a space"))
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -388,11 +388,11 @@ struct SpaceImportSheet: View {
                 .padding(GonggiSpacing.lg)
             }
             .background(GonggiAmbientBackground())
-            .navigationTitle("외부에서 가져오기")
+            .navigationTitle(L("Import"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("닫기") { dismiss() }
+                    Button(L("Close")) { dismiss() }
                 }
             }
             .onChange(of: photoItem) { _, item in
@@ -402,7 +402,7 @@ struct SpaceImportSheet: View {
                        let image = UIImage(data: data) {
                         model.handlePickedImage(image)
                     } else {
-                        model.phase = .failed("이미지를 불러오지 못했어요")
+                        model.phase = .failed(L("Couldn't load the image"))
                     }
                 }
             }
@@ -414,7 +414,7 @@ struct SpaceImportSheet: View {
                     } else if let url = try? await item.loadTransferable(type: URL.self) {
                         await model.handlePickedVideo(url: url)
                     } else {
-                        model.phase = .failed("영상을 불러오지 못했어요")
+                        model.phase = .failed(L("Couldn't load the video"))
                     }
                 }
             }
@@ -429,7 +429,7 @@ struct SpaceImportSheet: View {
                     guard let url = urls.first else { return }
                     model.handlePickedPly(url: url)
                 case .failure:
-                    model.phase = .failed("PLY 파일을 선택하지 못했어요")
+                    model.phase = .failed(L("Couldn't select the PLY file"))
                 }
             }
         }

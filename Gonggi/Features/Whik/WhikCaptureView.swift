@@ -13,17 +13,17 @@ enum WhikCaptureKind: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .space3D: return "3D Space"
-        case .space360: return "360° Space"
-        case .object3D: return "3D Object"
+        case .space3D: return L("3D Space")
+        case .space360: return L("360° Space")
+        case .object3D: return L("3D Object")
         }
     }
 
     var line: String {
         switch self {
-        case .space3D: return "Walk around your space"
-        case .space360: return "Look around from one spot"
-        case .object3D: return "Capture every side"
+        case .space3D: return L("Walk around your space")
+        case .space360: return L("Look around from one spot")
+        case .object3D: return L("Capture every side")
         }
     }
 
@@ -38,9 +38,9 @@ enum WhikCaptureKind: String, CaseIterable, Identifiable {
     /// Shown when a guest taps the card (generation and the library need an account).
     var signInReason: String {
         switch self {
-        case .space3D: return "Sign in to create a 3D Space. Your captures are saved to your account."
-        case .space360: return "Sign in to create a 360° Space. Your captures are saved to your account."
-        case .object3D: return "Sign in to create a 3D Object. Your captures are saved to your account."
+        case .space3D: return L("Sign in to create a 3D Space. Your captures are saved to your account.")
+        case .space360: return L("Sign in to create a 360° Space. Your captures are saved to your account.")
+        case .object3D: return L("Sign in to create a 3D Object. Your captures are saved to your account.")
         }
     }
 }
@@ -57,7 +57,7 @@ struct WhikCaptureView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Capture")
+                Text(L("Capture"))
                     .font(WhikFont.largeTitle())
                     .foregroundStyle(WhikColors.textPrimary)
                     .padding(.top, 8)
@@ -66,9 +66,9 @@ struct WhikCaptureView: View {
                 }
                 Button {
                     GonggiHaptics.light()
-                    gate.run(reason: "Sign in to import a 360° photo into your library.") { showImport = true }
+                    gate.run(reason: L("Sign in to import a 360° photo into your library.")) { showImport = true }
                 } label: {
-                    Label("Import 360° photo", systemImage: "square.and.arrow.up")
+                    Label(L("Import 360° photo"), systemImage: "square.and.arrow.up")
                         .font(.system(.body).weight(.medium))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
@@ -99,8 +99,8 @@ struct WhikCaptureView: View {
             )
             .environmentObject(appState)
         }
-        .alert("Not available yet", isPresented: Binding(get: { unavailable != nil }, set: { if !$0 { unavailable = nil } })) {
-            Button("OK", role: .cancel) { unavailable = nil }
+        .alert(L("Not available yet"), isPresented: Binding(get: { unavailable != nil }, set: { if !$0 { unavailable = nil } })) {
+            Button(L("OK"), role: .cancel) { unavailable = nil }
         } message: {
             Text(unavailable ?? "")
         }
@@ -128,8 +128,8 @@ struct WhikCaptureView: View {
                 active = kind
             } else {
                 unavailable = appState.spatialRecordAvailable == false
-                    ? "3D Space isn't available for this account yet."
-                    : "We couldn't check 3D Space right now. Please try again in a moment."
+                    ? L("3D Space isn't available for this account yet.")
+                    : L("We couldn't check 3D Space right now. Please try again in a moment.")
             }
         case .object3D:
             if objectAvailable { active = kind; return }
@@ -140,8 +140,8 @@ struct WhikCaptureView: View {
                 active = kind
             } else {
                 unavailable = appState.objectCaptureAvailable == false
-                    ? "3D Object isn't available for this account yet."
-                    : "We couldn't check 3D Object right now. Please try again in a moment."
+                    ? L("3D Object isn't available for this account yet.")
+                    : L("We couldn't check 3D Object right now. Please try again in a moment.")
             }
         }
     }

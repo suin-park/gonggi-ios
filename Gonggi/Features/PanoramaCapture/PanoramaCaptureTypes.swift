@@ -62,21 +62,21 @@ enum PanoramaGuideFeedback: Equatable {
     var message: String {
         switch self {
         case .idle:
-            return "촬영 버튼을 누른 뒤, 제자리에서 천천히 몸을 돌려주세요"
+            return L("Tap the capture button, then turn slowly in place")
         case .followLine:
-            return "선을 따라 천천히 회전하세요"
+            return L("Turn slowly along the line")
         case .tooFast:
-            return "조금 더 천천히 움직여주세요"
+            return L("Please move a little more slowly")
         case .tooSlow:
-            return "조금 더 움직여도 좋아요"
+            return L("You can move a little more")
         case .levelOff:
-            return "폰을 너무 위/아래로 기울이지 마세요"
+            return L("Don't tilt the phone too far up or down")
         case .shaky:
-            return "흔들림이 커요, 천천히 다시 맞춰주세요"
+            return L("Too much shake, line it up again slowly")
         case .enough:
-            return "충분히 촬영됐어요, 완료를 눌러주세요"
+            return L("That's enough, tap Done")
         case .keepGoing:
-            return "가이드 선을 유지하면 더 자연스럽게 이어져요"
+            return L("Keeping the guide line makes it join more naturally")
         }
     }
 }
@@ -94,8 +94,8 @@ enum PanoramaScanDirection: Equatable {
 
     var label: String {
         switch self {
-        case .right: return "오른쪽으로"
-        case .left: return "왼쪽으로"
+        case .right: return L("To the right")
+        case .left: return L("To the left")
         }
     }
 }
