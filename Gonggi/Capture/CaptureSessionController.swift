@@ -77,7 +77,11 @@ final class CaptureSessionController {
     private var reconstructionMetrics = CaptureReconstructionSessionMetrics()
     private var sectorRingProgress: CaptureSectorRingProgress = .empty
     private var lastReconstructionSnapshot: CaptureReconstructionMetricsSnapshot?
-    private var bridgeSession = CaptureBridgeSession()
+    private var bridgeSession: CaptureBridgeSession = {
+        var s = CaptureBridgeSession()
+        s.freeCapture = CaptureBridgeConfig.freeCaptureEnabled
+        return s
+    }()
     private var reconstructionCoverageModel = ReconstructionCoverageModel()
     private var lastBridgeVerdict: CaptureBridgeVerdict?
     private var lastFrustumOverlap: Double = 1
@@ -812,7 +816,7 @@ final class CaptureSessionController {
                 lastGuidanceAction = .reacquireView
                 lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
                     jpegData: lastReacquireThumbnail.jpegData,
-                    visible: true,
+                    visible: !bridgeSession.freeCapture,
                     signedYawDeg: lastReacquireThumbnail.signedYawDeg,
                     proximity: lastReacquireThumbnail.proximity,
                     title: L("Connection is uncertain"),
@@ -916,7 +920,7 @@ final class CaptureSessionController {
             : L("Some views failed to save. Move slowly until the last connected view appears again.")
         lastReacquireThumbnail = ContinuityAnchorThumbnailStore.Snapshot(
             jpegData: lastReacquireThumbnail.jpegData,
-            visible: true,
+            visible: !bridgeSession.freeCapture,
             signedYawDeg: lastReacquireThumbnail.signedYawDeg,
             proximity: lastReacquireThumbnail.proximity,
             title: L("Connection is uncertain"),

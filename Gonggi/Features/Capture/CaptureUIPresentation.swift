@@ -387,7 +387,9 @@ enum CaptureUIPresenter {
             )
         }
 
-        let copy = liveCopy(for: action == .continueCapture ? .continueCapture : action)
+        let copy = action == .continueCapture
+            ? captureTipCopy(savedPhotos: quality.spatialKeyframeEnqueueCount)
+            : liveCopy(for: action)
         return PrimaryGuidanceState(
             action: action,
             title: copy.title,
@@ -401,6 +403,22 @@ enum CaptureUIPresenter {
             ringSystemImage: ringSystemImage(for: quality.completionState, action: action),
             source: action == .continueCapture ? .phaseDefault : .live
         )
+    }
+
+    /// Free capture (3.1(37)): with nothing to correct, the user points anywhere and the tip below changes every
+    /// `captureTipEveryPhotos` saved photos.
+    static let captureTipCount = 4
+    static let captureTipEveryPhotos = 30
+
+    static func captureTipCopy(savedPhotos: Int) -> (title: String, subtitle: String?) {
+        let tip: String
+        switch (max(0, savedPhotos) / captureTipEveryPhotos) % captureTipCount {
+        case 0: tip = L("Now and then, slowly point at the opposite side too")
+        case 1: tip = L("Capture the same spot from a few different places")
+        case 2: tip = L("Include where the walls meet the floor and ceiling")
+        default: tip = L("Moving slowly keeps the photos sharp")
+        }
+        return (L("Point freely around the space"), tip)
     }
 
     /// User-facing copy for a live action (single primary + optional supporting line).

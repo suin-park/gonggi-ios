@@ -87,6 +87,9 @@ struct CaptureBridgeSession: Equatable {
     private(set) var reconstructionKeyframeCount: Int = 0
     /// Stale-anchor escapes (each starts a new continuity segment).
     private(set) var reanchorCount: Int = 0
+    /// `CaptureBridgeConfig.freeCaptureEnabled`: never stay in REACQUIRE, start a new segment instead.
+    /// Kept across `reset()`.
+    var freeCapture = false
     /// Steady-view window while reacquiring (reference pose + since).
     private var reacquireSteadyRef: simd_float4x4?
     private var reacquireSteadySince: Double?
@@ -253,6 +256,9 @@ struct CaptureBridgeSession: Equatable {
             )
         }
 
+        if mode == .reacquiring, freeCapture {
+            return reanchorNow(signals)
+        }
         if mode == .reacquiring,
            let escape = reanchorIfStalled(timestamp: timestamp, transform: transform, signals: signals)
         {
@@ -277,12 +283,14 @@ struct CaptureBridgeSession: Equatable {
         let angularJump = max(signals.yawDeltaDeg, signals.forwardAngleDeg)
         // Unsupported single jump (TF62 ~23–28°) — never progressive-bridge across.
         if angularJump > CaptureBridgeConfig.unsupportedAngularJumpDeg {
+            if freeCapture { return reanchorNow(signals) }
             mode = .reacquiring
             if continuityBrokenSince == nil { continuityBrokenSince = timestamp }
             return decision(.reacquire, "reacquire_unsupported_jump", signals, kind: .none, counts: false)
         }
 
         if frustumLost && (yawOver || fwdOver || compoundRisk) {
+            if freeCapture { return reanchorNow(signals) }
             mode = .reacquiring
             if continuityBrokenSince == nil { continuityBrokenSince = timestamp }
             return decision(.reacquire, "reacquire_continuity_lost", signals, kind: .none, counts: false)
@@ -418,6 +426,11 @@ struct CaptureBridgeSession: Equatable {
               let since = reacquireSteadySince,
               timestamp - since >= CaptureBridgeConfig.reanchorSteadyMinSec
         else { return nil }
+        return reanchorNow(signals)
+    }
+
+    /// Starts a new continuity segment at this (already hard-gated) candidate.
+    private mutating func reanchorNow(_ signals: CaptureBridgeCandidateSignals) -> CaptureBridgeDecision {
         mode = .idle
         bridgeTargetYawDeg = nil
         bridgeStepsAccepted = 0
@@ -439,6 +452,7 @@ struct CaptureBridgeSession: Equatable {
     ) -> CaptureBridgeDecision {
         _ = fallbackReason
         if signals.frustumOverlap < CaptureBridgeConfig.minFrustumOverlapBridge {
+            if freeCapture { return reanchorNow(signals) }
             if mode != .reacquiring { mode = .reacquiring }
             return decision(.reacquire, "reacquire_bridge_frustum", signals, kind: .none, counts: false)
         }

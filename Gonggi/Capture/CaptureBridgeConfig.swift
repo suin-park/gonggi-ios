@@ -42,6 +42,11 @@ enum CaptureBridgeConfig {
     /// 3.1(36): later than `reanchorAfterStallSec`, so a user who pauses for a moment never sees the card
     /// (device test 10-25: the card was hard to match and felt like a blocker).
     static var reacquireThumbnailMinDurationSec: Double = 2.0
+    /// Free capture (3.1(37), device test 10-26: the "show this view again" prompt kept coming back and felt like a
+    /// blocker). A view that would enter REACQUIRE starts a new continuity segment at once (`reanchor_after_stall`),
+    /// so the user can point anywhere; capture tips suggest looking back at the other side now and then instead.
+    /// The live controller reads this; `CaptureBridgeSession()` in tests keeps the strict behaviour.
+    static var freeCaptureEnabled: Bool = true
 
     // MARK: Stale-anchor escape (reacquire trap)
 

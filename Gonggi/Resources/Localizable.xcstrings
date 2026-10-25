@@ -4705,6 +4705,34 @@
         }
       }
     },
+    "Capture the same spot from a few different places": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture the same spot from a few different places"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同じ場所を別の位置からも映すと、より正確になります"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "같은 곳을 여러 위치에서 비추면 더 정확해져요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从几个不同位置拍同一处会更准确"
+          }
+        }
+      }
+    },
     "Capture the tops of the furniture %@ too": {
       "localizations": {
         "en": {
@@ -15009,6 +15037,34 @@
         }
       }
     },
+    "Include where the walls meet the floor and ceiling": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Include where the walls meet the floor and ceiling"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "壁と床、天井の境目も一緒に映してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "벽이 바닥과 천장에 닿는 부분도 함께 비춰주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "也请拍到墙与地面、天花板的交界处"
+          }
+        }
+      }
+    },
     "Includes kitchen and living room": {
       "localizations": {
         "en": {
@@ -18369,6 +18425,34 @@
         }
       }
     },
+    "Moving slowly keeps the photos sharp": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moving slowly keeps the photos sharp"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ゆっくり動かすと写真がくっきり保存されます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "천천히 움직이면 사진이 선명하게 저장돼요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "慢慢移动，照片会更清晰"
+          }
+        }
+      }
+    },
     "Moving too fast warning": {
       "localizations": {
         "en": {
@@ -20045,6 +20129,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "通知"
+          }
+        }
+      }
+    },
+    "Now and then, slowly point at the opposite side too": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Now and then, slowly point at the opposite side too"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ときどき反対側もゆっくり映してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "가끔 반대편도 천천히 비춰주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "偶尔也请慢慢拍一下对面"
           }
         }
       }
@@ -22145,6 +22257,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "重新对准这个画面，或稍停片刻即可从这里继续拍摄"
+          }
+        }
+      }
+    },
+    "Point freely around the space": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point freely around the space"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "空間を自由に映してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "공간을 자유롭게 비춰주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请自由拍摄整个空间"
           }
         }
       }

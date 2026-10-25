@@ -196,4 +196,43 @@ final class ReanchorAfterStallTests: XCTestCase {
         XCTAssertTrue(after.chainIntactLive, "every link inside a segment still passes the link gate")
         XCTAssertGreaterThanOrEqual(after.liveSegments, 2)
     }
+
+    // MARK: Free capture (3.1(37))
+
+    func testFreeCaptureContinuesAtOnceAfterASharpTurn() {
+        XCTAssertTrue(CaptureBridgeConfig.freeCaptureEnabled, "the live capture never waits on the last saved view")
+        var s = anchored()
+        s.freeCapture = true
+        let d = evaluate(&s, t: 0.05, x: pose(yawDeg: 130, simd_float3(1.17, 0, 0)))
+        XCTAssertEqual(d.verdict, .accept)
+        XCTAssertEqual(d.reason, CaptureBridgeSession.reanchorReason)
+        XCTAssertEqual(d.acceptKind, .reconstructionKeyframe)
+        XCTAssertEqual(s.mode, .idle)
+        XCTAssertEqual(s.reanchorCount, 1)
+        s.reset()
+        XCTAssertTrue(s.freeCapture, "reset keeps the mode")
+    }
+
+    func testFreeCaptureLeavesReacquireAfterASaveFailure() {
+        var s = anchored()
+        s.freeCapture = true
+        s.restoreAfterAsyncJPEGFailure(at: 1, continuityTimestamp: 0, continuityTransform: pose(yawDeg: 0),
+                                       reconstructionTimestamp: 0, reconstructionTransform: pose(yawDeg: 0),
+                                       enterReacquire: true, clearReconstructionAnchor: false)
+        XCTAssertEqual(s.mode, .reacquiring)
+        let d = evaluate(&s, t: 1.05, x: pose(yawDeg: 40, simd_float3(0.3, 0, 0)))
+        XCTAssertEqual(d.verdict, .accept)
+        XCTAssertEqual(s.mode, .idle)
+    }
+
+    func testCaptureTipsRotateWithSavedPhotos() {
+        let n = CaptureUIPresenter.captureTipEveryPhotos
+        let first = CaptureUIPresenter.captureTipCopy(savedPhotos: 0)
+        XCTAssertEqual(first.title, L("Point freely around the space"))
+        XCTAssertEqual(first.subtitle, L("Now and then, slowly point at the opposite side too"))
+        XCTAssertEqual(CaptureUIPresenter.captureTipCopy(savedPhotos: n - 1).subtitle, first.subtitle)
+        let tips = Set((0..<CaptureUIPresenter.captureTipCount).map { CaptureUIPresenter.captureTipCopy(savedPhotos: $0 * n).subtitle })
+        XCTAssertEqual(tips.count, CaptureUIPresenter.captureTipCount)
+        XCTAssertEqual(CaptureUIPresenter.captureTipCopy(savedPhotos: CaptureUIPresenter.captureTipCount * n).subtitle, first.subtitle)
+    }
 }
