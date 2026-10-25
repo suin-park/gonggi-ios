@@ -19,7 +19,8 @@ enum WhikLibraryItem: Identifiable, Equatable {
         switch self {
         case .record(let r):
             if r.isProductResult { return .object3D }
-            return GaussianGenerationStore.shared.spaceId(fromLibraryId: r.id) != nil ? .space3D : .space360
+            // Same rule as GaussianGenerationStore.spaceId(fromLibraryId:) (3DGS records are "gaussian:<spaceId>").
+            return r.id.hasPrefix("gaussian:") ? .space3D : .space360
         case .asset:
             return .object3D
         }
@@ -88,6 +89,7 @@ enum WhikRecordStatus {
     }
 
     /// Server-reported 0…1 for a 3D generation job, when the server has reported a stage.
+    @MainActor
     static func progress(_ r: SpaceRecord) -> Double? {
         guard r.status == .processing,
               let gid = GaussianGenerationStore.shared.spaceId(fromLibraryId: r.id),
