@@ -63,9 +63,12 @@ final class ReanchorAfterStallTests: XCTestCase {
         }
         XCTAssertEqual(first?.reason, "reacquire_unsupported_jump")
         XCTAssertNotNil(escapeAt)
-        // Stall ≥ 3 s after the first REACQUIRE (0.05 s) and view steady ≥ 0.5 s.
-        XCTAssertGreaterThanOrEqual(escapeAt ?? 0, 3.05 - 1e-6)
-        XCTAssertLessThan(escapeAt ?? 99, 3.2)
+        // Stall ≥ reanchorAfterStallSec after the first REACQUIRE (0.05 s) and view steady ≥ 0.5 s.
+        let stall = CaptureBridgeConfig.reanchorAfterStallSec
+        XCTAssertEqual(stall, 1.5, "a short pause continues the capture (3.1(36))")
+        XCTAssertGreaterThanOrEqual(escapeAt ?? 0, stall + 0.05 - 1e-6)
+        XCTAssertLessThan(escapeAt ?? 99, stall + 0.2)
+        XCTAssertGreaterThan(CaptureBridgeConfig.reacquireThumbnailMinDurationSec, stall, "the card only shows if the pause did not help")
         XCTAssertEqual(s.reanchorCount, 1)
         XCTAssertEqual(s.mode, .idle)
     }

@@ -428,7 +428,7 @@ enum CaptureUIPresenter {
         case .reacquireView:
             return (
                 L("Move slowly until this view appears again"),
-                L("Turning sharply can break the 3D connection")
+                L("Point at this view again, or hold still to continue from here")
             )
         case .bridgeContinuity:
             return (

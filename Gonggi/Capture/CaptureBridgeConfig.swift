@@ -39,7 +39,9 @@ enum CaptureBridgeConfig {
     /// / advance continuityAnchor (`nil` / identifiers-unavailable does not hard-block).
     static var minBridgeFeaturePersistentRatio: Double = 0.05
     /// Show REACQUIRE continuity-anchor thumbnail after this duration in reacquiring mode.
-    static var reacquireThumbnailMinDurationSec: Double = 0.5
+    /// 3.1(36): later than `reanchorAfterStallSec`, so a user who pauses for a moment never sees the card
+    /// (device test 10-25: the card was hard to match and felt like a blocker).
+    static var reacquireThumbnailMinDurationSec: Double = 2.0
 
     // MARK: Stale-anchor escape (reacquire trap)
 
@@ -48,7 +50,8 @@ enum CaptureBridgeConfig {
     /// `reacquire_unsupported_jump`), nothing is saved. After this long in REACQUIRE, a steady,
     /// sharp, tracking-normal view starts a **new continuity segment** (`reanchor_after_stall`).
     /// Inside a segment every continuity rule above still applies. 0 disables.
-    static var reanchorAfterStallSec: Double = 3.0
+    /// 3.0 → 1.5 s in 3.1(36): after a sharp turn, a short pause continues the capture from where the user is.
+    static var reanchorAfterStallSec: Double = 1.5
     /// The view must stay within this angle / translation for `reanchorSteadyMinSec` (no mid-turn anchors).
     static var reanchorSteadyMinSec: Double = 0.5
     static var reanchorSteadyMaxAngularDeg: Double = 3.0

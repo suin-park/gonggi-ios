@@ -22121,6 +22121,34 @@
         }
       }
     },
+    "Point at this view again, or hold still to continue from here": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Point at this view again, or hold still to continue from here"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この場面をもう一度映すか、少し止まるとここから続けて撮影します"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 장면을 다시 비추거나, 잠깐 멈추면 여기서부터 이어서 촬영해요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新对准这个画面，或稍停片刻即可从这里继续拍摄"
+          }
+        }
+      }
+    },
     "Point once more in the direction shown": {
       "localizations": {
         "en": {
