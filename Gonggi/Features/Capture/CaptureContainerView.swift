@@ -474,10 +474,11 @@ struct CaptureFlowView: View {
                     onClose()
                 },
                 onFinish: {
-                    if viewModel.guidance.quality.completionState == .ready {
-                        finishCapture(finishedBy: .readyCompletion)
-                    } else {
+                    let q = viewModel.guidance.quality
+                    if CaptureSummaryPresentation.finishNeedsConfirm(quality: q) {
                         showEarlyFinishConfirm = true
+                    } else {
+                        finishCapture(finishedBy: .readyCompletion)
                     }
                 },
                 onFlash: { viewModel.guidance.toggleFlash() },
@@ -525,9 +526,7 @@ struct CaptureFlowView: View {
             }
         }
         .confirmationDialog(
-            CaptureSummaryPresentation.earlyFinishDialogTitle(
-                candidateSafetyCapReached: viewModel.guidance.quality.candidateSafetyCapReached
-            ),
+            CaptureSummaryPresentation.finishConfirmTitle(quality: viewModel.guidance.quality),
             isPresented: $showEarlyFinishConfirm,
             titleVisibility: .visible
         ) {
@@ -536,7 +535,14 @@ struct CaptureFlowView: View {
                 Button(L("Close"), role: .cancel) {}
             } else {
                 Button(L("Capture more"), role: .cancel) {}
-                Button(L("Finish as is")) { finishCapture(finishedBy: .manualEarlyFinish) }
+                Button(L("Finish as is")) {
+                    finishCapture(finishedBy: viewModel.guidance.quality.completionState == .ready
+                        ? .readyCompletion : .manualEarlyFinish)
+                }
+            }
+        } message: {
+            if let reason = CaptureSummaryPresentation.finishConfirmMessage(quality: viewModel.guidance.quality) {
+                Text(reason)
             }
         }
         .sheet(isPresented: $showSummary) {

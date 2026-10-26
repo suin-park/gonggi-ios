@@ -129,6 +129,12 @@ struct CaptureQualityState: Equatable {
     var captureRecommendations: [String] = []
     /// The same list with each item's status: 남음 (not asked yet) / 미해결 (asked, still missing) / 사진 한도.
     var captureRemaining: [CaptureRemainingItem] = []
+    /// Floor area the camera path has spread over (XZ bounding box, m²) — photo density check (CaptureDensityCheck).
+    var coveredAreaM2: Double = 0
+    /// Coverage cells seen from enough angles ("good" cells of the reconstruction metrics).
+    var wellCoveredCellCount: Int = 0
+    /// Session-average walking speed (m/s) from capture telemetry.
+    var sessionAverageSpeedMps: Double = 0
 
     init(
         overallCoverage: Double,

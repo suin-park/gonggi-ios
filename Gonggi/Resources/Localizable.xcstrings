@@ -4789,6 +4789,34 @@
         }
       }
     },
+    "Capture this area a little longer": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture this area a little longer"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このエリアをもう少し撮ってください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 구역을 조금 더 찍어 주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这一块再多拍一会儿"
+          }
+        }
+      }
+    },
     "Capture this part again?": {
       "localizations": {
         "en": {
@@ -16941,6 +16969,34 @@
         }
       }
     },
+    "Look around here once more from a step or two away": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Look around here once more from a step or two away"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一、二歩横に動いて、もう一度見回してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "한두 걸음 옆에서 한 번 더 둘러봐 주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "往旁边走一两步，再环顾一次"
+          }
+        }
+      }
+    },
     "Loose box mode (internal test)": {
       "localizations": {
         "en": {
@@ -20577,6 +20633,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "只能导入 PLY 文件"
+          }
+        }
+      }
+    },
+    "Only a few areas are captured from enough angles. Look around each area from a step or two away.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only a few areas are captured from enough angles. Look around each area from a step or two away."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "十分な角度から撮れた場所が少ないです。エリアごとに一、二歩動きながら見回してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "여러 각도에서 충분히 찍힌 곳이 적어요. 구역마다 한두 걸음 옮겨 가며 둘러봐 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从足够多角度拍到的区域较少。每一块请移动一两步再环顾一次。"
           }
         }
       }
@@ -26601,6 +26685,34 @@
         }
       }
     },
+    "Some parts may come out blurry if you finish now": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some parts may come out blurry if you finish now"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "今終了すると、一部がぼやけて仕上がる可能性があります"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지금 끝내면 일부가 흐리게 나올 수 있어요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "现在结束的话，部分区域可能会模糊"
+          }
+        }
+      }
+    },
     "Some views failed to save. Move slowly until the last connected view appears again.": {
       "localizations": {
         "en": {
@@ -27801,6 +27913,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "请尽量在同一位置拍摄"
+          }
+        }
+      }
+    },
+    "Stay with each area a little longer before moving on": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stay with each area a little longer before moving on"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一か所を十分に撮ってから次の場所へ移動してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "한 곳을 충분히 찍은 뒤 다음 곳으로 옮겨 주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把一处拍够了再去下一处"
           }
         }
       }
@@ -30461,6 +30601,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "网址格式不正确"
+          }
+        }
+      }
+    },
+    "There are few photos for the area you covered. Capture each area a little longer.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "There are few photos for the area you covered. Capture each area a little longer."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "撮影した範囲に比べて写真が少ないです。エリアごとにもう少し撮ってください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "찍은 범위에 비해 사진이 적어요. 구역마다 조금 더 찍어 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "相对拍摄范围来说照片偏少。每一块请再多拍一些。"
           }
         }
       }
@@ -33517,6 +33685,34 @@
         }
       }
     },
+    "Walk more slowly": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Walk more slowly"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "もう少しゆっくり歩いてください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "조금 더 천천히 걸어 주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请走慢一点"
+          }
+        }
+      }
+    },
     "Walk slowly along the walls while capturing": {
       "localizations": {
         "en": {
@@ -34409,6 +34605,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "拍摄已足够"
+          }
+        }
+      }
+    },
+    "You moved quickly through a wide area. Walk back slowly and capture it once more.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You moved quickly through a wide area. Walk back slowly and capture it once more."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "広い範囲を速く通り過ぎました。通ってきた場所をゆっくりもう一度撮ってください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "넓은 곳을 빠르게 지나갔어요. 지나온 곳을 천천히 한 번 더 찍어 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你很快走过了一大片区域。请慢慢走回去，再拍一遍。"
           }
         }
       }

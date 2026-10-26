@@ -59,4 +59,23 @@ enum CaptureSummaryPresentation {
         }
         return L("Capturing a little more can improve the 3D Space quality.")
     }
+
+    /// Ask before finishing when the capture isn't ready, or when it is ready but the photos are spread thin
+    /// (CaptureDensityCheck). Before upload, so the user can still capture more.
+    static func finishNeedsConfirm(quality q: CaptureQualityState) -> Bool {
+        q.completionState != .ready || (!q.candidateSafetyCapReached && !CaptureDensityCheck.issues(for: q).isEmpty)
+    }
+
+    static func finishConfirmTitle(quality q: CaptureQualityState) -> String {
+        if !q.candidateSafetyCapReached, !CaptureDensityCheck.issues(for: q).isEmpty {
+            return CaptureDensityCheck.finishWarningTitle
+        }
+        return earlyFinishDialogTitle(candidateSafetyCapReached: q.candidateSafetyCapReached)
+    }
+
+    /// The main reason (first density issue), nil when there is no specific one.
+    static func finishConfirmMessage(quality q: CaptureQualityState) -> String? {
+        guard !q.candidateSafetyCapReached, let issue = CaptureDensityCheck.issues(for: q).first else { return nil }
+        return CaptureDensityCheck.reason(issue)
+    }
 }

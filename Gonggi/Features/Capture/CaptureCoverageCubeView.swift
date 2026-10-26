@@ -221,6 +221,10 @@ enum CaptureQuietUIPresenter {
         if let hint = toastHint(for: quality) {
             return WhikCaptureGuide(title: hint, subtitle: nil, tone: .warning)
         }
+        // Photos spread thin over the area walked (V1_062 pattern): slow down / stay with this area. Not when ready.
+        if phase(for: quality) != .ready, let pace = CaptureDensityCheck.liveGuide(for: quality) {
+            return pace
+        }
         if phase(for: quality) == .ready {
             return WhikCaptureGuide(title: statusLine(for: quality),
                                     subtitle: L("Tap Capture complete, or keep capturing"), tone: .done)

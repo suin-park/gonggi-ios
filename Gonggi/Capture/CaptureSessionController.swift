@@ -1677,6 +1677,9 @@ final class CaptureSessionController {
         q.coachPrompt = currentCoachPrompt
         q.captureRemaining = currentRemaining
         q.captureRecommendations = currentRemaining.map(\.shortLine)
+        q.coveredAreaM2 = lastReconstructionSnapshot?.xzBoundingAreaM2 ?? 0
+        q.wellCoveredCellCount = lastReconstructionSnapshot?.goodCellCount ?? 0
+        q.sessionAverageSpeedMps = telemetry.avgTranslationSpeed
         return q
     }
 
