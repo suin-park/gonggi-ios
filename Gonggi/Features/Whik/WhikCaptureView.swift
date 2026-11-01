@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The three public capture types and what they open. Each card starts the existing flow unchanged.
-/// Case order is the card order on the Capture tab: 360° first, then 3D Space, then 3D Object.
+/// The public capture types and what they open. Each card starts the existing flow unchanged.
+/// Case order is the card order on the Capture tab: 360° and 3D Space (Space), 3D Object (Products), Text Scan (Other).
 enum WhikCaptureKind: String, CaseIterable, Identifiable {
     /// `DirectionCaptureView` → Lat Long 360° space (server).
     case space360
@@ -9,14 +9,25 @@ enum WhikCaptureKind: String, CaseIterable, Identifiable {
     case space3D
     /// `ObjectCaptureFlowView` → 3DGS product/object (server).
     case object3D
+    /// `TextScanFlowView` → handwriting to rows of the user's Google Sheet.
+    case textScan
 
     var id: String { rawValue }
+
+    var section: WhikCaptureSection {
+        switch self {
+        case .space360, .space3D: return .space
+        case .object3D: return .product
+        case .textScan: return .other
+        }
+    }
 
     var title: String {
         switch self {
         case .space3D: return L("3D Space")
         case .space360: return L("360° Space")
         case .object3D: return L("3D Object")
+        case .textScan: return L("Text Scan")
         }
     }
 
@@ -25,6 +36,7 @@ enum WhikCaptureKind: String, CaseIterable, Identifiable {
         case .space3D: return L("Walk around your space")
         case .space360: return L("Look around from one spot")
         case .object3D: return L("Capture every side")
+        case .textScan: return L("Add handwriting to Google Sheets")
         }
     }
 
@@ -33,6 +45,7 @@ enum WhikCaptureKind: String, CaseIterable, Identifiable {
         case .space3D: return "WhikPhotoLivingWide"
         case .space360: return "WhikPhotoDiningWide"
         case .object3D: return "WhikPhotoChairCharcoal"
+        case .textScan: return "WhikPhotoTextScan"
         }
     }
 
@@ -42,8 +55,26 @@ enum WhikCaptureKind: String, CaseIterable, Identifiable {
         case .space3D: return L("Sign in to create a 3D Space. Your captures are saved to your account.")
         case .space360: return L("Sign in to create a 360° Space. Your captures are saved to your account.")
         case .object3D: return L("Sign in to create a 3D Object. Your captures are saved to your account.")
+        case .textScan: return L("Sign in to use Text Scan.")
         }
     }
+}
+
+/// Capture tab sections, top to bottom.
+enum WhikCaptureSection: CaseIterable {
+    case space
+    case product
+    case other
+
+    var title: String {
+        switch self {
+        case .space: return L("Space")
+        case .product: return L("Products")
+        case .other: return L("Other")
+        }
+    }
+
+    var kinds: [WhikCaptureKind] { WhikCaptureKind.allCases.filter { $0.section == self } }
 }
 
 struct WhikCaptureView: View {
@@ -62,21 +93,14 @@ struct WhikCaptureView: View {
                     .font(WhikFont.largeTitle())
                     .foregroundStyle(WhikColors.textPrimary)
                     .padding(.top, 8)
-                ForEach(WhikCaptureKind.allCases) { kind in
-                    WhikCaptureCard(kind: kind, busy: checking == kind) { start(kind) }
+                ForEach(WhikCaptureSection.allCases, id: \.self) { section in
+                    WhikCaptureSectionHeader(title: section.title)
+                        .padding(.top, section == .space ? 4 : 14)
+                    ForEach(section.kinds) { kind in
+                        WhikCaptureCard(kind: kind, busy: checking == kind) { start(kind) }
+                    }
+                    if section == .space { importButton }
                 }
-                Button {
-                    GonggiHaptics.light()
-                    gate.run(reason: L("Sign in to import a 360° photo into your library.")) { showImport = true }
-                } label: {
-                    Label(L("Import 360° photo"), systemImage: "square.and.arrow.up")
-                        .font(.system(.body).weight(.medium))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .foregroundStyle(WhikColors.textPrimary)
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, WhikLayout.sideInset)
             .padding(.bottom, WhikLayout.tabBarClearance)
@@ -89,6 +113,7 @@ struct WhikCaptureView: View {
                 case .space3D: ThreeDSpaceRecordFlowView(onClose: { active = nil })
                 case .space360: DirectionCaptureView(onClose: { active = nil })
                 case .object3D: ObjectCaptureFlowView(onClose: { active = nil })
+                case .textScan: TextScanFlowView(onClose: { active = nil })
                 }
             }
             .environmentObject(appState)
@@ -107,6 +132,21 @@ struct WhikCaptureView: View {
         }
     }
 
+    private var importButton: some View {
+        Button {
+            GonggiHaptics.light()
+            gate.run(reason: L("Sign in to import a 360° photo into your library.")) { showImport = true }
+        } label: {
+            Label(L("Import 360° photo"), systemImage: "square.and.arrow.up")
+                .font(.system(.body).weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .foregroundStyle(WhikColors.textPrimary)
+                .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(.plain)
+    }
+
     private func start(_ kind: WhikCaptureKind) {
         GonggiHaptics.medium()
         gate.run(reason: kind.signInReason) {
@@ -118,7 +158,7 @@ struct WhikCaptureView: View {
     /// an unknown scope is re-checked first, so the card never dead-ends.
     private func openWhenAvailable(_ kind: WhikCaptureKind) async {
         switch kind {
-        case .space360:
+        case .space360, .textScan:
             active = kind
         case .space3D:
             if appState.showsSpatialRecord { active = kind; return }
@@ -153,6 +193,26 @@ struct WhikCaptureView: View {
             mockMode: appState.isMockMode,
             serverAvailable: appState.objectCaptureAvailable
         )
+    }
+}
+
+/// Section title with a hairline running to the right edge.
+private struct WhikCaptureSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.system(.subheadline).weight(.semibold))
+                .foregroundStyle(WhikColors.textSecondary)
+                .fixedSize()
+            Rectangle()
+                .fill(WhikColors.border)
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 

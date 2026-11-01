@@ -100,7 +100,14 @@ final class WhikShellTests: XCTestCase {
     }
 
     func testCaptureCardOrderPuts360First() {
-        XCTAssertEqual(WhikCaptureKind.allCases, [.space360, .space3D, .object3D])
+        XCTAssertEqual(WhikCaptureKind.allCases, [.space360, .space3D, .object3D, .textScan])
+    }
+
+    func testCaptureTabSectionsAreSpaceProductsOther() {
+        XCTAssertEqual(WhikCaptureSection.allCases, [.space, .product, .other])
+        XCTAssertEqual(WhikCaptureSection.space.kinds, [.space360, .space3D])
+        XCTAssertEqual(WhikCaptureSection.product.kinds, [.object3D])
+        XCTAssertEqual(WhikCaptureSection.other.kinds, [.textScan])
     }
 
     // MARK: Home samples

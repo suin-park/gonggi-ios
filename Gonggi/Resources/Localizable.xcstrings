@@ -617,6 +617,34 @@
         }
       }
     },
+    "%d added to the sheet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d added to the sheet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシートに%d行追加しました"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트에 %d줄을 추가했어요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已向表格添加 %d 行"
+          }
+        }
+      }
+    },
     "360 space": {
       "localizations": {
         "en": {
@@ -1821,6 +1849,34 @@
         }
       }
     },
+    "Add a column": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a column"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "列を追加"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "칸 추가"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加一列"
+          }
+        }
+      }
+    },
     "Add a link and people viewing the space can open it": {
       "localizations": {
         "en": {
@@ -1845,6 +1901,62 @@
           "stringUnit": {
             "state": "translated",
             "value": "输入链接后，查看空间的人可以打开它"
+          }
+        }
+      }
+    },
+    "Add a row": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a row"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "行を追加"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "행 추가"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加一行"
+          }
+        }
+      }
+    },
+    "Add column names to the first row of the sheet first.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add column names to the first row of the sheet first."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "先にスプレッドシートの1行目に列名を入力してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트 첫 줄에 칸 이름을 먼저 넣어 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先在表格第一行填写列名。"
           }
         }
       }
@@ -1877,6 +1989,34 @@
         }
       }
     },
+    "Add handwriting to Google Sheets": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add handwriting to Google Sheets"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手書きをGoogleスプレッドシートに追加"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "손글씨를 구글 시트에 넣어요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把手写内容添加到 Google 表格"
+          }
+        }
+      }
+    },
     "Add selection": {
       "localizations": {
         "en": {
@@ -1901,6 +2041,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "添加选择"
+          }
+        }
+      }
+    },
+    "Add to the sheet (%d)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add to the sheet (%d)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシートに追加（%d行）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트에 추가 (%d줄)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加到表格（%d 行）"
           }
         }
       }
@@ -5321,6 +5489,34 @@
         }
       }
     },
+    "Change": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "変更"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "변경"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更改"
+          }
+        }
+      }
+    },
     "Change password": {
       "localizations": {
         "en": {
@@ -5345,6 +5541,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "修改密码"
+          }
+        }
+      }
+    },
+    "Check before adding": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check before adding"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "追加する前に確認してください"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "추가하기 전에 확인해 주세요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加前请确认"
           }
         }
       }
@@ -5541,6 +5765,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "确认要移除的对象后，点击“清除这件家具”"
+          }
+        }
+      }
+    },
+    "Check your internet connection and try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check your internet connection and try again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "インターネット接続を確認して、もう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인터넷 연결을 확인하고 다시 시도해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请检查网络连接后重试。"
           }
         }
       }
@@ -5849,6 +6101,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在验证…"
+          }
+        }
+      }
+    },
+    "Choose a sheet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a sheet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシートを選択"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트 선택"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择表格"
           }
         }
       }
@@ -6357,6 +6637,62 @@
         }
       }
     },
+    "Column %d": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Column %d"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d列目"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d번째 칸"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第 %d 列"
+          }
+        }
+      }
+    },
+    "Column names": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Column names"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "列名"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "칸 이름"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "列名"
+          }
+        }
+      }
+    },
     "Comments": {
       "localizations": {
         "en": {
@@ -6381,6 +6717,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "评论"
+          }
+        }
+      }
+    },
+    "Compare with the paper and fix anything that's wrong. Yellow boxes were hard to read.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compare with the paper and fix anything that's wrong. Yellow boxes were hard to read."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用紙と見比べて、違うところを直してください。黄色の欄は読み取りにくかった箇所です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "종이와 비교해서 틀린 곳을 고쳐 주세요. 노란 칸은 글씨가 흐려 확인이 필요한 곳이에요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请对照纸张修改有误的地方。黄色框是字迹不清、需要确认的地方。"
           }
         }
       }
@@ -6437,6 +6801,62 @@
           "stringUnit": {
             "state": "translated",
             "value": "确认密码"
+          }
+        }
+      }
+    },
+    "Connect Google account": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect Google account"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Googleアカウントを連携"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구글 계정 연결"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关联 Google 账号"
+          }
+        }
+      }
+    },
+    "Connect your Google account again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect your Google account again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Googleアカウントをもう一度連携してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구글 계정을 다시 연결해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请重新关联 Google 账号。"
           }
         }
       }
@@ -7001,6 +7421,34 @@
         }
       }
     },
+    "Couldn't connect to Google. Please try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't connect to Google. Please try again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Googleに接続できませんでした。もう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구글에 연결하지 못했어요. 다시 시도해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接 Google，请重试。"
+          }
+        }
+      }
+    },
     "Couldn't create the capture file": {
       "localizations": {
         "en": {
@@ -7309,6 +7757,34 @@
         }
       }
     },
+    "Couldn't find that sheet. Check the link.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't find that sheet. Check the link."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシートが見つかりませんでした。リンクを確認してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트를 찾지 못했어요. 링크를 확인해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "找不到该表格，请检查链接。"
+          }
+        }
+      }
+    },
     "Couldn't find the 360° image on the server.": {
       "localizations": {
         "en": {
@@ -7557,6 +8033,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "找不到要连接的空间"
+          }
+        }
+      }
+    },
+    "Couldn't find writing that fits this sheet's columns. Scan the paper again, closer and in good light.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't find writing that fits this sheet's columns. Scan the paper again, closer and in good light."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このスプレッドシートの列に合う文字が見つかりませんでした。明るい場所で、もっと近づいてもう一度スキャンしてください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 시트의 칸에 맞는 글씨를 찾지 못했어요. 밝은 곳에서 더 가까이 다시 스캔해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有找到与此表格列对应的文字。请在光线充足的地方靠近一些重新扫描。"
           }
         }
       }
@@ -8541,6 +9045,34 @@
         }
       }
     },
+    "Couldn't reach Google Sheets. Please try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't reach Google Sheets. Please try again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Googleスプレッドシートに接続できませんでした。もう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구글 시트에 연결하지 못했어요. 다시 시도해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法连接 Google 表格，请重试。"
+          }
+        }
+      }
+    },
     "Couldn't reach the server. Check your connection and try again.": {
       "localizations": {
         "en": {
@@ -8705,6 +9237,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "无法读取服务器响应，请稍后重试。"
+          }
+        }
+      }
+    },
+    "Couldn't read the text. Please try again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't read the text. Please try again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字を読み取れませんでした。もう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "글자를 읽지 못했어요. 다시 시도해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取文字，请重试。"
           }
         }
       }
@@ -9545,6 +10105,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "覆盖图例。绿色表示充足，青色表示需补拍"
+          }
+        }
+      }
+    },
+    "Create": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "作成"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "만들기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "创建"
           }
         }
       }
@@ -10529,6 +11117,34 @@
         }
       }
     },
+    "Delete this row": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this row"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この行を削除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 줄 삭제"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除此行"
+          }
+        }
+      }
+    },
     "Delete this space link?": {
       "localizations": {
         "en": {
@@ -10889,6 +11505,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "放弃更改并离开"
+          }
+        }
+      }
+    },
+    "Disconnect": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disconnect"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連携を解除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결 해제"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消关联"
           }
         }
       }
@@ -11533,6 +12177,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "请输入发送到 %@ 的 6 位验证码。"
+          }
+        }
+      }
+    },
+    "Existing sheet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Existing sheet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既存のスプレッドシート"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기존 시트"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已有表格"
           }
         }
       }
@@ -12909,6 +13581,34 @@
         }
       }
     },
+    "For example: Item, Quantity, Unit. They become the first row of the sheet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "For example: Item, Quantity, Unit. They become the first row of the sheet."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例：品目、数量、単位。スプレッドシートの1行目になります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "예: 품목, 수량, 단위. 시트의 첫 줄이 돼요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例如：品名、数量、单位。它们会成为表格的第一行。"
+          }
+        }
+      }
+    },
     "For long objects, set width, height and depth separately. Make the height a little above the top of the object": {
       "localizations": {
         "en": {
@@ -13577,6 +14277,90 @@
           "stringUnit": {
             "state": "translated",
             "value": "适合生成 3D 空间"
+          }
+        }
+      }
+    },
+    "Google Sheets isn't enabled for WHIK yet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Google Sheets isn't enabled for WHIK yet."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIKではまだGoogleスプレッドシートを利用できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIK에서 아직 구글 시트를 쓸 수 없어요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIK 暂时还不能使用 Google 表格。"
+          }
+        }
+      }
+    },
+    "Google account connected": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Google account connected"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Googleアカウント連携済み"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구글 계정 연결됨"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已关联 Google 账号"
+          }
+        }
+      }
+    },
+    "Google connection was cancelled.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Google connection was cancelled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Google連携をキャンセルしました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구글 연결을 취소했어요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已取消关联 Google。"
           }
         }
       }
@@ -14981,6 +15765,34 @@
         }
       }
     },
+    "In Google Sheets, tap Share and copy the link. The connected Google account needs edit access, and the first row needs column names.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In Google Sheets, tap Share and copy the link. The connected Google account needs edit access, and the first row needs column names."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Googleスプレッドシートで「共有」をタップしてリンクをコピーしてください。連携したGoogleアカウントに編集権限があり、1行目に列名がある必要があります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구글 시트에서 공유를 눌러 링크를 복사해 주세요. 연결한 구글 계정에 편집 권한이 있어야 하고, 첫 줄에 칸 이름이 있어야 해요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Google 表格中点按“共享”并复制链接。已关联的 Google 账号需要有编辑权限，且第一行需要有列名。"
+          }
+        }
+      }
+    },
     "In progress": {
       "localizations": {
         "en": {
@@ -15597,6 +16409,34 @@
         }
       }
     },
+    "Just a moment…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Just a moment…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "少々お待ちください…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "잠시만 기다려 주세요…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请稍候…"
+          }
+        }
+      }
+    },
     "Keep a steady pace when walking to reduce shake.": {
       "localizations": {
         "en": {
@@ -16209,6 +17049,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "最后衔接的画面"
+          }
+        }
+      }
+    },
+    "Lay the paper flat in good light. A form with two sides takes two scans.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lay the paper flat in good light. A form with two sides takes two scans."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "明るい場所で用紙を平らに置いて撮影してください。両面ある用紙は2枚撮影してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "밝은 곳에서 종이를 평평하게 놓고 찍어 주세요. 앞뒷면이 있는 종이는 두 장을 찍어 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在光线充足的地方把纸放平拍摄。双面的纸请拍两张。"
           }
         }
       }
@@ -18901,6 +19769,34 @@
         }
       }
     },
+    "New sheet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New sheet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新しいスプレッドシート"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "새 시트 만들기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建表格"
+          }
+        }
+      }
+    },
     "New space": {
       "localizations": {
         "en": {
@@ -20945,6 +21841,34 @@
         }
       }
     },
+    "Open the sheet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open the sheet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシートを開く"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트 열기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开表格"
+          }
+        }
+      }
+    },
     "OpenCV panorama preview": {
       "localizations": {
         "en": {
@@ -21109,6 +22033,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在整理记录"
+          }
+        }
+      }
+    },
+    "Other": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "その他"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기타"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他"
           }
         }
       }
@@ -21617,6 +22569,34 @@
         }
       }
     },
+    "Paste": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Paste"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ペースト"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "붙여넣기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "粘贴"
+          }
+        }
+      }
+    },
     "Pause and point at one spot to start saving again. Turn slowly": {
       "localizations": {
         "en": {
@@ -21809,6 +22789,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "照片预览"
+          }
+        }
+      }
+    },
+    "Photos": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Photos"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "写真"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사진"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "照片"
           }
         }
       }
@@ -23325,6 +24333,34 @@
         }
       }
     },
+    "Products": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Products"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "製品"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제품"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "产品"
+          }
+        }
+      }
+    },
     "Profile": {
       "localizations": {
         "en": {
@@ -23577,6 +24613,34 @@
         }
       }
     },
+    "Read the text": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read the text"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字を読み取る"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "글자 읽기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取文字"
+          }
+        }
+      }
+    },
     "Reading 3D data": {
       "localizations": {
         "en": {
@@ -23601,6 +24665,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在读取 3D 数据"
+          }
+        }
+      }
+    },
+    "Reading the text…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading the text…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字を読み取っています…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "글자를 읽는 중이에요…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在读取文字…"
           }
         }
       }
@@ -23993,6 +25085,62 @@
           "stringUnit": {
             "state": "translated",
             "value": "剩余"
+          }
+        }
+      }
+    },
+    "Remove": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "削除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "빼기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除"
+          }
+        }
+      }
+    },
+    "Remove from this list": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove from this list"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リストから外す"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "목록에서 빼기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从列表中移除"
           }
         }
       }
@@ -24725,6 +25873,62 @@
         }
       }
     },
+    "Row %d": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Row %d"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d行目"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d번째 줄"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "第 %d 行"
+          }
+        }
+      }
+    },
+    "Rows are added under the column names in the first row of the sheet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rows are added under the column names in the first row of the sheet."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシートの1行目の列名の下に行が追加されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트 첫 줄의 칸 이름 아래에 행이 추가돼요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内容会添加在表格第一行的列名下方。"
+          }
+        }
+      }
+    },
     "Sample 360° space": {
       "localizations": {
         "en": {
@@ -24865,6 +26069,90 @@
         }
       }
     },
+    "Scan": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スキャン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "스캔"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描"
+          }
+        }
+      }
+    },
+    "Scan again": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan again"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "もう一度スキャン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다시 스캔"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新扫描"
+          }
+        }
+      }
+    },
+    "Scan handwritten notes, forms or tables. WHIK reads them and adds them as rows to the Google Sheet you choose.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan handwritten notes, forms or tables. WHIK reads them and adds them as rows to the Google Sheet you choose."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手書きのメモ、用紙、表をスキャンすると、WHIKが読み取って選んだGoogleスプレッドシートに行として追加します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "손으로 쓴 메모, 신청서, 표를 스캔하면 WHIK가 읽어서 선택한 구글 시트에 행으로 추가해요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描手写的笔记、表单或表格，WHIK 会读取内容并作为行添加到你选择的 Google 表格中。"
+          }
+        }
+      }
+    },
     "Scan progress %@ percent": {
       "localizations": {
         "en": {
@@ -24889,6 +26177,62 @@
           "stringUnit": {
             "state": "translated",
             "value": "扫描进度 %@%%"
+          }
+        }
+      }
+    },
+    "Scan the next one": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan the next one"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次の用紙をスキャン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다음 종이 스캔"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描下一张"
+          }
+        }
+      }
+    },
+    "Scan the paper": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan the paper"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用紙をスキャン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "종이 스캔"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描纸张"
           }
         }
       }
@@ -25453,6 +26797,90 @@
         }
       }
     },
+    "Sheet link": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sheet link"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシートのリンク"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트 링크"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "表格链接"
+          }
+        }
+      }
+    },
+    "Sheet name": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sheet name"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシート名"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트 이름"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "表格名称"
+          }
+        }
+      }
+    },
+    "Sheet1": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sheet1"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "シート1"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트1"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工作表1"
+          }
+        }
+      }
+    },
     "Shoot from a little higher, looking down": {
       "localizations": {
         "en": {
@@ -25789,6 +27217,34 @@
         }
       }
     },
+    "Sign in to WHIK again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to WHIK again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIKにもう一度サインインしてください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIK에 다시 로그인해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请重新登录 WHIK。"
+          }
+        }
+      }
+    },
     "Sign in to create a 360° Space. Your captures are saved to your account.": {
       "localizations": {
         "en": {
@@ -26037,6 +27493,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "登录后即可查看拍摄记录。"
+          }
+        }
+      }
+    },
+    "Sign in to use Text Scan.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to use Text Scan."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字スキャンを使うにはサインインしてください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "글자 스캔을 쓰려면 로그인해 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "登录后即可使用文字扫描。"
           }
         }
       }
@@ -28869,6 +30353,34 @@
         }
       }
     },
+    "Text Scan": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Text Scan"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字スキャン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "글자 스캔"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字扫描"
+          }
+        }
+      }
+    },
     "Text size": {
       "localizations": {
         "en": {
@@ -30633,6 +32145,62 @@
         }
       }
     },
+    "They start at row %d of the sheet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "They start at row %d of the sheet."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スプレッドシートの%d行目から追加されました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시트의 %d행부터 들어갔어요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从表格第 %d 行开始。"
+          }
+        }
+      }
+    },
+    "This Google account can't edit that sheet.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Google account can't edit that sheet."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このGoogleアカウントではそのスプレッドシートを編集できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 구글 계정은 그 시트를 편집할 수 없어요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此 Google 账号无法编辑该表格。"
+          }
+        }
+      }
+    },
     "This account uses Apple or Google sign-in.": {
       "localizations": {
         "en": {
@@ -30769,6 +32337,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "这不是当前登录账号的拍摄。"
+          }
+        }
+      }
+    },
+    "This device can't scan documents. Choose photos instead.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device can't scan documents. Choose photos instead."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このデバイスでは書類をスキャンできません。写真から選んでください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 기기에서는 문서 스캔을 쓸 수 없어요. 사진에서 골라 주세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此设备无法扫描文档，请从照片中选择。"
           }
         }
       }
@@ -31697,6 +33293,34 @@
         }
       }
     },
+    "Turn handwriting into sheet rows": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn handwriting into sheet rows"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手書きをスプレッドシートの行に"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "손글씨를 시트의 행으로 바꿔요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "把手写内容变成表格行"
+          }
+        }
+      }
+    },
     "Turn just a little more.": {
       "localizations": {
         "en": {
@@ -32225,6 +33849,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "未命名"
+          }
+        }
+      }
+    },
+    "Untitled sheet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Untitled sheet"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無題のスプレッドシート"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제목 없는 시트"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未命名表格"
           }
         }
       }
@@ -32873,6 +34525,62 @@
         }
       }
     },
+    "Use": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用"
+          }
+        }
+      }
+    },
+    "Use an existing sheet link": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use an existing sheet link"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既存のスプレッドシートのリンクを使う"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기존 시트 링크로 연결"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用已有表格的链接"
+          }
+        }
+      }
+    },
     "Use current location": {
       "localizations": {
         "en": {
@@ -33457,6 +35165,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "WHIK 与 3D Locker 使用同一个账号。"
+          }
+        }
+      }
+    },
+    "WHIK only writes to the sheet you choose, and only after you check the rows.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIK only writes to the sheet you choose, and only after you check the rows."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIKは選んだスプレッドシートにだけ、内容を確認した後にだけ書き込みます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIK는 선택한 시트에만, 내용을 확인한 뒤에만 기록해요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WHIK 只会写入你选择的表格，并且只在你确认内容之后写入。"
           }
         }
       }
@@ -34997,6 +36733,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "例如：作品信息"
+          }
+        }
+      }
+    },
+    "e.g. Inventory": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "e.g. Inventory"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例：在庫表"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "예: 재고표"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "例如：库存表"
           }
         }
       }
