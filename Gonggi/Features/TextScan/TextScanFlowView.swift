@@ -35,8 +35,8 @@ struct TextScanFlowView: View {
     var body: some View {
         VStack(spacing: 0) {
             WhikCaptureTopBar(title: L("Text Scan"), onClose: onClose)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+                .padding(.top, 20)
+                .padding(.bottom, 20)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     switch stage {
@@ -179,6 +179,7 @@ struct TextScanFlowView: View {
         }
     }
 
+    /// Connected Google account, centered under the top bar as one pill.
     private var accountRow: some View {
         HStack(spacing: 10) {
             Image(systemName: "person.crop.circle")
@@ -187,16 +188,26 @@ struct TextScanFlowView: View {
                 .font(WhikFont.subheadline())
                 .foregroundStyle(WhikColors.textSecondary)
                 .lineLimit(1)
-            Spacer()
+                .truncationMode(.middle)
+            Rectangle()
+                .fill(WhikColors.border)
+                .frame(width: 1, height: 16)
+                .accessibilityHidden(true)
             Button(L("Disconnect")) {
                 google.disconnect()
                 sheet = nil
                 header = nil
                 stage = .start
             }
-            .font(WhikFont.subheadline())
+            .font(WhikFont.subheadline().weight(.semibold))
             .foregroundStyle(WhikColors.mint)
         }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 40)
+        .background(Capsule().fill(WhikColors.surface))
+        .overlay(Capsule().stroke(WhikColors.border, lineWidth: 1))
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 8)
     }
 
     private var captureStep: some View {

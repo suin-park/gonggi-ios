@@ -15597,6 +15597,34 @@
         }
       }
     },
+    "Import 360°": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import 360°"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "360°を読み込む"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "360° 가져오기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入 360°"
+          }
+        }
+      }
+    },
     "Import 360° photo": {
       "localizations": {
         "en": {
@@ -28893,6 +28921,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "空间"
+          }
+        }
+      }
+    },
+    "Spaces, objects and handwriting, captured with your phone": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spaces, objects and handwriting, captured with your phone"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "空間も製品も手書きも、スマホで取り込めます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "공간, 제품, 손글씨까지 휴대폰으로 담아요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用手机记录空间、产品和手写内容"
           }
         }
       }

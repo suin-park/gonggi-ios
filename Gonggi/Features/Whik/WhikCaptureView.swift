@@ -89,17 +89,14 @@ struct WhikCaptureView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text(L("Capture"))
-                    .font(WhikFont.largeTitle())
-                    .foregroundStyle(WhikColors.textPrimary)
+                header
                     .padding(.top, 8)
                 ForEach(WhikCaptureSection.allCases, id: \.self) { section in
                     WhikCaptureSectionHeader(title: section.title)
-                        .padding(.top, section == .space ? 4 : 14)
+                        .padding(.top, section == .space ? 6 : 14)
                     ForEach(section.kinds) { kind in
                         WhikCaptureCard(kind: kind, busy: checking == kind) { start(kind) }
                     }
-                    if section == .space { importButton }
                 }
             }
             .padding(.horizontal, WhikLayout.sideInset)
@@ -132,19 +129,48 @@ struct WhikCaptureView: View {
         }
     }
 
+    /// Title with a mint underline and one line under it; Import 360° sits top right like Library's profile button.
+    private var header: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("Capture"))
+                    .font(WhikFont.largeTitle())
+                    .foregroundStyle(WhikColors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityAddTraits(.isHeader)
+                Capsule()
+                    .fill(WhikColors.mint)
+                    .frame(width: 28, height: 4)
+                    .accessibilityHidden(true)
+                Text(L("Spaces, objects and handwriting, captured with your phone"))
+                    .font(.system(.subheadline))
+                    .foregroundStyle(WhikColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            importButton
+                .padding(.top, 2)
+        }
+    }
+
     private var importButton: some View {
         Button {
             GonggiHaptics.light()
             gate.run(reason: L("Sign in to import a 360° photo into your library.")) { showImport = true }
         } label: {
-            Label(L("Import 360° photo"), systemImage: "square.and.arrow.up")
-                .font(.system(.body).weight(.medium))
+            Label(L("Import 360°"), systemImage: "square.and.arrow.down")
+                .font(.system(.subheadline).weight(.semibold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
                 .foregroundStyle(WhikColors.textPrimary)
-                .frame(maxWidth: .infinity, minHeight: 48)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 40)
+                .background(Capsule().fill(WhikColors.surface))
+                .overlay(Capsule().stroke(WhikColors.border, lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(GonggiPressableStyle(scale: 0.97))
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+        .accessibilityLabel(L("Import 360° photo"))
     }
 
     private func start(_ kind: WhikCaptureKind) {
