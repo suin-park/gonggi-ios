@@ -211,8 +211,15 @@ enum TextScanSheetStore {
 /// `POST /api/mobile/text-scan/extract` on the WHIK server.
 struct TextScanAPIClient {
     struct Row: Decodable, Equatable {
+        struct Alternative: Decodable, Equatable {
+            var index: Int
+            var value: String
+        }
+
         var values: [String]
         var uncertain: [Int]
+        /// Another reader's value where the two readings differ (older servers do not send it).
+        var alternatives: [Alternative]?
     }
 
     enum APIError: LocalizedError {

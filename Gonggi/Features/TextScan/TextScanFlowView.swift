@@ -400,13 +400,19 @@ struct TextScanFlowView: View {
 
     private func read() async throws {
         guard let sheet, let header else { return }
-        let jpegs = pages.compactMap { TextScanImage.jpeg($0) }
+        let jpegs = TextScanImage.jpegs(pages)
         let found = try await TextScanAPIClient().extract(jpegs: jpegs, columns: header.names, sheetTitle: sheet.title)
         guard !found.isEmpty else {
             error = L("Couldn't find writing that fits this sheet's columns. Scan the paper again, closer and in good light.")
             return
         }
-        rows = found.map { TextScanEditableRow(values: $0.values, uncertain: Set($0.uncertain)) }
+        rows = found.map { found in
+            TextScanEditableRow(
+                values: found.values,
+                uncertain: Set(found.uncertain),
+                alternatives: Dictionary((found.alternatives ?? []).map { ($0.index, $0.value) }, uniquingKeysWith: { first, _ in first })
+            )
+        }
         stage = .review
     }
 
@@ -422,20 +428,37 @@ struct TextScanEditableRow: Identifiable, Equatable {
     let id = UUID()
     var values: [String]
     var uncertain: Set<Int> = []
+    /// Column -> another reading of it, when the two readers disagreed.
+    var alternatives: [Int: String] = [:]
 
     var isEmpty: Bool { values.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
 }
 
 enum TextScanImage {
-    /// Long edge 1600 px, JPEG: enough for handwriting, small enough for four pages in one request.
-    static func jpeg(_ image: UIImage, maxEdge: CGFloat = 1600) -> Data? {
+    /// All pages of one request stay under this (the server takes about 4 MB of base64 in total).
+    static let requestBudgetBytes = 2_900_000
+    /// Long edges tried from sharpest down: small, light handwriting loses strokes below ~2000 px.
+    static let edges: [CGFloat] = [2400, 2000, 1600, 1200]
+
+    /// The sharpest pages that fit the request budget together.
+    static func jpegs(_ images: [UIImage]) -> [Data] {
+        var smallest: [Data] = []
+        for edge in edges {
+            let encoded = images.compactMap { jpeg($0, maxEdge: edge) }
+            smallest = encoded
+            if encoded.reduce(0, { $0 + $1.count }) <= requestBudgetBytes { return encoded }
+        }
+        return smallest
+    }
+
+    static func jpeg(_ image: UIImage, maxEdge: CGFloat) -> Data? {
         let longest = max(image.size.width, image.size.height)
         let scale = min(1, maxEdge / max(longest, 1))
         let size = CGSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-        return resized.jpegData(compressionQuality: 0.75)
+        return resized.jpegData(compressionQuality: 0.85)
     }
 }
 
@@ -471,6 +494,7 @@ private struct TextScanRowCard: View {
                             while row.values.count <= index { row.values.append("") }
                             row.values[index] = newValue
                             row.uncertain.remove(index)
+                            row.alternatives[index] = nil
                         }
                     ))
                     .font(WhikFont.body())
@@ -482,6 +506,29 @@ private struct TextScanRowCard: View {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .stroke(unsure ? Color.yellow.opacity(0.85) : WhikColors.border, lineWidth: unsure ? 2 : 1)
                     )
+                    if let other = row.alternatives[index] {
+                        Button {
+                            GonggiHaptics.light()
+                            let current = index < row.values.count ? row.values[index] : ""
+                            while row.values.count <= index { row.values.append("") }
+                            row.values[index] = other
+                            // Keep the swap reversible until the user types.
+                            row.alternatives[index] = current.isEmpty ? nil : current
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.left.arrow.right")
+                                Text(String(format: L("Other reading: %@"), other))
+                                    .lineLimit(1)
+                            }
+                            .font(WhikFont.caption().weight(.semibold))
+                            .foregroundStyle(Color.yellow)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color.yellow.opacity(0.14)))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint(L("Uses this reading instead"))
+                    }
                 }
             }
         }

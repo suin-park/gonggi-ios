@@ -22121,6 +22121,34 @@
         }
       }
     },
+    "Other reading: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other reading: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "別の読み: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "다른 읽기: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "另一种识别：%@"
+          }
+        }
+      }
+    },
     "Overall": {
       "localizations": {
         "en": {
@@ -34717,6 +34745,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "可用手指移动、旋转和缩放"
+          }
+        }
+      }
+    },
+    "Uses this reading instead": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uses this reading instead"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この読みに切り替えます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 읽기로 바꿔요"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "改用这个识别结果"
           }
         }
       }

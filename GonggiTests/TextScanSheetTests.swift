@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 @testable import Gonggi
 
@@ -71,5 +72,24 @@ final class TextScanSheetTests: XCTestCase {
         ]]]
         XCTAssertEqual(GoogleSheetsClient.SheetsError.forbidden(off), .sheetsAPIOff(project: "645238834984"))
         XCTAssertEqual(GoogleSheetsClient.SheetsError.forbidden(["error": ["code": 403]]), .noAccess)
+    }
+
+    func testRowsDecodeWithAndWithoutAlternatives() throws {
+        let new = #"{"values":["박진아","010-1234-5678"],"uncertain":[0],"alternatives":[{"index":0,"value":"박선우"}]}"#
+        let row = try JSONDecoder().decode(TextScanAPIClient.Row.self, from: Data(new.utf8))
+        XCTAssertEqual(row.alternatives, [.init(index: 0, value: "박선우")])
+        let old = #"{"values":["노트"],"uncertain":[]}"#
+        XCTAssertNil(try JSONDecoder().decode(TextScanAPIClient.Row.self, from: Data(old.utf8)).alternatives)
+    }
+
+    func testPagesKeepTheSharpestSizeThatFitsTheRequest() {
+        let page = UIGraphicsImageRenderer(size: CGSize(width: 3024, height: 4032)).image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 3024, height: 4032))
+        }
+        let jpegs = TextScanImage.jpegs([page, page])
+        XCTAssertEqual(jpegs.count, 2)
+        XCTAssertLessThanOrEqual(jpegs.reduce(0) { $0 + $1.count }, TextScanImage.requestBudgetBytes)
+        XCTAssertEqual(UIImage(data: jpegs[0]).map { max($0.size.width, $0.size.height) }, 2400, "a plain page fits at full sharpness")
     }
 }
