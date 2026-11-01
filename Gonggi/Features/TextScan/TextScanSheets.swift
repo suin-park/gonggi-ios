@@ -107,7 +107,8 @@ struct GoogleSheetsClient {
         case noAccess
         case notFound
         case noHeader
-        case sheetsAPIOff
+        /// Google project (number) that has the Sheets API turned off, as Google reports it.
+        case sheetsAPIOff(project: String?)
         case failed
 
         var errorDescription: String? {
@@ -116,9 +117,19 @@ struct GoogleSheetsClient {
             case .noAccess: return L("This Google account can't edit that sheet.")
             case .notFound: return L("Couldn't find that sheet. Check the link.")
             case .noHeader: return L("Add column names to the first row of the sheet first.")
-            case .sheetsAPIOff: return L("Google Sheets isn't enabled for WHIK yet.")
+            case .sheetsAPIOff(let project):
+                let base = L("Google Sheets isn't enabled for WHIK yet.")
+                return project.map { "\(base)\n(Google Cloud \($0))" } ?? base
             case .failed: return L("Couldn't reach Google Sheets. Please try again.")
             }
+        }
+
+        /// 403 body → error. Google lists ErrorInfo anywhere in `details`; its metadata names the project.
+        static func forbidden(_ json: [String: Any]) -> SheetsError {
+            let details = (json["error"] as? [String: Any])?["details"] as? [[String: Any]] ?? []
+            guard let info = details.first(where: { $0["reason"] as? String == "SERVICE_DISABLED" }) else { return .noAccess }
+            let consumer = (info["metadata"] as? [String: Any])?["consumer"] as? String
+            return .sheetsAPIOff(project: consumer.map { $0.replacingOccurrences(of: "projects/", with: "") })
         }
     }
 
@@ -199,8 +210,7 @@ struct GoogleSheetsClient {
         case 200..<300: return json
         case 401: throw SheetsError.notConnected
         case 403:
-            let reason = (((json["error"] as? [String: Any])?["details"] as? [[String: Any]])?.first?["reason"] as? String) ?? ""
-            throw reason == "SERVICE_DISABLED" ? SheetsError.sheetsAPIOff : SheetsError.noAccess
+            throw SheetsError.forbidden(json)
         case 404: throw SheetsError.notFound
         default: throw SheetsError.failed
         }

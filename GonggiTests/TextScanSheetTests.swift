@@ -63,4 +63,13 @@ final class TextScanSheetTests: XCTestCase {
         XCTAssertTrue(TextScanEditableRow(values: ["", "  "]).isEmpty)
         XCTAssertFalse(TextScanEditableRow(values: ["", "3"]).isEmpty)
     }
+
+    func testForbiddenNamesTheProjectWithSheetsOff() {
+        let off: [String: Any] = ["error": ["details": [
+            ["@type": "type.googleapis.com/google.rpc.LocalizedMessage"],
+            ["reason": "SERVICE_DISABLED", "metadata": ["consumer": "projects/645238834984"]],
+        ]]]
+        XCTAssertEqual(GoogleSheetsClient.SheetsError.forbidden(off), .sheetsAPIOff(project: "645238834984"))
+        XCTAssertEqual(GoogleSheetsClient.SheetsError.forbidden(["error": ["code": 403]]), .noAccess)
+    }
 }
