@@ -43,7 +43,16 @@ final class TextScanSheetTests: XCTestCase {
         XCTAssertEqual(TextScanSheetMath.cellValue("12"), "12")
         XCTAssertEqual(TextScanSheetMath.cellValue("-3"), "-3")
         XCTAssertEqual(TextScanSheetMath.cellValue("=IMPORTXML(\"x\")"), "'=IMPORTXML(\"x\")")
-        XCTAssertEqual(TextScanSheetMath.cellValue(" 5월 12일 "), "5월 12일")
+        XCTAssertEqual(TextScanSheetMath.cellValue("3.5"), "3.5")
+    }
+
+    func testDatesStayAsWritten() {
+        XCTAssertEqual(TextScanSheetMath.cellValue("1994-07-23"), "'1994-07-23")
+        XCTAssertEqual(TextScanSheetMath.cellValue("1994. 7. 23."), "'1994. 7. 23.")
+        XCTAssertEqual(TextScanSheetMath.cellValue("7/23"), "'7/23")
+        XCTAssertEqual(TextScanSheetMath.cellValue("1994년 7월 23일"), "'1994년 7월 23일")
+        XCTAssertEqual(TextScanSheetMath.cellValue(" 5월 12일 "), "'5월 12일")
+        XCTAssertEqual(TextScanSheetMath.cellValue("010-3927-5184"), "010-3927-5184")
     }
 
     func testFirstRowOfUpdatedRange() {

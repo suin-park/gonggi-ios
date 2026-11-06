@@ -83,14 +83,23 @@ enum TextScanSheetMath {
     }
 
     /// Values are entered as typed (numbers stay numbers), except: a leading 0 number such as 01012345678 keeps its 0,
-    /// and text that would run as a formula is kept as text.
+    /// text that would run as a formula is kept as text, and a date stays as written (Sheets would turn 1994-07-23 into
+    /// the serial 34538 in a number-formatted column).
     static func cellValue(_ raw: String) -> String {
         let v = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = v.first else { return "" }
         if "=+-@".contains(first), v.count > 1, !(first == "-" && Double(v) != nil) { return "'" + v }
         if first == "0", v.count > 1, v.allSatisfy(\.isNumber) { return "'" + v }
+        if datePatterns.contains(where: { v.range(of: $0, options: .regularExpression) != nil }) { return "'" + v }
         return v
     }
+
+    /// 1994-07-23, 7/23, 1994. 7. 23. (a dot needs three parts, so 3.5 stays a number), 1994년 7월 23일, 5월 12일.
+    private static let datePatterns = [
+        #"^\d{1,4}\s*[-/]\s*\d{1,2}(\s*[-/]\s*\d{1,4})?$"#,
+        #"^\d{1,4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,4}\.?$"#,
+        #"^(\d{1,4}\s*년\s*)?\d{1,2}\s*월(\s*\d{1,2}\s*일)?$"#,
+    ]
 
     /// First row number of an updated range such as `'시트1'!B5:F6`.
     static func firstRow(ofUpdatedRange range: String) -> Int? {
